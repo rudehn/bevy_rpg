@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{
+    collision::collision::{collision_check, Collider},
     constants::{ENTITY_INDEX, TILE_SIZE_X, TILE_SIZE_Y},
     map::tile::SOLDIER,
     DungeonTileset,
@@ -23,6 +24,7 @@ pub struct Player;
 fn spawn_player(mut commands: Commands, tileset: Res<DungeonTileset>) {
     commands.spawn((
         Player,
+        Collider,
         Sprite::from_atlas_image(
             tileset.texture.clone(),
             TextureAtlas {
@@ -41,9 +43,10 @@ fn spawn_player(mut commands: Commands, tileset: Res<DungeonTileset>) {
 fn move_player(
     input: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
-    mut query: Query<&mut Transform, With<Player>>,
+    mut player_query: Query<&mut Transform, With<Player>>,
+    collider_query: Query<&Transform, (With<Collider>, Without<Player>)>,
 ) {
-    if let Ok(mut transform) = query.single_mut() {
+    if let Ok(mut player_transform) = player_query.single_mut() {
         let mut direction = Vec3::ZERO;
 
         if input.pressed(KeyCode::KeyW) {
@@ -63,7 +66,11 @@ fn move_player(
             direction = direction.normalize();
         }
 
-        transform.translation += direction * PLAYER_SPEED * time.delta_secs();
+        let move_delta = direction * PLAYER_SPEED * time.delta_secs();
+
+        let final_delta = collision_check(&player_transform, &collider_query, move_delta);
+
+        player_transform.translation += final_delta;
     }
 }
 

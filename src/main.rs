@@ -1,8 +1,10 @@
 use bevy::prelude::*;
 use bevy_light_2d::prelude::*;
+use collision::collision::CollisionPlugin;
 use map::{light::LightPlugin, map::MapPlugin};
 use player::player::PlayerPlugin;
 
+mod collision;
 mod constants;
 mod map;
 mod player;
@@ -15,6 +17,7 @@ fn main() {
             MapPlugin,
             LightPlugin,
             PlayerPlugin,
+            CollisionPlugin,
         ))
         .init_resource::<DungeonTileset>()
         .add_systems(Startup, (setup_camera, set_clear_color))

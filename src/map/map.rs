@@ -1,7 +1,10 @@
 use bevy::prelude::*;
 
 use crate::{
-    DungeonTileset, constants::{TILE_INDEX, TILE_SIZE_X, TILE_SIZE_Y}, map::tile::{FLOOR, WALL}
+    collision::collision::Collider,
+    constants::{TILE_INDEX, TILE_SIZE_X, TILE_SIZE_Y},
+    map::tile::{FLOOR, WALL},
+    DungeonTileset,
 };
 
 pub struct MapPlugin;
@@ -16,13 +19,14 @@ const MAP_WIDTH: i32 = 15;
 const MAP_HEIGHT: i32 = 15;
 
 fn spawn_tiles(mut commands: Commands, tileset: Res<DungeonTileset>) {
-    let mut spawn_tile = |position: (i32, i32), index: usize| {
+    let mut spawn_tile = |position: (i32, i32), index: usize, is_wall: bool| {
         spawn_from_atlas(
             &mut commands,
             tile_translation(position.0, position.1).extend(TILE_INDEX),
             index,
             tileset.layout.clone(),
             tileset.texture.clone(),
+            is_wall,
         );
     };
 
@@ -31,23 +35,22 @@ fn spawn_tiles(mut commands: Commands, tileset: Res<DungeonTileset>) {
             let pos_x = x - MAP_WIDTH / 2;
             let pos_y = y - MAP_HEIGHT / 2;
 
-
             // Spawn walls around the perimeter
             if x == 0 {
                 // Left wall
-                spawn_tile((pos_x, pos_y), WALL);
+                spawn_tile((pos_x, pos_y), WALL, true);
             } else if x == MAP_WIDTH - 1 {
                 // Right wall
-                spawn_tile((pos_x, pos_y), WALL);
+                spawn_tile((pos_x, pos_y), WALL, true);
             } else if y == 0 {
                 // Bottom wall
-                spawn_tile((pos_x, pos_y), WALL);
+                spawn_tile((pos_x, pos_y), WALL, true);
             } else if y == MAP_HEIGHT - 1 {
                 // Top wall
-                spawn_tile((pos_x, pos_y), WALL);
+                spawn_tile((pos_x, pos_y), WALL, true);
             } else {
                 // Floor
-                spawn_tile((pos_x, pos_y), FLOOR);
+                spawn_tile((pos_x, pos_y), FLOOR, false);
             }
         }
     }
@@ -66,8 +69,9 @@ fn spawn_from_atlas(
     sprite_index: usize,
     atlas_handle: Handle<TextureAtlasLayout>,
     texture: Handle<Image>,
+    is_wall: bool,
 ) {
-    commands.spawn((
+    let mut command = commands.spawn((
         Sprite::from_atlas_image(
             texture,
             TextureAtlas {
@@ -77,4 +81,8 @@ fn spawn_from_atlas(
         ),
         Transform::from_translation(translation),
     ));
+
+    if is_wall {
+        command.insert(Collider);
+    }
 }
