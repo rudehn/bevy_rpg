@@ -11,10 +11,29 @@ pub enum TileType {
     DownStairs,
 }
 
+#[derive(Component, Default, Copy, Clone, Eq, PartialEq, Debug)]
+pub enum TileVisibility {
+    #[default]
+    Hidden,
+    Visible,
+}
+
+#[derive(Component, Default, Copy, Clone, Eq, PartialEq, Debug)]
+pub enum TileExplored {
+    #[default]
+    Unexplored,
+    Explored,
+}
+
+
 pub fn is_walkable(tile: TileType) -> bool {
     match tile {
         TileType::Wall => false,
         TileType::Floor => true,
         TileType::DownStairs => true,
     }
+}
+
+pub fn is_opaque(tile: TileType) -> bool {
+    matches!(tile, TileType::Wall)
 }

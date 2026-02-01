@@ -6,13 +6,13 @@ use bracket_lib::prelude::{Algorithm2D, BaseMap, Point};
 /// A read-only adapter to view a `bevy_ecs_tilemap` as a `Map` trait object.
 /// This allows pathfinding and other algorithms to run on the live ECS data.
 /// It is constructed within a Bevy system.
-pub struct EcsMap<'w, 's> {
+pub struct EcsMap<'w, 's, 'a> {
     pub tile_storage: &'w TileStorage,
-    pub tile_query: &'w Query<'w, 's, &'static TileType>,
+    pub tile_query: &'w Query<'w, 's, &'a TileType>,
     pub map_size: TilemapSize,
 }
 
-impl<'w, 's> Map for EcsMap<'w, 's> {
+impl<'w, 's, 'a> Map for EcsMap<'w, 's, 'a> {
     fn width(&self) -> i32 {
         self.map_size.x as i32
     }
@@ -40,7 +40,7 @@ impl<'w, 's> Map for EcsMap<'w, 's> {
     }
 }
 
-impl<'w, 's> BaseMap for EcsMap<'w, 's> {
+impl<'w, 's, 'a> BaseMap for EcsMap<'w, 's, 'a> {
     fn is_opaque(&self, idx: usize) -> bool {
         let pt = self.index_to_point2d(idx);
         match self.get_tile(pt) {
@@ -82,7 +82,7 @@ impl<'w, 's> BaseMap for EcsMap<'w, 's> {
     }
 }
 
-impl<'w, 's> Algorithm2D for EcsMap<'w, 's> {
+impl<'w, 's, 'a> Algorithm2D for EcsMap<'w, 's, 'a> {
     fn dimensions(&self) -> Point {
         Point::new(self.map_size.x as i32, self.map_size.y as i32)
     }

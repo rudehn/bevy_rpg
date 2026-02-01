@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{prelude::*, time::Timer};
 use bevy_ecs_tilemap::prelude::*;
 
 use crate::{
@@ -13,10 +13,17 @@ use crate::{
 
 pub struct PlayerPlugin;
 
+#[derive(Resource)]
+pub struct MovementTimer(Timer);
+
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_player.after(spawn_dungeon)) // Ensure map is spawned first
-            .add_systems(Update, (move_player, move_camera).chain());
+        app.insert_resource(MovementTimer(Timer::from_seconds(
+            0.1,
+            TimerMode::Repeating,
+        )))
+        .add_systems(Startup, spawn_player.after(spawn_dungeon)) // Ensure map is spawned first
+        .add_systems(Update, (move_player, move_camera).chain());
     }
 }
 
@@ -48,7 +55,9 @@ fn spawn_player(
     ));
 }
 
-fn move_player(
+pub fn move_player(
+    time: Res<Time>,
+    mut timer: ResMut<MovementTimer>,
     keys: Res<ButtonInput<KeyCode>>,
     mut q_player: Query<&mut Transform, With<Player>>,
     // Query the map to check for collisions
@@ -63,17 +72,19 @@ fn move_player(
         return;
     };
 
+    timer.0.tick(time.delta());
+
     let mut delta = IVec2::ZERO;
-    if keys.just_pressed(KeyCode::ArrowUp) {
+    if keys.pressed(KeyCode::ArrowUp) {
         delta.y = 1;
     }
-    if keys.just_pressed(KeyCode::ArrowDown) {
+    if keys.pressed(KeyCode::ArrowDown) {
         delta.y = -1;
     }
-    if keys.just_pressed(KeyCode::ArrowLeft) {
+    if keys.pressed(KeyCode::ArrowLeft) {
         delta.x = -1;
     }
-    if keys.just_pressed(KeyCode::ArrowRight) {
+    if keys.pressed(KeyCode::ArrowRight) {
         delta.x = 1;
     }
 
@@ -81,41 +92,43 @@ fn move_player(
         return;
     }
 
-    // 1. Calculate current grid position
-    // Bevy ECS Tilemap provides helpers, but simple math works for square grids
-    let current_grid_x = (player_tf.translation.x / GRID_SIZE.x).floor() as i32;
-    let current_grid_y = (player_tf.translation.y / GRID_SIZE.y).floor() as i32;
+    if timer.0.is_finished() {
+        // 1. Calculate current grid position
+        // Bevy ECS Tilemap provides helpers, but simple math works for square grids
+        let current_grid_x = (player_tf.translation.x / GRID_SIZE.x).floor() as i32;
+        let current_grid_y = (player_tf.translation.y / GRID_SIZE.y).floor() as i32;
 
-    let target_x = current_grid_x + delta.x;
-    let target_y = current_grid_y + delta.y;
+        let target_x = current_grid_x + delta.x;
+        let target_y = current_grid_y + delta.y;
 
-    // 2. Check Bounds
-    if target_x < 0
-        || target_y < 0
-        || target_x >= MAP_SIZE.x as i32
-        || target_y >= MAP_SIZE.y as i32
-    {
-        return; // Out of bounds
-    }
-
-    let target_pos = TilePos {
-        x: target_x as u32,
-        y: target_y as u32,
-    };
-
-    // 3. Check Collision via TileStorage
-    // We ask the map: "What entity is at this position?"
-    if let Some(tile_entity) = tile_storage.get(&target_pos) {
-        // We found a tile entity, now let's check its component (TileType)
-        if q_blocked_tiles.get(tile_entity).is_ok() {
-            return; // Block movement
+        // 2. Check Bounds
+        if target_x < 0
+            || target_y < 0
+            || target_x >= MAP_SIZE.x as i32
+            || target_y >= MAP_SIZE.y as i32
+        {
+            return; // Out of bounds
         }
-    }
 
-    // 4. Move Transform
-    // Center the player in the new tile
-    player_tf.translation.x = target_x as f32 * GRID_SIZE.x;
-    player_tf.translation.y = target_y as f32 * GRID_SIZE.y;
+        let target_pos = TilePos {
+            x: target_x as u32,
+            y: target_y as u32,
+        };
+
+        // 3. Check Collision via TileStorage
+        // We ask the map: "What entity is at this position?"
+        if let Some(tile_entity) = tile_storage.get(&target_pos) {
+            // We found a tile entity, now let's check its component (TileType)
+            if q_blocked_tiles.get(tile_entity).is_ok() {
+                return; // Block movement
+            }
+        }
+
+        // 4. Move Transform
+        // Center the player in the new tile
+        player_tf.translation.x = target_x as f32 * GRID_SIZE.x;
+        player_tf.translation.y = target_y as f32 * GRID_SIZE.y;
+    }
 }
 
 fn move_camera(
