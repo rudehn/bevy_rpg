@@ -1,3 +1,3 @@
-pub mod tile;
-pub mod map;
 pub mod light;
+pub mod map;
+pub mod tile;
