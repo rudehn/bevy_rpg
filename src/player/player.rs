@@ -1,15 +1,12 @@
 use bevy::prelude::*;
-use bevy_ecs_tilemap::{
-    map::TilemapGridSize,
-    tiles::{TilePos, TileStorage},
-};
+use bevy_ecs_tilemap::prelude::*;
 
 use crate::{
     assets_plugin::DungeonTileset,
     components::Collider,
     constants::ENTITY_INDEX,
     map::{
-        map::{DungeonMap, MAP_SIZE},
+        map::{DungeonMap, GRID_SIZE, MAP_SIZE, PlayerSpawnPoint, spawn_dungeon},
         tile::{SOLDIER, TileType},
     },
 };
@@ -18,7 +15,7 @@ pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_player)
+        app.add_systems(Startup, spawn_player.after(spawn_dungeon)) // Ensure map is spawned first
             .add_systems(Update, (move_player, move_camera).chain());
     }
 }
@@ -26,7 +23,17 @@ impl Plugin for PlayerPlugin {
 #[derive(Component)]
 pub struct Player;
 
-fn spawn_player(mut commands: Commands, tileset: Res<DungeonTileset>) {
+fn spawn_player(
+    mut commands: Commands,
+    tileset: Res<DungeonTileset>,
+    spawn_point: Res<PlayerSpawnPoint>,
+) {
+    let spawn_pos = Transform::from_xyz(
+        spawn_point.0.x as f32 * GRID_SIZE.x,
+        spawn_point.0.y as f32 * GRID_SIZE.y,
+        ENTITY_INDEX,
+    );
+
     commands.spawn((
         Player,
         Collider,
@@ -37,62 +44,22 @@ fn spawn_player(mut commands: Commands, tileset: Res<DungeonTileset>) {
                 layout: tileset.layout.clone(),
             },
         ),
-        Transform::from_xyz(16.0, 16.0, ENTITY_INDEX),
+        spawn_pos,
     ));
 }
 
-// fn move_player(
-//     input: Res<ButtonInput<KeyCode>>,
-//     mut player_query: Query<&mut Transform, With<Player>>,
-//     collider_query: Query<&Transform, (With<Collider>, Without<Player>)>,
-// ) {
-//     if let Ok(mut player_transform) = player_query.single_mut() {
-//         let mut direction = Vec3::ZERO;
-
-//         if input.just_pressed(KeyCode::KeyW) {
-//             direction.y = TILE_SIZE_Y as f32;
-//         } else if input.just_pressed(KeyCode::KeyS) {
-//             direction.y = -(TILE_SIZE_Y as f32);
-//         } else if input.just_pressed(KeyCode::KeyA) {
-//             direction.x = -(TILE_SIZE_X as f32);
-//         } else if input.just_pressed(KeyCode::KeyD) {
-//             direction.x = TILE_SIZE_X as f32;
-//         }
-
-//         if direction.length() == 0.0 {
-//             return;
-//         }
-
-//         let target = player_transform.translation + direction;
-
-//         let mut collision = false;
-//         for transform in collider_query.iter() {
-//             // AABB collision check
-//             if transform.translation.x == target.x && transform.translation.y == target.y {
-//                 collision = true;
-//                 break;
-//             }
-//         }
-
-//         if !collision {
-//             player_transform.translation = target;
-//         }
-//     }
-// }
-
 fn move_player(
-    mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     mut q_player: Query<&mut Transform, With<Player>>,
     // Query the map to check for collisions
-    q_map: Query<(&TileStorage, &TilemapGridSize), With<DungeonMap>>,
+    q_map: Query<&TileStorage, With<DungeonMap>>,
     // Query tiles to check if they are walls
-    q_blocked_tiles: Query<(&TileType, &Collider)>,
+    q_blocked_tiles: Query<&TileType, With<Collider>>,
 ) {
     let Ok(mut player_tf) = q_player.single_mut() else {
         return;
     };
-    let Ok((tile_storage, grid_size)) = q_map.single() else {
+    let Ok(tile_storage) = q_map.single() else {
         return;
     };
 
@@ -116,8 +83,8 @@ fn move_player(
 
     // 1. Calculate current grid position
     // Bevy ECS Tilemap provides helpers, but simple math works for square grids
-    let current_grid_x = (player_tf.translation.x / grid_size.x).floor() as i32;
-    let current_grid_y = (player_tf.translation.y / grid_size.y).floor() as i32;
+    let current_grid_x = (player_tf.translation.x / GRID_SIZE.x).floor() as i32;
+    let current_grid_y = (player_tf.translation.y / GRID_SIZE.y).floor() as i32;
 
     let target_x = current_grid_x + delta.x;
     let target_y = current_grid_y + delta.y;
@@ -141,14 +108,14 @@ fn move_player(
     if let Some(tile_entity) = tile_storage.get(&target_pos) {
         // We found a tile entity, now let's check its component (TileType)
         if q_blocked_tiles.get(tile_entity).is_ok() {
-            return; // Block movement  
+            return; // Block movement
         }
     }
 
     // 4. Move Transform
     // Center the player in the new tile
-    player_tf.translation.x = (target_x as f32 * grid_size.x); // + grid_size.x;// / 2.0);
-    player_tf.translation.y = (target_y as f32 * grid_size.y); // + grid_size.y;// / 2.0);
+    player_tf.translation.x = target_x as f32 * GRID_SIZE.x;
+    player_tf.translation.y = target_y as f32 * GRID_SIZE.y;
 }
 
 fn move_camera(

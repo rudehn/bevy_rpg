@@ -1,9 +1,10 @@
-use bracket_lib::geometry::Point;
+use bracket_lib::prelude::{Algorithm2D, Point};
 use bracket_lib::pathfinding::DistanceAlg::PythagorasSquared;
 
 use crate::components::Position;
 use crate::map::builders::{BuilderMap, MetaMapBuilder};
 use crate::map::tile::is_walkable;
+use crate::map::Map;
 
 #[allow(dead_code)]
 #[derive(Clone)]
@@ -56,18 +57,18 @@ impl AreaStartingPosition {
         }
 
         let mut available_floors: Vec<(usize, f32)> = Vec::new();
-        for (idx, tiletype) in build_data.map.tiles.data.iter().enumerate() {
-            if is_walkable(tiletype) {
-                available_floors.push((
-                    idx,
-                    PythagorasSquared.distance2d(
-                        Point::new(
-                            idx as i32 % build_data.map.width(),
-                            idx as i32 / build_data.map.width(),
-                        ),
-                        Point::new(seed_x, seed_y),
-                    ),
-                ));
+        for y in 0..build_data.map.height() {
+            for x in 0..build_data.map.width() {
+                let pt = Point::new(x, y);
+                if let Some(tiletype) = build_data.map.get_tile(pt) {
+                    if is_walkable(tiletype) {
+                        let idx = build_data.map.point2d_to_index(pt);
+                        available_floors.push((
+                            idx,
+                            PythagorasSquared.distance2d(pt, Point::new(seed_x, seed_y)),
+                        ));
+                    }
+                }
             }
         }
         if available_floors.is_empty() {
@@ -76,12 +77,11 @@ impl AreaStartingPosition {
 
         available_floors.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
-        let start_x = available_floors[0].0 as i32 % build_data.map.width();
-        let start_y = available_floors[0].0 as i32 / build_data.map.width();
+        let start_pos = build_data.map.index_to_point2d(available_floors[0].0);
 
         build_data.starting_position = Some(Position {
-            x: start_x,
-            y: start_y,
+            x: start_pos.x,
+            y: start_pos.y,
         });
     }
 }

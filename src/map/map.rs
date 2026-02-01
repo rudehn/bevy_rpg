@@ -1,10 +1,14 @@
 use bevy::prelude::*;
 use bevy_ecs_tilemap::prelude::*;
+use bracket_lib::prelude::Point;
 
 use crate::{
     assets_plugin::DungeonTileset,
     components::Collider,
-    map::tile::{FLOOR, TileType, WALL},
+    map::{
+        builders::level_builder,
+        tile::{FLOOR, TileType, WALL},
+    },
 };
 
 // --------------------------------------------------------------------------------
@@ -13,6 +17,9 @@ use crate::{
 pub const TILE_SIZE: TilemapTileSize = TilemapTileSize { x: 16.0, y: 16.0 };
 pub const GRID_SIZE: TilemapGridSize = TilemapGridSize { x: 16.0, y: 16.0 };
 pub const MAP_SIZE: TilemapSize = TilemapSize { x: 80, y: 60 };
+
+#[derive(Resource)]
+pub struct PlayerSpawnPoint(pub Point);
 
 pub struct MapPlugin;
 
@@ -31,51 +38,32 @@ pub struct DungeonMap;
 // SYSTEMS
 // --------------------------------------------------------------------------------
 
-fn spawn_dungeon(mut commands: Commands, dungeon_tileset: ResMut<DungeonTileset>) {
-    // 2. Create the TileStorage (The container for all tiles)
-    // We create it empty first, and `TilemapBundle` will populate it.
-    let tile_storage = TileStorage::empty(MAP_SIZE);
-
-    // 3. Spawn the Map Entity
-    let map_entity = commands
-        .spawn((
-            TilemapBundle {
-                grid_size: GRID_SIZE,
-                map_type: TilemapType::Square,
-                size: MAP_SIZE,
-                texture: TilemapTexture::Single(dungeon_tileset.texture.clone()),
-                tile_size: TILE_SIZE,
-                transform: Transform::from_xyz(0.0, 0.0, 0.0),
-                storage: tile_storage,
-                ..Default::default()
-            },
-            DungeonMap,
-        ))
-        .id();
-
-    // 4. Fill the map (Procedural Generation)
-    // We need to get the storage component *after* spawning,
-    // but since we are inside the same system, we create the tile entities
-    // and manually tell them which map they belong to.
+pub fn spawn_dungeon(mut commands: Commands, dungeon_tileset: Res<DungeonTileset>) {
+    // Create the Tilemap entity
+    let map_entity = commands.spawn(DungeonMap).id();
 
     let mut tile_storage = TileStorage::empty(MAP_SIZE);
 
-    for x in 0..MAP_SIZE.x {
-        for y in 0..MAP_SIZE.y {
-            let tile_pos = TilePos { x, y };
+    // Run the builder
+    let mut builder = level_builder(1, MAP_SIZE.x as i32, MAP_SIZE.y as i32);
+    builder.build_map();
 
-            // Simple Logic: Borders are walls, inside is floor
-            let is_border = x == 0 || x == MAP_SIZE.x - 1 || y == 0 || y == MAP_SIZE.y - 1;
-            // Add some random pillars (pseudo-random for example)
-            let is_pillar = (x % 4 == 0) && (y % 4 == 0);
+    // Bake the map into the ECS
+    for y in 0..builder.build_data.map.height() {
+        for x in 0..builder.build_data.map.width() {
+            let pt = Point::new(x, y);
+            let tile_pos = TilePos {
+                x: x as u32,
+                y: y as u32,
+            };
+            let tile_type = builder.build_data.map.get_tile(pt).unwrap();
 
-            let (texture_index, tile_type) = if is_border || is_pillar {
-                (WALL, TileType::Wall)
-            } else {
-                (FLOOR, TileType::Floor)
+            let texture_index = match tile_type {
+                TileType::Floor => FLOOR,
+                TileType::Wall => WALL,
+                TileType::DownStairs => FLOOR, // Placeholder
             };
 
-            // Spawn the individual tile entity
             let mut command = commands.spawn((
                 TileBundle {
                     position: tile_pos,
@@ -83,19 +71,30 @@ fn spawn_dungeon(mut commands: Commands, dungeon_tileset: ResMut<DungeonTileset>
                     texture_index: TileTextureIndex(texture_index as u32),
                     ..Default::default()
                 },
-                tile_type, // Attach our logic component
+                tile_type,
             ));
 
             if tile_type == TileType::Wall {
                 command.insert(Collider);
             }
 
-            // Store the entity in the storage container
             tile_storage.set(&tile_pos, command.id());
         }
     }
 
-    // 5. Update the map entity with the populated storage
-    // This allows us to query the map later to find out what is at (x, y)
-    commands.entity(map_entity).insert(tile_storage);
+    // Add the tilemap components to the map entity
+    commands.entity(map_entity).insert(TilemapBundle {
+        grid_size: GRID_SIZE,
+        map_type: TilemapType::Square,
+        size: MAP_SIZE,
+        storage: tile_storage,
+        texture: TilemapTexture::Single(dungeon_tileset.texture.clone()),
+        tile_size: TILE_SIZE,
+        transform: Transform::from_xyz(0.0, 0.0, 0.0),
+        ..Default::default()
+    });
+
+    // Insert the player spawn point as a resource
+    let spawn_point = builder.build_data.starting_position.unwrap();
+    commands.insert_resource(PlayerSpawnPoint(Point::new(spawn_point.x, spawn_point.y)));
 }

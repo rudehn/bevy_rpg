@@ -2,22 +2,29 @@ use bracket_lib::{prelude::Rect, random::RandomNumberGenerator};
 
 use crate::{
     components::Position,
-    map::builders::{
-        bsp_dungeon::BspDungeonBuilder,
-        corridors::NearestCorridors,
-        starting_points::{XStart, YStart},
+    map::{
+        builders::{
+            bsp_dungeon::BspDungeonBuilder,
+            corridors::NearestCorridors,
+            room_drawer::RoomDrawer,
+            start_point::StartPointBuilder,
+            starting_points::{XStart, YStart},
+        },
+        GameMap, Map,
     },
 };
 
 mod bsp_dungeon;
 mod corridors;
 mod exit_points;
+mod room_drawer;
+mod start_point;
 mod starting_points;
 
 pub struct BuilderMap {
     // pub spawn_list: Vec<(usize, String)>,
     // pub modified_spawn_list: Vec<(SpawnOptions, String)>, // includes spawn options
-    pub map: Map,
+    pub map: Box<dyn Map>,
     pub starting_position: Option<Position>,
     pub rooms: Option<Vec<Rect>>,
     pub corridors: Option<Vec<Vec<usize>>>,
@@ -52,7 +59,7 @@ impl BuilderChain {
             build_data: BuilderMap {
                 // spawn_list: Vec::new(),
                 // modified_spawn_list: Vec::new(),
-                map: Map::new(new_depth, width, height, name),
+                map: Box::new(GameMap::new(new_depth, width, height, name)),
                 starting_position: None,
                 rooms: None,
                 corridors: None,
@@ -140,6 +147,7 @@ pub fn floor_builder(new_depth: i32, width: i32, height: i32) -> BuilderChain {
     builder.start_with(BspDungeonBuilder::dungeon());
     builder.with(RoomDrawer::new());
     builder.with(NearestCorridors::new());
+    builder.with(StartPointBuilder::new());
 
     // let (start_x, start_y) = random_start_position();
     // builder.with(AreaStartingPosition::new(start_x, start_y));
