@@ -5,5 +5,7 @@ edition = "2024"
 
 [dependencies]
 bevy = "0.17.0"
+bracket-lib = { git = "https://github.com/rudehn/bracket-lib" }
 bevy_ecs_tilemap = "0.17.0"
 bevy_light_2d = "0.8.0"
+petgraph = "0.8.3"

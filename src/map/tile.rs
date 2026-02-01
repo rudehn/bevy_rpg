@@ -8,4 +8,13 @@ pub const SOLDIER: usize = 97;
 pub enum TileType {
     Wall,
     Floor,
+    DownStairs,
+}
+
+pub fn is_walkable(tile: TileType) -> bool {
+    match tile {
+        TileType::Wall => false,
+        TileType::Floor => true,
+        TileType::DownStairs => true,
+    }
 }
