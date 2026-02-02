@@ -159,7 +159,7 @@ pub fn update_tile_visibility(
         } else {
             *tile_visibility = TileVisibility::Hidden;
             if *tile_explored == TileExplored::Explored {
-                tile_color.0 = Color::srgb(0.2, 0.2, 0.2); // Explored but not visible are dim
+                tile_color.0 = Color::srgb(0.5, 0.5, 0.5); // Explored but not visible are dim
             } else {
                 tile_color.0 = Color::BLACK; // Unexplored and not visible are black
             }
