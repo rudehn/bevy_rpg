@@ -1,13 +1,17 @@
+use bevy::color::palettes::css::YELLOW; // New import for YELLOW
 use bevy::prelude::*;
 use bevy_ecs_tilemap::prelude::*;
-use bracket_lib::prelude::{field_of_view, Point};
+use bevy_light_2d::prelude::PointLight2d;
+use bracket_lib::prelude::{Point, field_of_view}; // New import
 
 use crate::{
     assets_plugin::DungeonTileset,
     components::Collider,
+    constants::{ENTITY_INDEX, TILE_SIZE_X, TILE_SIZE_Y}, // New imports
     map::{
         builders::level_builder,
-        ecs_map::EcsMap, // Import EcsMap
+        ecs_map::EcsMap,                                    // Import EcsMap
+        light::{AnimationTimer, Candle, CandleSpritesheet}, // New imports
         tile::{FLOOR, TileExplored, TileType, TileVisibility, WALL},
     },
     player::player::Player,
@@ -31,7 +35,13 @@ impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(TilemapPlugin) // Required by bevy_ecs_tilemap
             .add_systems(Startup, spawn_dungeon)
-            .add_systems(Update, update_tile_visibility.after(move_player)); // Add the new system after move_player
+            .add_systems(
+                Update,
+                (
+                    update_tile_visibility.after(move_player),
+                    update_candle_visibility.after(update_tile_visibility),
+                ),
+            );
     }
 }
 
@@ -43,7 +53,11 @@ pub struct DungeonMap;
 // SYSTEMS
 // --------------------------------------------------------------------------------
 
-pub fn spawn_dungeon(mut commands: Commands, dungeon_tileset: Res<DungeonTileset>) {
+pub fn spawn_dungeon(
+    mut commands: Commands,
+    dungeon_tileset: Res<DungeonTileset>,
+    candle_spritesheet: Res<CandleSpritesheet>, // New parameter
+) {
     // Create the Tilemap entity
     let map_entity = commands.spawn(DungeonMap).id();
 
@@ -89,6 +103,42 @@ pub fn spawn_dungeon(mut commands: Commands, dungeon_tileset: Res<DungeonTileset
             let tile_entity = command.id();
             tile_storage.set(&tile_pos, tile_entity);
         }
+    }
+
+    // Spawn candles
+    for pt in builder.build_data.candle_spawn_points.iter() {
+        let light = commands
+            .spawn((
+                // When adding light as a child, its transform should be relative to parent
+                Transform::default(),
+                PointLight2d {
+                    radius: 96.0,
+                    color: Color::Srgba(YELLOW),
+                    intensity: 0.0, // Initially off
+                    falloff: 4.0,
+                    ..default()
+                },
+            ))
+            .id();
+
+        commands
+            .spawn((
+                Candle,
+                AnimationTimer(Timer::from_seconds(0.2, TimerMode::Repeating)),
+                Sprite::from_atlas_image(
+                    candle_spritesheet.texture.clone(),
+                    TextureAtlas {
+                        layout: candle_spritesheet.layout.clone(),
+                        index: 0,
+                    },
+                ),
+                Transform::from_xyz(
+                    pt.x as f32 * GRID_SIZE.x,
+                    pt.y as f32 * GRID_SIZE.y,
+                    ENTITY_INDEX, // Increased Z-index for candle sprite
+                ),
+            ))
+            .add_child(light);
     }
 
     // Add the tilemap components to the map entity
@@ -140,11 +190,7 @@ pub fn update_tile_visibility(
     };
 
     // Calculate FOV
-    let fov_tiles = field_of_view(
-        player_point,
-        PLAYER_FOV_RADIUS,
-        &ecs_map,
-    );
+    let fov_tiles = field_of_view(player_point, PLAYER_FOV_RADIUS, &ecs_map);
 
     // Update tile visibility and color
     for (tile_pos, mut tile_color, mut tile_visibility, mut tile_explored) in
@@ -162,6 +208,44 @@ pub fn update_tile_visibility(
                 tile_color.0 = Color::srgb(0.5, 0.5, 0.5); // Explored but not visible are dim
             } else {
                 tile_color.0 = Color::BLACK; // Unexplored and not visible are black
+            }
+        }
+    }
+}
+
+pub fn update_candle_visibility(
+    tile_query: Query<(&TilePos, &TileVisibility)>,
+    mut candle_query: Query<(&Candle, &Transform, &mut Visibility, &Children)>,
+    mut light_query: Query<&mut PointLight2d>,
+) {
+    for (_, candle_transform, mut candle_visibility, children) in candle_query.iter_mut() {
+        let candle_tile_pos = TilePos {
+            x: (candle_transform.translation.x / GRID_SIZE.x).floor() as u32,
+            y: (candle_transform.translation.y / GRID_SIZE.y).floor() as u32,
+        };
+
+        let mut light_entity_id: Option<Entity> = None;
+        for child in children.iter() {
+            if light_query.get(child).is_ok() {
+                light_entity_id = Some(child);
+                break;
+            }
+        }
+
+        if let Some(light_entity) = light_entity_id {
+            if let Some((_, tile_visibility)) = tile_query
+                .iter()
+                .find(|(tp, _)| tp.x == candle_tile_pos.x && tp.y == candle_tile_pos.y)
+            {
+                if let Ok(mut point_light) = light_query.get_mut(light_entity) {
+                    if *tile_visibility == TileVisibility::Visible {
+                        *candle_visibility = Visibility::Visible;
+                        point_light.intensity = 2.0; // Light on
+                    } else {
+                        *candle_visibility = Visibility::Hidden;
+                        point_light.intensity = 0.0; // Light off
+                    }
+                }
             }
         }
     }

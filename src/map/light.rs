@@ -1,5 +1,6 @@
 use bevy::{color::palettes::css::YELLOW, prelude::*};
 use bevy_light_2d::prelude::*;
+use bracket_lib::prelude::Point; // New import
 
 use crate::constants::{ENTITY_INDEX, TILE_SIZE_X, TILE_SIZE_Y};
 
@@ -8,22 +9,23 @@ pub struct LightPlugin;
 impl Plugin for LightPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CandleSpritesheet>()
-            .add_systems(Startup, (setup_candle_spritesheet, spawn_candles).chain())
+            // .add_systems(Startup, , spawn_candles).chain()) // Removed spawn_candles
             .add_systems(Update, animate_candles);
     }
 }
 
 #[derive(Resource, Default)]
-struct CandleSpritesheet {
-    layout: Handle<TextureAtlasLayout>,
-    texture: Handle<Image>,
+pub struct CandleSpritesheet {
+    // Made public
+    pub layout: Handle<TextureAtlasLayout>, // Made public
+    pub texture: Handle<Image>,             // Made public
 }
 
 #[derive(Component)]
-struct Candle;
+pub struct Candle;
 
 #[derive(Component, Deref, DerefMut)]
-struct AnimationTimer(Timer);
+pub struct AnimationTimer(pub Timer); // Inner field made public
 
 fn animate_candles(
     time: Res<Time>,
@@ -31,7 +33,7 @@ fn animate_candles(
 ) {
     for (mut timer, mut sprite) in &mut query {
         timer.tick(time.delta());
-        if timer.just_finished()
+        if timer.is_finished()
             && let Some(ref mut texture_atlas) = sprite.texture_atlas
         {
             texture_atlas.index = (texture_atlas.index + 1) % 4;
@@ -67,19 +69,4 @@ fn spawn_candles(mut commands: Commands, spritesheet: Res<CandleSpritesheet>) {
             Transform::from_xyz(0., 2., ENTITY_INDEX),
         ))
         .add_child(light);
-}
-
-fn setup_candle_spritesheet(
-    asset_server: Res<AssetServer>,
-    mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
-    mut candle_spritesheet: ResMut<CandleSpritesheet>,
-) {
-    candle_spritesheet.texture = asset_server.load("candle.png");
-    candle_spritesheet.layout = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
-        UVec2::new(TILE_SIZE_X, TILE_SIZE_Y),
-        4,
-        1,
-        None,
-        None,
-    ));
 }

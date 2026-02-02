@@ -1,4 +1,4 @@
-use bracket_lib::{prelude::Rect, random::RandomNumberGenerator};
+use bracket_lib::{prelude::{Point, Rect}, random::RandomNumberGenerator}; // Added Point
 
 use crate::{
     components::Position,
@@ -9,6 +9,7 @@ use crate::{
             room_drawer::RoomDrawer,
             start_point::StartPointBuilder,
             starting_points::{XStart, YStart},
+            candle_spawner::CandleSpawner, // New import
         },
         GameMap, Map,
     },
@@ -20,6 +21,7 @@ mod exit_points;
 mod room_drawer;
 mod start_point;
 mod starting_points;
+mod candle_spawner; // Declare the new module
 
 pub struct BuilderMap {
     // pub spawn_list: Vec<(usize, String)>,
@@ -28,6 +30,7 @@ pub struct BuilderMap {
     pub starting_position: Option<Position>,
     pub rooms: Option<Vec<Rect>>,
     pub corridors: Option<Vec<Vec<usize>>>,
+    pub candle_spawn_points: Vec<Point>, // New field for candle spawn points
     // pub history: Vec<Map>,
     pub width: i32,
     pub height: i32,
@@ -63,6 +66,7 @@ impl BuilderChain {
                 starting_position: None,
                 rooms: None,
                 corridors: None,
+                candle_spawn_points: Vec::new(),
                 // history: Vec::new(),
                 width,
                 height,
@@ -148,6 +152,7 @@ pub fn floor_builder(new_depth: i32, width: i32, height: i32) -> BuilderChain {
     builder.with(RoomDrawer::new());
     builder.with(NearestCorridors::new());
     builder.with(StartPointBuilder::new());
+    builder.with(CandleSpawner::new()); // Add the CandleSpawner
 
     // let (start_x, start_y) = random_start_position();
     // builder.with(AreaStartingPosition::new(start_x, start_y));

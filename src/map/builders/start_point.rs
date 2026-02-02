@@ -2,7 +2,6 @@ use crate::{
     components::Position,
     map::builders::{BuilderMap, MetaMapBuilder},
 };
-use bracket_lib::prelude::Rect;
 
 #[derive(Clone)]
 pub struct StartPointBuilder {}

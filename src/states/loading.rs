@@ -3,6 +3,7 @@ use bevy_light_2d::light::{AmbientLight2d, Light2d};
 
 use crate::{
     assets_plugin::{AssetsPlugin, DungeonTileset},
+    map::light::CandleSpritesheet,
     states::AppState,
 };
 
@@ -21,10 +22,13 @@ impl Plugin for LoadingPlugin {
 fn check_assets_loaded(
     asset_server: Res<AssetServer>,
     dungeon_tileset: Res<DungeonTileset>,
+    candle_spritesheet: Res<CandleSpritesheet>,
     mut next_state: ResMut<NextState<AppState>>,
 ) {
     let all_assets_loaded = asset_server.is_loaded_with_dependencies(&dungeon_tileset.texture)
-        && asset_server.is_loaded_with_dependencies(&dungeon_tileset.layout);
+        && asset_server.is_loaded_with_dependencies(&dungeon_tileset.layout)
+        && asset_server.is_loaded_with_dependencies(&candle_spritesheet.layout)
+        && asset_server.is_loaded_with_dependencies(&candle_spritesheet.texture);
 
     if all_assets_loaded {
         next_state.set(AppState::InGame);
