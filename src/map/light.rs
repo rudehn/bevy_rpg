@@ -1,8 +1,16 @@
 use bevy::{color::palettes::css::YELLOW, prelude::*};
+use bevy_ecs_tilemap::tiles::{TilePos, TileStorage};
 use bevy_light_2d::prelude::*;
+use bracket_lib::prelude::Point;
 use rand::{self, Rng};
 
-use crate::constants::{ENTITY_INDEX, TILE_SIZE_X, TILE_SIZE_Y};
+use crate::{
+    constants::{ENTITY_INDEX, TILE_SIZE_X, TILE_SIZE_Y},
+    map::{
+        map::{DungeonMap, GRID_SIZE},
+        tile::TileVisibility,
+    },
+};
 
 pub struct LightPlugin;
 
@@ -11,7 +19,7 @@ impl Plugin for LightPlugin {
         app.init_resource::<CandleSpritesheet>()
             .add_plugins(Light2dPlugin)
             // .add_systems(Startup, , spawn_candles).chain()) // Removed spawn_candles
-            .add_systems(Update, animate_candles);
+            .add_systems(Update, (update_candle_visibility, animate_candles).chain());
     }
 }
 
@@ -54,32 +62,88 @@ fn animate_candles(
     // }
 }
 
-fn spawn_candles(mut commands: Commands, spritesheet: Res<CandleSpritesheet>) {
-    let light = commands
-        .spawn((
-            Transform::from_xyz(0.0, 4.0, ENTITY_INDEX),
-            PointLight2d {
-                radius: 96.0,
-                color: Color::Srgba(YELLOW),
-                intensity: 2.0,
-                falloff: 4.0,
-                ..default()
+pub fn spawn_candle(
+    commands: &mut Commands,
+    candle_spritesheet: &Res<CandleSpritesheet>,
+    pt: &Point,
+) {
+    commands.spawn((
+        Candle,
+        PointLight2d {
+            radius: 96.0,
+            color: Color::Srgba(YELLOW),
+            intensity: 0.0, // Initially off
+            falloff: 4.0,
+            ..default()
+        },
+        AnimationTimer(Timer::from_seconds(0.2, TimerMode::Repeating)),
+        Sprite::from_atlas_image(
+            candle_spritesheet.texture.clone(),
+            TextureAtlas {
+                layout: candle_spritesheet.layout.clone(),
+                index: 0,
             },
-        ))
-        .id();
+        ),
+        Transform::from_xyz(
+            pt.x as f32 * GRID_SIZE.x,
+            pt.y as f32 * GRID_SIZE.y,
+            ENTITY_INDEX, // Increased Z-index for candle sprite
+        ),
+    ));
+}
 
-    commands
-        .spawn((
-            Candle,
-            AnimationTimer(Timer::from_seconds(0.2, TimerMode::Repeating)),
-            Sprite::from_atlas_image(
-                spritesheet.texture.clone(),
-                TextureAtlas {
-                    layout: spritesheet.layout.clone(),
-                    index: 0,
-                },
-            ),
-            Transform::from_xyz(0., 2., ENTITY_INDEX),
-        ))
-        .add_child(light);
+pub fn update_candle_visibility(
+    // 1. We need TileStorage to look up tiles instantly (O(1)) instead of searching (O(N))
+    map_query: Query<&TileStorage, With<DungeonMap>>,
+    // 2. We check the visibility of the specific tile entity we find
+    tile_vis_query: Query<&TileVisibility>,
+    // 3. Candle components
+    mut candle_query: Query<(&Transform, &mut Visibility, &mut PointLight2d), With<Candle>>,
+) {
+    // Get the map storage. If the map isn't loaded yet, do nothing.
+    let Ok(tile_storage) = map_query.single() else {
+        return;
+    };
+
+    for (transform, mut candle_vis, mut light) in candle_query.iter_mut() {
+        // Calculate grid position
+        let tile_pos = TilePos {
+            x: (transform.translation.x / GRID_SIZE.x).floor() as u32,
+            y: (transform.translation.y / GRID_SIZE.y).floor() as u32,
+        };
+
+        // --- THE CRITICAL FIX ---
+        // Start with the assumption that the candle is HIDDEN.
+        // If the map is culled, the tile is missing, or the coord is wrong,
+        // this 'false' ensures the light turns off.
+        let mut is_visible = false;
+
+        // Try to get the tile entity from storage
+        if let Some(tile_entity) = tile_storage.get(&tile_pos) {
+            // If the tile exists, check its actual visibility component
+            if let Ok(vis) = tile_vis_query.get(tile_entity) {
+                is_visible = *vis == TileVisibility::Visible;
+            }
+        }
+
+        // Apply visibility to the Candle Sprite
+        *candle_vis = if is_visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+        light.intensity = if is_visible { 2.0 } else { 0.0 };
+        println!("Is visible {}", is_visible);
+        println!("intensity {}", light.intensity);
+
+        // Apply visibility to the Light Child
+        // for child in children.iter() {
+        //     if let Ok(mut point_light) = light_query.get_mut(child) {
+        //         // We ALWAYS set the intensity, ensuring it turns off if 'is_visible' is false
+        //         point_light.intensity = if is_visible { 10.0 } else { 0.0 };
+        //         println!("Is visible {}", is_visible);
+        //         println!("intensity {}", point_light.intensity);
+        //     }
+        // }
+    }
 }

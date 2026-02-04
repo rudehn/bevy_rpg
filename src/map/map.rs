@@ -10,12 +10,13 @@ use crate::{
     constants::{ENTITY_INDEX, TILE_SIZE_X, TILE_SIZE_Y}, // New imports
     map::{
         builders::level_builder,
-        ecs_map::EcsMap,                                    // Import EcsMap
-        light::{AnimationTimer, Candle, CandleSpritesheet}, // New imports
+        ecs_map::EcsMap, // Import EcsMap
+        light::{
+            AnimationTimer, Candle, CandleSpritesheet, spawn_candle, update_candle_visibility,
+        }, // New imports
         tile::{FLOOR, TileExplored, TileType, TileVisibility, WALL},
     },
-    player::player::Player,
-    player::player::move_player, // Import move_player
+    player::player::{Player, move_player}, // Import move_player
 };
 
 // --------------------------------------------------------------------------------
@@ -37,10 +38,9 @@ impl Plugin for MapPlugin {
             .add_systems(Startup, spawn_dungeon)
             .add_systems(
                 Update,
-                (
-                    update_tile_visibility.after(move_player),
-                    update_candle_visibility.after(update_tile_visibility),
-                ),
+                (update_tile_visibility
+                    .after(move_player)
+                    .before(update_candle_visibility)),
             );
     }
 }
@@ -107,38 +107,20 @@ pub fn spawn_dungeon(
 
     // Spawn candles
     for pt in builder.build_data.candle_spawn_points.iter() {
-        let light = commands
-            .spawn((
-                // When adding light as a child, its transform should be relative to parent
-                Transform::default(),
-                PointLight2d {
-                    radius: 96.0,
-                    color: Color::Srgba(YELLOW),
-                    intensity: 0.0, // Initially off
-                    falloff: 4.0,
-                    ..default()
-                },
-            ))
-            .id();
-
-        commands
-            .spawn((
-                Candle,
-                AnimationTimer(Timer::from_seconds(0.2, TimerMode::Repeating)),
-                Sprite::from_atlas_image(
-                    candle_spritesheet.texture.clone(),
-                    TextureAtlas {
-                        layout: candle_spritesheet.layout.clone(),
-                        index: 0,
-                    },
-                ),
-                Transform::from_xyz(
-                    pt.x as f32 * GRID_SIZE.x,
-                    pt.y as f32 * GRID_SIZE.y,
-                    ENTITY_INDEX, // Increased Z-index for candle sprite
-                ),
-            ))
-            .add_child(light);
+        spawn_candle(&mut commands, &candle_spritesheet, pt);
+        // let light = commands
+        //     .spawn((
+        //         // When adding light as a child, its transform should be relative to parent
+        //         Transform::default(),
+        //         PointLight2d {
+        //             radius: 96.0,
+        //             color: Color::Srgba(YELLOW),
+        //             intensity: 0.0, // Initially off
+        //             falloff: 4.0,
+        //             ..default()
+        //         },
+        //     ))
+        //     .id();
     }
 
     // Add the tilemap components to the map entity
@@ -208,61 +190,6 @@ pub fn update_tile_visibility(
                 tile_color.0 = Color::srgb(0.5, 0.5, 0.5); // Explored but not visible are dim
             } else {
                 tile_color.0 = Color::BLACK; // Unexplored and not visible are black
-            }
-        }
-    }
-}
-
-pub fn update_candle_visibility(
-    // 1. We need TileStorage to look up tiles instantly (O(1)) instead of searching (O(N))
-    map_query: Query<&TileStorage, With<DungeonMap>>,
-    // 2. We check the visibility of the specific tile entity we find
-    tile_vis_query: Query<&TileVisibility>,
-    // 3. Candle components
-    mut candle_query: Query<(&Transform, &mut Visibility, &Children), With<Candle>>,
-    // 4. Light components
-    mut light_query: Query<&mut PointLight2d>,
-) {
-    // Get the map storage. If the map isn't loaded yet, do nothing.
-    let Ok(tile_storage) = map_query.single() else {
-        return;
-    };
-
-    for (transform, mut candle_vis, children) in candle_query.iter_mut() {
-        // Calculate grid position
-        let tile_pos = TilePos {
-            x: (transform.translation.x / GRID_SIZE.x).floor() as u32,
-            y: (transform.translation.y / GRID_SIZE.y).floor() as u32,
-        };
-
-        // --- THE CRITICAL FIX ---
-        // Start with the assumption that the candle is HIDDEN.
-        // If the map is culled, the tile is missing, or the coord is wrong,
-        // this 'false' ensures the light turns off.
-        let mut is_visible = false;
-
-        // Try to get the tile entity from storage
-        if let Some(tile_entity) = tile_storage.get(&tile_pos) {
-            // If the tile exists, check its actual visibility component
-            if let Ok(vis) = tile_vis_query.get(tile_entity) {
-                is_visible = *vis == TileVisibility::Visible;
-            }
-        }
-
-        // Apply visibility to the Candle Sprite
-        *candle_vis = if is_visible {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
-
-        // Apply visibility to the Light Child
-        for child in children.iter() {
-            if let Ok(mut point_light) = light_query.get_mut(child) {
-                // We ALWAYS set the intensity, ensuring it turns off if 'is_visible' is false
-                point_light.intensity = if is_visible { 10.0 } else { 0.0 };
-                println!("Is visible {}", is_visible);
-                println!("intensity {}", point_light.intensity);
             }
         }
     }
