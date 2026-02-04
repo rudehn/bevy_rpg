@@ -1,6 +1,6 @@
 use bevy::{color::palettes::css::YELLOW, prelude::*};
 use bevy_light_2d::prelude::*;
-use bracket_lib::prelude::Point; // New import
+use rand::{self, Rng};
 
 use crate::constants::{ENTITY_INDEX, TILE_SIZE_X, TILE_SIZE_Y};
 
@@ -9,6 +9,7 @@ pub struct LightPlugin;
 impl Plugin for LightPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CandleSpritesheet>()
+            .add_plugins(Light2dPlugin)
             // .add_systems(Startup, , spawn_candles).chain()) // Removed spawn_candles
             .add_systems(Update, animate_candles);
     }
@@ -30,6 +31,7 @@ pub struct AnimationTimer(pub Timer); // Inner field made public
 fn animate_candles(
     time: Res<Time>,
     mut query: Query<(&mut AnimationTimer, &mut Sprite), With<Candle>>,
+    mut light_query: Query<&mut PointLight2d>,
 ) {
     for (mut timer, mut sprite) in &mut query {
         timer.tick(time.delta());
@@ -39,6 +41,17 @@ fn animate_candles(
             texture_atlas.index = (texture_atlas.index + 1) % 4;
         }
     }
+    // println!("animating");
+    // for mut light in light_query.iter_mut() {
+    //     // This overwrites your visibility code!
+    //     if light.intensity > 0.0 {
+    //         let pct_change = rand::rng().random_range(-30.0..30.0) / 100.0;
+    //         println!("Pct change {}", pct_change);
+    //         println!("initial {}", light.intensity);
+    //         light.intensity += light.intensity * pct_change;
+    //         println!("final {}", light.intensity);
+    //     }
+    // }
 }
 
 fn spawn_candles(mut commands: Commands, spritesheet: Res<CandleSpritesheet>) {

@@ -214,38 +214,55 @@ pub fn update_tile_visibility(
 }
 
 pub fn update_candle_visibility(
-    tile_query: Query<(&TilePos, &TileVisibility)>,
-    mut candle_query: Query<(&Candle, &Transform, &mut Visibility, &Children)>,
+    // 1. We need TileStorage to look up tiles instantly (O(1)) instead of searching (O(N))
+    map_query: Query<&TileStorage, With<DungeonMap>>,
+    // 2. We check the visibility of the specific tile entity we find
+    tile_vis_query: Query<&TileVisibility>,
+    // 3. Candle components
+    mut candle_query: Query<(&Transform, &mut Visibility, &Children), With<Candle>>,
+    // 4. Light components
     mut light_query: Query<&mut PointLight2d>,
 ) {
-    for (_, candle_transform, mut candle_visibility, children) in candle_query.iter_mut() {
-        let candle_tile_pos = TilePos {
-            x: (candle_transform.translation.x / GRID_SIZE.x).floor() as u32,
-            y: (candle_transform.translation.y / GRID_SIZE.y).floor() as u32,
+    // Get the map storage. If the map isn't loaded yet, do nothing.
+    let Ok(tile_storage) = map_query.single() else {
+        return;
+    };
+
+    for (transform, mut candle_vis, children) in candle_query.iter_mut() {
+        // Calculate grid position
+        let tile_pos = TilePos {
+            x: (transform.translation.x / GRID_SIZE.x).floor() as u32,
+            y: (transform.translation.y / GRID_SIZE.y).floor() as u32,
         };
 
-        let mut light_entity_id: Option<Entity> = None;
-        for child in children.iter() {
-            if light_query.get(child).is_ok() {
-                light_entity_id = Some(child);
-                break;
+        // --- THE CRITICAL FIX ---
+        // Start with the assumption that the candle is HIDDEN.
+        // If the map is culled, the tile is missing, or the coord is wrong,
+        // this 'false' ensures the light turns off.
+        let mut is_visible = false;
+
+        // Try to get the tile entity from storage
+        if let Some(tile_entity) = tile_storage.get(&tile_pos) {
+            // If the tile exists, check its actual visibility component
+            if let Ok(vis) = tile_vis_query.get(tile_entity) {
+                is_visible = *vis == TileVisibility::Visible;
             }
         }
 
-        if let Some(light_entity) = light_entity_id {
-            if let Some((_, tile_visibility)) = tile_query
-                .iter()
-                .find(|(tp, _)| tp.x == candle_tile_pos.x && tp.y == candle_tile_pos.y)
-            {
-                if let Ok(mut point_light) = light_query.get_mut(light_entity) {
-                    if *tile_visibility == TileVisibility::Visible {
-                        *candle_visibility = Visibility::Visible;
-                        point_light.intensity = 2.0; // Light on
-                    } else {
-                        *candle_visibility = Visibility::Hidden;
-                        point_light.intensity = 0.0; // Light off
-                    }
-                }
+        // Apply visibility to the Candle Sprite
+        *candle_vis = if is_visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+
+        // Apply visibility to the Light Child
+        for child in children.iter() {
+            if let Ok(mut point_light) = light_query.get_mut(child) {
+                // We ALWAYS set the intensity, ensuring it turns off if 'is_visible' is false
+                point_light.intensity = if is_visible { 10.0 } else { 0.0 };
+                println!("Is visible {}", is_visible);
+                println!("intensity {}", point_light.intensity);
             }
         }
     }

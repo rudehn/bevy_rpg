@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use bevy_light_2d::plugin::Light2dPlugin;
 
 use crate::states::game::GamePlugin;
 use crate::states::loading::LoadingPlugin;
@@ -18,6 +17,6 @@ pub struct StatePlugin;
 impl Plugin for StatePlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<AppState>();
-        app.add_plugins((Light2dPlugin, LoadingPlugin, GamePlugin));
+        app.add_plugins((LoadingPlugin, GamePlugin));
     }
 }
