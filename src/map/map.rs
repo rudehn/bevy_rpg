@@ -8,7 +8,7 @@ use crate::{
     map::{
         builders::level_builder,
         light::{CandleSpritesheet, spawn_candle, update_candle_visibility},
-        tile::{FLOOR, TileExplored, TileType, TileVisibility, WALL, is_walkable},
+        tile::{FLOOR, TileExplored, TileType, TileVisibility, WALL, is_opaque, is_walkable},
     },
     player::player::{Player, move_player},
 };
@@ -86,7 +86,7 @@ pub fn spawn_dungeon(
                 TileExplored::Unexplored,
             ));
 
-            if tile_type == TileType::Wall {
+            if !is_walkable(tile_type) {
                 command.insert(Collider);
             }
 
@@ -118,7 +118,7 @@ pub fn spawn_dungeon(
 }
 
 pub fn update_tile_visibility(
-    player_query: Query<&Viewshed, (With<Player>, Changed<Viewshed>) >,
+    player_query: Query<&Viewshed, (With<Player>, Changed<Viewshed>)>,
     mut tile_render_query: Query<(
         &TilePos,
         &mut TileColor,
@@ -223,7 +223,7 @@ impl Map for GameMap {
 
 impl BaseMap for GameMap {
     fn is_opaque(&self, idx: usize) -> bool {
-        self.tiles[idx] == TileType::Wall
+        is_opaque(self.tiles[idx])
     }
 
     fn get_available_exits(
@@ -326,7 +326,7 @@ impl<'w, 's, 'a> BaseMap for EcsMap<'w, 's, 'a> {
     fn is_opaque(&self, idx: usize) -> bool {
         let pt = self.index_to_point2d(idx);
         match self.get_tile(pt) {
-            Some(TileType::Wall) => true,
+            Some(tile) => is_opaque(tile),
             _ => false,
         }
     }
@@ -380,4 +380,3 @@ impl<'w, 's, 'a> Algorithm2D for EcsMap<'w, 's, 'a> {
         Point::new(idx as i32 % self.width(), idx as i32 / self.width())
     }
 }
-
