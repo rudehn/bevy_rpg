@@ -18,6 +18,7 @@ impl Plugin for LightPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CandleSpritesheet>()
             .add_plugins(Light2dPlugin)
+            // .add_systems(Update, update_light_intensity);
             // .add_systems(Startup, , spawn_candles).chain()) // Removed spawn_candles
             .add_systems(Update, (update_candle_visibility, animate_candles).chain());
     }
@@ -70,10 +71,11 @@ pub fn spawn_candle(
     commands.spawn((
         Candle,
         PointLight2d {
-            radius: 96.0,
+            radius: 200.0,
             color: Color::Srgba(YELLOW),
             intensity: 0.0, // Initially off
             falloff: 4.0,
+            cast_shadows: true,
             ..default()
         },
         AnimationTimer(Timer::from_seconds(0.2, TimerMode::Repeating)),
@@ -92,6 +94,18 @@ pub fn spawn_candle(
     ));
 }
 
+fn update_light_intensity(
+    // Query for entities that have the PointLight2d component
+    mut query: Query<&mut PointLight2d>,
+    time: Res<Time>,
+) {
+    for mut light in &mut query {
+        // Update the intensity using a sine wave for a pulsating effect
+        // The intensity value can be any f32
+        light.intensity = (time.elapsed_secs().sin() * 2.0 + 3.0).max(0.0);
+    }
+}
+
 pub fn update_candle_visibility(
     // 1. We need TileStorage to look up tiles instantly (O(1)) instead of searching (O(N))
     map_query: Query<&TileStorage, With<DungeonMap>>,
@@ -99,13 +113,16 @@ pub fn update_candle_visibility(
     tile_vis_query: Query<&TileVisibility>,
     // 3. Candle components
     mut candle_query: Query<(&Transform, &mut Visibility, &mut PointLight2d), With<Candle>>,
+    time: Res<Time>,
 ) {
     // Get the map storage. If the map isn't loaded yet, do nothing.
     let Ok(tile_storage) = map_query.single() else {
         return;
     };
 
-    for (transform, mut candle_vis, mut light) in candle_query.iter_mut() {
+    for (transform, mut candle_vis, mut light) in &mut candle_query {
+        light.intensity = (time.elapsed_secs().sin() * 2.0 + 3.0).max(0.0);
+        continue;
         // Calculate grid position
         let tile_pos = TilePos {
             x: (transform.translation.x / GRID_SIZE.x).floor() as u32,

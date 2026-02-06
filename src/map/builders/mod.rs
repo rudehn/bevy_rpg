@@ -1,27 +1,28 @@
-use bracket_lib::{prelude::{Point, Rect}, random::RandomNumberGenerator}; // Added Point
+use bracket_lib::{
+    prelude::{Point, Rect},
+    random::RandomNumberGenerator,
+}; // Added Point
 
 use crate::{
     components::Position,
     map::{
+        GameMap, Map,
         builders::{
             bsp_dungeon::BspDungeonBuilder,
+            candle_spawner::CandleSpawner, // New import
             corridors::NearestCorridors,
             room_drawer::RoomDrawer,
-            start_point::StartPointBuilder,
-            starting_points::{XStart, YStart},
-            candle_spawner::CandleSpawner, // New import
+            start_point::{StartPointBuilder, XStart, YStart},
         },
-        GameMap, Map,
     },
 };
 
 mod bsp_dungeon;
+mod candle_spawner;
 mod corridors;
 mod exit_points;
 mod room_drawer;
-mod start_point;
-mod starting_points;
-mod candle_spawner; // Declare the new module
+mod start_point; // Declare the new module
 
 pub struct BuilderMap {
     // pub spawn_list: Vec<(usize, String)>,

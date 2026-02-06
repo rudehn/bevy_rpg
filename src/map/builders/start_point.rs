@@ -3,6 +3,28 @@ use crate::{
     map::builders::{BuilderMap, MetaMapBuilder},
 };
 
+#[allow(dead_code)]
+#[derive(Clone)]
+pub enum XStart {
+    LEFT,
+    CENTER,
+    RIGHT,
+}
+
+#[allow(dead_code)]
+#[derive(Clone)]
+pub enum YStart {
+    TOP,
+    CENTER,
+    BOTTOM,
+}
+
+#[derive(Clone)]
+pub struct AreaStartingPosition {
+    x: XStart,
+    y: YStart,
+}
+
 #[derive(Clone)]
 pub struct StartPointBuilder {}
 

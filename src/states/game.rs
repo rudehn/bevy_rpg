@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use bevy_light_2d::plugin::Light2dPlugin;
 
 use crate::{
     map::{light::LightPlugin, map::MapPlugin},
