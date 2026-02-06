@@ -50,17 +50,6 @@ fn animate_candles(
             texture_atlas.index = (texture_atlas.index + 1) % 4;
         }
     }
-    // println!("animating");
-    // for mut light in light_query.iter_mut() {
-    //     // This overwrites your visibility code!
-    //     if light.intensity > 0.0 {
-    //         let pct_change = rand::rng().random_range(-30.0..30.0) / 100.0;
-    //         println!("Pct change {}", pct_change);
-    //         println!("initial {}", light.intensity);
-    //         light.intensity += light.intensity * pct_change;
-    //         println!("final {}", light.intensity);
-    //     }
-    // }
 }
 
 pub fn spawn_candle(

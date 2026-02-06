@@ -2,9 +2,9 @@ use bevy::{prelude::*, time::Timer};
 use bevy_ecs_tilemap::prelude::*;
 
 use crate::{
-    assets_plugin::DungeonTileset,
-    components::Collider,
+    components::{Collider, Position, Viewshed},
     constants::ENTITY_INDEX,
+    game::DungeonTileset,
     map::{
         map::{DungeonMap, GRID_SIZE, MAP_SIZE, PlayerSpawnPoint, spawn_dungeon},
         tile::{SOLDIER, TileType},
@@ -44,6 +44,11 @@ fn spawn_player(
     commands.spawn((
         Player,
         Collider,
+        Position {
+            x: spawn_point.0.x,
+            y: spawn_point.0.y,
+        },
+        Viewshed::new(20),
         Sprite::from_atlas_image(
             tileset.texture.clone(),
             TextureAtlas {
@@ -59,13 +64,13 @@ pub fn move_player(
     time: Res<Time>,
     mut timer: ResMut<MovementTimer>,
     keys: Res<ButtonInput<KeyCode>>,
-    mut q_player: Query<&mut Transform, With<Player>>,
+    mut q_player: Query<(&mut Transform, &mut Position), With<Player>>,
     // Query the map to check for collisions
     q_map: Query<&TileStorage, With<DungeonMap>>,
     // Query tiles to check if they are walls
     q_blocked_tiles: Query<&TileType, With<Collider>>,
 ) {
-    let Ok(mut player_tf) = q_player.single_mut() else {
+    let Ok((mut player_tf, mut player_pos)) = q_player.single_mut() else {
         return;
     };
     let Ok(tile_storage) = q_map.single() else {
@@ -128,6 +133,8 @@ pub fn move_player(
         // Center the player in the new tile
         player_tf.translation.x = target_x as f32 * GRID_SIZE.x;
         player_tf.translation.y = target_y as f32 * GRID_SIZE.y;
+        player_pos.x = target_x;
+        player_pos.y = target_y;
     }
 }
 

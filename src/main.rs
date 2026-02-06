@@ -1,20 +1,20 @@
 use bevy::prelude::*;
 
-mod assets_plugin;
+use crate::game::{AppState, GamePlugin, LoadingPlugin};
+
 mod components;
 mod constants;
+mod game;
 mod map;
 mod player;
-mod states;
-
-use crate::states::StatePlugin;
 
 fn main() {
     App::new()
         .add_plugins((
             DefaultPlugins.set(ImagePlugin::default_nearest()),
-            StatePlugin,
+            (LoadingPlugin, GamePlugin),
         ))
+        .init_state::<AppState>()
         .run();
 }
 

@@ -3,8 +3,8 @@ use bevy_ecs_tilemap::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, BaseMap, Point, field_of_view};
 
 use crate::{
-    assets_plugin::DungeonTileset,
-    components::Collider,
+    components::{Collider, Position, Viewshed},
+    game::DungeonTileset,
     map::{
         builders::level_builder,
         light::{CandleSpritesheet, spawn_candle, update_candle_visibility},
@@ -16,7 +16,6 @@ use crate::{
 pub const TILE_SIZE: TilemapTileSize = TilemapTileSize { x: 16.0, y: 16.0 };
 pub const GRID_SIZE: TilemapGridSize = TilemapGridSize { x: 16.0, y: 16.0 };
 pub const MAP_SIZE: TilemapSize = TilemapSize { x: 80, y: 60 };
-pub const PLAYER_FOV_RADIUS: i32 = 12;
 
 #[derive(Resource)]
 pub struct PlayerSpawnPoint(pub Point);
@@ -29,9 +28,9 @@ impl Plugin for MapPlugin {
             .add_systems(Startup, spawn_dungeon)
             .add_systems(
                 Update,
-                (update_tile_visibility
+                (update_tile_visibility)
                     .after(move_player)
-                    .before(update_candle_visibility)),
+                    .before(update_candle_visibility),
             );
     }
 }
@@ -119,38 +118,19 @@ pub fn spawn_dungeon(
 }
 
 pub fn update_tile_visibility(
-    player_query: Query<&Transform, With<Player>>,
+    player_query: Query<&Viewshed, (With<Player>, Changed<Viewshed>)>,
     mut tile_render_query: Query<(
         &TilePos,
         &mut TileColor,
         &mut TileVisibility,
         &mut TileExplored,
     )>,
-    tile_type_query: Query<&TileType>, // Immutable query for EcsMap
-    map_query: Query<(&DungeonMap, &TileStorage)>,
 ) {
-    let Ok(player_tf) = player_query.single() else {
-        return;
-    };
-    let Ok((_, tile_storage)) = map_query.single() else {
+    let Ok(player_viewshed) = player_query.single() else {
         return;
     };
 
-    // Convert player world position to tile position
-    let player_tile_pos = TilePos {
-        x: (player_tf.translation.x / GRID_SIZE.x).floor() as u32,
-        y: (player_tf.translation.y / GRID_SIZE.y).floor() as u32,
-    };
-    let player_point = Point::new(player_tile_pos.x as i32, player_tile_pos.y as i32);
-
-    let ecs_map = EcsMap {
-        tile_storage,
-        tile_query: &tile_type_query, // Use the new query here
-        map_size: MAP_SIZE,
-    };
-
-    // Calculate FOV
-    let fov_tiles = field_of_view(player_point, PLAYER_FOV_RADIUS, &ecs_map);
+    let fov_tiles = &player_viewshed.visible_tiles;
 
     // Update tile visibility and color
     for (tile_pos, mut tile_color, mut tile_visibility, mut tile_explored) in
