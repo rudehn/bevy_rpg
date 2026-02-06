@@ -1,7 +1,6 @@
 use crate::map::{
     builders::{BuilderMap, MetaMapBuilder},
     tile::TileType,
-    Map,
 };
 use bracket_lib::prelude::{Point, Rect};
 

@@ -1,4 +1,4 @@
-use bracket_lib::prelude::{Point, RandomNumberGenerator, Rect};
+use bracket_lib::prelude::{Point, RandomNumberGenerator};
 
 use super::{BuilderMap, MetaMapBuilder};
 

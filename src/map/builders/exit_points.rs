@@ -3,7 +3,6 @@ use bracket_lib::prelude::{Algorithm2D, DijkstraMap, Point};
 use crate::map::{
     builders::{BuilderMap, MetaMapBuilder},
     tile::TileType,
-    Map,
 };
 
 #[derive(Clone)]

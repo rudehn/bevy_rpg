@@ -1,15 +1,12 @@
 use bevy::{color::palettes::css::YELLOW, prelude::*};
-use bevy_ecs_tilemap::tiles::{TilePos, TileStorage};
 use bevy_light_2d::prelude::*;
 use bracket_lib::prelude::Point;
-use rand::{self, Rng};
 
 use crate::{
-    constants::{ENTITY_INDEX, TILE_SIZE_X, TILE_SIZE_Y},
-    map::{
-        map::{DungeonMap, GRID_SIZE},
-        tile::TileVisibility,
-    },
+    components::{Position, Viewshed},
+    constants::ENTITY_INDEX,
+    map::map::GRID_SIZE,
+    player::player::Player,
 };
 
 pub struct LightPlugin;
@@ -40,7 +37,6 @@ pub struct AnimationTimer(pub Timer); // Inner field made public
 fn animate_candles(
     time: Res<Time>,
     mut query: Query<(&mut AnimationTimer, &mut Sprite), With<Candle>>,
-    mut light_query: Query<&mut PointLight2d>,
 ) {
     for (mut timer, mut sprite) in &mut query {
         timer.tick(time.delta());
@@ -59,6 +55,7 @@ pub fn spawn_candle(
 ) {
     commands.spawn((
         Candle,
+        Position { x: pt.x, y: pt.y },
         PointLight2d {
             radius: 200.0,
             color: Color::Srgba(YELLOW),
@@ -96,60 +93,28 @@ fn update_light_intensity(
 }
 
 pub fn update_candle_visibility(
-    // 1. We need TileStorage to look up tiles instantly (O(1)) instead of searching (O(N))
-    map_query: Query<&TileStorage, With<DungeonMap>>,
-    // 2. We check the visibility of the specific tile entity we find
-    tile_vis_query: Query<&TileVisibility>,
-    // 3. Candle components
-    mut candle_query: Query<(&Transform, &mut Visibility, &mut PointLight2d), With<Candle>>,
-    time: Res<Time>,
+    // Query for the player's Viewshed, only when it changes
+    player_query: Query<&Viewshed, With<Player>>,
+    mut candle_query: Query<(&Position, &mut Visibility, &mut PointLight2d), With<Candle>>,
 ) {
-    // Get the map storage. If the map isn't loaded yet, do nothing.
-    let Ok(tile_storage) = map_query.single() else {
-        return;
+    // Only run if the player's viewshed has changed
+    let Ok(player_viewshed) = player_query.single() else {
+        return; // No player or viewshed hasn't changed
     };
 
-    for (transform, mut candle_vis, mut light) in &mut candle_query {
-        light.intensity = (time.elapsed_secs().sin() * 2.0 + 3.0).max(0.0);
-        continue;
-        // Calculate grid position
-        let tile_pos = TilePos {
-            x: (transform.translation.x / GRID_SIZE.x).floor() as u32,
-            y: (transform.translation.y / GRID_SIZE.y).floor() as u32,
-        };
+    for (position, mut candle_vis, mut light) in &mut candle_query {
+        let candle_grid_pos = Point::new(position.x, position.y);
+        let is_visible_to_player = player_viewshed.visible_tiles.contains(&candle_grid_pos);
 
-        // --- THE CRITICAL FIX ---
-        // Start with the assumption that the candle is HIDDEN.
-        // If the map is culled, the tile is missing, or the coord is wrong,
-        // this 'false' ensures the light turns off.
-        let mut is_visible = false;
-
-        // Try to get the tile entity from storage
-        if let Some(tile_entity) = tile_storage.get(&tile_pos) {
-            // If the tile exists, check its actual visibility component
-            if let Ok(vis) = tile_vis_query.get(tile_entity) {
-                is_visible = *vis == TileVisibility::Visible;
-            }
-        }
-
-        // Apply visibility to the Candle Sprite
-        *candle_vis = if is_visible {
+        // Update sprite visibility
+        *candle_vis = if is_visible_to_player {
             Visibility::Visible
         } else {
             Visibility::Hidden
         };
-        light.intensity = if is_visible { 2.0 } else { 0.0 };
-        println!("Is visible {}", is_visible);
-        println!("intensity {}", light.intensity);
 
-        // Apply visibility to the Light Child
-        // for child in children.iter() {
-        //     if let Ok(mut point_light) = light_query.get_mut(child) {
-        //         // We ALWAYS set the intensity, ensuring it turns off if 'is_visible' is false
-        //         point_light.intensity = if is_visible { 10.0 } else { 0.0 };
-        //         println!("Is visible {}", is_visible);
-        //         println!("intensity {}", point_light.intensity);
-        //     }
-        // }
+        // Update light intensity
+        // If the candle is not visible to the player, turn its light off (dim to 0)
+        light.intensity = if is_visible_to_player { 4.0 } else { 0.0 };
     }
 }

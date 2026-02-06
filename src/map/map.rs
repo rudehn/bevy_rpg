@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 use bevy_ecs_tilemap::prelude::*;
-use bracket_lib::prelude::{Algorithm2D, BaseMap, Point, field_of_view};
+use bracket_lib::prelude::{Algorithm2D, BaseMap, Point};
 
 use crate::{
-    components::{Collider, Position, Viewshed},
+    components::{Collider, Viewshed},
     game::DungeonTileset,
     map::{
         builders::level_builder,
@@ -118,7 +118,7 @@ pub fn spawn_dungeon(
 }
 
 pub fn update_tile_visibility(
-    player_query: Query<&Viewshed, (With<Player>, Changed<Viewshed>)>,
+    player_query: Query<&Viewshed, (With<Player>, Changed<Viewshed>) >,
     mut tile_render_query: Query<(
         &TilePos,
         &mut TileColor,
@@ -380,3 +380,4 @@ impl<'w, 's, 'a> Algorithm2D for EcsMap<'w, 's, 'a> {
         Point::new(idx as i32 % self.width(), idx as i32 / self.width())
     }
 }
+
