@@ -4,7 +4,7 @@ use bevy_ecs_tilemap::prelude::*;
 use crate::{
     components::{Collider, Position, Viewshed},
     constants::ENTITY_INDEX,
-    game::DungeonTileset,
+    game::DungeonTileset, // Import camera module for systems and components
     map::{
         map::{DungeonMap, GRID_SIZE, MAP_SIZE, PlayerSpawnPoint, spawn_dungeon},
         tile::{SOLDIER, TileType},
@@ -23,7 +23,7 @@ impl Plugin for PlayerPlugin {
             TimerMode::Repeating,
         )))
         .add_systems(Startup, spawn_player.after(spawn_dungeon)) // Ensure map is spawned first
-        .add_systems(Update, (move_player, move_camera).chain());
+        .add_systems(Update, move_player);
     }
 }
 
@@ -135,38 +135,5 @@ pub fn move_player(
         player_tf.translation.y = target_y as f32 * GRID_SIZE.y;
         player_pos.x = target_x;
         player_pos.y = target_y;
-    }
-}
-
-fn move_camera(
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-    player_query: Query<&Transform, With<Player>>,
-    mut camera_query: Query<(&mut Transform, &mut Projection), (With<Camera>, Without<Player>)>,
-) {
-    if let Ok((mut camera_transform, mut camera_projection)) = camera_query.single_mut() {
-        if let Ok(player_transform) = player_query.single() {
-            camera_transform.translation.x = player_transform.translation.x;
-            camera_transform.translation.y = player_transform.translation.y;
-        }
-
-        // Scale camera zoom
-        let Projection::Orthographic(ortho) = &mut *camera_projection else {
-            return;
-        };
-
-        if keyboard_input.pressed(KeyCode::KeyZ) {
-            ortho.scale += 0.1;
-        }
-
-        if keyboard_input.pressed(KeyCode::KeyX) {
-            ortho.scale -= 0.1;
-        }
-
-        ortho.scale = ortho.scale.clamp(0.25, 1.0);
-
-        let z = camera_transform.translation.z;
-        // Important! We need to restore the Z values when moving the camera around.
-        // Bevy has a specific camera setup and this can mess with how our layers are shown.
-        camera_transform.translation.z = z;
     }
 }

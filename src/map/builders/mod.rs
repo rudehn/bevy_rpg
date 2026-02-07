@@ -13,6 +13,7 @@ use crate::{
             corridors::NearestCorridors,
             room_drawer::RoomDrawer,
             start_point::{StartPointBuilder, XStart, YStart},
+            unseen_culler::UnseenCuller,
         },
     },
 };
@@ -23,6 +24,7 @@ mod corridors;
 mod exit_points;
 mod room_drawer;
 mod start_point; // Declare the new module
+mod unseen_culler;
 
 pub struct BuilderMap {
     // pub spawn_list: Vec<(usize, String)>,
@@ -154,6 +156,7 @@ pub fn floor_builder(new_depth: i32, width: i32, height: i32) -> BuilderChain {
     builder.with(NearestCorridors::new());
     builder.with(StartPointBuilder::new());
     builder.with(CandleSpawner::new()); // Add the CandleSpawner
+    builder.with(UnseenCuller::new());
 
     // let (start_x, start_y) = random_start_position();
     // builder.with(AreaStartingPosition::new(start_x, start_y));

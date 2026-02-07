@@ -2,16 +2,19 @@ use bevy::prelude::*;
 
 use crate::{
     constants::{TILE_MAP_PATH, TILE_SIZE_X, TILE_SIZE_Y},
-    game::systems::fov_update_system,
+    game::{camera::move_camera, systems::fov_update_system},
     map::{light::LightPlugin, map::MapPlugin},
     player::player::PlayerPlugin,
 };
 
-use bevy_light_2d::light::{AmbientLight2d, Light2d};
+// Removed: use bevy_light_2d::light::{AmbientLight2d, Light2d}; // No longer needed here
 
 use crate::map::light::CandleSpritesheet;
 
-mod systems;
+mod camera;
+mod systems; // Declare the new camera module
+
+// Removed: MinimapCamera and MainCamera component definitions
 
 #[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum AppState {
@@ -24,7 +27,8 @@ pub struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((LightPlugin, MapPlugin, PlayerPlugin))
-            .add_systems(Update, fov_update_system);
+            .add_systems(Update, fov_update_system)
+            .add_systems(PostUpdate, move_camera);
     }
 }
 
@@ -32,7 +36,7 @@ pub struct LoadingPlugin;
 impl Plugin for LoadingPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(AssetsPlugin)
-            .add_systems(Startup, (setup_camera, set_clear_color))
+            .add_systems(Startup, (camera::setup_camera, set_clear_color))
             .add_systems(
                 Update,
                 check_assets_loaded.run_if(in_state(AppState::Loading)),
@@ -56,20 +60,8 @@ fn check_assets_loaded(
     }
 }
 
-fn setup_camera(mut commands: Commands) {
-    let mut projection = OrthographicProjection::default_2d();
-    projection.scale = 0.25;
-    commands.spawn((
-        Camera2d,
-        Projection::Orthographic(projection),
-        Light2d {
-            ambient_light: AmbientLight2d {
-                brightness: 0.1,
-                ..default()
-            },
-        },
-    ));
-}
+// Removed: fn setup_camera(...)
+// Removed: fn setup_minimap_camera(...)
 
 fn set_clear_color(mut clear_color: ResMut<ClearColor>) {
     clear_color.0 = Color::srgb_u8(37, 19, 26);

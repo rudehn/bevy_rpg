@@ -9,6 +9,7 @@ pub enum TileType {
     Wall,
     Floor,
     DownStairs,
+    Empty,
 }
 
 #[derive(Component, Default, Copy, Clone, Eq, PartialEq, Debug)]
@@ -31,6 +32,7 @@ pub fn is_walkable(tile: TileType) -> bool {
         TileType::Wall => false,
         TileType::Floor => true,
         TileType::DownStairs => true,
+        TileType::Empty => false,
     }
 }
 

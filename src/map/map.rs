@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy_ecs_tilemap::prelude::*;
+// Removed: use bevy_light_2d::prelude::{LightOccluder2d, LightOccluder2dShape};
 use bracket_lib::prelude::{Algorithm2D, BaseMap, Point};
 
 use crate::{
@@ -71,6 +72,7 @@ pub fn spawn_dungeon(
                 TileType::Floor => FLOOR,
                 TileType::Wall => WALL,
                 TileType::DownStairs => FLOOR, // Placeholder
+                TileType::Empty => FLOOR,
             };
 
             let mut command = commands.spawn((
@@ -84,10 +86,19 @@ pub fn spawn_dungeon(
                 tile_type,
                 TileVisibility::Hidden,
                 TileExplored::Unexplored,
+                Transform::from_xyz(pt.x as f32 * GRID_SIZE.x, pt.y as f32 * GRID_SIZE.y, 0.0),
             ));
 
             if !is_walkable(tile_type) {
                 command.insert(Collider);
+            }
+            if is_opaque(tile_type) {
+                // command.insert(LightOccluder2d::default());
+                // command.insert(LightOccluder2d {
+                //     shape: LightOccluder2dShape::Rectangle {
+                //         half_size: Vec2::new(GRID_SIZE.x / 2.0, GRID_SIZE.y / 2.0),
+                //     },
+                // });
             }
 
             let tile_entity = command.id();

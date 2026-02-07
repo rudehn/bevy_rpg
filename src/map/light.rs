@@ -61,7 +61,7 @@ pub fn spawn_candle(
             color: Color::Srgba(YELLOW),
             intensity: 0.0, // Initially off
             falloff: 4.0,
-            cast_shadows: true,
+            cast_shadows: false,
             ..default()
         },
         AnimationTimer(Timer::from_seconds(0.2, TimerMode::Repeating)),
@@ -115,6 +115,6 @@ pub fn update_candle_visibility(
 
         // Update light intensity
         // If the candle is not visible to the player, turn its light off (dim to 0)
-        light.intensity = if is_visible_to_player { 4.0 } else { 0.0 };
+        light.intensity = if is_visible_to_player { 2.0 } else { 0.0 };
     }
 }
