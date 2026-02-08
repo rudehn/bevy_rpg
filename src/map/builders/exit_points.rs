@@ -57,9 +57,7 @@ impl DistantExit {
         // Place a staircase
         let stairs_idx = exit_tile.0;
         let stairs_pos = build_data.map.index_to_point2d(stairs_idx);
-        build_data
-            .map
-            .set_tile(stairs_pos, TileType::DownStairs);
+        build_data.map.set_tile(stairs_pos, TileType::DownStairs);
         build_data.take_snapshot();
     }
 }

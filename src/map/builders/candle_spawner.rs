@@ -42,8 +42,8 @@ impl CandleSpawner {
                     {
                         // Ensure it's not the center of the room (where player might spawn)
                         if wall_pt != center_pt {
-                             build_data.candle_spawn_points.push(wall_pt);
-                             found_wall = true;
+                            build_data.candle_spawn_points.push(wall_pt);
+                            found_wall = true;
                         }
                     }
                     attempts += 1;

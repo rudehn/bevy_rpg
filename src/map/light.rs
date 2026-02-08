@@ -7,7 +7,7 @@ use crate::{
     constants::ENTITY_INDEX,
     game::AppState,
     map::map::GRID_SIZE,
-    player::player::Player,
+    player::Player,
 };
 
 pub struct LightPlugin;

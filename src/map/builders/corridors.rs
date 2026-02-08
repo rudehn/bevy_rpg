@@ -1,6 +1,6 @@
+use crate::map::Map;
 use crate::map::builders::{BuilderMap, MetaMapBuilder};
 use crate::map::tile::TileType;
-use crate::map::Map;
 use bracket_lib::geometry::{Point, Rect};
 use bracket_lib::pathfinding::DistanceAlg::Pythagoras;
 use std::collections::HashSet;

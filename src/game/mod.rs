@@ -3,8 +3,8 @@ use bevy::prelude::*;
 use crate::{
     constants::{TILE_MAP_PATH, TILE_SIZE_X, TILE_SIZE_Y},
     game::{camera::move_camera, systems::fov_update_system},
-    map::{light::LightPlugin, map::MapPlugin},
-    player::player::PlayerPlugin,
+    map::{dungeon::DungeonPlugin, light::LightPlugin, map::MapPlugin},
+    player::PlayerPlugin,
 };
 
 // Removed: use bevy_light_2d::light::{AmbientLight2d, Light2d}; // No longer needed here
@@ -27,7 +27,7 @@ pub enum AppState {
 pub struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((LightPlugin, MapPlugin, PlayerPlugin))
+        app.add_plugins((LightPlugin, MapPlugin, PlayerPlugin, DungeonPlugin))
             .add_systems(Update, fov_update_system.run_if(in_state(AppState::InGame)))
             .add_systems(PostUpdate, move_camera.run_if(in_state(AppState::InGame)));
     }
@@ -77,7 +77,6 @@ fn setup_dungeon_tileset(
     mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
     mut dungeon_tileset: ResMut<DungeonTileset>,
 ) {
-    println!("Setting up dungeon tileset...");
     dungeon_tileset.texture = asset_server.load(TILE_MAP_PATH);
     dungeon_tileset.layout = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
         UVec2::new(16, 16),
@@ -86,7 +85,6 @@ fn setup_dungeon_tileset(
         None,
         None,
     ));
-    println!("Dungeon tileset setup complete.");
 }
 
 pub struct AssetsPlugin;
@@ -105,7 +103,6 @@ fn setup_candle_spritesheet(
     mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
     mut candle_spritesheet: ResMut<CandleSpritesheet>,
 ) {
-    println!("Setting up candle spritesheet...");
     candle_spritesheet.texture = asset_server.load("candle.png");
     candle_spritesheet.layout = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
         UVec2::new(TILE_SIZE_X, TILE_SIZE_Y),
@@ -114,5 +111,4 @@ fn setup_candle_spritesheet(
         None,
         None,
     ));
-    println!("Candle spritesheet setup complete.");
 }

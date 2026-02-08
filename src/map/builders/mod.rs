@@ -9,8 +9,9 @@ use crate::{
         GameMap, Map,
         builders::{
             bsp_dungeon::BspDungeonBuilder,
-            candle_spawner::CandleSpawner, // New import
+            candle_spawner::CandleSpawner,
             corridors::NearestCorridors,
+            exit_points::DistantExit,
             room_drawer::RoomDrawer,
             start_point::{StartPointBuilder, XStart, YStart},
             unseen_culler::UnseenCuller,
@@ -157,6 +158,7 @@ pub fn floor_builder(new_depth: i32, width: i32, height: i32) -> BuilderChain {
     builder.with(StartPointBuilder::new());
     builder.with(CandleSpawner::new()); // Add the CandleSpawner
     builder.with(UnseenCuller::new());
+    builder.with(DistantExit::new());
 
     // let (start_x, start_y) = random_start_position();
     // builder.with(AreaStartingPosition::new(start_x, start_y));

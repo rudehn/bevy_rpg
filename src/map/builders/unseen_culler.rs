@@ -1,6 +1,6 @@
 use super::{BuilderMap, MetaMapBuilder};
-use crate::map::tile::TileType;
 use crate::map::Map;
+use crate::map::tile::TileType;
 use bracket_lib::prelude::Point;
 
 #[derive(Clone)]
@@ -23,7 +23,9 @@ impl MetaMapBuilder for UnseenCuller {
             for x in 0..width {
                 let non_wall_tiles = count_non_walls_in_radius(
                     &*build_data.map, // Pass a reference to the dyn Map
-                    x, y, 1
+                    x,
+                    y,
+                    1,
                 );
                 if non_wall_tiles == 0 {
                     update_vec.push((x, y));
@@ -48,9 +50,10 @@ fn count_non_walls_in_radius(map: &dyn Map, x: i32, y: i32, radius: i32) -> i32 
             }
             let nx = x + dx;
             let ny = y + dy; // Fixed bug here (was y + y)
-            
+
             // Check if within bounds and if it's not a wall
-            if map.get_tile(Point::new(nx, ny))
+            if map
+                .get_tile(Point::new(nx, ny))
                 .map(|cell| cell != TileType::Wall)
                 .unwrap_or(false)
             {
@@ -60,4 +63,3 @@ fn count_non_walls_in_radius(map: &dyn Map, x: i32, y: i32, radius: i32) -> i32 
     }
     count
 }
-

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_light_2d::light::{AmbientLight2d, Light2d};
 
-use crate::{components::Position, player::player::Player};
+use crate::{components::Position, player::Player};
 
 // Components for distinguishing cameras
 #[derive(Component)]
