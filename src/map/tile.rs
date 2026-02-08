@@ -1,6 +1,6 @@
 use bevy::ecs::component::Component;
-use bevy::prelude::{Commands, Entity, Transform, Color};
-use bevy_ecs_tilemap::prelude::{TileBundle, TilePos, TilemapId, TileTextureIndex, TileColor};
+use bevy::prelude::{Color, Commands, Entity, Transform};
+use bevy_ecs_tilemap::prelude::{TileBundle, TileColor, TilePos, TileTextureIndex, TilemapId};
 use bracket_lib::prelude::Point;
 
 use crate::components::Collider;
@@ -8,7 +8,8 @@ use crate::map::map::GRID_SIZE;
 
 pub const FLOOR: usize = 49;
 pub const WALL: usize = 40;
-pub const DOWN_STAIRS: usize = 61;
+pub const DOWN_STAIRS: usize = 45;
+pub const UP_STAIRS: usize = 21;
 pub const SOLDIER: usize = 97;
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,6 +17,7 @@ pub enum TileType {
     Wall,
     Floor,
     DownStairs,
+    UpStairs,
     Empty,
 }
 
@@ -38,6 +40,7 @@ pub fn is_walkable(tile: TileType) -> bool {
         TileType::Wall => false,
         TileType::Floor => true,
         TileType::DownStairs => true,
+        TileType::UpStairs => true,
         TileType::Empty => false,
     }
 }
@@ -51,6 +54,7 @@ pub fn tile_texture(tile: TileType) -> usize {
         TileType::Floor => FLOOR,
         TileType::Wall => WALL,
         TileType::DownStairs => DOWN_STAIRS,
+        TileType::UpStairs => UP_STAIRS,
         TileType::Empty => FLOOR,
     }
 }
@@ -92,4 +96,3 @@ pub fn spawn_tile_entity(
 
     command.id()
 }
-

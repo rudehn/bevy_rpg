@@ -10,9 +10,7 @@ use crate::{
         builders::level_builder,
         dungeon::Floor,
         light::{CandleSpritesheet, spawn_candle},
-        tile::{
-            TileExplored, TileType, TileVisibility, is_opaque, is_walkable, spawn_tile_entity,
-        },
+        tile::{TileExplored, TileType, TileVisibility, is_opaque, is_walkable, spawn_tile_entity},
     },
     player::{Player, move_player},
 };
@@ -85,13 +83,7 @@ pub fn spawn_dungeon(
             };
             let tile_type = builder.build_data.map.get_tile(pt).unwrap();
 
-            let tile_entity = spawn_tile_entity(
-                &mut commands,
-                map_entity,
-                tile_pos,
-                tile_type,
-                pt,
-            );
+            let tile_entity = spawn_tile_entity(&mut commands, map_entity, tile_pos, tile_type, pt);
             tile_storage.set(&tile_pos, tile_entity);
         }
     }
@@ -158,6 +150,7 @@ pub fn update_tile_visibility(
 pub trait Map: BaseMap + Algorithm2D {
     fn width(&self) -> i32;
     fn height(&self) -> i32;
+    fn depth(&self) -> i32;
 
     fn get_tile(&self, pt: Point) -> Option<TileType>;
     fn set_tile(&mut self, pt: Point, tile: TileType);
@@ -203,6 +196,10 @@ impl Map for GameMap {
 
     fn height(&self) -> i32 {
         self.height
+    }
+
+    fn depth(&self) -> i32 {
+        self.depth
     }
 
     fn get_tile(&self, pt: Point) -> Option<TileType> {
@@ -293,6 +290,7 @@ pub struct EcsMap<'w, 's, 'a> {
     pub tile_storage: &'w TileStorage,
     pub tile_query: &'w Query<'w, 's, &'a TileType>,
     pub map_size: TilemapSize,
+    pub depth: i32, // Added depth field
 }
 
 impl<'w, 's, 'a> Map for EcsMap<'w, 's, 'a> {
@@ -318,10 +316,13 @@ impl<'w, 's, 'a> Map for EcsMap<'w, 's, 'a> {
     }
 
     /// This is a read-only adapter. Setting tiles must be done via Commands.
-    fn set_tile(&mut self, _pt: Point, _tile: TileType) {
-        panic!("EcsMap is a read-only adapter. Use Commands to modify the map.");
-    }
-}
+            fn set_tile(&mut self, _pt: Point, _tile: TileType) {
+                panic!("EcsMap is a read-only adapter. Use Commands to modify the map.");
+            }
+    
+            fn depth(&self) -> i32 {
+                self.depth
+            }}
 
 impl<'w, 's, 'a> BaseMap for EcsMap<'w, 's, 'a> {
     fn is_opaque(&self, idx: usize) -> bool {
