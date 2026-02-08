@@ -4,7 +4,7 @@ use bevy_ecs_tilemap::prelude::*;
 use crate::{
     components::{Collider, Position, Viewshed},
     constants::ENTITY_INDEX,
-    game::DungeonTileset, // Import camera module for systems and components
+    game::{AppState, DungeonTileset}, // Import camera module for systems and components
     map::{
         map::{DungeonMap, GRID_SIZE, MAP_SIZE, PlayerSpawnPoint, spawn_dungeon},
         tile::{SOLDIER, TileType},
@@ -22,8 +22,8 @@ impl Plugin for PlayerPlugin {
             0.1,
             TimerMode::Repeating,
         )))
-        .add_systems(Startup, spawn_player.after(spawn_dungeon)) // Ensure map is spawned first
-        .add_systems(Update, move_player);
+        .add_systems(OnEnter(AppState::InGame), spawn_player.after(spawn_dungeon)) // Ensure map is spawned first
+        .add_systems(Update, move_player.run_if(in_state(AppState::InGame)));
     }
 }
 

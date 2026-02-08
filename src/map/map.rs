@@ -5,10 +5,9 @@ use bracket_lib::prelude::{Algorithm2D, BaseMap, Point};
 
 use crate::{
     components::{Collider, Viewshed},
-    game::DungeonTileset,
-    map::{
+            game::{AppState, DungeonTileset},    map::{
         builders::level_builder,
-        light::{CandleSpritesheet, spawn_candle, update_candle_visibility},
+        light::{CandleSpritesheet, spawn_candle},
         tile::{FLOOR, TileExplored, TileType, TileVisibility, WALL, is_opaque, is_walkable},
     },
     player::player::{Player, move_player},
@@ -26,12 +25,12 @@ pub struct MapPlugin;
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(TilemapPlugin) // Required by bevy_ecs_tilemap
-            .add_systems(Startup, spawn_dungeon)
+            .add_systems(OnEnter(AppState::InGame), spawn_dungeon)
             .add_systems(
                 Update,
-                (update_tile_visibility)
-                    .after(move_player)
-                    .before(update_candle_visibility),
+                update_tile_visibility
+                    .run_if(in_state(AppState::InGame))
+                    .after(move_player),
             );
     }
 }

@@ -1,18 +1,20 @@
 use bevy::prelude::*;
 
 use crate::game::{AppState, GamePlugin, LoadingPlugin};
+use crate::menu::MenuPlugin; // Import the new MenuPlugin
 
 mod components;
 mod constants;
 mod game;
 mod map;
 mod player;
+mod menu; // Declare the new menu module
 
 fn main() {
     App::new()
         .add_plugins((
             DefaultPlugins.set(ImagePlugin::default_nearest()),
-            (LoadingPlugin, GamePlugin),
+            (LoadingPlugin, GamePlugin, MenuPlugin), // Add MenuPlugin here
         ))
         .init_state::<AppState>()
         .run();

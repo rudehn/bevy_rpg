@@ -20,6 +20,7 @@ mod systems; // Declare the new camera module
 pub enum AppState {
     #[default]
     Loading,
+    Menu,
     InGame,
 }
 
@@ -27,8 +28,8 @@ pub struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((LightPlugin, MapPlugin, PlayerPlugin))
-            .add_systems(Update, fov_update_system)
-            .add_systems(PostUpdate, move_camera);
+            .add_systems(Update, fov_update_system.run_if(in_state(AppState::InGame)))
+            .add_systems(PostUpdate, move_camera.run_if(in_state(AppState::InGame)));
     }
 }
 
@@ -50,13 +51,15 @@ fn check_assets_loaded(
     candle_spritesheet: Res<CandleSpritesheet>,
     mut next_state: ResMut<NextState<AppState>>,
 ) {
-    let all_assets_loaded = asset_server.is_loaded_with_dependencies(&dungeon_tileset.texture)
-        && asset_server.is_loaded_with_dependencies(&dungeon_tileset.layout)
-        && asset_server.is_loaded_with_dependencies(&candle_spritesheet.layout)
+    println!("Checking assets loaded...");
+    let all_textures_loaded = asset_server.is_loaded_with_dependencies(&dungeon_tileset.texture)
         && asset_server.is_loaded_with_dependencies(&candle_spritesheet.texture);
 
-    if all_assets_loaded {
-        next_state.set(AppState::InGame);
+    if all_textures_loaded {
+        println!("All textures loaded! Transitioning to Menu.");
+        next_state.set(AppState::Menu);
+    } else {
+        println!("Textures not yet loaded.");
     }
 }
 
@@ -78,6 +81,7 @@ fn setup_dungeon_tileset(
     mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
     mut dungeon_tileset: ResMut<DungeonTileset>,
 ) {
+    println!("Setting up dungeon tileset...");
     dungeon_tileset.texture = asset_server.load(TILE_MAP_PATH);
     dungeon_tileset.layout = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
         UVec2::new(16, 16),
@@ -86,6 +90,7 @@ fn setup_dungeon_tileset(
         None,
         None,
     ));
+    println!("Dungeon tileset setup complete.");
 }
 
 pub struct AssetsPlugin;
@@ -104,6 +109,7 @@ fn setup_candle_spritesheet(
     mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
     mut candle_spritesheet: ResMut<CandleSpritesheet>,
 ) {
+    println!("Setting up candle spritesheet...");
     candle_spritesheet.texture = asset_server.load("candle.png");
     candle_spritesheet.layout = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
         UVec2::new(TILE_SIZE_X, TILE_SIZE_Y),
@@ -112,4 +118,5 @@ fn setup_candle_spritesheet(
         None,
         None,
     ));
+    println!("Candle spritesheet setup complete.");
 }

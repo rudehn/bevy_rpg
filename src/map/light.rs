@@ -5,6 +5,7 @@ use bracket_lib::prelude::Point;
 use crate::{
     components::{Position, Viewshed},
     constants::ENTITY_INDEX,
+    game::AppState,
     map::map::GRID_SIZE,
     player::player::Player,
 };
@@ -17,7 +18,12 @@ impl Plugin for LightPlugin {
             .add_plugins(Light2dPlugin)
             // .add_systems(Update, update_light_intensity);
             // .add_systems(Startup, , spawn_candles).chain()) // Removed spawn_candles
-            .add_systems(Update, (update_candle_visibility, animate_candles).chain());
+            .add_systems(
+                Update,
+                (update_candle_visibility, animate_candles)
+                    .chain()
+                    .run_if(in_state(AppState::InGame)),
+            );
     }
 }
 
