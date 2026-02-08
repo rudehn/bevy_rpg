@@ -51,15 +51,11 @@ fn check_assets_loaded(
     candle_spritesheet: Res<CandleSpritesheet>,
     mut next_state: ResMut<NextState<AppState>>,
 ) {
-    println!("Checking assets loaded...");
     let all_textures_loaded = asset_server.is_loaded_with_dependencies(&dungeon_tileset.texture)
         && asset_server.is_loaded_with_dependencies(&candle_spritesheet.texture);
 
     if all_textures_loaded {
-        println!("All textures loaded! Transitioning to Menu.");
         next_state.set(AppState::Menu);
-    } else {
-        println!("Textures not yet loaded.");
     }
 }
 
