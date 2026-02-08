@@ -4,15 +4,14 @@ use bevy_ecs_tilemap::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, BaseMap, Point};
 
 use crate::{
-    components::{Collider, Viewshed},
+    components::Viewshed,
     game::{AppState, DungeonTileset},
     map::{
         builders::level_builder,
         dungeon::Floor,
         light::{CandleSpritesheet, spawn_candle},
         tile::{
-            FLOOR, TileExplored, TileType, TileVisibility, WALL, is_opaque, is_walkable,
-            tile_texture,
+            TileExplored, TileType, TileVisibility, is_opaque, is_walkable, spawn_tile_entity,
         },
     },
     player::{Player, move_player},
@@ -86,35 +85,13 @@ pub fn spawn_dungeon(
             };
             let tile_type = builder.build_data.map.get_tile(pt).unwrap();
 
-            let texture_index = tile_texture(tile_type);
-
-            let mut command = commands.spawn((
-                TileBundle {
-                    position: tile_pos,
-                    tilemap_id: TilemapId(map_entity),
-                    texture_index: TileTextureIndex(texture_index as u32),
-                    color: TileColor(Color::BLACK), // Initially black for fog of war
-                    ..Default::default()
-                },
+            let tile_entity = spawn_tile_entity(
+                &mut commands,
+                map_entity,
+                tile_pos,
                 tile_type,
-                TileVisibility::Hidden,
-                TileExplored::Unexplored,
-                Transform::from_xyz(pt.x as f32 * GRID_SIZE.x, pt.y as f32 * GRID_SIZE.y, 0.0),
-            ));
-
-            if !is_walkable(tile_type) {
-                command.insert(Collider);
-            }
-            if is_opaque(tile_type) {
-                // command.insert(LightOccluder2d::default());
-                // command.insert(LightOccluder2d {
-                //     shape: LightOccluder2dShape::Rectangle {
-                //         half_size: Vec2::new(GRID_SIZE.x / 2.0, GRID_SIZE.y / 2.0),
-                //     },
-                // });
-            }
-
-            let tile_entity = command.id();
+                pt,
+            );
             tile_storage.set(&tile_pos, tile_entity);
         }
     }
