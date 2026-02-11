@@ -1,6 +1,7 @@
 use crate::{
     components::Position,
     map::{
+        Map,
         builders::{BuilderMap, MetaMapBuilder},
         tile::TileType,
     },

@@ -73,7 +73,7 @@ fn menu_action(
     }
 
     if keyboard_input.just_pressed(KeyCode::Enter) {
-        next_state.set(AppState::InGame);
+        next_state.set(AppState::GameInit);
     }
 }
 

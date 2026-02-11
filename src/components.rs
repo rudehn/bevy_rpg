@@ -4,7 +4,7 @@ use bracket_lib::prelude::Point;
 #[derive(Component)]
 pub struct Collider;
 
-#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Position {
     pub x: i32,
     pub y: i32,

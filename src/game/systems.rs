@@ -9,8 +9,7 @@ use crate::{
     components::{Position, Viewshed},
     map::{
         EcsMap,
-        dungeon::Floor,
-        map::{DungeonMap, MAP_SIZE},
+        map::{ActiveMap, DungeonMap, MAP_SIZE},
         tile::TileType,
     },
 };
@@ -19,7 +18,7 @@ pub fn fov_update_system(
     mut query: Query<(&mut Viewshed, &Position), Changed<Position>>,
     map_query: Query<&TileStorage, With<DungeonMap>>,
     tile_type_query: Query<&TileType>,
-    floor: Res<Floor>, // Added Floor resource
+    active_map: Res<ActiveMap>,
 ) {
     let Ok(tile_storage) = map_query.single() else {
         return;
@@ -28,7 +27,7 @@ pub fn fov_update_system(
         tile_storage,
         tile_query: &tile_type_query,
         map_size: MAP_SIZE,
-        depth: floor.0 as i32, // Pass depth from Floor resource
+        depth: active_map.0.0 as i32,
     };
 
     for (mut viewshed, position) in query.iter_mut() {

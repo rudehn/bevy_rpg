@@ -6,7 +6,7 @@ use bracket_lib::{
 use crate::{
     components::Position,
     map::{
-        GameMap, Map,
+        GameMap,
         builders::{
             bsp_dungeon::BspDungeonBuilder,
             candle_spawner::CandleSpawner,
@@ -30,7 +30,7 @@ mod unseen_culler;
 pub struct BuilderMap {
     // pub spawn_list: Vec<(usize, String)>,
     // pub modified_spawn_list: Vec<(SpawnOptions, String)>, // includes spawn options
-    pub map: Box<dyn Map>,
+    pub map: GameMap,
     pub starting_position: Option<Position>,
     pub rooms: Option<Vec<Rect>>,
     pub corridors: Option<Vec<Vec<usize>>>,
@@ -66,7 +66,7 @@ impl BuilderChain {
             build_data: BuilderMap {
                 // spawn_list: Vec::new(),
                 // modified_spawn_list: Vec::new(),
-                map: Box::new(GameMap::new(new_depth, width, height, name)),
+                map: GameMap::new(new_depth, width, height, name),
                 starting_position: None,
                 rooms: None,
                 corridors: None,

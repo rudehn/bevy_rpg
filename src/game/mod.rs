@@ -21,13 +21,23 @@ pub enum AppState {
     #[default]
     Loading,
     Menu,
+    GameInit,
     InGame,
+    NextLevel,
+    PreviousLevel,
 }
 
 pub struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((LightPlugin, MapPlugin, PlayerPlugin, DungeonPlugin))
+            .add_systems(
+                PostUpdate,
+                (|mut next_state: ResMut<NextState<AppState>>| {
+                    next_state.set(AppState::NextLevel)
+                })
+                .run_if(in_state(AppState::GameInit)),
+            )
             .add_systems(Update, fov_update_system.run_if(in_state(AppState::InGame)))
             .add_systems(PostUpdate, move_camera.run_if(in_state(AppState::InGame)));
     }

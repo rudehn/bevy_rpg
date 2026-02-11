@@ -75,7 +75,7 @@ impl NearestCorridors {
                 room_distance.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
                 let dest_center = rooms[room_distance[0].0].center();
                 let corridor = draw_corridor(
-                    &mut *build_data.map,
+                    &mut build_data.map,
                     room_center.x,
                     room_center.y,
                     dest_center.x,

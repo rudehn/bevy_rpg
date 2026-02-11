@@ -6,8 +6,8 @@ use crate::{
     constants::ENTITY_INDEX,
     game::{AppState, DungeonTileset}, // Import camera module for systems and components
     map::{
-        dungeon::MapTransitionMessage,
-        map::{DungeonMap, GRID_SIZE, MAP_SIZE, PlayerSpawnPoint, SpawnDungeonMessage}, // Added SpawnDungeonMessage
+        dungeon::SpawnDungeonMessage,
+        map::{DungeonMap, GRID_SIZE, MAP_SIZE, PlayerPosition},
         tile::{SOLDIER, TileType},
     },
 };
@@ -23,13 +23,14 @@ impl Plugin for PlayerPlugin {
             0.1,
             TimerMode::Repeating,
         )))
-        // Player spawn/move now happens on SpawnDungeonMessage, after the dungeon has been spawned
         .add_systems(
             Update,
             player_spawn_or_move_system
                 .run_if(on_message::<SpawnDungeonMessage>)
-                .after(crate::map::map::spawn_dungeon), // Reference the system correctly
+                .after(crate::map::dungeon::spawn_dungeon), // Reference the system correctly
         )
+        // .add_systems(OnEnter(AppState::GameInit), spawn_player)
+        // Player spawn/move now happens on SpawnDungeonMessage, after the dungeon has been spawned
         .add_systems(Update, move_player.run_if(in_state(AppState::InGame)));
     }
 }
@@ -40,7 +41,7 @@ pub struct Player;
 fn player_spawn_or_move_system(
     mut commands: Commands,
     tileset: Res<DungeonTileset>,
-    spawn_point: Res<PlayerSpawnPoint>,
+    spawn_point: Res<PlayerPosition>,
     mut q_player: Query<(Entity, &mut Transform, &mut Position), With<Player>>,
 ) {
     let new_pos = Transform::from_xyz(
@@ -76,6 +77,38 @@ fn player_spawn_or_move_system(
     }
 }
 
+// fn spawn_player(
+//     mut commands: Commands,
+//     tileset: Res<DungeonTileset>,
+//     player_pos: Res<PlayerPosition>,
+// ) {
+//     let new_pos = Transform::from_xyz(
+//         player_pos.0.x as f32 * GRID_SIZE.x,
+//         player_pos.0.y as f32 * GRID_SIZE.y,
+//         ENTITY_INDEX,
+//     );
+//     let new_grid_pos = Position {
+//         x: player_pos.0.x,
+//         y: player_pos.0.y,
+//     };
+
+//     // No player exists, spawn a new one
+//     commands.spawn((
+//         Player,
+//         Collider,
+//         new_grid_pos,
+//         Viewshed::new(20),
+//         Sprite::from_atlas_image(
+//             tileset.texture.clone(),
+//             TextureAtlas {
+//                 index: SOLDIER,
+//                 layout: tileset.layout.clone(),
+//             },
+//         ),
+//         new_pos,
+//     ));
+// }
+
 pub fn move_player(
     time: Res<Time>,
     mut timer: ResMut<MovementTimer>,
@@ -86,7 +119,8 @@ pub fn move_player(
     // Query tiles to check if they are walls
     q_blocked_tiles: Query<&TileType, With<Collider>>,
     q_tile_types: Query<&TileType>,
-    mut ev_map_transition: MessageWriter<MapTransitionMessage>,
+    mut player_pos_res: ResMut<PlayerPosition>,
+    mut next_state: ResMut<NextState<AppState>>,
 ) {
     let Ok((mut player_tf, mut player_pos)) = q_player.single_mut() else {
         return;
@@ -141,11 +175,11 @@ pub fn move_player(
         // 3. Check Collision via TileStorage
         // We ask the map: "What entity is at this position?"
         if let Some(tile_entity) = tile_storage.get(&target_pos) {
-            // Check for DownStairs before checking for general collision
             if let Ok(tile_type) = q_tile_types.get(tile_entity) {
                 if matches!(tile_type, TileType::DownStairs) {
-                    ev_map_transition.write(MapTransitionMessage);
-                    return;
+                    next_state.set(AppState::NextLevel);
+                } else if matches!(tile_type, TileType::UpStairs) {
+                    next_state.set(AppState::PreviousLevel);
                 }
             }
             // We found a tile entity, now let's check its component (TileType)
@@ -160,5 +194,7 @@ pub fn move_player(
         player_tf.translation.y = target_y as f32 * GRID_SIZE.y;
         player_pos.x = target_x;
         player_pos.y = target_y;
+        player_pos_res.0.x = target_x;
+        player_pos_res.0.y = target_y;
     }
 }

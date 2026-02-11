@@ -1,4 +1,7 @@
-use crate::map::builders::{BuilderMap, InitialMapBuilder};
+use crate::map::{
+    Map,
+    builders::{BuilderMap, InitialMapBuilder},
+};
 use bracket_lib::geometry::Rect;
 use bracket_lib::random::RandomNumberGenerator;
 use petgraph::Graph;

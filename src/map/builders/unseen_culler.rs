@@ -22,7 +22,7 @@ impl MetaMapBuilder for UnseenCuller {
         for y in 0..height {
             for x in 0..width {
                 let non_wall_tiles = count_non_walls_in_radius(
-                    &*build_data.map, // Pass a reference to the dyn Map
+                    &build_data.map, // Pass a reference to the dyn Map
                     x,
                     y,
                     1,

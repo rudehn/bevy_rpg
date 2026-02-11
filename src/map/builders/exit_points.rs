@@ -1,6 +1,7 @@
 use bracket_lib::prelude::{Algorithm2D, DijkstraMap, Point};
 
 use crate::map::{
+    Map,
     builders::{BuilderMap, MetaMapBuilder},
     tile::TileType,
 };
@@ -33,7 +34,7 @@ impl DistantExit {
             build_data.map.width() as usize,
             build_data.map.height() as usize,
             &map_starts,
-            &*build_data.map,
+            &build_data.map,
             3000.0,
         );
         let mut exit_tile = (0, 0.0f32);

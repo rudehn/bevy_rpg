@@ -1,17 +1,13 @@
 use bevy::prelude::*;
 use bevy_ecs_tilemap::prelude::*;
+use std::collections::HashMap;
 // Removed: use bevy_light_2d::prelude::{LightOccluder2d, LightOccluder2dShape};
 use bracket_lib::prelude::{Algorithm2D, BaseMap, Point};
 
 use crate::{
-    components::Viewshed,
-    game::{AppState, DungeonTileset},
-    map::{
-        builders::level_builder,
-        dungeon::Floor,
-        light::{CandleSpritesheet, spawn_candle},
-        tile::{TileExplored, TileType, TileVisibility, is_opaque, is_walkable, spawn_tile_entity},
-    },
+    components::{Position, Viewshed},
+    game::AppState,
+    map::tile::{TileExplored, TileType, TileVisibility, is_opaque, is_walkable},
     player::{Player, move_player},
 };
 
@@ -19,28 +15,31 @@ pub const TILE_SIZE: TilemapTileSize = TilemapTileSize { x: 16.0, y: 16.0 };
 pub const GRID_SIZE: TilemapGridSize = TilemapGridSize { x: 16.0, y: 16.0 };
 pub const MAP_SIZE: TilemapSize = TilemapSize { x: 80, y: 60 };
 
-#[derive(Resource)]
-pub struct PlayerSpawnPoint(pub Point);
+#[derive(Resource, Default)]
+pub struct PlayerPosition(pub Position);
 
-#[derive(Message, Clone, Copy)]
-pub struct SpawnDungeonMessage;
+#[derive(Resource, Default)]
+pub struct MapHistory {
+    pub maps: HashMap<i32, GameMap>,
+}
+
+#[derive(Resource)]
+pub struct ActiveMap(pub MapId);
+
+impl Default for ActiveMap {
+    fn default() -> Self {
+        ActiveMap(MapId(0))
+    }
+}
 
 pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(TilemapPlugin) // Required by bevy_ecs_tilemap
-            .add_message::<SpawnDungeonMessage>()
-            .add_systems(
-                OnEnter(AppState::InGame),
-                |mut writer: MessageWriter<SpawnDungeonMessage>| {
-                    writer.write(SpawnDungeonMessage);
-                },
-            )
-            .add_systems(
-                Update,
-                spawn_dungeon.run_if(on_message::<SpawnDungeonMessage>),
-            )
+            .init_resource::<MapHistory>()
+            .init_resource::<ActiveMap>()
+            .init_resource::<PlayerPosition>()
             .add_systems(
                 Update,
                 update_tile_visibility
@@ -54,61 +53,9 @@ impl Plugin for MapPlugin {
 #[derive(Component)]
 pub struct DungeonMap;
 
-// --------------------------------------------------------------------------------
-// SYSTEMS
-// --------------------------------------------------------------------------------
-
-pub fn spawn_dungeon(
-    mut commands: Commands,
-    dungeon_tileset: Res<DungeonTileset>,
-    candle_spritesheet: Res<CandleSpritesheet>, // New parameter
-    floor: Res<Floor>,
-) {
-    // Create the Tilemap entity
-    let map_entity = commands.spawn(DungeonMap).id();
-
-    let mut tile_storage = TileStorage::empty(MAP_SIZE);
-
-    // Run the builder
-    let mut builder = level_builder(floor.0 as i32, MAP_SIZE.x as i32, MAP_SIZE.y as i32);
-    builder.build_map();
-
-    // Bake the map into the ECS
-    for y in 0..builder.build_data.map.height() {
-        for x in 0..builder.build_data.map.width() {
-            let pt = Point::new(x, y);
-            let tile_pos = TilePos {
-                x: x as u32,
-                y: y as u32,
-            };
-            let tile_type = builder.build_data.map.get_tile(pt).unwrap();
-
-            let tile_entity = spawn_tile_entity(&mut commands, map_entity, tile_pos, tile_type, pt);
-            tile_storage.set(&tile_pos, tile_entity);
-        }
-    }
-
-    // Spawn candles
-    for pt in builder.build_data.candle_spawn_points.iter() {
-        spawn_candle(&mut commands, &candle_spritesheet, pt);
-    }
-
-    // Add the tilemap components to the map entity
-    commands.entity(map_entity).insert(TilemapBundle {
-        grid_size: GRID_SIZE,
-        map_type: TilemapType::Square,
-        size: MAP_SIZE,
-        storage: tile_storage,
-        texture: TilemapTexture::Single(dungeon_tileset.texture.clone()),
-        tile_size: TILE_SIZE,
-        transform: Transform::from_xyz(0.0, 0.0, 0.0),
-        ..Default::default()
-    });
-
-    // Insert the player spawn point as a resource
-    let spawn_point = builder.build_data.starting_position.unwrap();
-    commands.insert_resource(PlayerSpawnPoint(Point::new(spawn_point.x, spawn_point.y)));
-}
+// Tag for all entities that belong to a specific map instance
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MapId(pub i32);
 
 pub fn update_tile_visibility(
     player_query: Query<&Viewshed, (With<Player>, Changed<Viewshed>)>,
@@ -163,7 +110,7 @@ pub struct GameMap {
     pub width: i32,
     pub height: i32,
     pub depth: i32,
-    pub downstairs_position: Option<Point>,
+    pub candle_positions: Vec<Point>,
 }
 
 impl GameMap {
@@ -176,7 +123,7 @@ impl GameMap {
             width,
             height,
             depth,
-            downstairs_position: None,
+            candle_positions: Vec::new(),
         }
     }
 
@@ -316,13 +263,14 @@ impl<'w, 's, 'a> Map for EcsMap<'w, 's, 'a> {
     }
 
     /// This is a read-only adapter. Setting tiles must be done via Commands.
-            fn set_tile(&mut self, _pt: Point, _tile: TileType) {
-                panic!("EcsMap is a read-only adapter. Use Commands to modify the map.");
-            }
-    
-            fn depth(&self) -> i32 {
-                self.depth
-            }}
+    fn set_tile(&mut self, _pt: Point, _tile: TileType) {
+        panic!("EcsMap is a read-only adapter. Use Commands to modify the map.");
+    }
+
+    fn depth(&self) -> i32 {
+        self.depth
+    }
+}
 
 impl<'w, 's, 'a> BaseMap for EcsMap<'w, 's, 'a> {
     fn is_opaque(&self, idx: usize) -> bool {

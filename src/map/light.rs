@@ -6,7 +6,7 @@ use crate::{
     components::{Position, Viewshed},
     constants::ENTITY_INDEX,
     game::AppState,
-    map::map::GRID_SIZE,
+    map::map::{GRID_SIZE, MapId},
     player::Player,
 };
 
@@ -44,6 +44,7 @@ fn animate_candles(
     time: Res<Time>,
     mut query: Query<(&mut AnimationTimer, &mut Sprite), With<Candle>>,
 ) {
+    // println!("Animating candles");
     for (mut timer, mut sprite) in &mut query {
         timer.tick(time.delta());
         if timer.is_finished()
@@ -58,8 +59,9 @@ pub fn spawn_candle(
     commands: &mut Commands,
     candle_spritesheet: &Res<CandleSpritesheet>,
     pt: &Point,
-) {
-    commands.spawn((
+    map_id: MapId,
+) -> Entity {
+    let entity = commands.spawn((
         Candle,
         Position { x: pt.x, y: pt.y },
         PointLight2d {
@@ -83,7 +85,9 @@ pub fn spawn_candle(
             pt.y as f32 * GRID_SIZE.y,
             ENTITY_INDEX, // Increased Z-index for candle sprite
         ),
+        map_id,
     ));
+    entity.id()
 }
 
 fn update_light_intensity(
@@ -103,17 +107,21 @@ pub fn update_candle_visibility(
     player_query: Query<&Viewshed, With<Player>>,
     mut candle_query: Query<(&Position, &mut Visibility, &mut PointLight2d), With<Candle>>,
 ) {
+    // println!("In update candle");
     // Only run if the player's viewshed has changed
     let Ok(player_viewshed) = player_query.single() else {
+        // println!("No viewshed");
         return; // No player or viewshed hasn't changed
     };
 
     for (position, mut candle_vis, mut light) in &mut candle_query {
+        // println!("Iterating candle");
         let candle_grid_pos = Point::new(position.x, position.y);
         let is_visible_to_player = player_viewshed.visible_tiles.contains(&candle_grid_pos);
 
         // Update sprite visibility
         *candle_vis = if is_visible_to_player {
+            // println!("Visible candle");
             Visibility::Visible
         } else {
             Visibility::Hidden

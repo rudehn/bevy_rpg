@@ -4,7 +4,7 @@ use bevy_ecs_tilemap::prelude::{TileBundle, TileColor, TilePos, TileTextureIndex
 use bracket_lib::prelude::Point;
 
 use crate::components::Collider;
-use crate::map::map::GRID_SIZE;
+use crate::map::map::{GRID_SIZE, MapId};
 
 pub const FLOOR: usize = 49;
 pub const WALL: usize = 40;
@@ -65,6 +65,7 @@ pub fn spawn_tile_entity(
     tile_pos: TilePos,
     tile_type: TileType,
     pt: Point,
+    map_id: MapId,
 ) -> Entity {
     let texture_index = tile_texture(tile_type);
 
@@ -80,6 +81,7 @@ pub fn spawn_tile_entity(
         TileVisibility::Hidden,
         TileExplored::Unexplored,
         Transform::from_xyz(pt.x as f32 * GRID_SIZE.x, pt.y as f32 * GRID_SIZE.y, 0.0),
+        map_id,
     ));
 
     if !is_walkable(tile_type) {

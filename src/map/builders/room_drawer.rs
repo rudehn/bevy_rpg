@@ -1,4 +1,5 @@
 use crate::map::{
+    Map,
     builders::{BuilderMap, MetaMapBuilder},
     tile::TileType,
 };
