@@ -85,6 +85,7 @@ pub fn move_player(
     q_map: Query<&TileStorage, With<DungeonMap>>,
     // Query tiles to check if they are walls
     q_blocked_tiles: Query<&TileType, With<Collider>>,
+    q_collidable_entities: Query<&Position, (With<Collider>, Without<Player>)>, // New query for other collidable entities
     q_tile_types: Query<&TileType>,
     mut ev_map_transition: MessageWriter<MapTransitionMessage>,
 ) {
@@ -151,6 +152,13 @@ pub fn move_player(
             // We found a tile entity, now let's check its component (TileType)
             if q_blocked_tiles.get(tile_entity).is_ok() {
                 return; // Block movement
+            }
+        }
+
+        // Check for other collidable entities
+        for other_collider_pos in q_collidable_entities.iter() {
+            if other_collider_pos.x == target_x && other_collider_pos.y == target_y {
+                return; // Block movement if another collidable entity is in the way
             }
         }
 
