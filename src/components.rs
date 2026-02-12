@@ -30,3 +30,9 @@ pub struct BlocksVisibility;
 
 #[derive(Component, Debug, Clone)]
 pub struct Hidden;
+
+#[derive(Component)]
+pub struct Goblin;
+
+#[derive(Component)]
+pub struct Name(pub String);

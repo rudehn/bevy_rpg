@@ -26,6 +26,9 @@ mod exit_points;
 mod room_drawer;
 mod start_point; // Declare the new module
 mod unseen_culler;
+pub mod goblin_spawner; // Declare the new module
+
+use crate::map::builders::goblin_spawner::GoblinSpawner; // Import GoblinSpawner
 
 pub struct BuilderMap {
     // pub spawn_list: Vec<(usize, String)>,
@@ -38,6 +41,7 @@ pub struct BuilderMap {
     // pub history: Vec<Map>,
     pub width: i32,
     pub height: i32,
+    pub spawn_list: Vec<(Point, String)>, // Add spawn_list for entities
 }
 
 impl BuilderMap {
@@ -74,6 +78,7 @@ impl BuilderChain {
                 // history: Vec::new(),
                 width,
                 height,
+                spawn_list: Vec::new(), // Initialize spawn_list
             },
         }
     }
@@ -157,6 +162,7 @@ pub fn floor_builder(new_depth: i32, width: i32, height: i32) -> BuilderChain {
     builder.with(NearestCorridors::new());
     builder.with(StartPointBuilder::new());
     builder.with(CandleSpawner::new()); // Add the CandleSpawner
+    builder.with(GoblinSpawner::new()); // Add the GoblinSpawner
     builder.with(UnseenCuller::new());
     builder.with(DistantExit::new());
 

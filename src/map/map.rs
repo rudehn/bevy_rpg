@@ -4,8 +4,9 @@ use bevy_ecs_tilemap::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, BaseMap, Point};
 
 use crate::{
-    components::Viewshed,
-    game::{AppState, DungeonTileset},
+    components::{Collider, Goblin, Name, Position, Viewshed},
+    constants::ENTITY_INDEX,
+    game::{AppState, DungeonTileset, spawn_goblin},
     map::{
         builders::level_builder,
         dungeon::Floor,
@@ -91,6 +92,18 @@ pub fn spawn_dungeon(
     // Spawn candles
     for pt in builder.build_data.candle_spawn_points.iter() {
         spawn_candle(&mut commands, &candle_spritesheet, pt);
+    }
+
+    // Spawn entities from the builder's spawn list
+    for (pt, name) in builder.build_data.spawn_list.iter() {
+        match name.as_str() {
+            "Goblin" => {
+                spawn_goblin(&mut commands, &dungeon_tileset, pt);
+            }
+            _ => {
+                // Ignore other entity types for now
+            }
+        }
     }
 
     // Add the tilemap components to the map entity
@@ -316,13 +329,14 @@ impl<'w, 's, 'a> Map for EcsMap<'w, 's, 'a> {
     }
 
     /// This is a read-only adapter. Setting tiles must be done via Commands.
-            fn set_tile(&mut self, _pt: Point, _tile: TileType) {
-                panic!("EcsMap is a read-only adapter. Use Commands to modify the map.");
-            }
-    
-            fn depth(&self) -> i32 {
-                self.depth
-            }}
+    fn set_tile(&mut self, _pt: Point, _tile: TileType) {
+        panic!("EcsMap is a read-only adapter. Use Commands to modify the map.");
+    }
+
+    fn depth(&self) -> i32 {
+        self.depth
+    }
+}
 
 impl<'w, 's, 'a> BaseMap for EcsMap<'w, 's, 'a> {
     fn is_opaque(&self, idx: usize) -> bool {

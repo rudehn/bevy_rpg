@@ -11,6 +11,7 @@ pub const WALL: usize = 40;
 pub const DOWN_STAIRS: usize = 45;
 pub const UP_STAIRS: usize = 21;
 pub const SOLDIER: usize = 97;
+pub const GOBLIN: usize = 98;
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TileType {

@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::{
     constants::{TILE_MAP_PATH, TILE_SIZE_X, TILE_SIZE_Y},
-    game::{camera::move_camera, systems::fov_update_system},
+    game::{camera::move_camera, systems::{fov_update_system, update_goblin_visibility}}, // Import update_goblin_visibility
     map::{dungeon::DungeonPlugin, light::LightPlugin, map::MapPlugin},
     player::PlayerPlugin,
 };
@@ -12,7 +12,10 @@ use crate::{
 use crate::map::light::CandleSpritesheet;
 
 mod camera;
+mod spawner;
 mod systems; // Declare the new camera module
+
+pub use spawner::*;
 
 // Removed: MinimapCamera and MainCamera component definitions
 
@@ -28,7 +31,10 @@ pub struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((LightPlugin, MapPlugin, PlayerPlugin, DungeonPlugin))
-            .add_systems(Update, fov_update_system.run_if(in_state(AppState::InGame)))
+            .add_systems(Update, (
+                fov_update_system,
+                update_goblin_visibility, // Add the new system here
+            ).run_if(in_state(AppState::InGame)))
             .add_systems(PostUpdate, move_camera.run_if(in_state(AppState::InGame)));
     }
 }
