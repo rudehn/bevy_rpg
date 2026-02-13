@@ -13,7 +13,8 @@ use crate::map::light::CandleSpritesheet;
 
 mod camera;
 mod spawner;
-mod systems; // Declare the new camera module
+mod systems;
+pub mod actions; // Declare the new actions module
 
 pub use spawner::*;
 

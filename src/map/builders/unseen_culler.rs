@@ -21,12 +21,7 @@ impl MetaMapBuilder for UnseenCuller {
 
         for y in 0..height {
             for x in 0..width {
-                let non_wall_tiles = count_non_walls_in_radius(
-                    &*build_data.map, // Pass a reference to the dyn Map
-                    x,
-                    y,
-                    1,
-                );
+                let non_wall_tiles = count_non_walls_in_radius(&build_data.map, x, y, 1);
                 if non_wall_tiles == 0 {
                     update_vec.push((x, y));
                 }
@@ -41,7 +36,7 @@ impl MetaMapBuilder for UnseenCuller {
     }
 }
 
-fn count_non_walls_in_radius(map: &dyn Map, x: i32, y: i32, radius: i32) -> i32 {
+fn count_non_walls_in_radius(map: &Map, x: i32, y: i32, radius: i32) -> i32 {
     let mut count = 0;
     for dy in -radius..=radius {
         for dx in -radius..=radius {

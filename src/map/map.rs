@@ -1,47 +1,34 @@
-use bevy::prelude::*;
+use bevy::{ecs::system::command::insert_resource, prelude::*};
 use bevy_ecs_tilemap::prelude::*;
-// Removed: use bevy_light_2d::prelude::{LightOccluder2d, LightOccluder2dShape};
 use bracket_lib::prelude::{Algorithm2D, BaseMap, Point};
 
 use crate::{
-    components::{Collider, Goblin, Name, Position, Viewshed},
-    constants::ENTITY_INDEX,
-    game::{AppState, DungeonTileset, spawn_goblin},
-    map::{
-        builders::level_builder,
-        dungeon::Floor,
-        light::{CandleSpritesheet, spawn_candle},
-        tile::{TileExplored, TileType, TileVisibility, is_opaque, is_walkable, spawn_tile_entity},
-    },
+    components::Viewshed,
+    game::AppState,
+    map::tile::{TileExplored, TileType, TileVisibility, is_opaque, is_walkable},
     player::{Player, move_player},
 };
 
+/*
+There are two map types.
+
+1. The Map struct defined here. This grid based map handles all game logic, from map generation
+   to collision and fog of war.
+
+2. The Bevy_ecs_tilemap. This third party map handles all the rendering of all entities on the level.
+   This handles sprites, visibility, pixel location, etc.
+
+*/
 pub const TILE_SIZE: TilemapTileSize = TilemapTileSize { x: 16.0, y: 16.0 };
 pub const GRID_SIZE: TilemapGridSize = TilemapGridSize { x: 16.0, y: 16.0 };
 pub const MAP_SIZE: TilemapSize = TilemapSize { x: 80, y: 60 };
-
-#[derive(Resource)]
-pub struct PlayerSpawnPoint(pub Point);
-
-#[derive(Message, Clone, Copy)]
-pub struct SpawnDungeonMessage;
 
 pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(TilemapPlugin) // Required by bevy_ecs_tilemap
-            .add_message::<SpawnDungeonMessage>()
-            .add_systems(
-                OnEnter(AppState::InGame),
-                |mut writer: MessageWriter<SpawnDungeonMessage>| {
-                    writer.write(SpawnDungeonMessage);
-                },
-            )
-            .add_systems(
-                Update,
-                spawn_dungeon.run_if(on_message::<SpawnDungeonMessage>),
-            )
+        app.add_plugins(TilemapPlugin)
+            .insert_resource(Map::default()) // This will always be the active level
             .add_systems(
                 Update,
                 update_tile_visibility
@@ -53,75 +40,11 @@ impl Plugin for MapPlugin {
 
 // Tag for the entity that holds the map storage
 #[derive(Component)]
-pub struct DungeonMap;
+pub struct DungeonECSMap; // Tag for entity holding the active ECS tilemap
 
 // --------------------------------------------------------------------------------
 // SYSTEMS
 // --------------------------------------------------------------------------------
-
-pub fn spawn_dungeon(
-    mut commands: Commands,
-    dungeon_tileset: Res<DungeonTileset>,
-    candle_spritesheet: Res<CandleSpritesheet>, // New parameter
-    floor: Res<Floor>,
-) {
-    // Create the Tilemap entity
-    let map_entity = commands.spawn(DungeonMap).id();
-
-    let mut tile_storage = TileStorage::empty(MAP_SIZE);
-
-    // Run the builder
-    let mut builder = level_builder(floor.0 as i32, MAP_SIZE.x as i32, MAP_SIZE.y as i32);
-    builder.build_map();
-
-    // Bake the map into the ECS
-    for y in 0..builder.build_data.map.height() {
-        for x in 0..builder.build_data.map.width() {
-            let pt = Point::new(x, y);
-            let tile_pos = TilePos {
-                x: x as u32,
-                y: y as u32,
-            };
-            let tile_type = builder.build_data.map.get_tile(pt).unwrap();
-
-            let tile_entity = spawn_tile_entity(&mut commands, map_entity, tile_pos, tile_type, pt);
-            tile_storage.set(&tile_pos, tile_entity);
-        }
-    }
-
-    // Spawn candles
-    for pt in builder.build_data.candle_spawn_points.iter() {
-        spawn_candle(&mut commands, &candle_spritesheet, pt);
-    }
-
-    // Spawn entities from the builder's spawn list
-    for (pt, name) in builder.build_data.spawn_list.iter() {
-        match name.as_str() {
-            "Goblin" => {
-                spawn_goblin(&mut commands, &dungeon_tileset, pt);
-            }
-            _ => {
-                // Ignore other entity types for now
-            }
-        }
-    }
-
-    // Add the tilemap components to the map entity
-    commands.entity(map_entity).insert(TilemapBundle {
-        grid_size: GRID_SIZE,
-        map_type: TilemapType::Square,
-        size: MAP_SIZE,
-        storage: tile_storage,
-        texture: TilemapTexture::Single(dungeon_tileset.texture.clone()),
-        tile_size: TILE_SIZE,
-        transform: Transform::from_xyz(0.0, 0.0, 0.0),
-        ..Default::default()
-    });
-
-    // Insert the player spawn point as a resource
-    let spawn_point = builder.build_data.starting_position.unwrap();
-    commands.insert_resource(PlayerSpawnPoint(Point::new(spawn_point.x, spawn_point.y)));
-}
 
 pub fn update_tile_visibility(
     player_query: Query<&Viewshed, (With<Player>, Changed<Viewshed>)>,
@@ -159,27 +82,16 @@ pub fn update_tile_visibility(
     }
 }
 
-/// A trait that defines the basic functions of a map.
-pub trait Map: BaseMap + Algorithm2D {
-    fn width(&self) -> i32;
-    fn height(&self) -> i32;
-    fn depth(&self) -> i32;
-
-    fn get_tile(&self, pt: Point) -> Option<TileType>;
-    fn set_tile(&mut self, pt: Point, tile: TileType);
-}
-
-#[derive(Default, Clone)]
-pub struct GameMap {
+#[derive(Default, Clone, Resource)]
+pub struct Map {
     pub name: String,
     pub tiles: Vec<TileType>,
     pub width: i32,
     pub height: i32,
     pub depth: i32,
-    pub downstairs_position: Option<Point>,
 }
 
-impl GameMap {
+impl Map {
     /// Creates a new map of the given size, with all tiles set to `Wall`.
     pub fn new<S: ToString>(depth: i32, width: i32, height: i32, name: S) -> Self {
         let map_tile_count = (width * height) as usize;
@@ -189,7 +101,6 @@ impl GameMap {
             width,
             height,
             depth,
-            downstairs_position: None,
         }
     }
 
@@ -200,22 +111,19 @@ impl GameMap {
     pub fn idx_xy(&self, idx: usize) -> (i32, i32) {
         (idx as i32 % self.width, idx as i32 / self.width)
     }
-}
-
-impl Map for GameMap {
-    fn width(&self) -> i32 {
+    pub fn width(&self) -> i32 {
         self.width
     }
 
-    fn height(&self) -> i32 {
+    pub fn height(&self) -> i32 {
         self.height
     }
 
-    fn depth(&self) -> i32 {
+    pub fn depth(&self) -> i32 {
         self.depth
     }
 
-    fn get_tile(&self, pt: Point) -> Option<TileType> {
+    pub fn get_tile(&self, pt: Point) -> Option<TileType> {
         if self.in_bounds(pt) {
             let idx = self.xy_idx(pt.x, pt.y);
             Some(self.tiles[idx])
@@ -224,7 +132,7 @@ impl Map for GameMap {
         }
     }
 
-    fn set_tile(&mut self, pt: Point, tile: TileType) {
+    pub fn set_tile(&mut self, pt: Point, tile: TileType) {
         if self.in_bounds(pt) {
             let idx = self.xy_idx(pt.x, pt.y);
             self.tiles[idx] = tile;
@@ -232,7 +140,7 @@ impl Map for GameMap {
     }
 }
 
-impl BaseMap for GameMap {
+impl BaseMap for Map {
     fn is_opaque(&self, idx: usize) -> bool {
         is_opaque(self.tiles[idx])
     }
@@ -283,7 +191,7 @@ impl BaseMap for GameMap {
     }
 }
 
-impl Algorithm2D for GameMap {
+impl Algorithm2D for Map {
     fn dimensions(&self) -> Point {
         Point::new(self.width, self.height)
     }
@@ -294,105 +202,5 @@ impl Algorithm2D for GameMap {
 
     fn index_to_point2d(&self, idx: usize) -> Point {
         Point::new(idx as i32 % self.width, idx as i32 / self.width)
-    }
-}
-/// A read-only adapter to view a `bevy_ecs_tilemap` as a `Map` trait object.
-/// This allows pathfinding and other algorithms to run on the live ECS data.
-/// It is constructed within a Bevy system.
-pub struct EcsMap<'w, 's, 'a> {
-    pub tile_storage: &'w TileStorage,
-    pub tile_query: &'w Query<'w, 's, &'a TileType>,
-    pub map_size: TilemapSize,
-    pub depth: i32, // Added depth field
-}
-
-impl<'w, 's, 'a> Map for EcsMap<'w, 's, 'a> {
-    fn width(&self) -> i32 {
-        self.map_size.x as i32
-    }
-
-    fn height(&self) -> i32 {
-        self.map_size.y as i32
-    }
-
-    fn get_tile(&self, pt: Point) -> Option<TileType> {
-        if !self.in_bounds(pt) {
-            return None;
-        }
-        let tile_pos = TilePos {
-            x: pt.x as u32,
-            y: pt.y as u32,
-        };
-        self.tile_storage
-            .get(&tile_pos)
-            .and_then(|tile_entity| self.tile_query.get(tile_entity).ok().copied())
-    }
-
-    /// This is a read-only adapter. Setting tiles must be done via Commands.
-    fn set_tile(&mut self, _pt: Point, _tile: TileType) {
-        panic!("EcsMap is a read-only adapter. Use Commands to modify the map.");
-    }
-
-    fn depth(&self) -> i32 {
-        self.depth
-    }
-}
-
-impl<'w, 's, 'a> BaseMap for EcsMap<'w, 's, 'a> {
-    fn is_opaque(&self, idx: usize) -> bool {
-        let pt = self.index_to_point2d(idx);
-        match self.get_tile(pt) {
-            Some(tile) => is_opaque(tile),
-            _ => false,
-        }
-    }
-
-    fn get_available_exits(
-        &self,
-        idx: usize,
-    ) -> bracket_lib::prelude::SmallVec<[(usize, f32); 10]> {
-        let mut exits = bracket_lib::prelude::SmallVec::new();
-        let pt = self.index_to_point2d(idx);
-
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                if dx == 0 && dy == 0 {
-                    continue;
-                }
-
-                let next_pt = Point::new(pt.x + dx, pt.y + dy);
-                if self.in_bounds(next_pt) {
-                    if let Some(tile) = self.get_tile(next_pt) {
-                        if !matches!(tile, TileType::Wall) {
-                            let next_idx = self.point2d_to_index(next_pt);
-                            let distance = if dx == 0 || dy == 0 { 1.0 } else { 1.45 };
-                            exits.push((next_idx, distance));
-                        }
-                    }
-                }
-            }
-        }
-
-        exits
-    }
-
-    fn get_pathing_distance(&self, idx1: usize, idx2: usize) -> f32 {
-        let p1 = self.index_to_point2d(idx1);
-        let p2 = self.index_to_point2d(idx2);
-        bracket_lib::prelude::DistanceAlg::Pythagoras.distance2d(p1, p2)
-    }
-}
-
-impl<'w, 's, 'a> Algorithm2D for EcsMap<'w, 's, 'a> {
-    fn dimensions(&self) -> Point {
-        Point::new(self.map_size.x as i32, self.map_size.y as i32)
-    }
-
-    fn point2d_to_index(&self, pt: Point) -> usize {
-        (pt.y as usize * self.map_size.x as usize) + pt.x as usize
-    }
-
-    fn index_to_point2d(&self, idx: usize) -> Point {
-        Point::new(idx as i32 % self.width(), idx as i32 / self.width())
     }
 }

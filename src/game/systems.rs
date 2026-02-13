@@ -2,41 +2,23 @@ use bevy::ecs::{
     query::{Changed, With},
     system::{Query, Res},
 };
-use bevy::prelude::Visibility; // Corrected import
-use bevy_ecs_tilemap::tiles::TileStorage;
+use bevy::prelude::Visibility;
 use bracket_lib::prelude::{Point, field_of_view};
 
 use crate::{
     components::{Goblin, Position, Viewshed},
+    map::Map,
     player::Player, // Corrected import
-    map::{
-        EcsMap,
-        dungeon::Floor,
-        map::{DungeonMap, MAP_SIZE},
-        tile::TileType,
-    },
 };
 
 pub fn fov_update_system(
-    mut query: Query<(&mut Viewshed, &Position, Option<&Player>), Changed<Position>>, // Added Option<&Player>
-    map_query: Query<&TileStorage, With<DungeonMap>>,
-    tile_type_query: Query<&TileType>,
-    floor: Res<Floor>, // Added Floor resource
+    mut query: Query<(&mut Viewshed, &Position, Option<&Player>), Changed<Position>>,
+    map: Res<Map>,
 ) {
-    let Ok(tile_storage) = map_query.single() else {
-        return;
-    };
-    let ecs_map = EcsMap {
-        tile_storage,
-        tile_query: &tile_type_query,
-        map_size: MAP_SIZE,
-        depth: floor.0 as i32, // Pass depth from Floor resource
-    };
-
     for (mut viewshed, position, player) in query.iter_mut() {
         viewshed.visible_tiles.clear();
         viewshed.visible_tiles =
-            field_of_view(Point::new(position.x, position.y), viewshed.range, &ecs_map);
+            field_of_view(Point::new(position.x, position.y), viewshed.range, &*map);
 
         if player.is_some() {
             println!(

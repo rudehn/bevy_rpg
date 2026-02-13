@@ -4,10 +4,10 @@ use bevy_ecs_tilemap::prelude::*;
 use crate::{
     components::{Collider, Position, Viewshed},
     constants::ENTITY_INDEX,
-    game::{AppState, DungeonTileset}, // Import camera module for systems and components
+    game::{AppState, DungeonTileset},
     map::{
-        dungeon::MapTransitionMessage,
-        map::{DungeonMap, GRID_SIZE, MAP_SIZE, PlayerSpawnPoint, SpawnDungeonMessage}, // Added SpawnDungeonMessage
+        dungeon::{MapTransitionMessage, PlayerSpawnPoint, SpawnDungeonMessage},
+        map::{DungeonECSMap, GRID_SIZE, MAP_SIZE},
         tile::{SOLDIER, TileType},
     },
 };
@@ -28,7 +28,7 @@ impl Plugin for PlayerPlugin {
             Update,
             player_spawn_or_move_system
                 .run_if(on_message::<SpawnDungeonMessage>)
-                .after(crate::map::map::spawn_dungeon), // Reference the system correctly
+                .after(crate::map::dungeon::spawn_dungeon), // Reference the system correctly
         )
         .add_systems(Update, move_player.run_if(in_state(AppState::InGame)));
     }
@@ -82,7 +82,7 @@ pub fn move_player(
     keys: Res<ButtonInput<KeyCode>>,
     mut q_player: Query<(&mut Transform, &mut Position), With<Player>>,
     // Query the map to check for collisions
-    q_map: Query<&TileStorage, With<DungeonMap>>,
+    q_map: Query<&TileStorage, With<DungeonECSMap>>,
     // Query tiles to check if they are walls
     q_blocked_tiles: Query<&TileType, With<Collider>>,
     q_collidable_entities: Query<&Position, (With<Collider>, Without<Player>)>, // New query for other collidable entities

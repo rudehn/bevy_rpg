@@ -3,9 +3,10 @@ use crate::map::builders::{BuilderMap, MetaMapBuilder};
 use crate::map::tile::TileType;
 use bracket_lib::geometry::{Point, Rect};
 use bracket_lib::pathfinding::DistanceAlg::Pythagoras;
+use bracket_lib::prelude::Algorithm2D;
 use std::collections::HashSet;
 
-pub fn draw_corridor(map: &mut dyn Map, x1: i32, y1: i32, x2: i32, y2: i32) -> Vec<usize> {
+pub fn draw_corridor(map: &mut Map, x1: i32, y1: i32, x2: i32, y2: i32) -> Vec<usize> {
     let mut corridor = Vec::new();
     let mut x = x1;
     let mut y = y1;
@@ -23,7 +24,7 @@ pub fn draw_corridor(map: &mut dyn Map, x1: i32, y1: i32, x2: i32, y2: i32) -> V
 
         let pt = Point::new(x, y);
         if map.get_tile(pt) != Some(TileType::Floor) {
-            let idx = map.point2d_to_index(pt);
+            let idx = map.xy_idx(pt.x, pt.y);
             corridor.push(idx);
             map.set_tile(pt, TileType::Floor);
         }
@@ -75,7 +76,7 @@ impl NearestCorridors {
                 room_distance.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
                 let dest_center = rooms[room_distance[0].0].center();
                 let corridor = draw_corridor(
-                    &mut *build_data.map,
+                    &mut build_data.map,
                     room_center.x,
                     room_center.y,
                     dest_center.x,
