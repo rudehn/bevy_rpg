@@ -36,3 +36,6 @@ pub struct Goblin;
 
 #[derive(Component)]
 pub struct Name(pub String);
+
+#[derive(Component)]
+pub struct Player;

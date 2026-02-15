@@ -4,7 +4,7 @@ use bevy_ecs_tilemap::prelude::*;
 use crate::{
     components::{Collider, Position, Viewshed},
     constants::ENTITY_INDEX,
-    game::{AppState, DungeonTileset},
+    game::{Actor, AppState, DungeonTileset, PlayerAI},
     map::{
         dungeon::{MapTransitionMessage, PlayerSpawnPoint, SpawnDungeonMessage},
         map::{DungeonECSMap, GRID_SIZE, MAP_SIZE},
@@ -61,6 +61,9 @@ fn player_spawn_or_move_system(
         // No player exists, spawn a new one
         commands.spawn((
             Player,
+            Actor {
+                ai: Box::new(PlayerAI::default()),
+            },
             Collider,
             new_grid_pos,
             Viewshed::new(20),

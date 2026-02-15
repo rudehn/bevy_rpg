@@ -1,7 +1,13 @@
 use bevy::prelude::*;
-use bracket_lib::prelude::Point;
+use bracket_lib::prelude::{Algorithm2D, Point};
 
-use crate::components::Position;
+use crate::{
+    components::Position,
+    map::{
+        Map,
+        tile::{TileType, is_walkable},
+    },
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
@@ -16,71 +22,63 @@ pub enum ActionResult {
     Alternate { action: Action },
 }
 
-pub fn perform_action(commands: &mut Commands, actor: &Entity, action: &Action) -> ActionResult {
+pub fn perform_action(world: &mut World, actor: &Entity, action: &Action) -> ActionResult {
     match action {
         Action::Wait => ActionResult::Success,
-        Action::Move { dir } => perform_move_action(commands, actor, dir),
+        Action::Move { dir } => perform_move_action(world, actor, *dir),
     }
 }
+fn perform_move_action(world: &mut World, actor: &Entity, dir: Direction) -> ActionResult {
+    // 1. Get the current position and the Map resource
+    let Some(current_pos) = world.get::<Position>(*actor).cloned() else {
+        return ActionResult::Failure;
+    };
+    let map = world.resource::<Map>();
 
-fn perform_move_action(
-    commands: &mut Commands,
-    actor: &Entity,
-    direction: &Direction, // position: &mut Position, // Direct mutable access to the moving entity's position
-                           // // Removed map: Res<Map>
-                           // current_entity: Entity, // Still needed for collision queries (e.g. Without<current_entity>)
-                           // move_direction: Direction,
-                           // q_map: Query<&TileStorage, With<DungeonMap>>,
-                           // q_blocked_tiles: Query<&TileType, With<Collider>>,
-                           // q_collidable_entities: Query<&Position, (With<Collider>, Without<crate::player::Player>)>, // Corrected Without<Entity>
-                           // q_tile_types: Query<&TileType>,
-                           // map_size: TilemapSize, // Added map_size parameter
-                           // floor_depth: i32,      // Added floor_depth parameter
-) -> ActionResult {
-    // let (dx, dy) = move_direction.offset().to_tuple();
+    // 2. Calculate target
+    let offset = dir.offset();
+    let target_pt = Point::new(current_pos.x + offset.x, current_pos.y + offset.y);
 
-    // let target_x = position.x + dx;
-    // let target_y = position.y + dy;
+    // 3. Check Bounds & Walls using the Map Resource
+    if !map.in_bounds(target_pt) {
+        return ActionResult::Failure;
+    }
 
-    // // Create EcsMap for bounds checking and tile queries
-    // let Ok(tile_storage) = q_map.single() else {
-    //     return ActionResult::Failure;
-    // };
-    // let ecs_map = crate::map::map::EcsMap {
-    //     tile_storage,
-    //     tile_query: &q_tile_types, // Pass the query for tile types
-    //     map_size,
-    //     depth: floor_depth,
-    // };
+    let target_idx = map.xy_idx(target_pt.x, target_pt.y);
+    if !is_walkable(map.tiles[target_idx]) {
+        return ActionResult::Failure;
+    }
 
-    // // 2. Check Bounds using EcsMap
-    // if target_x < 0 || target_y < 0 || target_x >= ecs_map.width() || target_y >= ecs_map.height() {
-    //     return ActionResult::Failure;
-    // }
+    // 4. Check for Entity Collisions (e.g., Bump-to-Attack)
+    // We search the world for any other entity with a Position at target_pt
+    let mut occupants = world.query::<(Entity, &Position)>();
+    let bump_target = occupants
+        .iter(world)
+        .find(|(e, pos)| {
+            **pos
+                == Position {
+                    x: target_pt.x,
+                    y: target_pt.y,
+                }
+                && *e != *actor
+        })
+        .map(|(e, _)| e);
 
-    // let target_tile_pos = TilePos {
-    //     x: target_x as u32,
-    //     y: target_y as u32,
-    // };
+    if let Some(_target_entity) = bump_target {
+        // Here is the "Alternate" pattern: Instead of moving,
+        // we suggest a MeleeAttack action.
+        // return ActionResult::Alternate { action: Action::MeleeAttack { target: target_entity } };
+        return ActionResult::Failure; // For now, just block
+    }
 
-    // // 3. Check Collision via TileStorage and TileType
-    // if let Some(tile_entity) = tile_storage.get(&target_tile_pos) {
-    //     if q_blocked_tiles.get(tile_entity).is_ok() {
-    //         return ActionResult::Failure; // Block movement
-    //     }
-    // }
-
-    // // Check for other collidable entities
-    // for other_collider_pos in q_collidable_entities.iter() {
-    //     if other_collider_pos.x == target_x && other_collider_pos.y == target_y {
-    //         return ActionResult::Failure; // Block movement if another collidable entity is in the way
-    //     }
-    // }
-
-    // position.x = target_x;
-    // position.y = target_y;
-
-    ActionResult::Success
+    // 5. Success! Apply the movement
+    if let Some(mut pos_component) = world.get_mut::<Position>(*actor) {
+        pos_component.x = target_pt.x;
+        pos_component.y = target_pt.y;
+        ActionResult::Success
+    } else {
+        ActionResult::Failure
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

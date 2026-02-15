@@ -1,13 +1,17 @@
-use bevy::ecs::{
-    query::{Changed, With},
-    system::{Query, Res},
-};
 use bevy::prelude::Visibility;
+use bevy::{
+    ecs::{
+        query::{Changed, With},
+        system::{Query, Res},
+    },
+    transform::components::Transform,
+};
 use bracket_lib::prelude::{Point, field_of_view};
 
+use crate::map::map::GRID_SIZE;
 use crate::{
     components::{Goblin, Position, Viewshed},
-    map::Map,
+    map::{Map, map::TILE_SIZE},
     player::Player, // Corrected import
 };
 
@@ -56,5 +60,19 @@ pub fn update_goblin_visibility(
             "Goblin at {:?} is_visible_to_player: {}, new visibility: {:?}",
             goblin_point, is_visible, *goblin_vis
         );
+    }
+}
+
+pub fn sync_entity_transforms(mut query: Query<(&mut Transform, &Position), Changed<Position>>) {
+    let config = GRID_SIZE;
+    for (mut transform, pos) in query.iter_mut() {
+        // Calculate the center of the tile
+        let x = pos.x as f32 * config.x;
+        let y = pos.y as f32 * config.y;
+
+        // Update the translation.
+        // We keep the existing Z-axis to maintain layering (Player on top of Items)
+        transform.translation.x = x;
+        transform.translation.y = y;
     }
 }

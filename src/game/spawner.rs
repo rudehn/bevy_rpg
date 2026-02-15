@@ -4,7 +4,7 @@ use bracket_lib::prelude::Point;
 use crate::{
     components::{Collider, Goblin, Position, Viewshed},
     constants::ENTITY_INDEX,
-    game::DungeonTileset,
+    game::{Actor, DungeonTileset, MonsterAI},
     map::{map::GRID_SIZE, tile::GOBLIN},
 };
 
@@ -22,6 +22,9 @@ pub fn spawn_goblin(commands: &mut Commands, tileset: &Res<DungeonTileset>, spaw
     commands.spawn((
         Goblin,
         Name::new(String::from("Goblin")),
+        Actor {
+            ai: Box::new(MonsterAI::default()),
+        },
         Collider,
         new_grid_pos,
         Viewshed::new(12),
