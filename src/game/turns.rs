@@ -1,6 +1,10 @@
 use bevy::prelude::*;
+use bracket_lib::prelude::Algorithm2D;
 use std::collections::VecDeque;
 
+use rand::seq::{IndexedRandom, SliceRandom};
+
+use crate::components::Position;
 use crate::game::AppState;
 use crate::game::actions::{Action, ActionResult, Direction, perform_action};
 use crate::player::{MovementTimer, Player}; // Import AppState
@@ -65,8 +69,27 @@ impl ActorAI for TurnAI {
 #[derive(Default)]
 pub struct MonsterAI {}
 impl ActorAI for MonsterAI {
-    fn get_action(&self, _entity: Entity, _world: &World) -> Option<Action> {
-        // TODO - implement actual monster AI
+    fn get_action(&self, entity: Entity, world: &World) -> Option<Action> {
+        let mut rng = rand::rng();
+        let map = world.resource::<crate::map::Map>();
+        let pos = world.get::<Position>(entity)?;
+
+        let mut directions = Direction::CARDINALS.to_vec();
+        directions.shuffle(&mut rng);
+
+        for dir in directions {
+            let offset = dir.offset();
+            let target = bracket_lib::prelude::Point::new(pos.x + offset.x, pos.y + offset.y);
+
+            if map.in_bounds(target) {
+                let idx = map.xy_idx(target.x, target.y);
+                if crate::map::tile::is_walkable(map.tiles[idx]) {
+                    return Some(Action::Move { dir });
+                }
+            }
+        }
+
+        // If no walkable direction is found, just wait
         Some(Action::Wait)
     }
 }

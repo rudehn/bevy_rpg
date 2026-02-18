@@ -5,6 +5,7 @@ use bevy_ecs_tilemap::tiles::TileStorage;
 use bevy_ecs_tilemap::{map::TilemapTexture, prelude::TilePos};
 use bracket_lib::prelude::Point;
 
+use crate::game::TurnManager;
 use crate::map::Map;
 use crate::map::map::TILE_SIZE;
 use crate::{
@@ -88,6 +89,7 @@ pub fn spawn_dungeon(
     candle_spritesheet: Res<CandleSpritesheet>, // New parameter
     floor: Res<Floor>,
     mut map: ResMut<Map>,
+    mut turn_manager: ResMut<TurnManager>,
 ) {
     // Run the builder
     let mut builder = level_builder(floor.0 as i32, MAP_SIZE.x as i32, MAP_SIZE.y as i32);
@@ -122,7 +124,7 @@ pub fn spawn_dungeon(
     for (pt, name) in builder.build_data.spawn_list.iter() {
         match name.as_str() {
             "Goblin" => {
-                spawn_goblin(&mut commands, &dungeon_tileset, pt);
+                spawn_goblin(&mut commands, &dungeon_tileset, pt, &mut turn_manager);
             }
             _ => {
                 // Ignore other entity types for now

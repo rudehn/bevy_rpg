@@ -4,11 +4,16 @@ use bracket_lib::prelude::Point;
 use crate::{
     components::{Collider, Goblin, Position, Viewshed},
     constants::ENTITY_INDEX,
-    game::{Actor, DungeonTileset, MonsterAI},
+    game::{Actor, DungeonTileset, MonsterAI, TurnManager},
     map::{map::GRID_SIZE, tile::GOBLIN},
 };
 
-pub fn spawn_goblin(commands: &mut Commands, tileset: &Res<DungeonTileset>, spawn_point: &Point) {
+pub fn spawn_goblin(
+    commands: &mut Commands,
+    tileset: &Res<DungeonTileset>,
+    spawn_point: &Point,
+    turn_manager: &mut ResMut<TurnManager>,
+) {
     let new_pos = Transform::from_xyz(
         spawn_point.x as f32 * GRID_SIZE.x,
         spawn_point.y as f32 * GRID_SIZE.y,
@@ -19,7 +24,7 @@ pub fn spawn_goblin(commands: &mut Commands, tileset: &Res<DungeonTileset>, spaw
         y: spawn_point.y,
     };
 
-    commands.spawn((
+    let goblin_entity = commands.spawn((
         Goblin,
         Name::new(String::from("Goblin")),
         Actor {
@@ -36,5 +41,7 @@ pub fn spawn_goblin(commands: &mut Commands, tileset: &Res<DungeonTileset>, spaw
             },
         ),
         new_pos,
-    ));
+    )).id(); // Get the entity ID
+
+    turn_manager.turn_queue.push_back(goblin_entity);
 }
