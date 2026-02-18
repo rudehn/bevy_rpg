@@ -35,11 +35,11 @@ pub fn fov_update_system(
 }
 
 pub fn update_goblin_visibility(
-    player_query: Query<&Viewshed, (With<Player>, Changed<Viewshed>)>, // Query player viewshed, only when it changes
+    player_query: Query<&Viewshed, With<Player>>, // Query player viewshed
     mut goblin_query: Query<(&Position, &mut Visibility), With<Goblin>>, // Query goblins
 ) {
     let Ok(player_viewshed) = player_query.single() else {
-        return; // No player or viewshed hasn't changed
+        return; // No player
     };
 
     println!(

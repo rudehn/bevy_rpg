@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{
+    components::{Goblin, Position},
     constants::{TILE_MAP_PATH, TILE_SIZE_X, TILE_SIZE_Y},
     game::{
         camera::move_camera,
@@ -8,6 +9,7 @@ use crate::{
         turns::TurnOrderPlugin, // Import TurnOrderPlugin
     }, // Import update_goblin_visibility
     map::{dungeon::DungeonPlugin, light::LightPlugin, map::MapPlugin},
+    player::Player,
     player::PlayerPlugin,
 };
 
@@ -47,7 +49,14 @@ impl Plugin for GamePlugin {
             Update,
             (
                 fov_update_system,
-                update_goblin_visibility, // Add the new system here
+                update_goblin_visibility
+                    .run_if(
+                        // Run if either Player's or Goblin's Position component has changed
+                        |query_movement: Query<&Position, Changed<Position>>| {
+                            !query_movement.is_empty()
+                        },
+                    )
+                    .after(fov_update_system), // Ensure it runs after FOV is updated
             )
                 .run_if(in_state(AppState::InGame)),
         )
