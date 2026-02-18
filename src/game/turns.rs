@@ -146,60 +146,106 @@ fn setup_turn_order(mut commands: Commands, mut turn_manager: ResMut<TurnManager
 }
 
 fn execute_action(world: &mut World) {
-    let current_entity = world.resource_mut::<TurnManager>().acting_entity.unwrap();
+    // We use a loop to process multiple non-player entities in one frame
+    loop {
+        let current_entity = {
+            let mut turn_manager = world.resource_mut::<TurnManager>();
+            let Some(entity) = turn_manager
+                .acting_entity
+                .take()
+                .or_else(|| turn_manager.turn_queue.pop_front())
+            else {
+                // Queue empty, nothing to do
+                world
+                    .resource_mut::<NextState<TurnState>>()
+                    .set(TurnState::NextTurn);
+                return;
+            };
+            entity
+        };
 
-    // 1. Get the action (from Player Input or AI)
-    let is_player = world.get::<Player>(current_entity).is_some();
-    let action = if is_player {
-        world
-            .resource_mut::<TurnManager>()
-            .player_action_pending
-            .take()
-    } else {
-        let actor = world
-            .get::<Actor>(current_entity)
-            .expect("Entity in queue has no Actor component");
-        actor.ai.get_action(current_entity, world)
-    };
+        let is_player = world.get::<Player>(current_entity).is_some();
 
-    // 2. Process the action
-    if let Some(mut actual_action) = action {
-        loop {
-            let result = perform_action(world, &current_entity, &actual_action);
-            match result {
-                ActionResult::Alternate { action } => {
-                    actual_action = action;
-                }
-                ActionResult::Failure if is_player => {
-                    // If player fails (walks into wall), let them try again
-                    world
-                        .resource_mut::<NextState<TurnState>>()
-                        .set(TurnState::PlayerInput);
-                    return;
-                }
-                _ => {
-                    // Success or AI failure: End turn
-                    break;
-                }
+        // 1. Get the action
+        let action = if is_player {
+            // If it's the player, take the pending action
+            world
+                .resource_mut::<TurnManager>()
+                .player_action_pending
+                .take()
+        } else {
+            // It's a monster or marker; get AI action immediately
+            let actor = world.get::<Actor>(current_entity).expect("Actor missing");
+            actor.ai.get_action(current_entity, world)
+        };
+
+        // 2. Process the action
+        if let Some(mut actual_action) = action {
+            let mut result = perform_action(world, &current_entity, &actual_action);
+
+            // Handle alternatives (like bump-to-attack)
+            while let ActionResult::Alternate { action: alt_action } = result {
+                actual_action = alt_action;
+                result = perform_action(world, &current_entity, &actual_action);
+            }
+
+            if result == ActionResult::Failure && is_player {
+                // Player failed (walked into wall), keep them as the acting entity
+                // and wait for new input.
+                world.resource_mut::<TurnManager>().acting_entity = Some(current_entity);
+                world
+                    .resource_mut::<NextState<TurnState>>()
+                    .set(TurnState::PlayerInput);
+                return;
+            }
+
+            // Turn success (or NPC failure): Move to back of queue
+            world
+                .resource_mut::<TurnManager>()
+                .turn_queue
+                .push_back(current_entity);
+
+            // IF it was the player who just moved, STOP batching so the screen updates
+            if is_player {
+                world
+                    .resource_mut::<NextState<TurnState>>()
+                    .set(TurnState::NextTurn);
+                return;
+            }
+        } else {
+            // No action available (Player hasn't pressed a key yet)
+            if is_player {
+                world.resource_mut::<TurnManager>().acting_entity = Some(current_entity);
+                world
+                    .resource_mut::<NextState<TurnState>>()
+                    .set(TurnState::PlayerInput);
+                return;
+            } else {
+                // NPC had no action? Just skip them.
+                world
+                    .resource_mut::<TurnManager>()
+                    .turn_queue
+                    .push_back(current_entity);
             }
         }
-    }
 
-    // 3. Cleanup and loop back
-    world
-        .resource_mut::<TurnManager>()
-        .turn_queue
-        .push_back(current_entity);
-    world
-        .resource_mut::<NextState<TurnState>>()
-        .set(TurnState::NextTurn);
+        // If we reach here, an NPC just finished their turn.
+        // The loop continues, processing the next NPC in the same frame!
+    }
 }
 
 fn handle_player_input(
+    time: Res<Time>,
+    mut timer: ResMut<MovementTimer>,
     keys: Res<ButtonInput<KeyCode>>,
     mut turn_manager: ResMut<TurnManager>,
     mut next_state: ResMut<NextState<TurnState>>,
 ) {
+    timer.0.tick(time.delta());
+    if !timer.0.is_finished() {
+        return;
+    }
+
     let mut action = None;
     if keys.pressed(KeyCode::KeyW) {
         action = Some(Action::Move { dir: Direction::N });

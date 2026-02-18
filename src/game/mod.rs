@@ -48,20 +48,20 @@ impl Plugin for GamePlugin {
         .add_systems(
             Update,
             (
-                fov_update_system,
+                sync_entity_transforms, // Run first to update transforms immediately after position changes
+                fov_update_system.after(sync_entity_transforms), // FOV updates after transforms are synced
+                update_goblin_visibility
+                    .run_if(|query: Query<(), Changed<Position>>| {
+                        !query.is_empty()
+                    })
+                    .after(fov_update_system), // Visibility updates after FOV and transforms are synced
             )
                 .run_if(in_state(AppState::InGame)),
         )
         .add_systems(
             PostUpdate,
             (
-                sync_entity_transforms,
                 move_camera,
-                update_goblin_visibility
-                    .run_if(|query: Query<(), Changed<Position>>| {
-                        !query.is_empty()
-                    })
-                    .after(sync_entity_transforms),
             )
                 .run_if(in_state(AppState::InGame)),
         )
