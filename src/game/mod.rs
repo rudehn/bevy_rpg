@@ -18,10 +18,12 @@ use crate::{
 use crate::map::light::CandleSpritesheet;
 
 pub mod actions; // Declare the new actions module
+mod ai;
 mod camera;
 mod spawner;
 mod systems;
 mod turns;
+pub use ai::*;
 pub use spawner::*;
 pub use turns::*; // Expose the turns module
 
@@ -51,19 +53,14 @@ impl Plugin for GamePlugin {
                 sync_entity_transforms, // Run first to update transforms immediately after position changes
                 fov_update_system.after(sync_entity_transforms), // FOV updates after transforms are synced
                 update_goblin_visibility
-                    .run_if(|query: Query<(), Changed<Position>>| {
-                        !query.is_empty()
-                    })
+                    .run_if(|query: Query<(), Changed<Position>>| !query.is_empty())
                     .after(fov_update_system), // Visibility updates after FOV and transforms are synced
             )
                 .run_if(in_state(AppState::InGame)),
         )
         .add_systems(
             PostUpdate,
-            (
-                move_camera,
-            )
-                .run_if(in_state(AppState::InGame)),
+            (move_camera,).run_if(in_state(AppState::InGame)),
         )
         .init_resource::<TurnManager>();
     }
