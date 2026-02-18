@@ -3,7 +3,6 @@ use crate::map::builders::{BuilderMap, MetaMapBuilder};
 use crate::map::tile::TileType;
 use bracket_lib::geometry::{Point, Rect};
 use bracket_lib::pathfinding::DistanceAlg::Pythagoras;
-use bracket_lib::prelude::Algorithm2D;
 use std::collections::HashSet;
 
 pub fn draw_corridor(map: &mut Map, x1: i32, y1: i32, x2: i32, y2: i32) -> Vec<usize> {

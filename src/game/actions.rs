@@ -3,10 +3,7 @@ use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::{
     components::Position,
-    map::{
-        Map,
-        tile::{TileType, is_walkable},
-    },
+    map::{Map, tile::is_walkable},
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -130,32 +127,32 @@ impl Direction {
     pub fn from_pos(current: &Position, target: &Position) -> Self {
         match target.x.cmp(&current.x) {
             std::cmp::Ordering::Less => match target.y.cmp(&current.y) {
-                std::cmp::Ordering::Less => Direction::NW,
+                std::cmp::Ordering::Less => Direction::SW,
                 std::cmp::Ordering::Equal => Direction::W,
-                std::cmp::Ordering::Greater => Direction::SW,
+                std::cmp::Ordering::Greater => Direction::NW,
             },
             std::cmp::Ordering::Equal => match target.y.cmp(&current.y) {
-                std::cmp::Ordering::Less => Direction::N,
+                std::cmp::Ordering::Less => Direction::S,
                 std::cmp::Ordering::Equal => Direction::NoDirection,
-                std::cmp::Ordering::Greater => Direction::S,
+                std::cmp::Ordering::Greater => Direction::N,
             },
             std::cmp::Ordering::Greater => match target.y.cmp(&current.y) {
-                std::cmp::Ordering::Less => Direction::NE,
+                std::cmp::Ordering::Less => Direction::SE,
                 std::cmp::Ordering::Equal => Direction::E,
-                std::cmp::Ordering::Greater => Direction::SE,
+                std::cmp::Ordering::Greater => Direction::NE,
             },
         }
     }
 
     pub fn offset(&self) -> Point {
         match self {
-            Direction::NW => Point { x: -1, y: -1 },
-            Direction::N => Point { x: 0, y: -1 },
-            Direction::NE => Point { x: 1, y: -1 },
+            Direction::NW => Point { x: -1, y: 1 },
+            Direction::N => Point { x: 0, y: 1 },
+            Direction::NE => Point { x: 1, y: 1 },
             Direction::E => Point { x: 1, y: 0 },
-            Direction::SE => Point { x: 1, y: 1 },
-            Direction::S => Point { x: 0, y: 1 },
-            Direction::SW => Point { x: -1, y: 1 },
+            Direction::SE => Point { x: 1, y: -1 },
+            Direction::S => Point { x: 0, y: -1 },
+            Direction::SW => Point { x: -1, y: -1 },
             Direction::W => Point { x: -1, y: 0 },
             Direction::NoDirection => Point { x: 0, y: 0 },
         }

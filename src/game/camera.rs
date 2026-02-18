@@ -52,7 +52,7 @@ pub fn move_camera(
     player_query: Query<&Transform, (With<Player>, Changed<Position>)>,
     mut camera_query: Query<(&mut Transform, &mut Projection), (With<MainCamera>, Without<Player>)>,
 ) {
-    for ((mut camera_transform, mut camera_projection)) in camera_query.iter_mut() {
+    for (mut camera_transform, mut camera_projection) in camera_query.iter_mut() {
         if let Ok(player_transform) = player_query.single() {
             camera_transform.translation.x = player_transform.translation.x;
             camera_transform.translation.y = player_transform.translation.y;

@@ -1,12 +1,4 @@
-use crate::{
-    components::{Collider, Goblin, Name, Position, Viewshed},
-    constants::ENTITY_INDEX,
-    game::DungeonTileset,
-    map::{
-        builders::{BuilderMap, MetaMapBuilder},
-        map::MAP_SIZE,
-    },
-};
+use crate::map::builders::{BuilderMap, MetaMapBuilder};
 use bevy::prelude::*;
 use bracket_lib::prelude::{Point, RandomNumberGenerator, Rect};
 

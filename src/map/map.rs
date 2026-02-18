@@ -1,4 +1,4 @@
-use bevy::{ecs::system::command::insert_resource, prelude::*};
+use bevy::prelude::*;
 use bevy_ecs_tilemap::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, BaseMap, Point};
 
@@ -6,7 +6,7 @@ use crate::{
     components::Viewshed,
     game::AppState,
     map::tile::{TileExplored, TileType, TileVisibility, is_opaque, is_walkable},
-    player::{Player, move_player},
+    player::Player,
 };
 
 /*
@@ -31,9 +31,7 @@ impl Plugin for MapPlugin {
             .insert_resource(Map::default()) // This will always be the active level
             .add_systems(
                 Update,
-                update_tile_visibility
-                    .run_if(in_state(AppState::InGame))
-                    .after(move_player),
+                update_tile_visibility.run_if(in_state(AppState::InGame)), // .after(move_player),
             );
     }
 }

@@ -35,6 +35,8 @@ https://www.oryxdesignlab.com/products/p/ultimate-fantasy-tileset
 * Any better way to despawn tilemap & children entities?
 * Any better way to indicate which floor entities are on?
 * Revisit player_spawn_or_move_system, see other branch??
+* Don't couple turn order setup to player spawning?
+* Update tile visiblity after player moved?? - may not be needed
 
 * Save game
 * Load game from Menu

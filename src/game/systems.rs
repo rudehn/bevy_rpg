@@ -11,7 +11,7 @@ use bracket_lib::prelude::{Point, field_of_view};
 use crate::map::map::GRID_SIZE;
 use crate::{
     components::{Goblin, Position, Viewshed},
-    map::{Map, map::TILE_SIZE},
+    map::Map,
     player::Player, // Corrected import
 };
 
