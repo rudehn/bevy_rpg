@@ -49,20 +49,21 @@ impl Plugin for GamePlugin {
             Update,
             (
                 fov_update_system,
-                update_goblin_visibility
-                    .run_if(
-                        // Run if either Player's or Goblin's Position component has changed
-                        |query_movement: Query<&Position, Changed<Position>>| {
-                            !query_movement.is_empty()
-                        },
-                    )
-                    .after(fov_update_system), // Ensure it runs after FOV is updated
             )
                 .run_if(in_state(AppState::InGame)),
         )
         .add_systems(
             PostUpdate,
-            (sync_entity_transforms, move_camera).run_if(in_state(AppState::InGame)),
+            (
+                sync_entity_transforms,
+                move_camera,
+                update_goblin_visibility
+                    .run_if(|query: Query<(), Changed<Position>>| {
+                        !query.is_empty()
+                    })
+                    .after(sync_entity_transforms),
+            )
+                .run_if(in_state(AppState::InGame)),
         )
         .init_resource::<TurnManager>();
     }
