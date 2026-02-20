@@ -48,12 +48,9 @@ impl Plugin for GamePlugin {
                 update_goblin_visibility
                     .run_if(|query: Query<(), Changed<Position>>| !query.is_empty())
                     .after(fov_update_system), // Visibility updates after FOV and transforms are synced
+                move_camera.after(sync_entity_transforms), // Move camera after transforms are synced
             )
                 .run_if(in_state(AppState::InGame)),
-        )
-        .add_systems(
-            PostUpdate,
-            (move_camera,).run_if(in_state(AppState::InGame)),
         )
         .init_resource::<TurnManager>();
     }

@@ -54,9 +54,8 @@ pub fn player_spawn_or_move_system(
         y: spawn_point.0.y,
     };
 
-    if let Ok((_player_entity, mut player_tf, mut player_pos)) = q_player.single_mut() {
+    if let Ok((_player_entity, mut _player_tf, mut player_pos)) = q_player.single_mut() { // _player_tf is no longer mutable
         // Player already exists, move them
-        player_tf.translation = new_pos.translation;
         *player_pos = new_grid_pos;
     } else {
         // No player exists, spawn a new one
@@ -76,7 +75,9 @@ pub fn player_spawn_or_move_system(
                         layout: tileset.layout.clone(),
                     },
                 ),
-                new_pos,
+                // Provide an initial Transform with the correct Z-order.
+                // X and Y will be set by sync_entity_transforms when Position changes.
+                Transform::from_xyz(0.0, 0.0, ENTITY_INDEX + 0.1),
             ))
             .id(); // Get the entity ID
         turn_manager.turn_queue.push_front(player_entity); // Add player to the turn queue
