@@ -1,27 +1,30 @@
-use bevy::prelude::*;
-use bracket_lib::prelude::Point;
-
 use crate::{
-    assets::{DungeonTileset, MonsterAsset},
-    components::{Collider, Goblin, Position, Viewshed},
-    constants::ENTITY_INDEX,
+    assets::{MonsterAsset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets},
+    components::{Collider, Position, Viewshed},
+    constants::{ENTITY_INDEX, TILE_SIZE_X, TILE_SIZE_Y}, // Added TILE_SIZE_X, TILE_SIZE_Y
     game::{Actor, MonsterAI, TurnManager},
-    map::{map::GRID_SIZE, tile::GOBLIN},
+    map::map::GRID_SIZE,
 };
 
 pub fn spawn_monster(
     commands: &mut Commands,
-    tileset: &Res<DungeonTileset>,
     spawn_point: &Point,
     turn_manager: &mut ResMut<TurnManager>,
     monster_asset: &MonsterAsset,
-    asset_server: &Res<AssetServer>,
+    monster_sprite_assets: &Res<MonsterSpriteAssets>,
 ) {
-    let new_pos = Transform::from_xyz(
-        spawn_point.x as f32 * GRID_SIZE.x,
-        spawn_point.y as f32 * GRID_SIZE.y,
-        ENTITY_INDEX,
-    );
+    let scale_x = TILE_SIZE_X as f32 / monster_asset.tile_size.x as f32;
+    let scale_y = TILE_SIZE_Y as f32 / monster_asset.tile_size.y as f32;
+
+    let new_pos = Transform {
+        translation: Vec3::new(
+            spawn_point.x as f32 * GRID_SIZE.x,
+            spawn_point.y as f32 * GRID_SIZE.y,
+            ENTITY_INDEX,
+        ),
+        scale: Vec3::new(scale_x, scale_y, 1.0), // Use calculated scale
+        ..Default::default()
+    };
     let new_grid_pos = Position {
         x: spawn_point.x,
         y: spawn_point.y,
@@ -31,8 +34,8 @@ pub fn spawn_monster(
     let texture_path = sprite_path_parts[0];
     let index = sprite_path_parts[1].parse::<usize>().unwrap_or_default();
 
-    let texture_handle = asset_server.load::<Image>(texture_path.to_string());
-    let layout_handle = tileset.layout.clone(); // Assuming a common tileset layout for now
+    let texture_handle = monster_sprite_assets.handles.get(texture_path).unwrap().clone();
+    let layout_handle = monster_sprite_assets.layouts.get(texture_path).unwrap().clone();
 
     let monster_entity = commands
         .spawn((
@@ -57,69 +60,28 @@ pub fn spawn_monster(
     turn_manager.turn_queue.push_back(monster_entity);
 }
 
-// pub fn spawn_monsters_from_manifest(
-//     mut commands: Commands,
-//     asset_server: Res<AssetServer>,
-//     monster_manifest_handle: Res<MonsterManifestHandle>,
-//     monster_manifests: Res<Assets<MonsterManifest>>,
-//     mut next_state: ResMut<NextState<AppState>>,
-//     tileset: Res<DungeonTileset>,
-//     mut turn_manager: ResMut<TurnManager>,
-//     mut monster_sprite_assets: ResMut<MonsterSpriteAssets>,
-// ) {
-//     if let Some(manifest) = monster_manifests.get(&monster_manifest_handle.0) {
-//         // Example: Spawn a goblin at a fixed point for now
-//         if let Some(goblin_asset) = manifest.monsters.get("goblin") {
-//             spawn_monster(
-//                 &mut commands,
-//                 &tileset,
-//                 &Point::new(10, 10), // Example spawn point
-//                 &mut turn_manager,
-//                 goblin_asset,
-//                 &mut monster_sprite_assets,
-//                 &asset_server,
-//             );
-//         }
-//         next_state.set(AppState::Menu); // Transition to Menu after spawning
-//     }
-// }
-
-pub fn spawn_goblin(
+pub fn spawn_monster_by_name(
     commands: &mut Commands,
-    tileset: &Res<DungeonTileset>,
+    monster_name: &str,
     spawn_point: &Point,
     turn_manager: &mut ResMut<TurnManager>,
+    monster_manifests: &Res<Assets<MonsterManifest>>,
+    monster_manifest_handle: &Res<MonsterManifestHandle>,
+    monster_sprite_assets: &Res<MonsterSpriteAssets>,
 ) {
-    let new_pos = Transform::from_xyz(
-        spawn_point.x as f32 * GRID_SIZE.x,
-        spawn_point.y as f32 * GRID_SIZE.y,
-        ENTITY_INDEX,
-    );
-    let new_grid_pos = Position {
-        x: spawn_point.x,
-        y: spawn_point.y,
-    };
-
-    let goblin_entity = commands
-        .spawn((
-            Goblin,
-            Name::new(String::from("Goblin")),
-            Actor {
-                ai: Box::new(MonsterAI::default()),
-            },
-            Collider,
-            new_grid_pos,
-            Viewshed::new(12),
-            Sprite::from_atlas_image(
-                tileset.texture.clone(),
-                TextureAtlas {
-                    index: GOBLIN,
-                    layout: tileset.layout.clone(),
-                },
-            ),
-            new_pos,
-        ))
-        .id(); // Get the entity ID
-
-    turn_manager.turn_queue.push_back(goblin_entity);
+    if let Some(manifest) = monster_manifests.get(&monster_manifest_handle.0) {
+        if let Some(monster_asset) = manifest.monsters.get(monster_name) {
+            spawn_monster(
+                commands,
+                spawn_point,
+                turn_manager,
+                monster_asset,
+                monster_sprite_assets,
+            );
+        } else {
+            warn!("Monster '{}' not found in manifest.", monster_name);
+        }
+    } else {
+        error!("Monster manifest not loaded.");
+    }
 }

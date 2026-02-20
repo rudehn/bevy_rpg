@@ -5,8 +5,8 @@ use bevy_ecs_tilemap::tiles::TileStorage;
 use bevy_ecs_tilemap::{map::TilemapTexture, prelude::TilePos};
 use bracket_lib::prelude::Point;
 
-use crate::assets::{CandleSpritesheet, DungeonTileset};
-use crate::game::{TurnManager, spawn_goblin};
+use crate::assets::{CandleSpritesheet, DungeonTileset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets};
+use crate::game::{TurnManager, spawn_monster_by_name};
 use crate::map::Map;
 use crate::map::map::TILE_SIZE;
 use crate::{
@@ -89,6 +89,9 @@ pub fn spawn_dungeon(
     floor: Res<Floor>,
     mut map: ResMut<Map>,
     mut turn_manager: ResMut<TurnManager>,
+    monster_manifests: Res<Assets<MonsterManifest>>,
+    monster_manifest_handle: Res<MonsterManifestHandle>,
+    monster_sprite_assets: Res<MonsterSpriteAssets>,
 ) {
     // Run the builder
     let mut builder = level_builder(floor.0 as i32, MAP_SIZE.x as i32, MAP_SIZE.y as i32);
@@ -121,14 +124,15 @@ pub fn spawn_dungeon(
 
     // Spawn entities from the builder's spawn list
     for (pt, name) in builder.build_data.spawn_list.iter() {
-        match name.as_str() {
-            "Goblin" => {
-                spawn_goblin(&mut commands, &dungeon_tileset, pt, &mut turn_manager);
-            }
-            _ => {
-                // Ignore other entity types for now
-            }
-        }
+        spawn_monster_by_name(
+            &mut commands,
+            name.as_str(),
+            pt,
+            &mut turn_manager,
+            &monster_manifests,
+            &monster_manifest_handle,
+            &monster_sprite_assets,
+        );
     }
 
     // Add the tilemap components to the map entity

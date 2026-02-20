@@ -1,9 +1,11 @@
 (
     monsters: {
-        "goblin": (
+        "Goblin": (
             name: "Goblin",
             vision_range: 8.0,
-            sprite: "tilemap_packed.png#97", // Assuming a sprite sheet and an index for the goblin
+            sprite: "monsters/goblin.png#0",
+            grid_size: (1, 1),
+            tile_size: (32, 32),
         ),
     }
 )

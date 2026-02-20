@@ -14,7 +14,7 @@ impl Plugin for AssetsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DungeonTileset>()
             .init_resource::<CandleSpritesheet>()
-            .init_resource::<MonsterManifestHandle>() // Initialize the resource
+            .init_resource::<MonsterManifestHandle>()
             .add_systems(
                 OnEnter(AppState::Loading),
                 (
@@ -22,6 +22,13 @@ impl Plugin for AssetsPlugin {
                     setup_candle_spritesheet,
                     load_monster_manifest,
                 ),
+            )
+            .add_systems(
+                Update,
+                (
+                    load_monster_sprites,
+                    check_assets_loaded,
+                ).run_if(in_state(AppState::Loading)),
             );
     }
 }
@@ -34,10 +41,6 @@ impl Plugin for LoadingPlugin {
             RonAssetPlugin::<MonsterManifest>::new(&["monsters.ron"]),
         ))
         .add_systems(Startup, (camera::setup_camera, set_clear_color))
-        .add_systems(
-            Update,
-            check_assets_loaded.run_if(in_state(AppState::Loading)),
-        )
         // .add_systems(OnEnter(AppState::Loading), spawn_monsters_from_manifest)
         .init_resource::<MonsterSpriteAssets>();
     }
@@ -45,8 +48,8 @@ impl Plugin for LoadingPlugin {
 
 #[derive(Resource, Default)]
 pub struct MonsterSpriteAssets {
-    pub handles: Vec<Handle<Image>>,
-    pub layouts: Vec<Handle<TextureAtlasLayout>>,
+    pub handles: HashMap<String, Handle<Image>>,
+    pub layouts: HashMap<String, Handle<TextureAtlasLayout>>,
 }
 #[derive(Resource, Default)]
 pub struct CandleSpritesheet {
@@ -60,6 +63,8 @@ pub struct MonsterAsset {
     pub name: String,
     pub vision_range: f32,
     pub sprite: String,
+    pub grid_size: UVec2, // New field
+    pub tile_size: UVec2, // New field
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
@@ -113,21 +118,82 @@ fn load_monster_manifest(
     monster_manifest_handle.0 = asset_server.load("monsters.ron");
 }
 
+fn load_monster_sprites(
+    // mut commands: Commands, // Removed commands since we don't remove resource
+    asset_server: Res<AssetServer>,
+    monster_manifest_handle: Res<MonsterManifestHandle>,
+    monster_manifests: Res<Assets<MonsterManifest>>,
+    mut monster_sprite_assets: ResMut<MonsterSpriteAssets>,
+    mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
+) {
+    // Only run if the manifest is loaded AND monster_sprite_assets is currently empty (meaning it hasn't been populated yet)
+    if monster_sprite_assets.handles.is_empty() {
+        if let Some(manifest) = monster_manifests.get(&monster_manifest_handle.0) {
+            for monster_asset in manifest.monsters.values() {
+                let sprite_path_parts: Vec<&str> = monster_asset.sprite.split('#').collect();
+                let texture_path = sprite_path_parts[0];
+
+                let texture_path_string = texture_path.to_string();
+
+                if !monster_sprite_assets.handles.contains_key(&texture_path_string) {
+                    let texture_handle = asset_server.load::<Image>(texture_path_string.clone());
+                    monster_sprite_assets
+                        .handles
+                        .insert(texture_path_string.clone(), texture_handle);
+
+                    let layout_handle = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
+                        monster_asset.tile_size, // Use tile_size from MonsterAsset
+                        monster_asset.grid_size.x, // Use grid_size.x from MonsterAsset
+                        monster_asset.grid_size.y, // Use grid_size.y from MonsterAsset
+                        None, None,
+                    ));
+                    monster_sprite_assets
+                        .layouts
+                        .insert(texture_path_string, layout_handle);
+                }
+            }
+            // No commands.remove_resource::<MonsterManifestHandle>();
+        }
+    }
+}
+
 fn check_assets_loaded(
     asset_server: Res<AssetServer>,
     dungeon_tileset: Res<DungeonTileset>,
     candle_spritesheet: Res<CandleSpritesheet>,
-    monster_manifest_handle: Res<MonsterManifestHandle>,
+    monster_manifest_handle: Res<MonsterManifestHandle>, // No longer Option
     monster_manifests: Res<Assets<MonsterManifest>>,
+    monster_sprite_assets: Res<MonsterSpriteAssets>,
     mut next_state: ResMut<NextState<AppState>>,
 ) {
-    let all_textures_loaded = asset_server.is_loaded_with_dependencies(&dungeon_tileset.texture)
-        && asset_server.is_loaded_with_dependencies(&candle_spritesheet.texture)
-        && monster_manifests.get(&monster_manifest_handle.0).is_some();
+    // 1. Check if core textures are loaded
+    let core_textures_loaded = asset_server.is_loaded_with_dependencies(&dungeon_tileset.texture)
+        && asset_server.is_loaded_with_dependencies(&candle_spritesheet.texture);
 
-    if all_textures_loaded {
-        next_state.set(AppState::Menu);
+    if !core_textures_loaded {
+        return; // Still waiting for core textures
     }
+
+    // 2. Check if the MonsterManifest itself is loaded
+    let monster_manifest_loaded = monster_manifests.get(&monster_manifest_handle.0).is_some();
+    if !monster_manifest_loaded {
+        return; // Still waiting for monster manifest to load
+    }
+
+    // 3. Check if load_monster_sprites has populated monster_sprite_assets, and all contained sprites are loaded.
+    // If monster_sprite_assets.handles is empty, it means load_monster_sprites hasn't run yet.
+    if monster_sprite_assets.handles.is_empty() {
+        return; // Still waiting for monster sprites to be populated/loaded
+    }
+
+    for handle in monster_sprite_assets.handles.values() {
+        if !asset_server.is_loaded_with_dependencies(handle) {
+            return; // Still waiting for some individual monster sprites
+        }
+    }
+
+    // If we reach here, all assets are loaded.
+    next_state.set(AppState::Menu);
 }
 
 fn set_clear_color(mut clear_color: ResMut<ClearColor>) {
