@@ -2,7 +2,7 @@ use crate::{
     components::Position,
     game::{
         camera::move_camera,
-        systems::{fov_update_system, sync_entity_transforms, update_goblin_visibility},
+        systems::{fov_update_system, sync_entity_transforms, update_monster_visibility}, // Changed update_goblin_visibility to update_monster_visibility
         turns::TurnOrderPlugin, // Import TurnOrderPlugin
     },
     map::{dungeon::DungeonPlugin, light::LightPlugin, map::MapPlugin},
@@ -45,8 +45,8 @@ impl Plugin for GamePlugin {
             (
                 sync_entity_transforms, // Run first to update transforms immediately after position changes
                 fov_update_system.after(sync_entity_transforms), // FOV updates after transforms are synced
-                update_goblin_visibility
-                    .run_if(|query: Query<(), Changed<Position>>| !query.is_empty())
+                update_monster_visibility
+                    .run_if(|query: Query<(), Changed<Position>>| !query.is_empty()) // Re-added run_if
                     .after(fov_update_system), // Visibility updates after FOV and transforms are synced
                 move_camera.after(sync_entity_transforms), // Move camera after transforms are synced
             )

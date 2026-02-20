@@ -10,7 +10,7 @@ use bracket_lib::prelude::{Point, field_of_view};
 
 use crate::map::map::GRID_SIZE;
 use crate::{
-    components::{Goblin, Position, Viewshed},
+    components::{Monster, Position, Viewshed},
     map::Map,
     player::Player, // Corrected import
 };
@@ -26,22 +26,22 @@ pub fn fov_update_system(
     }
 }
 
-pub fn update_goblin_visibility(
+pub fn update_monster_visibility(
     player_query: Query<&Viewshed, With<Player>>, // Query player viewshed
-    mut goblin_query: Query<(&Position, &mut Visibility), With<Goblin>>, // Query goblins
+    mut monster_query: Query<(&Position, &mut Visibility), With<Monster>>, // Query monsters
 ) {
     let Ok(player_viewshed) = player_query.single() else {
         return; // No player
     };
 
-    for (goblin_pos, mut goblin_vis) in goblin_query.iter_mut() {
-        let goblin_point = Point::new(goblin_pos.x, goblin_pos.y);
-        let is_visible = player_viewshed.visible_tiles.contains(&goblin_point);
+    for (monster_pos, mut monster_vis) in monster_query.iter_mut() {
+        let monster_point = Point::new(monster_pos.x, monster_pos.y);
+        let is_visible = player_viewshed.visible_tiles.contains(&monster_point);
 
         if is_visible {
-            *goblin_vis = Visibility::Visible;
+            *monster_vis = Visibility::Visible;
         } else {
-            *goblin_vis = Visibility::Hidden;
+            *monster_vis = Visibility::Hidden;
         }
     }
 }

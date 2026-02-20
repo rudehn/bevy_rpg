@@ -5,10 +5,14 @@ use bevy_ecs_tilemap::tiles::TileStorage;
 use bevy_ecs_tilemap::{map::TilemapTexture, prelude::TilePos};
 use bracket_lib::prelude::Point;
 
-use crate::assets::{CandleSpritesheet, DungeonTileset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets};
+use crate::assets::{
+    CandleSpritesheet, DungeonTileset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets,
+};
 use crate::game::{TurnManager, spawn_monster_by_name};
 use crate::map::Map;
-use crate::map::map::TILE_SIZE;
+use crate::map::builders::BuilderMap;
+use crate::map::map::TILE_SIZE; // Import BuildData
+
 use crate::{
     AppState,
     map::{
@@ -82,6 +86,71 @@ fn map_transition_system(
     message_writer.write(SpawnDungeonMessage);
 }
 
+fn spawn_tiles_into_ecs(
+    commands: &mut Commands,
+    map_entity: Entity,
+    game_map: &Map,
+    dungeon_tileset: &Res<DungeonTileset>,
+) -> TileStorage {
+    let mut tile_storage = TileStorage::empty(MAP_SIZE);
+
+    for y in 0..game_map.height() {
+        for x in 0..game_map.width() {
+            let pt = Point::new(x, y);
+            let tile_pos = TilePos {
+                x: x as u32,
+                y: y as u32,
+            };
+            let tile_type = game_map.get_tile(pt).unwrap();
+
+            let tile_entity = spawn_tile_entity(commands, map_entity, tile_pos, tile_type, pt);
+            tile_storage.set(&tile_pos, tile_entity);
+        }
+    }
+
+    commands.entity(map_entity).insert(TilemapBundle {
+        grid_size: GRID_SIZE,
+        map_type: TilemapType::Square,
+        size: MAP_SIZE,
+        storage: tile_storage.clone(),
+        texture: TilemapTexture::Single(dungeon_tileset.texture.clone()),
+        tile_size: TILE_SIZE,
+        transform: Transform::from_xyz(0.0, 0.0, 0.0),
+        ..Default::default()
+    });
+    tile_storage
+}
+
+// ... existing code ...
+
+fn spawn_dungeon_entities(
+    commands: &mut Commands,
+    build_data: &BuilderMap,
+    turn_manager: &mut ResMut<TurnManager>,
+    candle_spritesheet: &Res<CandleSpritesheet>,
+    monster_manifests: &Res<Assets<MonsterManifest>>,
+    monster_manifest_handle: &Res<MonsterManifestHandle>,
+    monster_sprite_assets: &Res<MonsterSpriteAssets>,
+) {
+    // Spawn candles
+    for pt in build_data.candle_spawn_points.iter() {
+        spawn_candle(commands, candle_spritesheet, pt);
+    }
+
+    // Spawn entities from the builder's spawn list
+    for (pt, name) in build_data.spawn_list.iter() {
+        spawn_monster_by_name(
+            commands,
+            name.as_str(),
+            pt,
+            turn_manager,
+            monster_manifests,
+            monster_manifest_handle,
+            monster_sprite_assets,
+        );
+    }
+}
+
 pub fn spawn_dungeon(
     mut commands: Commands,
     dungeon_tileset: Res<DungeonTileset>,
@@ -101,51 +170,17 @@ pub fn spawn_dungeon(
     // Bake the map into the ECS
     // Create the Tilemap entity
     let map_entity = commands.spawn(DungeonECSMap).id();
-    let mut tile_storage = TileStorage::empty(MAP_SIZE);
+    let tile_storage = spawn_tiles_into_ecs(&mut commands, map_entity, &map, &dungeon_tileset);
 
-    for y in 0..builder.build_data.map.height() {
-        for x in 0..builder.build_data.map.width() {
-            let pt = Point::new(x, y);
-            let tile_pos = TilePos {
-                x: x as u32,
-                y: y as u32,
-            };
-            let tile_type = builder.build_data.map.get_tile(pt).unwrap();
-
-            let tile_entity = spawn_tile_entity(&mut commands, map_entity, tile_pos, tile_type, pt);
-            tile_storage.set(&tile_pos, tile_entity);
-        }
-    }
-
-    // Spawn candles
-    for pt in builder.build_data.candle_spawn_points.iter() {
-        spawn_candle(&mut commands, &candle_spritesheet, pt);
-    }
-
-    // Spawn entities from the builder's spawn list
-    for (pt, name) in builder.build_data.spawn_list.iter() {
-        spawn_monster_by_name(
-            &mut commands,
-            name.as_str(),
-            pt,
-            &mut turn_manager,
-            &monster_manifests,
-            &monster_manifest_handle,
-            &monster_sprite_assets,
-        );
-    }
-
-    // Add the tilemap components to the map entity
-    commands.entity(map_entity).insert(TilemapBundle {
-        grid_size: GRID_SIZE,
-        map_type: TilemapType::Square,
-        size: MAP_SIZE,
-        storage: tile_storage,
-        texture: TilemapTexture::Single(dungeon_tileset.texture.clone()),
-        tile_size: TILE_SIZE,
-        transform: Transform::from_xyz(0.0, 0.0, 0.0),
-        ..Default::default()
-    });
+    spawn_dungeon_entities(
+        &mut commands,
+        &builder.build_data,
+        &mut turn_manager,
+        &candle_spritesheet,
+        &monster_manifests,
+        &monster_manifest_handle,
+        &monster_sprite_assets,
+    );
 
     // Insert the player spawn point as a resource
     let spawn_point = builder.build_data.starting_position.unwrap();

@@ -32,7 +32,7 @@ pub struct BlocksVisibility;
 pub struct Hidden;
 
 #[derive(Component)]
-pub struct Goblin;
+pub struct Monster;
 
 #[derive(Component)]
 pub struct Name(pub String);
