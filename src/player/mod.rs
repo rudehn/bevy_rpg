@@ -47,7 +47,7 @@ pub fn player_spawn_or_move_system(
     let new_pos = Transform::from_xyz(
         spawn_point.0.x as f32 * GRID_SIZE.x,
         spawn_point.0.y as f32 * GRID_SIZE.y,
-        ENTITY_INDEX,
+        ENTITY_INDEX + 0.1, // Player Z slightly higher
     );
     let new_grid_pos = Position {
         x: spawn_point.0.x,

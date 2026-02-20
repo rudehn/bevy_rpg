@@ -1,7 +1,10 @@
+use bevy::prelude::*;
+use bracket_lib::prelude::Point;
+
 use crate::{
     assets::{MonsterAsset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets},
     components::{Collider, Position, Viewshed},
-    constants::{ENTITY_INDEX, TILE_SIZE_X, TILE_SIZE_Y}, // Added TILE_SIZE_X, TILE_SIZE_Y
+    constants::{ENTITY_INDEX, TILE_SIZE_X, TILE_SIZE_Y},
     game::{Actor, MonsterAI, TurnManager},
     map::map::GRID_SIZE,
 };
