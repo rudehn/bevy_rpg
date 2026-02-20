@@ -1,0 +1,9 @@
+(
+    monsters: {
+        "goblin": (
+            name: "Goblin",
+            vision_range: 8.0,
+            sprite: "tilemap_packed.png#97", // Assuming a sprite sheet and an index for the goblin
+        ),
+    }
+)

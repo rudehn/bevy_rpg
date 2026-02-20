@@ -1,8 +1,10 @@
 use bevy::prelude::*;
 
-use crate::game::{AppState, GamePlugin, LoadingPlugin};
+use crate::assets::LoadingPlugin;
+use crate::game::{AppState, GamePlugin};
 use crate::menu::MenuPlugin; // Import the new MenuPlugin
 
+mod assets;
 mod components;
 mod constants;
 mod game;

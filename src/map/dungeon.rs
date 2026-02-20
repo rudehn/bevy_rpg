@@ -5,15 +5,15 @@ use bevy_ecs_tilemap::tiles::TileStorage;
 use bevy_ecs_tilemap::{map::TilemapTexture, prelude::TilePos};
 use bracket_lib::prelude::Point;
 
-use crate::game::TurnManager;
+use crate::assets::{CandleSpritesheet, DungeonTileset};
+use crate::game::{TurnManager, spawn_goblin};
 use crate::map::Map;
 use crate::map::map::TILE_SIZE;
 use crate::{
     AppState,
-    game::{DungeonTileset, spawn_goblin},
     map::{
         builders::level_builder,
-        light::{CandleSpritesheet, spawn_candle},
+        light::spawn_candle,
         map::{DungeonECSMap, GRID_SIZE, MAP_SIZE},
         tile::spawn_tile_entity,
     },
@@ -78,7 +78,6 @@ fn map_transition_system(
 
     // Increment floor
     floor.0 += 1;
-    println!("Entering floor {}", floor.0);
 
     message_writer.write(SpawnDungeonMessage);
 }

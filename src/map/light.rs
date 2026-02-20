@@ -3,6 +3,7 @@ use bevy_light_2d::prelude::*;
 use bracket_lib::prelude::Point;
 
 use crate::{
+    assets::CandleSpritesheet,
     components::{Position, Viewshed},
     constants::ENTITY_INDEX,
     game::AppState,
@@ -14,8 +15,7 @@ pub struct LightPlugin;
 
 impl Plugin for LightPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CandleSpritesheet>()
-            .add_plugins(Light2dPlugin)
+        app.add_plugins(Light2dPlugin)
             // .add_systems(Update, update_light_intensity);
             // .add_systems(Startup, , spawn_candles).chain()) // Removed spawn_candles
             .add_systems(
@@ -25,13 +25,6 @@ impl Plugin for LightPlugin {
                     .run_if(in_state(AppState::InGame)),
             );
     }
-}
-
-#[derive(Resource, Default)]
-pub struct CandleSpritesheet {
-    // Made public
-    pub layout: Handle<TextureAtlasLayout>, // Made public
-    pub texture: Handle<Image>,             // Made public
 }
 
 #[derive(Component)]

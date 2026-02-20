@@ -1,9 +1,10 @@
 use bevy::{prelude::*, time::Timer};
 
 use crate::{
+    assets::DungeonTileset,
     components::{Collider, Position, Viewshed},
     constants::ENTITY_INDEX,
-    game::{Actor, DungeonTileset, PlayerAI, TurnManager},
+    game::{Actor, PlayerAI, TurnManager},
     map::{
         dungeon::{PlayerSpawnPoint, SpawnDungeonMessage},
         map::GRID_SIZE,
@@ -78,7 +79,6 @@ pub fn player_spawn_or_move_system(
                 new_pos,
             ))
             .id(); // Get the entity ID
-        info!("Player entity: {}", player_entity);
         turn_manager.turn_queue.push_front(player_entity); // Add player to the turn queue
     }
 }

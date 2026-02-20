@@ -38,7 +38,6 @@ pub struct TurnAI;
 
 impl ActorAI for TurnAI {
     fn get_action(&self, _entity: Entity, _world: &World) -> Option<Action> {
-        info!("Turn Marker reached! End of round processing...");
         None
     }
 }
