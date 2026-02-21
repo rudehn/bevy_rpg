@@ -2,14 +2,17 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::{
-    components::Position,
+    components::{Monster, Position}, // Import Monster
+    game::combat::HitEvent,          // Import HitEvent
     map::{Map, tile::is_walkable},
+    player::Player, // Import Player
 };
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     Wait,
     Move { dir: Direction },
+    MeleeAttack { target: Entity }, // New action variant
 }
 
 #[derive(Debug, PartialEq)]
@@ -23,6 +26,14 @@ pub fn perform_action(world: &mut World, actor: &Entity, action: &Action) -> Act
     match action {
         Action::Wait => ActionResult::Success,
         Action::Move { dir } => perform_move_action(world, actor, *dir),
+        Action::MeleeAttack { target } => {
+            // Send a HitEvent
+            world.write_message(HitEvent {
+                attacker: *actor,
+                target: *target,
+            });
+            ActionResult::Success
+        }
     }
 }
 fn perform_move_action(world: &mut World, actor: &Entity, dir: Direction) -> ActionResult {
@@ -61,11 +72,26 @@ fn perform_move_action(world: &mut World, actor: &Entity, dir: Direction) -> Act
         })
         .map(|(e, _)| e);
 
-    if let Some(_target_entity) = bump_target {
-        // Here is the "Alternate" pattern: Instead of moving,
-        // we suggest a MeleeAttack action.
-        // return ActionResult::Alternate { action: Action::MeleeAttack { target: target_entity } };
-        return ActionResult::Failure; // For now, just block
+    if let Some(target_entity) = bump_target {
+        // Check for hostility: Player attacking Monster, or Monster attacking Player
+        let is_actor_player = world.get::<Player>(*actor).is_some();
+        let is_actor_monster = world.get::<Monster>(*actor).is_some();
+        let is_target_player = world.get::<Player>(target_entity).is_some();
+        let is_target_monster = world.get::<Monster>(target_entity).is_some();
+
+        let is_hostile_bump =
+            (is_actor_player && is_target_monster) || (is_actor_monster && is_target_player);
+
+        if is_hostile_bump {
+            return ActionResult::Alternate {
+                action: Action::MeleeAttack {
+                    target: target_entity,
+                },
+            };
+        } else {
+            // Not hostile, or bump target is not a recognized Player/Monster, so just block movement for now
+            return ActionResult::Failure;
+        }
     }
 
     // 5. Success! Apply the movement

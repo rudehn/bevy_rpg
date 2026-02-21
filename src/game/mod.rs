@@ -2,8 +2,9 @@ use crate::{
     components::Position,
     game::{
         camera::move_camera,
-        systems::{fov_update_system, sync_entity_transforms, update_monster_visibility}, // Changed update_goblin_visibility to update_monster_visibility
-        turns::TurnOrderPlugin, // Import TurnOrderPlugin
+        systems::{fov_update_system, sync_entity_transforms, update_monster_visibility},
+        turns::TurnOrderPlugin,
+        combat::CombatPlugin, // Added CombatPlugin import
     },
     map::{dungeon::DungeonPlugin, light::LightPlugin, map::MapPlugin},
     player::PlayerPlugin,
@@ -13,6 +14,7 @@ use bevy::prelude::*;
 pub mod actions; // Declare the new actions module
 mod ai;
 pub mod camera;
+pub mod combat; // Added combat module declaration
 mod spawner;
 mod systems;
 mod turns;
@@ -39,7 +41,8 @@ impl Plugin for GamePlugin {
             PlayerPlugin,
             DungeonPlugin,
             TurnOrderPlugin,
-        )) // Add TurnOrderPlugin here
+            CombatPlugin, // Added CombatPlugin here
+        ))
         .add_systems(
             Update,
             (

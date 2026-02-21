@@ -3,9 +3,9 @@ use bracket_lib::prelude::Point;
 
 use crate::{
     assets::{MonsterAsset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets},
-    components::{Collider, Monster, Position, Viewshed}, // Added Monster
+    components::{Collider, Monster, Position, Viewshed},
     constants::{ENTITY_INDEX, TILE_SIZE_X, TILE_SIZE_Y},
-    game::{Actor, MonsterAI, TurnManager},
+    game::{Actor, MonsterAI, TurnManager, combat::{Health, Damage}}, // Added combat::Damage
     map::map::GRID_SIZE,
 };
 
@@ -42,7 +42,7 @@ pub fn spawn_monster(
 
     let monster_entity = commands
         .spawn((
-            Monster, // Add Monster component here
+            Monster,
             Name::new(monster_asset.name.clone()),
             Actor {
                 ai: Box::new(MonsterAI::default()),
@@ -51,6 +51,8 @@ pub fn spawn_monster(
             new_grid_pos,
             new_pos,
             Viewshed::new(monster_asset.vision_range as i32),
+            Health { current: monster_asset.health, max: monster_asset.health },
+            Damage(monster_asset.damage.clone()), // Add Damage component
             Sprite::from_atlas_image(
                 texture_handle,
                 TextureAtlas {

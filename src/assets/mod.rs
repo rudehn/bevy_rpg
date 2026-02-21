@@ -65,6 +65,8 @@ pub struct MonsterAsset {
     pub sprite: String,
     pub grid_size: UVec2, // New field
     pub tile_size: UVec2, // New field
+    pub health: i32,     // New field for monster health
+    pub damage: String,  // New field for monster damage
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]

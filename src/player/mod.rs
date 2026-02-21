@@ -4,7 +4,7 @@ use crate::{
     assets::DungeonTileset,
     components::{Collider, Position, Viewshed},
     constants::ENTITY_INDEX,
-    game::{Actor, PlayerAI, TurnManager},
+    game::{Actor, PlayerAI, TurnManager, combat::{Health, Damage}}, // Added combat::Damage
     map::{
         dungeon::{PlayerSpawnPoint, SpawnDungeonMessage},
         map::GRID_SIZE,
@@ -68,6 +68,8 @@ pub fn player_spawn_or_move_system(
                 Collider,
                 new_grid_pos,
                 Viewshed::new(20),
+                Health { current: 20, max: 20 },
+                Damage("1d6".to_string()), // Add Damage component
                 Sprite::from_atlas_image(
                     tileset.texture.clone(),
                     TextureAtlas {
