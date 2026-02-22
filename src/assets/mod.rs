@@ -8,6 +8,17 @@ use crate::{
     game::{AppState, camera},
 };
 
+mod serde_helpers {
+    use serde::{Deserialize, Deserializer};
+
+    pub fn deserialize_f32_as_option<'de, D>(deserializer: D) -> Result<Option<f32>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(Some(f32::deserialize(deserializer)?))
+    }
+}
+
 pub struct AssetsPlugin;
 
 impl Plugin for AssetsPlugin {
@@ -71,6 +82,10 @@ pub struct MonsterAsset {
     pub tile_size: UVec2, // New field
     pub health: i32,      // New field for monster health
     pub damage: String,   // New field for monster damage
+    #[serde(default, deserialize_with = "serde_helpers::deserialize_f32_as_option")]
+    pub move_delay: Option<f32>,
+    #[serde(default, deserialize_with = "serde_helpers::deserialize_f32_as_option")]
+    pub action_delay: Option<f32>,
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]

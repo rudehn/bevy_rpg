@@ -7,6 +7,7 @@ use crate::{
     constants::{ENTITY_INDEX, TILE_SIZE_X, TILE_SIZE_Y},
     game::{
         MonsterAI, TurnManager,
+        actions::ActionStats,
         combat::{Damage, Health},
     }, // Added combat::Damage
     map::map::GRID_SIZE,
@@ -65,6 +66,14 @@ pub fn spawn_monster(
                 max: monster_asset.health,
             },
             Damage(monster_asset.damage.clone()), // Add Damage component
+            ActionStats {
+                move_delay: monster_asset
+                    .move_delay
+                    .unwrap_or(ActionStats::default().move_delay),
+                action_delay: monster_asset
+                    .action_delay
+                    .unwrap_or(ActionStats::default().action_delay),
+            },
             Sprite::from_atlas_image(
                 texture_handle,
                 TextureAtlas {

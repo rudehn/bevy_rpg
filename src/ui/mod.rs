@@ -4,6 +4,7 @@ use crate::components::Monster;
 use crate::constants::TILE_SIZE_X; // For rough monster size check
 use crate::game::camera::MainCamera;
 use crate::game::{
+    actions::ActionStats,
     AppState,
     combat::{Damage, Health},
 };
@@ -38,6 +39,14 @@ pub struct MonsterTooltipHealth;
 /// Marker component for the text displaying the monster's damage in the tooltip.
 #[derive(Component)]
 pub struct MonsterTooltipDamage;
+
+/// Marker component for the text displaying the monster's move speed in the tooltip.
+#[derive(Component)]
+pub struct MonsterTooltipMoveSpeed;
+
+/// Marker component for the text displaying the monster's action speed in the tooltip.
+#[derive(Component)]
+pub struct MonsterTooltipActionSpeed;
 
 // --- Systems ---
 
@@ -183,6 +192,26 @@ fn spawn_monster_tooltip_ui(mut commands: Commands, asset_server: Res<AssetServe
                 TextColor(Color::WHITE),
                 MonsterTooltipDamage,
             ));
+            parent.spawn((
+                Text::new("Move Speed: "),
+                TextFont {
+                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                MonsterTooltipMoveSpeed,
+            ));
+            parent.spawn((
+                Text::new("Action Speed: "),
+                TextFont {
+                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                MonsterTooltipActionSpeed,
+            ));
         });
 }
 
@@ -190,7 +219,7 @@ fn spawn_monster_tooltip_ui(mut commands: Commands, asset_server: Res<AssetServe
 fn update_monster_tooltip_ui(
     windows: Query<&Window>,
     q_camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
-    q_monsters: Query<(Entity, &Transform, &Name, &Health, &Damage), With<Monster>>,
+    q_monsters: Query<(Entity, &Transform, &Name, &Health, &Damage, &ActionStats), With<Monster>>,
     mut q_tooltip_root: Query<(&mut Node, &mut Visibility), With<MonsterTooltip>>, // Style replaced by Node
     mut q_tooltip_name: Query<
         &mut Text,
@@ -198,6 +227,8 @@ fn update_monster_tooltip_ui(
             With<MonsterTooltipName>,
             Without<MonsterTooltipHealth>,
             Without<MonsterTooltipDamage>,
+            Without<MonsterTooltipMoveSpeed>,
+            Without<MonsterTooltipActionSpeed>,
         ),
     >,
     mut q_tooltip_health: Query<
@@ -206,6 +237,8 @@ fn update_monster_tooltip_ui(
             With<MonsterTooltipHealth>,
             Without<MonsterTooltipName>,
             Without<MonsterTooltipDamage>,
+            Without<MonsterTooltipMoveSpeed>,
+            Without<MonsterTooltipActionSpeed>,
         ),
     >,
     mut q_tooltip_damage: Query<
@@ -214,6 +247,28 @@ fn update_monster_tooltip_ui(
             With<MonsterTooltipDamage>,
             Without<MonsterTooltipName>,
             Without<MonsterTooltipHealth>,
+            Without<MonsterTooltipMoveSpeed>,
+            Without<MonsterTooltipActionSpeed>,
+        ),
+    >,
+    mut q_tooltip_move_speed: Query<
+        &mut Text,
+        (
+            With<MonsterTooltipMoveSpeed>,
+            Without<MonsterTooltipName>,
+            Without<MonsterTooltipHealth>,
+            Without<MonsterTooltipDamage>,
+            Without<MonsterTooltipActionSpeed>,
+        ),
+    >,
+    mut q_tooltip_action_speed: Query<
+        &mut Text,
+        (
+            With<MonsterTooltipActionSpeed>,
+            Without<MonsterTooltipName>,
+            Without<MonsterTooltipHealth>,
+            Without<MonsterTooltipDamage>,
+            Without<MonsterTooltipMoveSpeed>,
         ),
     >,
 ) {
@@ -233,7 +288,8 @@ fn update_monster_tooltip_ui(
             let mouse_world_y = world_pos.y;
 
             // Simple AABB check for hover
-            for (entity, monster_transform, name, health, damage) in q_monsters.iter() {
+            for (entity, monster_transform, name, health, damage, action_stats) in q_monsters.iter()
+            {
                 let monster_size = TILE_SIZE_X as f32 * monster_transform.scale.x;
                 let half_size = monster_size / 2.0;
 
@@ -247,7 +303,8 @@ fn update_monster_tooltip_ui(
                     && mouse_world_y >= min_y
                     && mouse_world_y <= max_y
                 {
-                    hovered_monster_data = Some((entity, monster_transform, name, health, damage));
+                    hovered_monster_data =
+                        Some((entity, monster_transform, name, health, damage, action_stats));
                     break;
                 }
             }
@@ -258,7 +315,9 @@ fn update_monster_tooltip_ui(
         return;
     };
 
-    if let Some((_entity, monster_transform, name, health, damage)) = hovered_monster_data {
+    if let Some((_entity, monster_transform, name, health, damage, action_stats)) =
+        hovered_monster_data
+    {
         // Show tooltip
         *tooltip_visibility = Visibility::Visible;
         tooltip_node.display = Display::Flex;
@@ -287,6 +346,12 @@ fn update_monster_tooltip_ui(
         }
         if let Ok(mut damage_text) = q_tooltip_damage.single_mut() {
             damage_text.0 = format!("Damage: {}", damage.0);
+        }
+        if let Ok(mut move_speed_text) = q_tooltip_move_speed.single_mut() {
+            move_speed_text.0 = format!("Move Speed: {}", action_stats.move_delay);
+        }
+        if let Ok(mut action_speed_text) = q_tooltip_action_speed.single_mut() {
+            action_speed_text.0 = format!("Action Speed: {}", action_stats.action_delay);
         }
     } else {
         // Hide tooltip
