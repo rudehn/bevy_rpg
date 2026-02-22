@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy_ecs_tilemap::prelude::*;
-use bracket_lib::prelude::{Algorithm2D, BaseMap, Point};
+use bracket_lib::prelude::{Algorithm2D, BaseMap, DistanceAlg, Point, SmallVec};
 
 use crate::{
     components::Viewshed,
@@ -147,45 +147,37 @@ impl BaseMap for Map {
         &self,
         idx: usize,
     ) -> bracket_lib::prelude::SmallVec<[(usize, f32); 10]> {
-        let mut exits = bracket_lib::prelude::SmallVec::new();
+        let mut exits = SmallVec::new();
         let (x, y) = self.idx_xy(idx);
-        let w = self.width as usize;
 
-        // Cardinal directions
-        if self.in_bounds(Point::new(x - 1, y)) && is_walkable(self.tiles[idx - 1]) {
-            exits.push((idx - 1, 1.0))
-        };
-        if self.in_bounds(Point::new(x + 1, y)) && is_walkable(self.tiles[idx + 1]) {
-            exits.push((idx + 1, 1.0))
-        };
-        if self.in_bounds(Point::new(x, y - 1)) && is_walkable(self.tiles[idx - w]) {
-            exits.push((idx - w, 1.0))
-        };
-        if self.in_bounds(Point::new(x, y + 1)) && is_walkable(self.tiles[idx + w]) {
-            exits.push((idx + w, 1.0))
-        };
+        // Check all 8 directions
+        for i in -1..=1 {
+            for j in -1..=1 {
+                if i == 0 && j == 0 {
+                    continue; // Skip current position
+                }
 
-        // Diagonals
-        if self.in_bounds(Point::new(x - 1, y - 1)) && is_walkable(self.tiles[idx - w - 1]) {
-            exits.push((idx - w - 1, 1.45));
-        }
-        if self.in_bounds(Point::new(x + 1, y - 1)) && is_walkable(self.tiles[idx - w + 1]) {
-            exits.push((idx - w + 1, 1.45));
-        }
-        if self.in_bounds(Point::new(x - 1, y + 1)) && is_walkable(self.tiles[idx + w - 1]) {
-            exits.push((idx + w - 1, 1.45));
-        }
-        if self.in_bounds(Point::new(x + 1, y + 1)) && is_walkable(self.tiles[idx + w + 1]) {
-            exits.push((idx + w + 1, 1.45));
-        }
+                let nx = x + i;
+                let ny = y + j;
+                let np = Point::new(nx, ny);
 
+                if self.in_bounds(np) {
+                    let next_idx = self.xy_idx(nx, ny);
+                    if is_walkable(self.tiles[next_idx]) {
+                        // Diagonal moves cost slightly more
+                        let cost = if i != 0 && j != 0 { 1.45 } else { 1.0 };
+                        exits.push((next_idx, cost));
+                    }
+                }
+            }
+        }
         exits
     }
 
     fn get_pathing_distance(&self, idx1: usize, idx2: usize) -> f32 {
-        let p1 = Point::new(idx1 % self.width as usize, idx1 / self.width as usize);
-        let p2 = Point::new(idx2 % self.width as usize, idx2 / self.width as usize);
-        bracket_lib::prelude::DistanceAlg::Pythagoras.distance2d(p1, p2)
+        let (x1, y1) = self.idx_xy(idx1);
+        let (x2, y2) = self.idx_xy(idx2);
+        DistanceAlg::Pythagoras.distance2d(Point::new(x1, y1), Point::new(x2, y2))
     }
 }
 

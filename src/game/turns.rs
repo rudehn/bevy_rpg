@@ -112,8 +112,16 @@ fn execute_action(world: &mut World) {
                 .take()
         } else {
             // It's a monster or marker; get AI action immediately
-            let actor = world.get::<Actor>(current_entity).expect("Actor missing");
-            actor.ai.get_action(current_entity, world)
+            let mut actor = world
+                .entity_mut(current_entity)
+                .take::<Actor>()
+                .expect("Actor missing");
+            let ai_action = actor.ai.get_action(current_entity, world);
+
+            // Put the Actor component back onto the entity
+            world.entity_mut(current_entity).insert(actor);
+
+            ai_action
         };
 
         // 2. Process the action

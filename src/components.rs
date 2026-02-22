@@ -10,6 +10,19 @@ pub struct Position {
     pub y: i32,
 }
 
+impl Position {
+    pub fn to_point(&self) -> Point {
+        Point::new(self.x, self.y)
+    }
+
+    pub fn from_point(point: Point) -> Self {
+        Position {
+            x: point.x,
+            y: point.y,
+        }
+    }
+}
+
 #[derive(Component)]
 pub struct Viewshed {
     pub visible_tiles: Vec<Point>,
