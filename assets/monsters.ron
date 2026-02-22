@@ -9,5 +9,14 @@
             health: 5,
             damage: "1d4",
         ),
+        "Orc": (
+            name: "Orc",
+            vision_range: 10.0,
+            sprite: "monsters/orc.png#0",
+            grid_size: (1, 1),
+            tile_size: (32, 32),
+            health: 8,
+            damage: "1d4+1",
+        ),
     }
 )

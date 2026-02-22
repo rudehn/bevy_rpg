@@ -15,12 +15,14 @@ impl Plugin for AssetsPlugin {
         app.init_resource::<DungeonTileset>()
             .init_resource::<CandleSpritesheet>()
             .init_resource::<MonsterManifestHandle>()
+            .init_resource::<MonsterSpawnTableHandle>()
             .add_systems(
                 OnEnter(AppState::Loading),
                 (
                     setup_dungeon_tileset,
                     setup_candle_spritesheet,
                     load_monster_manifest,
+                    load_monster_spawn_table,
                 ),
             )
             .add_systems(
@@ -28,7 +30,8 @@ impl Plugin for AssetsPlugin {
                 (
                     load_monster_sprites,
                     check_assets_loaded,
-                ).run_if(in_state(AppState::Loading)),
+                )
+                    .run_if(in_state(AppState::Loading)),
             );
     }
 }
@@ -39,6 +42,7 @@ impl Plugin for LoadingPlugin {
         app.add_plugins((
             AssetsPlugin,
             RonAssetPlugin::<MonsterManifest>::new(&["monsters.ron"]),
+            RonAssetPlugin::<MonsterSpawnTable>::new(&["monster_spawns.ron"]),
         ))
         .add_systems(Startup, (camera::setup_camera, set_clear_color))
         // .add_systems(OnEnter(AppState::Loading), spawn_monsters_from_manifest)
@@ -65,13 +69,25 @@ pub struct MonsterAsset {
     pub sprite: String,
     pub grid_size: UVec2, // New field
     pub tile_size: UVec2, // New field
-    pub health: i32,     // New field for monster health
-    pub damage: String,  // New field for monster damage
+    pub health: i32,      // New field for monster health
+    pub damage: String,   // New field for monster damage
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
 pub struct MonsterManifest {
     pub monsters: HashMap<String, MonsterAsset>,
+}
+
+#[derive(Asset, TypePath, Deserialize, Debug, Clone)]
+pub struct MonsterSpawnInfo {
+    pub monster: String,
+    pub min_floor: i32,
+    pub max_floor: i32,
+}
+
+#[derive(Asset, TypePath, Deserialize, Debug, Clone)]
+pub struct MonsterSpawnTable {
+    pub spawns: Vec<MonsterSpawnInfo>,
 }
 
 #[derive(Resource, Default)]
@@ -113,11 +129,21 @@ fn setup_candle_spritesheet(
 #[derive(Resource, Default)]
 pub struct MonsterManifestHandle(pub Handle<MonsterManifest>);
 
+#[derive(Resource, Default)]
+pub struct MonsterSpawnTableHandle(pub Handle<MonsterSpawnTable>);
+
 fn load_monster_manifest(
     asset_server: Res<AssetServer>,
     mut monster_manifest_handle: ResMut<MonsterManifestHandle>,
 ) {
     monster_manifest_handle.0 = asset_server.load("monsters.ron");
+}
+
+fn load_monster_spawn_table(
+    asset_server: Res<AssetServer>,
+    mut handle: ResMut<MonsterSpawnTableHandle>,
+) {
+    handle.0 = asset_server.load("monster_spawns.ron");
 }
 
 fn load_monster_sprites(
@@ -137,17 +163,21 @@ fn load_monster_sprites(
 
                 let texture_path_string = texture_path.to_string();
 
-                if !monster_sprite_assets.handles.contains_key(&texture_path_string) {
+                if !monster_sprite_assets
+                    .handles
+                    .contains_key(&texture_path_string)
+                {
                     let texture_handle = asset_server.load::<Image>(texture_path_string.clone());
                     monster_sprite_assets
                         .handles
                         .insert(texture_path_string.clone(), texture_handle);
 
                     let layout_handle = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
-                        monster_asset.tile_size, // Use tile_size from MonsterAsset
+                        monster_asset.tile_size,   // Use tile_size from MonsterAsset
                         monster_asset.grid_size.x, // Use grid_size.x from MonsterAsset
                         monster_asset.grid_size.y, // Use grid_size.y from MonsterAsset
-                        None, None,
+                        None,
+                        None,
                     ));
                     monster_sprite_assets
                         .layouts
@@ -165,6 +195,8 @@ fn check_assets_loaded(
     candle_spritesheet: Res<CandleSpritesheet>,
     monster_manifest_handle: Res<MonsterManifestHandle>, // No longer Option
     monster_manifests: Res<Assets<MonsterManifest>>,
+    monster_spawn_table_handle: Res<MonsterSpawnTableHandle>,
+    monster_spawn_tables: Res<Assets<MonsterSpawnTable>>,
     monster_sprite_assets: Res<MonsterSpriteAssets>,
     mut next_state: ResMut<NextState<AppState>>,
 ) {
@@ -182,7 +214,15 @@ fn check_assets_loaded(
         return; // Still waiting for monster manifest to load
     }
 
-    // 3. Check if load_monster_sprites has populated monster_sprite_assets, and all contained sprites are loaded.
+    // 3. Check if the MonsterSpawnTable is loaded
+    let spawn_table_loaded = monster_spawn_tables
+        .get(&monster_spawn_table_handle.0)
+        .is_some();
+    if !spawn_table_loaded {
+        return; // Still waiting for spawn table to load
+    }
+
+    // 4. Check if load_monster_sprites has populated monster_sprite_assets, and all contained sprites are loaded.
     // If monster_sprite_assets.handles is empty, it means load_monster_sprites hasn't run yet.
     if monster_sprite_assets.handles.is_empty() {
         return; // Still waiting for monster sprites to be populated/loaded

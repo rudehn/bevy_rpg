@@ -28,6 +28,7 @@ https://www.oryxdesignlab.com/products/p/ultimate-fantasy-tileset
 * On death, go to end game state, then go to main menu and clear map assets
 * Add spawn table
 * Add hordes
+* WASM
 
 * Save game
 * Load game from Menu

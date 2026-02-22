@@ -1,26 +1,27 @@
 use bevy::prelude::*;
+use bevy_ecs_tilemap::map::{TilemapTexture, TilemapType};
+use bevy_ecs_tilemap::prelude::TilePos;
 use bevy_ecs_tilemap::TilemapBundle;
-use bevy_ecs_tilemap::map::TilemapType;
 use bevy_ecs_tilemap::tiles::TileStorage;
-use bevy_ecs_tilemap::{map::TilemapTexture, prelude::TilePos};
 use bracket_lib::prelude::Point;
 
 use crate::assets::{
-    CandleSpritesheet, DungeonTileset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets,
+    CandleSpritesheet, DungeonTileset, MonsterManifest, MonsterManifestHandle, MonsterSpawnTable,
+    MonsterSpawnTableHandle, MonsterSpriteAssets,
 };
-use crate::game::{TurnManager, spawn_monster_by_name};
-use crate::map::Map;
+use crate::game::{spawn_monster_by_name, TurnManager};
 use crate::map::builders::BuilderMap;
 use crate::map::map::TILE_SIZE; // Import BuildData
+use crate::map::Map;
 
 use crate::{
-    AppState,
     map::{
         builders::level_builder,
         light::spawn_candle,
         map::{DungeonECSMap, GRID_SIZE, MAP_SIZE},
         tile::spawn_tile_entity,
     },
+    AppState,
 };
 
 #[derive(Message, Clone, Copy)]
@@ -160,10 +161,20 @@ pub fn spawn_dungeon(
     mut turn_manager: ResMut<TurnManager>,
     monster_manifests: Res<Assets<MonsterManifest>>,
     monster_manifest_handle: Res<MonsterManifestHandle>,
+    monster_spawn_tables: Res<Assets<MonsterSpawnTable>>,
+    monster_spawn_table_handle: Res<MonsterSpawnTableHandle>,
     monster_sprite_assets: Res<MonsterSpriteAssets>,
 ) {
+    let spawn_table = monster_spawn_tables
+        .get(&monster_spawn_table_handle.0)
+        .unwrap();
     // Run the builder
-    let mut builder = level_builder(floor.0 as i32, MAP_SIZE.x as i32, MAP_SIZE.y as i32);
+    let mut builder = level_builder(
+        floor.0 as i32,
+        MAP_SIZE.x as i32,
+        MAP_SIZE.y as i32,
+        &spawn_table.spawns,
+    );
     builder.build_map();
     *map = builder.build_data.map.clone();
 

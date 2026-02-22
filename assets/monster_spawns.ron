@@ -1,0 +1,14 @@
+(
+  spawns: [
+    (
+      monster: "Goblin",
+      min_floor: 1,
+      max_floor: 100,
+    ),
+    (
+      monster: "Orc",
+      min_floor: 1,
+      max_floor: 100,
+    ),
+  ]
+)

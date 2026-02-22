@@ -4,6 +4,7 @@ use bracket_lib::{
 }; // Added Point
 
 use crate::{
+    assets::{MonsterSpawnInfo, MonsterSpawnTable, MonsterSpawnTableHandle},
     components::Position,
     map::{
         Map,
@@ -12,6 +13,7 @@ use crate::{
             candle_spawner::CandleSpawner,
             corridors::NearestCorridors,
             exit_points::DistantExit,
+            monster_spawner::MonsterSpawner,
             room_drawer::RoomDrawer,
             start_point::{StartPointBuilder, XStart, YStart},
             unseen_culler::UnseenCuller,
@@ -23,12 +25,10 @@ mod bsp_dungeon;
 mod candle_spawner;
 mod corridors;
 mod exit_points;
-pub mod goblin_spawner;
+pub mod monster_spawner;
 mod room_drawer;
 mod start_point; // Declare the new module
 mod unseen_culler; // Declare the new module
-
-use crate::map::builders::goblin_spawner::GoblinSpawner; // Import GoblinSpawner
 
 pub struct BuilderMap {
     // pub spawn_list: Vec<(usize, String)>,
@@ -149,7 +149,12 @@ fn random_start_position() -> (XStart, YStart) {
     (x, y)
 }
 
-pub fn floor_builder(new_depth: i32, width: i32, height: i32) -> BuilderChain {
+pub fn floor_builder(
+    new_depth: i32,
+    width: i32,
+    height: i32,
+    spawn_table: &[MonsterSpawnInfo],
+) -> BuilderChain {
     let mut map_name = "Floor ".to_owned() + &new_depth.to_string();
     if new_depth == 1 {
         map_name = "Entrance".to_owned();
@@ -162,7 +167,7 @@ pub fn floor_builder(new_depth: i32, width: i32, height: i32) -> BuilderChain {
     builder.with(NearestCorridors::new());
     builder.with(StartPointBuilder::new());
     builder.with(CandleSpawner::new()); // Add the CandleSpawner
-    builder.with(GoblinSpawner::new()); // Add the GoblinSpawner
+    builder.with(MonsterSpawner::new(spawn_table));
     builder.with(UnseenCuller::new());
     builder.with(DistantExit::new());
 
@@ -172,8 +177,13 @@ pub fn floor_builder(new_depth: i32, width: i32, height: i32) -> BuilderChain {
     builder
 }
 
-pub fn level_builder(new_depth: i32, width: i32, height: i32) -> BuilderChain {
+pub fn level_builder(
+    new_depth: i32,
+    width: i32,
+    height: i32,
+    spawn_table: &[MonsterSpawnInfo],
+) -> BuilderChain {
     match new_depth {
-        _ => floor_builder(new_depth, width, height),
+        _ => floor_builder(new_depth, width, height, spawn_table),
     }
 }
