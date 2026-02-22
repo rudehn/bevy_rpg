@@ -5,7 +5,10 @@ use crate::{
     assets::{MonsterAsset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets},
     components::{Collider, Monster, Position, Viewshed},
     constants::{ENTITY_INDEX, TILE_SIZE_X, TILE_SIZE_Y},
-    game::{Actor, MonsterAI, TurnManager, combat::{Health, Damage}}, // Added combat::Damage
+    game::{
+        MonsterAI, TurnManager,
+        combat::{Damage, Health},
+    }, // Added combat::Damage
     map::map::GRID_SIZE,
 };
 
@@ -37,21 +40,30 @@ pub fn spawn_monster(
     let texture_path = sprite_path_parts[0];
     let index = sprite_path_parts[1].parse::<usize>().unwrap_or_default();
 
-    let texture_handle = monster_sprite_assets.handles.get(texture_path).unwrap().clone();
-    let layout_handle = monster_sprite_assets.layouts.get(texture_path).unwrap().clone();
+    let texture_handle = monster_sprite_assets
+        .handles
+        .get(texture_path)
+        .unwrap()
+        .clone();
+    let layout_handle = monster_sprite_assets
+        .layouts
+        .get(texture_path)
+        .unwrap()
+        .clone();
 
     let monster_entity = commands
         .spawn((
             Monster,
             Name::new(monster_asset.name.clone()),
-            Actor {
-                ai: Box::new(MonsterAI::default()),
-            },
+            MonsterAI::default(),
             Collider,
             new_grid_pos,
             new_pos,
             Viewshed::new(monster_asset.vision_range as i32),
-            Health { current: monster_asset.health, max: monster_asset.health },
+            Health {
+                current: monster_asset.health,
+                max: monster_asset.health,
+            },
             Damage(monster_asset.damage.clone()), // Add Damage component
             Sprite::from_atlas_image(
                 texture_handle,

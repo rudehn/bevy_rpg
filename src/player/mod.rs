@@ -4,7 +4,10 @@ use crate::{
     assets::DungeonTileset,
     components::{Collider, Position, Viewshed},
     constants::ENTITY_INDEX,
-    game::{Actor, PlayerAI, TurnManager, combat::{Health, Damage}}, // Added combat::Damage
+    game::{
+        TurnManager,
+        combat::{Damage, Health},
+    }, // Added combat::Damage
     map::{
         dungeon::{PlayerSpawnPoint, SpawnDungeonMessage},
         map::GRID_SIZE,
@@ -54,7 +57,8 @@ pub fn player_spawn_or_move_system(
         y: spawn_point.0.y,
     };
 
-    if let Ok((_player_entity, mut _player_tf, mut player_pos)) = q_player.single_mut() { // _player_tf is no longer mutable
+    if let Ok((_player_entity, mut _player_tf, mut player_pos)) = q_player.single_mut() {
+        // _player_tf is no longer mutable
         // Player already exists, move them
         *player_pos = new_grid_pos;
     } else {
@@ -62,13 +66,13 @@ pub fn player_spawn_or_move_system(
         let player_entity = commands
             .spawn((
                 Player,
-                Actor {
-                    ai: Box::new(PlayerAI::default()),
-                },
                 Collider,
                 new_grid_pos,
                 Viewshed::new(20),
-                Health { current: 20, max: 20 },
+                Health {
+                    current: 20,
+                    max: 20,
+                },
                 Damage("1d6".to_string()), // Add Damage component
                 Sprite::from_atlas_image(
                     tileset.texture.clone(),

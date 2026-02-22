@@ -23,7 +23,7 @@ impl Position {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Clone, Default)]
 pub struct Viewshed {
     pub visible_tiles: Vec<Point>,
     pub range: i32,

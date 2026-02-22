@@ -1,13 +1,11 @@
-// Here we will put the generic monster ai.
-// The AI's main job is to resolve to a single action that the entity wants to take
 use crate::{
-    components::{Position, Viewshed}, // Monster is no longer directly used here, but in spawner
-    game::actions::{Action, Direction},
+    components::{Position, Viewshed},
+    game::actions::{Direction, MeleeIntent, MovementIntent, WaitIntent},
     map::{Map, tile::is_walkable},
     player::Player,
 };
 use bevy::prelude::*;
-use bracket_lib::prelude::{Algorithm2D, Point, a_star_search}; // Removed BaseMap, DistanceAlg
+use bracket_lib::prelude::{Algorithm2D, Point, a_star_search};
 use rand::rng;
 use rand::seq::SliceRandom;
 
@@ -17,31 +15,13 @@ pub struct Actor {
 }
 
 pub trait ActorAI: Send + Sync {
-    // Modified to provide world access for AI decisions
-    fn get_action(&mut self, entity: Entity, world: &mut World) -> Option<Action>;
+    /// AI now directly sends events to the world instead of returning an Action enum.
+    fn execute(&mut self, entity: Entity, world: &mut World);
 }
 
-#[derive(Default)]
-pub struct PlayerAI; // PlayerAI does not need any internal state for now
-
-impl ActorAI for PlayerAI {
-    fn get_action(&mut self, _entity: Entity, _world: &mut World) -> Option<Action> {
-        None
-    }
-}
-
-#[derive(Default)]
-pub struct TurnAI;
-
-impl ActorAI for TurnAI {
-    fn get_action(&mut self, _entity: Entity, _world: &mut World) -> Option<Action> {
-        None
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)] // Added Default
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 enum MonsterAIMode {
-    #[default] // Set Asleep as default
+    #[default]
     Asleep,
     Hunting,
     Wandering,
@@ -51,91 +31,113 @@ enum MonsterAIMode {
 pub struct MonsterAI {
     mode: MonsterAIMode,
     last_known_player_position: Option<Point>,
-    path: Vec<Point>, // Stores the current path for hunting/pursuit
 }
 
-impl ActorAI for MonsterAI {
-    fn get_action(&mut self, entity: Entity, world: &mut World) -> Option<Action> {
-        Some(Action::Wait)
-        // let mut rng = rng();
-        // let map = world.resource::<Map>();
-        // let monster_pos = world.get::<Position>(entity)?.to_point();
-        // let monster_viewshed = world.get::<Viewshed>(entity)?;
+impl MonsterAI {
+    pub fn execute(&mut self, entity: Entity, world: &mut World) {
+        let mut rng = rng();
 
-        // let mut player_query = world.query_filtered::<(&Position, &Viewshed), With<Player>>();
-        // let Some((player_pos, _)) = player_query.iter(world).next() else {
-        //     return Some(Action::Wait);
-        // };
-        // let player_point = player_pos.to_point();
-        // let is_player_visible = monster_viewshed.visible_tiles.contains(&player_point);
+        // --- STEP 1: READ-ONLY DATA EXTRACTION ---
+        // We do all our World queries in a single block to ensure borrows are dropped immediately.
+        let (monster_pos, monster_viewshed, player_point) = {
+            let m_pos = world.get::<Position>(entity).map(|p| p.to_point());
+            let m_view = world.get::<Viewshed>(entity).cloned().unwrap_or_default();
 
-        // // --- 1. State Transitions & Path Updates ---
-        // match self.mode {
-        //     MonsterAIMode::Asleep => {
-        //         if is_player_visible {
-        //             self.mode = MonsterAIMode::Hunting;
-        //         } else {
-        //             return Some(Action::Wait);
-        //         }
-        //     }
-        //     MonsterAIMode::Hunting => {
-        //         if is_player_visible {
-        //             self.last_known_player_position = Some(player_point);
-        //         }
+            let mut player_query = world.query_filtered::<&Position, With<Player>>();
+            let p_pt = player_query.iter(world).next().map(|p| p.to_point());
 
-        //         // If we reached our destination and still can't see the player, wander
-        //         if !is_player_visible && Some(monster_pos) == self.last_known_player_position {
-        //             self.mode = MonsterAIMode::Wandering;
-        //             self.last_known_player_position = None;
-        //             self.path.clear();
-        //         }
-        //     }
-        //     MonsterAIMode::Wandering => {
-        //         if is_player_visible {
-        //             self.mode = MonsterAIMode::Hunting;
-        //         }
-        //     }
-        // }
+            (m_pos, m_view, p_pt)
+        };
 
-        // // --- 2. Action Logic based on Current Mode ---
-        // match self.mode {
-        //     MonsterAIMode::Hunting => {
-        //         // Always try to update the path if we have a target
-        //         if let Some(target) = self.last_known_player_position {
-        //             let start_idx = map.point2d_to_index(monster_pos);
-        //             let end_idx = map.point2d_to_index(target);
-        //             let path = a_star_search(start_idx, end_idx, map);
+        // Guard clauses
+        let Some(monster_pos) = monster_pos else {
+            return;
+        };
+        let Some(player_point) = player_point else {
+            world.write_message(WaitIntent { entity });
+            return;
+        };
 
-        //             if path.success && path.steps.len() > 1 {
-        //                 let next_step = map.index_to_point2d(path.steps[1]);
-        //                 let dir = Direction::from_pos(
-        //                     &Position::from_point(monster_pos),
-        //                     &Position::from_point(next_step),
-        //                 );
-        //                 return Some(Action::Move { dir });
-        //             }
-        //         }
-        //         Some(Action::Wait)
-        //     }
+        let is_player_visible = monster_viewshed.visible_tiles.contains(&player_point);
 
-        //     MonsterAIMode::Wandering => {
-        //         let mut directions = Direction::ALL.to_vec();
-        //         directions.shuffle(&mut rng);
+        // --- STEP 2: STATE LOGIC (No World access) ---
+        match self.mode {
+            MonsterAIMode::Asleep => {
+                if is_player_visible {
+                    self.mode = MonsterAIMode::Hunting;
+                }
+            }
+            MonsterAIMode::Hunting => {
+                if is_player_visible {
+                    self.last_known_player_position = Some(player_point);
+                }
+                if !is_player_visible && Some(monster_pos) == self.last_known_player_position {
+                    self.mode = MonsterAIMode::Wandering;
+                    self.last_known_player_position = None;
+                }
+            }
+            MonsterAIMode::Wandering => {
+                if is_player_visible {
+                    self.mode = MonsterAIMode::Hunting;
+                }
+            }
+        }
 
-        //         for dir in directions {
-        //             let offset = dir.offset();
-        //             let target = Point::new(monster_pos.x + offset.x, monster_pos.y + offset.y);
+        // --- STEP 3: PATHFINDING AND INTENT (Isolated Map access) ---
+        // We use an inner scope to ensure the Map resource borrow is dropped
+        // before we call world.write_message() later.
+        let intent_to_send = {
+            let map = world.resource::<Map>();
 
-        //             if map.in_bounds(target)
-        //                 && is_walkable(map.tiles[map.xy_idx(target.x, target.y)])
-        //             {
-        //                 return Some(Action::Move { dir });
-        //             }
-        //         }
-        //         Some(Action::Wait)
-        //     }
+            match self.mode {
+                MonsterAIMode::Hunting => {
+                    if let Some(target) = self.last_known_player_position {
+                        let path = a_star_search(
+                            map.point2d_to_index(monster_pos),
+                            map.point2d_to_index(target),
+                            map,
+                        );
 
-        //     MonsterAIMode::Asleep => Some(Action::Wait),
-        // }
+                        if path.success && path.steps.len() > 1 {
+                            let next_step = map.index_to_point2d(path.steps[1]);
+                            let dir = Direction::from_pos(
+                                &Position::from_point(monster_pos),
+                                &Position::from_point(next_step),
+                            );
+                            Some(MovementIntent { entity, dir })
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+                MonsterAIMode::Wandering => {
+                    let mut directions = Direction::ALL.to_vec();
+                    directions.shuffle(&mut rng);
+
+                    let mut chosen_dir = None;
+                    for dir in directions {
+                        let target = monster_pos + dir.offset();
+                        if map.in_bounds(target)
+                            && is_walkable(map.tiles[map.xy_idx(target.x, target.y)])
+                        {
+                            chosen_dir = Some(dir);
+                            break;
+                        }
+                    }
+                    chosen_dir.map(|dir| MovementIntent { entity, dir })
+                }
+                _ => None,
+            }
+        };
+
+        // --- STEP 4: FINAL MUTATION ---
+        // All previous borrows (Query, Map, Position) are guaranteed dead here.
+        if let Some(intent) = intent_to_send {
+            world.write_message(intent);
+        } else {
+            world.write_message(WaitIntent { entity });
+        }
     }
 }

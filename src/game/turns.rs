@@ -1,58 +1,64 @@
 use bevy::prelude::*;
-use bracket_lib::prelude::Algorithm2D;
 use std::collections::VecDeque;
 
-use rand::seq::{IndexedRandom, SliceRandom};
+use crate::game::AppState;
+use crate::game::actions::{
+    Action, ActionFinishedEvent, Direction, MeleeIntent, MovementIntent, WaitIntent, handle_melee,
+    handle_movement, handle_wait,
+};
+use crate::game::ai::MonsterAI;
+use crate::player::{MovementTimer, Player};
 
-use crate::components::Position;
-use crate::game::actions::{Action, ActionResult, Direction, perform_action};
-use crate::game::{Actor, AppState, TurnAI};
-use crate::player::{MovementTimer, Player}; // Import AppState
-
-// Component to mark the entity that signifies the end of a turn round
 #[derive(Component)]
 pub struct TurnMarker;
 
-// Resource to manage the turn order and current turn state
-#[derive(Resource)]
+/// Marker component indicating it is currently this entity's turn.
+/// Execution systems or AI systems look for this to know when to act.
+#[derive(Component)]
+pub struct MyTurn;
+
+#[derive(Resource, Default)]
 pub struct TurnManager {
     pub turn_queue: VecDeque<Entity>,
     pub player_action_pending: Option<Action>,
     pub acting_entity: Option<Entity>,
 }
 
-impl Default for TurnManager {
-    fn default() -> Self {
-        Self {
-            turn_queue: VecDeque::new(),
-            player_action_pending: None,
-            acting_entity: None,
-        }
-    }
-}
-
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 pub enum TurnState {
     #[default]
-    Waiting, // Doing nothing (map loading, etc)
-    NextTurn,    // Logic to pop the next entity from the queue
-    PlayerInput, // Loop here until a key is pressed
-    Processing,  // AI is thinking or an action is being animated
+    Waiting,
+    NextTurn,
+    PlayerInput,
+    Processing,
 }
 
-// Plugin to manage the game's turn order and related systems
 pub struct TurnOrderPlugin;
 
 impl Plugin for TurnOrderPlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<TurnState>()
+            .add_message::<MovementIntent>()
+            .add_message::<MeleeIntent>()
+            .add_message::<WaitIntent>()
+            .add_message::<ActionFinishedEvent>()
             .add_systems(OnEnter(AppState::InGame), (setup_turn_order, start_turns))
             .add_systems(
                 Update,
                 (
                     select_next_actor.run_if(in_state(TurnState::NextTurn)),
                     handle_player_input.run_if(in_state(TurnState::PlayerInput)),
-                    execute_action.run_if(in_state(TurnState::Processing)),
+                    // --- Brain Systems ---
+                    // These respond to the "MyTurn" component and emit Intents
+                    player_ai_bridge.run_if(in_state(TurnState::Processing)),
+                    monster_ai_dispatch.run_if(in_state(TurnState::Processing)),
+                    marker_dispatch.run_if(in_state(TurnState::Processing)),
+                    // --- Execution Systems ---
+                    handle_movement.run_if(in_state(TurnState::Processing)),
+                    handle_melee.run_if(in_state(TurnState::Processing)),
+                    handle_wait.run_if(in_state(TurnState::Processing)),
+                    // --- Cleanup ---
+                    resolve_turn_end.run_if(in_state(TurnState::Processing)),
                 )
                     .run_if(in_state(AppState::InGame)),
             );
@@ -63,119 +69,113 @@ fn start_turns(mut next_state: ResMut<NextState<TurnState>>) {
     next_state.set(TurnState::NextTurn);
 }
 
-// System to set up the initial turn order when entering the InGame state
 fn setup_turn_order(mut commands: Commands, mut turn_manager: ResMut<TurnManager>) {
-    // Spawn the TurnMarker entity
-    let turn_marker_entity = commands
-        .spawn((
-            TurnMarker,
-            Actor {
-                ai: Box::new(TurnAI::default()),
-            },
-        ))
-        .id();
-
-    // Clear any existing queue (useful if re-entering InGame state)
+    let turn_marker_entity = commands.spawn(TurnMarker).id();
     turn_manager.turn_queue.clear();
-
-    // Add the turn marker to signal end of round
     turn_manager.turn_queue.push_back(turn_marker_entity);
 }
 
-fn execute_action(world: &mut World) {
-    // We use a loop to process multiple non-player entities in one frame
-    loop {
-        let current_entity = {
-            let mut turn_manager = world.resource_mut::<TurnManager>();
-            let Some(entity) = turn_manager
-                .acting_entity
-                .take()
-                .or_else(|| turn_manager.turn_queue.pop_front())
-            else {
-                // Queue empty, nothing to do
-                world
-                    .resource_mut::<NextState<TurnState>>()
-                    .set(TurnState::NextTurn);
-                return;
-            };
-            entity
-        };
+/// The turn system now just labels the entity and steps aside.
+fn select_next_actor(
+    mut commands: Commands,
+    mut turn_manager: ResMut<TurnManager>,
+    query_player: Query<Entity, With<Player>>,
+    mut next_state: ResMut<NextState<TurnState>>,
+) {
+    let Some(current_entity) = turn_manager.turn_queue.pop_front() else {
+        return;
+    };
+    turn_manager.acting_entity = Some(current_entity);
 
-        let is_player = world.get::<Player>(current_entity).is_some();
+    // Tag the entity so its specific "Brain System" knows to fire
+    commands.entity(current_entity).insert(MyTurn);
 
-        // 1. Get the action
-        let action = if is_player {
-            // If it's the player, take the pending action
-            world
-                .resource_mut::<TurnManager>()
-                .player_action_pending
-                .take()
+    if let Ok(player_entity) = query_player.single() {
+        if current_entity == player_entity {
+            next_state.set(TurnState::PlayerInput);
         } else {
-            // It's a monster or marker; get AI action immediately
-            let mut actor = world
-                .entity_mut(current_entity)
-                .take::<Actor>()
-                .expect("Actor missing");
-            let ai_action = actor.ai.get_action(current_entity, world);
+            next_state.set(TurnState::Processing);
+        }
+    }
+}
 
-            // Put the Actor component back onto the entity
-            world.entity_mut(current_entity).insert(actor);
+/// BRIDGE: Converts Player Input Resource into Action Intents
+fn player_ai_bridge(
+    mut commands: Commands,
+    mut turn_manager: ResMut<TurnManager>,
+    mut move_events: MessageWriter<MovementIntent>,
+    mut melee_events: MessageWriter<MeleeIntent>,
+    mut wait_events: MessageWriter<WaitIntent>,
+    query: Query<Entity, (With<Player>, With<MyTurn>)>,
+) {
+    let Ok(player_entity) = query.single() else {
+        return;
+    };
 
-            ai_action
-        };
-
-        // 2. Process the action
-        if let Some(mut actual_action) = action {
-            let mut result = perform_action(world, &current_entity, &actual_action);
-
-            // Handle alternatives (like bump-to-attack)
-            while let ActionResult::Alternate { action: alt_action } = result {
-                actual_action = alt_action;
-                result = perform_action(world, &current_entity, &actual_action);
+    // We only act if there's a pending action from the input system
+    if let Some(action) = turn_manager.player_action_pending.take() {
+        match action {
+            Action::Wait => {
+                wait_events.write(WaitIntent {
+                    entity: player_entity,
+                });
             }
 
-            if result == ActionResult::Failure && is_player {
-                // Player failed (walked into wall), keep them as the acting entity
-                // and wait for new input.
-                world.resource_mut::<TurnManager>().acting_entity = Some(current_entity);
-                world
-                    .resource_mut::<NextState<TurnState>>()
-                    .set(TurnState::PlayerInput);
-                return;
+            Action::Move { dir } => {
+                move_events.write(MovementIntent {
+                    entity: player_entity,
+                    dir,
+                });
             }
-
-            // Turn success (or NPC failure): Move to back of queue
-            world
-                .resource_mut::<TurnManager>()
-                .turn_queue
-                .push_back(current_entity);
-
-            // IF it was the player who just moved, STOP batching so the screen updates
-            if is_player {
-                world
-                    .resource_mut::<NextState<TurnState>>()
-                    .set(TurnState::NextTurn);
-                return;
-            }
-        } else {
-            // No action available (Player hasn't pressed a key yet)
-            if is_player {
-                world.resource_mut::<TurnManager>().acting_entity = Some(current_entity);
-                world
-                    .resource_mut::<NextState<TurnState>>()
-                    .set(TurnState::PlayerInput);
-                return;
-            } else {
-                // NPC had no action? Just skip them.
-                world
-                    .resource_mut::<TurnManager>()
-                    .turn_queue
-                    .push_back(current_entity);
+            Action::MeleeAttack { target } => {
+                melee_events.write(MeleeIntent {
+                    attacker: player_entity,
+                    target,
+                });
             }
         }
+        // Remove MyTurn so we don't dispatch again
+        commands.entity(player_entity).remove::<MyTurn>();
+    }
+}
 
-        // If we reach here, an NPC just finished their turn.
-        // The loop continues, processing the next NPC in the same frame!
+/// BRIDGE: Triggers Monster AI
+fn monster_ai_dispatch(world: &mut World) {
+    // We use a query to find monsters whose turn it is
+    let mut query = world.query_filtered::<Entity, (With<MonsterAI>, With<MyTurn>)>();
+    let Some(entity) = query.iter(world).next() else {
+        return;
+    };
+
+    let mut monster_ai = world.entity_mut(entity).take::<MonsterAI>().unwrap();
+    monster_ai.execute(entity, world);
+    world.entity_mut(entity).insert(monster_ai);
+    world.entity_mut(entity).remove::<MyTurn>();
+}
+
+/// BRIDGE: Triggers Marker Logic
+fn marker_dispatch(
+    mut commands: Commands,
+    mut wait_events: MessageWriter<WaitIntent>,
+    query: Query<Entity, (With<TurnMarker>, With<MyTurn>)>,
+) {
+    let Ok(entity) = query.single() else {
+        return;
+    };
+    wait_events.write(WaitIntent { entity });
+    commands.entity(entity).remove::<MyTurn>();
+}
+
+fn resolve_turn_end(
+    mut events: MessageReader<ActionFinishedEvent>,
+    mut turn_manager: ResMut<TurnManager>,
+    mut next_state: ResMut<NextState<TurnState>>,
+) {
+    for _ in events.read() {
+        if let Some(entity) = turn_manager.acting_entity.take() {
+            turn_manager.turn_queue.push_back(entity);
+            next_state.set(TurnState::NextTurn);
+        }
     }
 }
 
@@ -207,29 +207,9 @@ fn handle_player_input(
     if keys.pressed(KeyCode::Space) {
         action = Some(Action::Wait);
     }
+
     if let Some(act) = action {
         turn_manager.player_action_pending = Some(act);
         next_state.set(TurnState::Processing);
-    }
-}
-
-fn select_next_actor(
-    mut turn_manager: ResMut<TurnManager>,
-    query_player: Query<Entity, With<Player>>,
-    mut next_state: ResMut<NextState<TurnState>>,
-) {
-    let Some(current_entity) = turn_manager.turn_queue.pop_front() else {
-        return;
-    };
-
-    // Store who is acting now
-    turn_manager.acting_entity = Some(current_entity);
-
-    if let Ok(player_entity) = query_player.single() {
-        if current_entity == player_entity {
-            next_state.set(TurnState::PlayerInput);
-        } else {
-            next_state.set(TurnState::Processing);
-        }
     }
 }

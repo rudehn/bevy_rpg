@@ -2,105 +2,133 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::{
-    components::{Monster, Position}, // Import Monster
-    game::combat::HitEvent,          // Import HitEvent
+    components::{Monster, Position},
+    game::combat::HitEvent,
     map::{Map, tile::is_walkable},
-    player::Player, // Import Player
+    player::Player,
 };
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     Wait,
     Move { dir: Direction },
-    MeleeAttack { target: Entity }, // New action variant
+    MeleeAttack { target: Entity },
 }
 
-#[derive(Debug, PartialEq)]
-pub enum ActionResult {
-    Success,
-    Failure,
-    Alternate { action: Action },
+// --- Events ---
+
+#[derive(Message)]
+pub struct MovementIntent {
+    pub entity: Entity,
+    pub dir: Direction,
 }
 
-pub fn perform_action(world: &mut World, actor: &Entity, action: &Action) -> ActionResult {
-    match action {
-        Action::Wait => ActionResult::Success,
-        Action::Move { dir } => perform_move_action(world, actor, *dir),
-        Action::MeleeAttack { target } => {
-            // Send a HitEvent
-            world.write_message(HitEvent {
-                attacker: *actor,
-                target: *target,
-            });
-            ActionResult::Success
+#[derive(Message)]
+pub struct MeleeIntent {
+    pub attacker: Entity,
+    pub target: Entity,
+}
+
+#[derive(Message)]
+pub struct WaitIntent {
+    pub entity: Entity,
+}
+
+/// Emitted by any action system when an action successfully resolves (or fails)
+/// to signal the turn manager to move to the next entity.
+#[derive(Message)]
+pub struct ActionFinishedEvent;
+
+// --- Systems ---
+
+/// Handles movement. If a collision with a hostile entity is detected,
+/// it converts the movement into a MeleeIntent instead.
+pub fn handle_movement(
+    mut intents: MessageReader<MovementIntent>,
+    mut melee_writer: MessageWriter<MeleeIntent>,
+    mut finish_writer: MessageWriter<ActionFinishedEvent>,
+    mut actors_query: Query<(Entity, &mut Position, Has<Player>, Has<Monster>)>,
+    map: Res<Map>,
+) {
+    for intent in intents.read() {
+        let Ok((_, pos, _, _)) = actors_query.get(intent.entity) else {
+            finish_writer.write(ActionFinishedEvent);
+            continue;
+        };
+
+        let target_pt = pos.to_point() + intent.dir.offset();
+
+        // 1. Bounds/Wall Check
+        if !map.in_bounds(target_pt)
+            || !is_walkable(map.tiles[map.xy_idx(target_pt.x, target_pt.y)])
+        {
+            finish_writer.write(ActionFinishedEvent);
+            continue;
         }
-    }
-}
-fn perform_move_action(world: &mut World, actor: &Entity, dir: Direction) -> ActionResult {
-    // 1. Get the current position and the Map resource
-    let Some(current_pos) = world.get::<Position>(*actor).cloned() else {
-        return ActionResult::Failure;
-    };
-    let map = world.resource::<Map>();
 
-    // 2. Calculate target
-    let offset = dir.offset();
-    let target_pt = Point::new(current_pos.x + offset.x, current_pos.y + offset.y);
+        // 2. Occupant Check (Bump-to-Attack)
+        let mut bump_target = None;
+        for (e, pos, is_p, is_m) in actors_query.iter() {
+            if pos.to_point() == target_pt && e != intent.entity {
+                bump_target = Some((e, is_p, is_m));
+                break;
+            }
+        }
 
-    // 3. Check Bounds & Walls using the Map Resource
-    if !map.in_bounds(target_pt) {
-        return ActionResult::Failure;
-    }
+        if let Some((target_entity, target_is_player, target_is_monster)) = bump_target {
+            let actor_is_player = actors_query
+                .get(intent.entity)
+                .map(|(_, _, p, _)| p)
+                .unwrap_or(false);
+            let actor_is_monster = actors_query
+                .get(intent.entity)
+                .map(|(_, _, _, m)| m)
+                .unwrap_or(false);
 
-    let target_idx = map.xy_idx(target_pt.x, target_pt.y);
-    if !is_walkable(map.tiles[target_idx]) {
-        return ActionResult::Failure;
-    }
+            let is_hostile =
+                (actor_is_player && target_is_monster) || (actor_is_monster && target_is_player);
 
-    // 4. Check for Entity Collisions (e.g., Bump-to-Attack)
-    // We search the world for any other entity with a Position at target_pt
-    let mut occupants = world.query::<(Entity, &Position)>();
-    let bump_target = occupants
-        .iter(world)
-        .find(|(e, pos)| {
-            **pos
-                == Position {
-                    x: target_pt.x,
-                    y: target_pt.y,
-                }
-                && *e != *actor
-        })
-        .map(|(e, _)| e);
-
-    if let Some(target_entity) = bump_target {
-        // Check for hostility: Player attacking Monster, or Monster attacking Player
-        let is_actor_player = world.get::<Player>(*actor).is_some();
-        let is_actor_monster = world.get::<Monster>(*actor).is_some();
-        let is_target_player = world.get::<Player>(target_entity).is_some();
-        let is_target_monster = world.get::<Monster>(target_entity).is_some();
-
-        let is_hostile_bump =
-            (is_actor_player && is_target_monster) || (is_actor_monster && is_target_player);
-
-        if is_hostile_bump {
-            return ActionResult::Alternate {
-                action: Action::MeleeAttack {
+            if is_hostile {
+                melee_writer.write(MeleeIntent {
+                    attacker: intent.entity,
                     target: target_entity,
-                },
-            };
-        } else {
-            // Not hostile, or bump target is not a recognized Player/Monster, so just block movement for now
-            return ActionResult::Failure;
+                });
+            } else {
+                // Blocked by friendly/neutral
+                finish_writer.write(ActionFinishedEvent);
+            }
+            continue;
         }
-    }
 
-    // 5. Success! Apply the movement
-    if let Some(mut pos_component) = world.get_mut::<Position>(*actor) {
-        pos_component.x = target_pt.x;
-        pos_component.y = target_pt.y;
-        ActionResult::Success
-    } else {
-        ActionResult::Failure
+        // 3. Apply Movement
+        if let Ok((_, mut pos, _, _)) = actors_query.get_mut(intent.entity) {
+            pos.x = target_pt.x;
+            pos.y = target_pt.y;
+        }
+        finish_writer.write(ActionFinishedEvent);
+    }
+}
+
+pub fn handle_melee(
+    mut intents: MessageReader<MeleeIntent>,
+    mut finish_writer: MessageWriter<ActionFinishedEvent>,
+    mut hit_events: MessageWriter<HitEvent>,
+) {
+    for intent in intents.read() {
+        hit_events.write(HitEvent {
+            attacker: intent.attacker,
+            target: intent.target,
+        });
+        finish_writer.write(ActionFinishedEvent);
+    }
+}
+
+pub fn handle_wait(
+    mut intents: MessageReader<WaitIntent>,
+    mut finish_writer: MessageWriter<ActionFinishedEvent>,
+) {
+    for _ in intents.read() {
+        finish_writer.write(ActionFinishedEvent);
     }
 }
 
@@ -114,11 +142,10 @@ pub enum Direction {
     S,
     SW,
     W,
-    NoDirection, // No movement
+    NoDirection,
 }
 
 impl Direction {
-    pub const CARDINALS: [Self; 4] = [Self::N, Self::E, Self::S, Self::W];
     pub const ALL: [Self; 8] = [
         Self::N,
         Self::NE,
@@ -130,26 +157,6 @@ impl Direction {
         Self::NW,
     ];
 
-    pub fn cardinals() -> &'static [Self] {
-        &Self::CARDINALS
-    }
-    pub fn iter() -> &'static [Self] {
-        &Self::ALL
-    }
-
-    pub fn opposite(&self) -> Self {
-        match self {
-            Direction::N => Direction::S,
-            Direction::S => Direction::N,
-            Direction::E => Direction::W,
-            Direction::W => Direction::E,
-            Direction::NW => Direction::SE,
-            Direction::NE => Direction::SW,
-            Direction::SW => Direction::NE,
-            Direction::SE => Direction::NW,
-            Direction::NoDirection => Direction::NoDirection,
-        }
-    }
     pub fn from_pos(current: &Position, target: &Position) -> Self {
         match target.x.cmp(&current.x) {
             std::cmp::Ordering::Less => match target.y.cmp(&current.y) {
