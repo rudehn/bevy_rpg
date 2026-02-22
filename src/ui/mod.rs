@@ -4,8 +4,8 @@ use crate::components::Monster;
 use crate::constants::TILE_SIZE_X; // For rough monster size check
 use crate::game::camera::MainCamera;
 use crate::game::{
-    actions::ActionStats,
     AppState,
+    actions::ActionStats,
     combat::{Damage, Health},
 };
 use crate::player::Player;
@@ -303,8 +303,14 @@ fn update_monster_tooltip_ui(
                     && mouse_world_y >= min_y
                     && mouse_world_y <= max_y
                 {
-                    hovered_monster_data =
-                        Some((entity, monster_transform, name, health, damage, action_stats));
+                    hovered_monster_data = Some((
+                        entity,
+                        monster_transform,
+                        name,
+                        health,
+                        damage,
+                        action_stats,
+                    ));
                     break;
                 }
             }
@@ -348,10 +354,10 @@ fn update_monster_tooltip_ui(
             damage_text.0 = format!("Damage: {}", damage.0);
         }
         if let Ok(mut move_speed_text) = q_tooltip_move_speed.single_mut() {
-            move_speed_text.0 = format!("Move Speed: {}", action_stats.move_delay);
+            move_speed_text.0 = format!("Move Delay: {}x", action_stats.move_delay);
         }
         if let Ok(mut action_speed_text) = q_tooltip_action_speed.single_mut() {
-            action_speed_text.0 = format!("Action Speed: {}", action_stats.action_delay);
+            action_speed_text.0 = format!("Action Delay: {}x", action_stats.action_delay);
         }
     } else {
         // Hide tooltip

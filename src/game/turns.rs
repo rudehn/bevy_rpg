@@ -57,17 +57,22 @@ impl Plugin for TurnOrderPlugin {
                 (
                     select_next_actor.run_if(in_state(TurnState::NextTurn)),
                     handle_player_input.run_if(in_state(TurnState::PlayerInput)),
-                    // --- Brain Systems ---
-                    // These respond to the "MyTurn" component and emit Intents
-                    player_ai_bridge.run_if(in_state(TurnState::Processing)),
-                    monster_ai_dispatch.run_if(in_state(TurnState::Processing)),
-                    marker_dispatch.run_if(in_state(TurnState::Processing)),
-                    // --- Execution Systems ---
-                    handle_movement.run_if(in_state(TurnState::Processing)),
-                    handle_melee.run_if(in_state(TurnState::Processing)),
-                    handle_wait.run_if(in_state(TurnState::Processing)),
-                    // --- Cleanup ---
-                    resolve_turn_end.run_if(in_state(TurnState::Processing)),
+                    (
+                        // --- Brain Systems ---
+                        // These respond to the "MyTurn" component and emit Intents
+                        player_ai_bridge,
+                        monster_ai_dispatch,
+                        marker_dispatch,
+                        // --- Execution Systems ---
+                        handle_movement,
+                        handle_melee,
+                        handle_wait,
+                        // --- Cleanup ---
+                        resolve_turn_end,
+                        continue_turn_processing,
+                    )
+                        .chain()
+                        .run_if(in_state(TurnState::Processing)),
                 )
                     .run_if(in_state(AppState::InGame)),
             );
@@ -150,9 +155,15 @@ fn player_ai_bridge(
                 });
             }
         }
-        // Remove MyTurn so we don't dispatch again
-        commands.entity(player_entity).remove::<MyTurn>();
+    } else {
+        // If no action was pending, the player implicitly waits.
+        // This ensures ActionFinishedEvent is always sent,
+        // preventing the turn manager from stalling.
+        wait_events.write(WaitIntent {
+            entity: player_entity,
+        });
     }
+    commands.entity(player_entity).remove::<MyTurn>();
 }
 
 /// BRIDGE: Triggers Monster AI
@@ -183,7 +194,6 @@ fn marker_dispatch(
         base_cost: BASE_ACTION_COST,
         category: ActionCategory::Movement,
     });
-    // TODO - Emit turn finished event
     commands.entity(entity).remove::<MyTurn>();
 }
 
@@ -191,7 +201,6 @@ fn resolve_turn_end(
     mut events: MessageReader<ActionFinishedEvent>,
     mut turn_manager: ResMut<TurnManager>,
     stats_query: Query<&ActionStats>,
-    mut next_state: ResMut<NextState<TurnState>>,
 ) {
     for event in events.read() {
         if let Some(entity) = turn_manager.acting_entity.take() {
@@ -213,9 +222,35 @@ fn resolve_turn_end(
 
             // Sort ascending by the scheduled time (the `u32` in the tuple)
             turn_manager.turn_queue.sort_by_key(|&(_, time)| time);
-
-            next_state.set(TurnState::NextTurn);
         }
+    }
+}
+
+fn continue_turn_processing(
+    mut commands: Commands,
+    mut turn_manager: ResMut<TurnManager>,
+    query_player: Query<Entity, With<Player>>,
+    mut next_state: ResMut<NextState<TurnState>>,
+) {
+    if turn_manager.acting_entity.is_some() {
+        return;
+    }
+
+    if turn_manager.turn_queue.is_empty() {
+        next_state.set(TurnState::NextTurn);
+        return;
+    }
+
+    let (next_entity, next_time) = turn_manager.turn_queue[0];
+    let is_player = query_player.get(next_entity).is_ok();
+
+    if is_player || next_time > turn_manager.current_time {
+        next_state.set(TurnState::NextTurn);
+    } else {
+        let (entity, time) = turn_manager.turn_queue.remove(0);
+        turn_manager.current_time = time;
+        turn_manager.acting_entity = Some(entity);
+        commands.entity(entity).insert(MyTurn);
     }
 }
 
