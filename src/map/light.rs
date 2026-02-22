@@ -5,7 +5,7 @@ use bracket_lib::prelude::Point;
 use crate::{
     assets::CandleSpritesheet,
     components::{Position, Viewshed},
-    constants::ENTITY_INDEX,
+    constants::Z_ITEM,
     game::AppState,
     map::map::GRID_SIZE,
     player::Player,
@@ -74,7 +74,7 @@ pub fn spawn_candle(
         Transform::from_xyz(
             pt.x as f32 * GRID_SIZE.x,
             pt.y as f32 * GRID_SIZE.y,
-            ENTITY_INDEX, // Increased Z-index for candle sprite
+            Z_ITEM, // Use Z_ITEM for candle sprite
         ),
     ));
 }

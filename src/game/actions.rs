@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::{
-    components::{Monster, Position},
+    components::{Collider, Monster, Position},
     constants::BASE_ACTION_COST,
     game::combat::HitEvent,
     map::{Map, tile::is_walkable},
@@ -72,11 +72,11 @@ pub fn handle_movement(
     mut intents: MessageReader<MovementIntent>,
     mut melee_writer: MessageWriter<MeleeIntent>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
-    mut actors_query: Query<(Entity, &mut Position, Has<Player>, Has<Monster>)>,
+    mut actors_query: Query<(Entity, &mut Position, Has<Player>, Has<Monster>, Has<Collider>)>,
     map: Res<Map>,
 ) {
     for intent in intents.read() {
-        let Ok((_, pos, _, _)) = actors_query.get(intent.entity) else {
+        let Ok((_, pos, _, _, _)) = actors_query.get(intent.entity) else {
             finish_writer.write(ActionFinishedEvent {
                 entity: intent.entity,
                 base_cost: BASE_ACTION_COST,
@@ -99,23 +99,23 @@ pub fn handle_movement(
             continue;
         }
 
-        // 2. Occupant Check (Bump-to-Attack)
+        // 2. Occupant Check (Bump-to-Attack / Block)
         let mut bump_target = None;
-        for (e, pos, is_p, is_m) in actors_query.iter() {
-            if pos.to_point() == target_pt && e != intent.entity {
-                bump_target = Some((e, is_p, is_m));
+        for (e, other_pos, other_is_player, other_is_monster, other_has_collider) in actors_query.iter() {
+            if other_pos.to_point() == target_pt && e != intent.entity {
+                bump_target = Some((e, other_is_player, other_is_monster, other_has_collider));
                 break;
             }
         }
 
-        if let Some((target_entity, target_is_player, target_is_monster)) = bump_target {
+        if let Some((target_entity, target_is_player, target_is_monster, target_has_collider)) = bump_target {
             let actor_is_player = actors_query
                 .get(intent.entity)
-                .map(|(_, _, p, _)| p)
+                .map(|(_, _, p, _, _)| p)
                 .unwrap_or(false);
             let actor_is_monster = actors_query
                 .get(intent.entity)
-                .map(|(_, _, _, m)| m)
+                .map(|(_, _, _, m, _)| m)
                 .unwrap_or(false);
 
             let is_hostile =
@@ -126,19 +126,21 @@ pub fn handle_movement(
                     attacker: intent.entity,
                     target: target_entity,
                 });
-            } else {
-                // Blocked by friendly/neutral
+                continue;
+            } else if target_has_collider {
+                // Blocked by friendly/neutral with a Collider
                 finish_writer.write(ActionFinishedEvent {
                     entity: intent.entity,
                     base_cost: BASE_ACTION_COST,
                     category: ActionCategory::Movement,
                 });
+                continue;
             }
-            continue;
+            // If neither hostile nor blocking collider, fall through to movement
         }
 
         // 3. Apply Movement
-        if let Ok((_, mut pos, _, _)) = actors_query.get_mut(intent.entity) {
+        if let Ok((_, mut pos, _, _, _)) = actors_query.get_mut(intent.entity) {
             pos.x = target_pt.x;
             pos.y = target_pt.y;
         }

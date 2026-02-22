@@ -8,7 +8,6 @@
             tile_size: (32, 32),
             health: 5,
             damage: "1d4",
-            move_delay: 0.5,
         ),
         "Orc": (
             name: "Orc",
@@ -18,7 +17,6 @@
             tile_size: (32, 32),
             health: 8,
             damage: "1d4+1",
-            action_delay: 2.0,
         ),
     }
 )

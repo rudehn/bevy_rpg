@@ -4,7 +4,7 @@ use bracket_lib::prelude::Point;
 use crate::{
     assets::{MonsterAsset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets},
     components::{Collider, Monster, Position, Viewshed},
-    constants::{ENTITY_INDEX, TILE_SIZE_X, TILE_SIZE_Y},
+    constants::{TILE_SIZE_X, TILE_SIZE_Y, Z_MONSTER},
     game::{
         MonsterAI, TurnManager,
         actions::ActionStats,
@@ -27,7 +27,7 @@ pub fn spawn_monster(
         translation: Vec3::new(
             spawn_point.x as f32 * GRID_SIZE.x,
             spawn_point.y as f32 * GRID_SIZE.y,
-            ENTITY_INDEX,
+            Z_MONSTER,
         ),
         scale: Vec3::new(scale_x, scale_y, 1.0), // Use calculated scale
         ..Default::default()
