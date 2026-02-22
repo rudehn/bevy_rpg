@@ -1,10 +1,11 @@
 use bevy::prelude::*;
 use std::collections::VecDeque;
 
+use crate::constants::BASE_ACTION_COST;
 use crate::game::AppState;
 use crate::game::actions::{
-    Action, ActionFinishedEvent, Direction, MeleeIntent, MovementIntent, WaitIntent, handle_melee,
-    handle_movement, handle_wait,
+    Action, ActionCategory, ActionFinishedEvent, ActionStats, Direction, MeleeIntent,
+    MovementIntent, WaitIntent, handle_melee, handle_movement, handle_wait,
 };
 use crate::game::ai::MonsterAI;
 use crate::player::{MovementTimer, Player};
@@ -19,9 +20,17 @@ pub struct MyTurn;
 
 #[derive(Resource, Default)]
 pub struct TurnManager {
-    pub turn_queue: VecDeque<Entity>,
+    // Stores (Entity, Scheduled Time). We will keep this sorted.
+    pub turn_queue: Vec<(Entity, u32)>,
     pub player_action_pending: Option<Action>,
     pub acting_entity: Option<Entity>,
+    pub current_time: u32, // The global clock
+}
+
+impl TurnManager {
+    pub fn add_entity(&mut self, entity: Entity) {
+        self.turn_queue.push((entity, self.current_time));
+    }
 }
 
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
@@ -72,7 +81,9 @@ fn start_turns(mut next_state: ResMut<NextState<TurnState>>) {
 fn setup_turn_order(mut commands: Commands, mut turn_manager: ResMut<TurnManager>) {
     let turn_marker_entity = commands.spawn(TurnMarker).id();
     turn_manager.turn_queue.clear();
-    turn_manager.turn_queue.push_back(turn_marker_entity);
+    // Start the global clock at 0
+    turn_manager.current_time = 0;
+    turn_manager.add_entity(turn_marker_entity);
 }
 
 /// The turn system now just labels the entity and steps aside.
@@ -82,9 +93,14 @@ fn select_next_actor(
     query_player: Query<Entity, With<Player>>,
     mut next_state: ResMut<NextState<TurnState>>,
 ) {
-    let Some(current_entity) = turn_manager.turn_queue.pop_front() else {
+    // Remove the first element (lowest scheduled time)
+    if turn_manager.turn_queue.is_empty() {
         return;
-    };
+    }
+    let (current_entity, scheduled_time) = turn_manager.turn_queue.remove(0);
+
+    // Fast-forward the global clock to when this entity is ready
+    turn_manager.current_time = scheduled_time;
     turn_manager.acting_entity = Some(current_entity);
 
     // Tag the entity so its specific "Brain System" knows to fire
@@ -156,24 +172,48 @@ fn monster_ai_dispatch(world: &mut World) {
 /// BRIDGE: Triggers Marker Logic
 fn marker_dispatch(
     mut commands: Commands,
-    mut wait_events: MessageWriter<WaitIntent>,
+    mut finish_writer: MessageWriter<ActionFinishedEvent>,
     query: Query<Entity, (With<TurnMarker>, With<MyTurn>)>,
 ) {
     let Ok(entity) = query.single() else {
         return;
     };
-    wait_events.write(WaitIntent { entity });
+    finish_writer.write(ActionFinishedEvent {
+        entity: entity,
+        base_cost: BASE_ACTION_COST,
+        category: ActionCategory::Movement,
+    });
+    // TODO - Emit turn finished event
     commands.entity(entity).remove::<MyTurn>();
 }
 
 fn resolve_turn_end(
     mut events: MessageReader<ActionFinishedEvent>,
     mut turn_manager: ResMut<TurnManager>,
+    stats_query: Query<&ActionStats>,
     mut next_state: ResMut<NextState<TurnState>>,
 ) {
-    for _ in events.read() {
+    for event in events.read() {
         if let Some(entity) = turn_manager.acting_entity.take() {
-            turn_manager.turn_queue.push_back(entity);
+            // 1. Get the entity's multipliers, defaulting to 1.0 (100%)
+            let stats = stats_query.get(entity).cloned().unwrap_or_default();
+
+            // 2. Determine which multiplier applies
+            let multiplier = match event.category {
+                ActionCategory::Movement => stats.move_delay,
+                ActionCategory::General => stats.action_delay,
+            };
+
+            // 3. Calculate final cost and their next act time
+            let final_cost = (event.base_cost as f32 * multiplier).round() as u32;
+            let next_act_time = turn_manager.current_time + final_cost;
+
+            // 4. Put them back in the queue and sort it
+            turn_manager.turn_queue.push((entity, next_act_time));
+
+            // Sort ascending by the scheduled time (the `u32` in the tuple)
+            turn_manager.turn_queue.sort_by_key(|&(_, time)| time);
+
             next_state.set(TurnState::NextTurn);
         }
     }

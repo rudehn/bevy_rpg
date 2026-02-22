@@ -3,6 +3,7 @@ use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::{
     components::{Monster, Position},
+    constants::BASE_ACTION_COST,
     game::combat::HitEvent,
     map::{Map, tile::is_walkable},
     player::Player,
@@ -34,10 +35,34 @@ pub struct WaitIntent {
     pub entity: Entity,
 }
 
+#[derive(Component, Clone)]
+pub struct ActionStats {
+    pub move_delay: f32,   // e.g., 0.5 for half time
+    pub action_delay: f32, // e.g., 2.0 for double time
+}
+
+impl Default for ActionStats {
+    fn default() -> Self {
+        Self {
+            move_delay: 1.0,
+            action_delay: 1.0,
+        }
+    }
+}
+
+pub enum ActionCategory {
+    Movement,
+    General,
+}
+
 /// Emitted by any action system when an action successfully resolves (or fails)
 /// to signal the turn manager to move to the next entity.
 #[derive(Message)]
-pub struct ActionFinishedEvent;
+pub struct ActionFinishedEvent {
+    pub entity: Entity,
+    pub base_cost: u32,
+    pub category: ActionCategory,
+}
 
 // --- Systems ---
 
@@ -52,7 +77,11 @@ pub fn handle_movement(
 ) {
     for intent in intents.read() {
         let Ok((_, pos, _, _)) = actors_query.get(intent.entity) else {
-            finish_writer.write(ActionFinishedEvent);
+            finish_writer.write(ActionFinishedEvent {
+                entity: intent.entity,
+                base_cost: BASE_ACTION_COST,
+                category: ActionCategory::Movement,
+            });
             continue;
         };
 
@@ -62,7 +91,11 @@ pub fn handle_movement(
         if !map.in_bounds(target_pt)
             || !is_walkable(map.tiles[map.xy_idx(target_pt.x, target_pt.y)])
         {
-            finish_writer.write(ActionFinishedEvent);
+            finish_writer.write(ActionFinishedEvent {
+                entity: intent.entity,
+                base_cost: BASE_ACTION_COST,
+                category: ActionCategory::Movement,
+            });
             continue;
         }
 
@@ -95,7 +128,11 @@ pub fn handle_movement(
                 });
             } else {
                 // Blocked by friendly/neutral
-                finish_writer.write(ActionFinishedEvent);
+                finish_writer.write(ActionFinishedEvent {
+                    entity: intent.entity,
+                    base_cost: BASE_ACTION_COST,
+                    category: ActionCategory::Movement,
+                });
             }
             continue;
         }
@@ -105,7 +142,11 @@ pub fn handle_movement(
             pos.x = target_pt.x;
             pos.y = target_pt.y;
         }
-        finish_writer.write(ActionFinishedEvent);
+        finish_writer.write(ActionFinishedEvent {
+            entity: intent.entity,
+            base_cost: BASE_ACTION_COST,
+            category: ActionCategory::Movement,
+        });
     }
 }
 
@@ -119,7 +160,11 @@ pub fn handle_melee(
             attacker: intent.attacker,
             target: intent.target,
         });
-        finish_writer.write(ActionFinishedEvent);
+        finish_writer.write(ActionFinishedEvent {
+            entity: intent.attacker,
+            base_cost: BASE_ACTION_COST,
+            category: ActionCategory::General,
+        });
     }
 }
 
@@ -127,8 +172,12 @@ pub fn handle_wait(
     mut intents: MessageReader<WaitIntent>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
 ) {
-    for _ in intents.read() {
-        finish_writer.write(ActionFinishedEvent);
+    for intent in intents.read() {
+        finish_writer.write(ActionFinishedEvent {
+            entity: intent.entity,
+            base_cost: BASE_ACTION_COST,
+            category: ActionCategory::General,
+        });
     }
 }
 

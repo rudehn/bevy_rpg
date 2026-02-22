@@ -100,7 +100,7 @@ fn death_system(
                 info!("Monster {:?} died!", entity);
                 commands.entity(entity).despawn();
                 // Remove from turn queue if present
-                turn_manager.turn_queue.retain(|&e| e != entity);
+                turn_manager.turn_queue.retain(|&(e, _)| e != entity);
             }
         }
     }

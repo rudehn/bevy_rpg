@@ -29,6 +29,7 @@ https://www.oryxdesignlab.com/products/p/ultimate-fantasy-tileset
 * Add spawn table
 * Add hordes
 * WASM
+* Speed up frame rate
 
 * Save game
 * Load game from Menu

@@ -75,7 +75,7 @@ pub fn spawn_monster(
         ))
         .id();
 
-    turn_manager.turn_queue.push_back(monster_entity);
+    turn_manager.add_entity(monster_entity);
 }
 
 pub fn spawn_monster_by_name(

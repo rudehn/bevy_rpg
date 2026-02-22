@@ -47,11 +47,6 @@ pub fn player_spawn_or_move_system(
     mut q_player: Query<(Entity, &mut Transform, &mut Position), With<Player>>,
     mut turn_manager: ResMut<TurnManager>, // Added TurnManager
 ) {
-    let new_pos = Transform::from_xyz(
-        spawn_point.0.x as f32 * GRID_SIZE.x,
-        spawn_point.0.y as f32 * GRID_SIZE.y,
-        ENTITY_INDEX + 0.1, // Player Z slightly higher
-    );
     let new_grid_pos = Position {
         x: spawn_point.0.x,
         y: spawn_point.0.y,
@@ -86,7 +81,7 @@ pub fn player_spawn_or_move_system(
                 Transform::from_xyz(0.0, 0.0, ENTITY_INDEX + 0.1),
             ))
             .id(); // Get the entity ID
-        turn_manager.turn_queue.push_front(player_entity); // Add player to the turn queue
+        turn_manager.add_entity(player_entity); // Add player to the turn queue
     }
 }
 
