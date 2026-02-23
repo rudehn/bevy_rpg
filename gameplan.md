@@ -18,7 +18,6 @@ https://www.oryxdesignlab.com/products/p/ultimate-fantasy-tileset
 
 # Todo
 * Refactor candle & goblin spawning from being hard coded in spawn dungeon function
-* Combine player & goblin FOV system
 * make a visibility file??
 * Remove floor resource in favor of Map.depth
 * Any better way to despawn tilemap & children entities?
@@ -26,7 +25,6 @@ https://www.oryxdesignlab.com/products/p/ultimate-fantasy-tileset
 * Revisit player_spawn_or_move_system, see other branch??
 * Update tile visiblity after player moved?? - may not be needed
 * On death, go to end game state, then go to main menu and clear map assets
-* Add spawn table
 * Add hordes
 * WASM
 * Speed up frame rate

@@ -1,6 +1,6 @@
 use bevy::{prelude::*, window::Window};
 
-use crate::components::Monster;
+use crate::components::{GameEntityMarker, Monster};
 use crate::constants::TILE_SIZE_X; // For rough monster size check
 use crate::game::camera::MainCamera;
 use crate::game::{
@@ -70,6 +70,7 @@ fn spawn_player_stats_ui(mut commands: Commands, asset_server: Res<AssetServer>)
             },
             BackgroundColor(Color::BLACK),
             BorderColor::all(Color::WHITE),
+            GameEntityMarker, // Add GameEntityMarker here
         ))
         .with_children(|parent| {
             // Title

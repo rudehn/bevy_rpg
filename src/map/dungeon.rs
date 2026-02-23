@@ -15,6 +15,7 @@ use crate::map::map::TILE_SIZE; // Import BuildData
 use crate::map::Map;
 
 use crate::{
+    components::GameEntityMarker, // Add this import
     map::{
         builders::level_builder,
         light::spawn_candle,
@@ -180,7 +181,7 @@ pub fn spawn_dungeon(
 
     // Bake the map into the ECS
     // Create the Tilemap entity
-    let map_entity = commands.spawn(DungeonECSMap).id();
+    let map_entity = commands.spawn((DungeonECSMap, GameEntityMarker)).id();
     let tile_storage = spawn_tiles_into_ecs(&mut commands, map_entity, &map, &dungeon_tileset);
 
     spawn_dungeon_entities(

@@ -2,7 +2,7 @@ use bevy::{prelude::*, time::Timer};
 
 use crate::{
     assets::DungeonTileset,
-    components::{Collider, Position, Viewshed},
+    components::{Collider, GameEntityMarker, Position, Viewshed},
     constants::Z_PLAYER,
     game::{
         TurnManager,
@@ -59,12 +59,13 @@ pub fn player_spawn_or_move_system(
         let player_entity = commands
             .spawn((
                 Player,
+                GameEntityMarker, // Add GameEntityMarker here
                 Collider,
                 new_grid_pos,
                 Viewshed::new(20),
                 Health {
-                    current: 100,
-                    max: 100,
+                    current: 20,
+                    max: 20,
                 },
                 Damage("1d6".to_string()), // Add Damage component
                 Sprite::from_atlas_image(

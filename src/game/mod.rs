@@ -1,12 +1,16 @@
 use crate::{
-    components::Position,
+    components::{GameEntityMarker, Position},
     game::{
         camera::move_camera,
+        combat::CombatPlugin, // Added CombatPlugin import
         systems::{fov_update_system, sync_entity_transforms, update_monster_visibility},
         turns::TurnOrderPlugin,
-        combat::CombatPlugin, // Added CombatPlugin import
     },
-    map::{dungeon::DungeonPlugin, light::LightPlugin, map::MapPlugin},
+    map::{
+        dungeon::{DungeonPlugin, Floor},
+        light::LightPlugin,
+        map::MapPlugin,
+    },
     player::PlayerPlugin,
 };
 use bevy::prelude::*;
@@ -30,6 +34,7 @@ pub enum AppState {
     Loading,
     Menu,
     InGame,
+    GameOver,
 }
 
 pub struct GamePlugin;
@@ -55,6 +60,26 @@ impl Plugin for GamePlugin {
             )
                 .run_if(in_state(AppState::InGame)),
         )
+        .add_systems(OnExit(AppState::GameOver), despawn_game_entities)
         .init_resource::<TurnManager>();
     }
+}
+
+fn despawn_game_entities(
+    mut commands: Commands,
+    game_entities_query: Query<Entity, With<GameEntityMarker>>,
+    mut turn_manager: ResMut<TurnManager>,
+    mut floor: ResMut<Floor>,
+) {
+    info!("Despawning all game entities...");
+
+    for entity in game_entities_query.iter() {
+        commands.entity(entity).despawn();
+    }
+
+    // Reset turn manager to clear any remaining entities in the queue
+    *turn_manager = TurnManager::default();
+    *floor = Floor::default();
+
+    info!("Finished despawning game entities.");
 }

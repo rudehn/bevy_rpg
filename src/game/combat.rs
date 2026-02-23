@@ -94,7 +94,7 @@ fn death_system(
             if is_player.is_some() {
                 // Player died
                 eprintln!("Game Over! You died!");
-                next_state.set(AppState::Menu); // Transition to menu or a specific game over state
+                next_state.set(AppState::GameOver); // Transition to GameOver state
             } else if is_monster.is_some() {
                 // Monster died
                 info!("Monster {:?} died!", entity);

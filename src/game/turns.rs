@@ -267,16 +267,16 @@ fn handle_player_input(
     }
 
     let mut action = None;
-    if keys.pressed(KeyCode::KeyW) {
+    if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
         action = Some(Action::Move { dir: Direction::N });
     }
-    if keys.pressed(KeyCode::KeyA) {
+    if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
         action = Some(Action::Move { dir: Direction::W });
     }
-    if keys.pressed(KeyCode::KeyS) {
+    if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
         action = Some(Action::Move { dir: Direction::S });
     }
-    if keys.pressed(KeyCode::KeyD) {
+    if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
         action = Some(Action::Move { dir: Direction::E });
     }
     if keys.pressed(KeyCode::Space) {
