@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use std::collections::VecDeque;
 
+use crate::components::GameEntityMarker;
 use crate::constants::BASE_ACTION_COST;
 use crate::game::AppState;
 use crate::game::actions::{
@@ -84,7 +85,7 @@ fn start_turns(mut next_state: ResMut<NextState<TurnState>>) {
 }
 
 fn setup_turn_order(mut commands: Commands, mut turn_manager: ResMut<TurnManager>) {
-    let turn_marker_entity = commands.spawn(TurnMarker).id();
+    let turn_marker_entity = commands.spawn((TurnMarker, GameEntityMarker)).id();
     turn_manager.turn_queue.clear();
     // Start the global clock at 0
     turn_manager.current_time = 0;

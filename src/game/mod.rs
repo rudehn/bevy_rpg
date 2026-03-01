@@ -2,31 +2,29 @@ use crate::{
     components::{GameEntityMarker, Position},
     game::{
         camera::move_camera,
-        combat::CombatPlugin, // Added CombatPlugin import
+        combat::CombatPlugin,
         systems::{fov_update_system, sync_entity_transforms, update_monster_visibility},
         turns::TurnOrderPlugin,
     },
     map::{
         dungeon::{DungeonPlugin, Floor},
         light::LightPlugin,
-        map::MapPlugin,
+        map::{DungeonECSMap, MapPlugin}, // Corrected: Added DungeonECSMap
     },
     player::PlayerPlugin,
 };
 use bevy::prelude::*;
-
-pub mod actions; // Declare the new actions module
+pub mod actions;
 mod ai;
 pub mod camera;
-pub mod combat; // Added combat module declaration
+pub mod combat;
 mod spawner;
 mod systems;
 mod turns;
 pub use ai::*;
+use bevy_ecs_tilemap::tiles::TileStorage;
 pub use spawner::*;
-pub use turns::*; // Expose the turns module
-
-// Removed: MinimapCamera and MainCamera component definitions
+pub use turns::*;
 
 #[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum AppState {
@@ -46,21 +44,22 @@ impl Plugin for GamePlugin {
             PlayerPlugin,
             DungeonPlugin,
             TurnOrderPlugin,
-            CombatPlugin, // Added CombatPlugin here
+            CombatPlugin,
         ))
         .add_systems(
             Update,
             (
-                sync_entity_transforms, // Run first to update transforms immediately after position changes
-                fov_update_system.after(sync_entity_transforms), // FOV updates after transforms are synced
+                sync_entity_transforms,
+                fov_update_system.after(sync_entity_transforms),
                 update_monster_visibility
-                    .run_if(|query: Query<(), Changed<Position>>| !query.is_empty()) // Re-added run_if
-                    .after(fov_update_system), // Visibility updates after FOV and transforms are synced
-                move_camera.after(sync_entity_transforms), // Move camera after transforms are synced
+                    .run_if(|query: Query<(), Changed<Position>>| !query.is_empty())
+                    .after(fov_update_system),
+                move_camera.after(sync_entity_transforms),
             )
                 .run_if(in_state(AppState::InGame)),
         )
         .add_systems(OnExit(AppState::GameOver), despawn_game_entities)
+        .add_systems(OnExit(AppState::GameOver), despawn_map)
         .init_resource::<TurnManager>();
     }
 }
@@ -82,4 +81,19 @@ fn despawn_game_entities(
     *floor = Floor::default();
 
     info!("Finished despawning game entities.");
+}
+
+fn despawn_map(mut commands: Commands, mut maps: Query<(Entity, &mut TileStorage, &Transform)>) {
+    let Some((tilemap_entity, mut tile_storage, _)) = maps
+        .iter_mut()
+        .sort_by::<&Transform>(|a, b| b.translation.z.partial_cmp(&a.translation.z).unwrap())
+        .next()
+    else {
+        return;
+    };
+
+    commands.entity(tilemap_entity).despawn();
+    for entity in tile_storage.drain() {
+        commands.entity(entity).despawn();
+    }
 }

@@ -101,6 +101,10 @@ fn death_system(
                 commands.entity(entity).despawn();
                 // Remove from turn queue if present
                 turn_manager.turn_queue.retain(|&(e, _)| e != entity);
+
+                if turn_manager.acting_entity == Some(entity) {
+                    turn_manager.acting_entity = None;
+                }
             }
         }
     }
