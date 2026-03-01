@@ -1,9 +1,10 @@
 use bevy::prelude::*;
 use bracket_lib::random::{DiceType, RandomNumberGenerator, parse_dice_string};
 
-use crate::components::Monster; // Import Monster marker
+use crate::components::{Monster, Name}; // Import Monster marker
 use crate::game::{AppState, TurnManager};
 use crate::player::Player; // Import Player marker // Import AppState for game over
+use crate::ui::game_log::GameLogMessage;
 
 // --- Components ---
 
@@ -51,29 +52,36 @@ fn roll_dice(dice_string: &str, rng: &mut RandomNumberGenerator) -> i32 {
 /// System that processes HitEvents, calculates damage, and updates target health.
 fn combat_system(
     mut hit_events: MessageReader<HitEvent>, // Changed from EventReader to MessageReader
-    query_attackers: Query<&Damage>,
-    mut query_targets: Query<&mut Health>,
+    query_attackers: Query<(&Damage, &Name)>,
+    mut query_targets: Query<(&mut Health, &Name)>,
     mut game_rng: ResMut<GameRng>, // Use GameRng resource
+    mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     for event in hit_events.read() {
-        let attacker_damage = match query_attackers.get(event.attacker) {
-            Ok(damage) => damage,
+        let (attacker_damage, attacker_name) = match query_attackers.get(event.attacker) {
+            Ok(data) => data,
             Err(_) => {
-                warn!("Attacker {:?} has no Damage component.", event.attacker);
+                warn!("Attacker {:?} has no Damage or Name component.", event.attacker);
                 continue;
             }
         };
 
-        let mut target_health = match query_targets.get_mut(event.target) {
-            Ok(health) => health,
+        let (mut target_health, target_name) = match query_targets.get_mut(event.target) {
+            Ok(data) => data,
             Err(_) => {
-                warn!("Target {:?} has no Health component.", event.target);
+                warn!("Target {:?} has no Health or Name component.", event.target);
                 continue;
             }
         };
 
         let rolled_damage = roll_dice(&attacker_damage.0, &mut game_rng.0); // Pass inner RNG
         target_health.current -= rolled_damage;
+
+        let message = format!(
+            "{} hits {} for {} damage.",
+            attacker_name.0, target_name.0, rolled_damage
+        );
+        log_writer.write(GameLogMessage(message));
 
         info!(
             "Entity {:?} hit Entity {:?} for {} damage. Target health: {}/{}",
@@ -85,19 +93,22 @@ fn combat_system(
 /// System that checks for entities with Health <= 0 and handles death.
 fn death_system(
     mut commands: Commands,
-    query_dead: Query<(Entity, &Health, Option<&Player>, Option<&Monster>)>,
+    query_dead: Query<(Entity, &Health, &Name, Option<&Player>, Option<&Monster>)>,
     mut next_state: ResMut<NextState<AppState>>,
     mut turn_manager: ResMut<TurnManager>,
+    mut log_writer: MessageWriter<GameLogMessage>,
 ) {
-    for (entity, health, is_player, is_monster) in query_dead.iter() {
+    for (entity, health, name, is_player, is_monster) in query_dead.iter() {
         if health.current <= 0 {
             if is_player.is_some() {
                 // Player died
                 eprintln!("Game Over! You died!");
+                log_writer.write(GameLogMessage("You have died!".to_string()));
                 next_state.set(AppState::GameOver); // Transition to GameOver state
             } else if is_monster.is_some() {
                 // Monster died
                 info!("Monster {:?} died!", entity);
+                log_writer.write(GameLogMessage(format!("{} dies.", name.0)));
                 commands.entity(entity).despawn();
                 // Remove from turn queue if present
                 turn_manager.turn_queue.retain(|&(e, _)| e != entity);

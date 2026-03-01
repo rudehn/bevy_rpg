@@ -1,9 +1,10 @@
 use bevy::prelude::*;
+use bevy::camera::visibility::RenderLayers;
 use bracket_lib::prelude::Point;
 
 use crate::{
     assets::{MonsterAsset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets},
-    components::{Collider, GameEntityMarker, Monster, Position, Viewshed},
+    components::{Collider, GameEntityMarker, Monster, Name, Position, Viewshed},
     constants::{TILE_SIZE_X, TILE_SIZE_Y, Z_MONSTER},
     game::{
         MonsterAI, TurnManager,
@@ -56,7 +57,7 @@ pub fn spawn_monster(
         .spawn((
             Monster,
             GameEntityMarker, // Add GameEntityMarker here
-            Name::new(monster_asset.name.clone()),
+            Name(monster_asset.name.clone()),
             MonsterAI::default(),
             Collider,
             new_grid_pos,
@@ -82,6 +83,7 @@ pub fn spawn_monster(
                     layout: layout_handle,
                 },
             ),
+            RenderLayers::layer(1),
         ))
         .id();
 

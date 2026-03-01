@@ -1,4 +1,5 @@
 use bevy::{color::palettes::css::YELLOW, prelude::*};
+use bevy::camera::visibility::RenderLayers;
 use bevy_light_2d::prelude::*;
 use bracket_lib::prelude::Point;
 
@@ -77,6 +78,7 @@ pub fn spawn_candle(
             pt.y as f32 * GRID_SIZE.y,
             Z_ITEM, // Use Z_ITEM for candle sprite
         ),
+        RenderLayers::layer(1),
     ));
 }
 

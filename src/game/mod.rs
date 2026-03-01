@@ -1,7 +1,7 @@
 use crate::{
     components::{GameEntityMarker, Position},
     game::{
-        camera::move_camera,
+        camera::{move_camera, toggle_main_camera_visibility},
         combat::CombatPlugin,
         systems::{fov_update_system, sync_entity_transforms, update_monster_visibility},
         turns::TurnOrderPlugin,
@@ -9,9 +9,10 @@ use crate::{
     map::{
         dungeon::{DungeonPlugin, Floor},
         light::LightPlugin,
-        map::{DungeonECSMap, MapPlugin}, // Corrected: Added DungeonECSMap
+        map::MapPlugin,
     },
     player::PlayerPlugin,
+    ui::game_log::GameLog,
 };
 use bevy::prelude::*;
 pub mod actions;
@@ -58,6 +59,7 @@ impl Plugin for GamePlugin {
             )
                 .run_if(in_state(AppState::InGame)),
         )
+        .add_systems(Update, toggle_main_camera_visibility.run_if(state_changed::<AppState>))
         .add_systems(OnExit(AppState::GameOver), despawn_game_entities)
         .add_systems(OnExit(AppState::GameOver), despawn_map)
         .init_resource::<TurnManager>();
@@ -69,6 +71,7 @@ fn despawn_game_entities(
     game_entities_query: Query<Entity, With<GameEntityMarker>>,
     mut turn_manager: ResMut<TurnManager>,
     mut floor: ResMut<Floor>,
+    mut game_log: ResMut<GameLog>,
 ) {
     info!("Despawning all game entities...");
 
@@ -79,6 +82,7 @@ fn despawn_game_entities(
     // Reset turn manager to clear any remaining entities in the queue
     *turn_manager = TurnManager::default();
     *floor = Floor::default();
+    game_log.entries.clear();
 
     info!("Finished despawning game entities.");
 }

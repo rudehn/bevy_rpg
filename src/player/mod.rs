@@ -1,8 +1,10 @@
-use bevy::{prelude::*, time::Timer};
+use bevy::prelude::*;
+use bevy::camera::visibility::RenderLayers;
+use bevy::time::Timer;
 
 use crate::{
     assets::DungeonTileset,
-    components::{Collider, GameEntityMarker, Position, Viewshed},
+    components::{Collider, GameEntityMarker, Name, Position, Viewshed},
     constants::Z_PLAYER,
     game::{
         TurnManager,
@@ -59,6 +61,7 @@ pub fn player_spawn_or_move_system(
         let player_entity = commands
             .spawn((
                 Player,
+                Name("You".to_string()),
                 GameEntityMarker, // Add GameEntityMarker here
                 Collider,
                 new_grid_pos,
@@ -78,6 +81,7 @@ pub fn player_spawn_or_move_system(
                 // Provide an initial Transform with the correct Z-order.
                 // X and Y will be set by sync_entity_transforms when Position changes.
                 Transform::from_xyz(0.0, 0.0, Z_PLAYER),
+                RenderLayers::layer(1),
             ))
             .id(); // Get the entity ID
         turn_manager.add_entity(player_entity); // Add player to the turn queue

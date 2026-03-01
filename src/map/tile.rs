@@ -1,5 +1,6 @@
 use bevy::ecs::component::Component;
 use bevy::prelude::{Color, Commands, Entity, Transform};
+use bevy::camera::visibility::RenderLayers;
 use bevy_ecs_tilemap::prelude::{TileBundle, TileColor, TilePos, TileTextureIndex, TilemapId};
 use bracket_lib::prelude::Point;
 
@@ -81,6 +82,7 @@ pub fn spawn_tile_entity(
         TileVisibility::Hidden,
         TileExplored::Unexplored,
         Transform::from_xyz(pt.x as f32 * GRID_SIZE.x, pt.y as f32 * GRID_SIZE.y, 0.0),
+        RenderLayers::layer(1),
     ));
 
     if !is_walkable(tile_type) {

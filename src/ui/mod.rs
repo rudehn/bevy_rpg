@@ -10,6 +10,13 @@ use crate::game::{
 };
 use crate::player::Player;
 
+pub mod game_log;
+
+use game_log::{
+    GameLog, GameLogMessage, GameLogSettings, add_log_message_system, game_log_input_system,
+    spawn_game_log_ui, update_game_log_ui,
+};
+
 // --- Components ---
 
 /// Marker component for the player's health text UI element.
@@ -373,13 +380,27 @@ pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            OnEnter(AppState::InGame),
-            (spawn_player_stats_ui, spawn_monster_tooltip_ui),
-        )
-        .add_systems(
-            Update,
-            (update_player_stats_ui, update_monster_tooltip_ui).run_if(in_state(AppState::InGame)),
-        );
+        app.init_resource::<GameLog>()
+            .init_resource::<GameLogSettings>()
+            .add_message::<GameLogMessage>()
+            .add_systems(
+                OnEnter(AppState::InGame),
+                (
+                    spawn_player_stats_ui,
+                    spawn_monster_tooltip_ui,
+                    spawn_game_log_ui,
+                ),
+            )
+            .add_systems(
+                Update,
+                (
+                    update_player_stats_ui,
+                    update_monster_tooltip_ui,
+                    add_log_message_system,
+                    update_game_log_ui,
+                    game_log_input_system,
+                )
+                    .run_if(in_state(AppState::InGame)),
+            );
     }
 }

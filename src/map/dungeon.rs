@@ -1,8 +1,9 @@
 use bevy::prelude::*;
+use bevy::camera::visibility::RenderLayers;
 use bevy_ecs_tilemap::map::{TilemapTexture, TilemapType};
 use bevy_ecs_tilemap::prelude::TilePos;
-use bevy_ecs_tilemap::TilemapBundle;
 use bevy_ecs_tilemap::tiles::TileStorage;
+use bevy_ecs_tilemap::TilemapBundle;
 use bracket_lib::prelude::Point;
 
 use crate::assets::{
@@ -13,6 +14,7 @@ use crate::game::{spawn_monster_by_name, TurnManager};
 use crate::map::builders::BuilderMap;
 use crate::map::map::TILE_SIZE; // Import BuildData
 use crate::map::Map;
+use crate::ui::game_log::GameLogMessage;
 
 use crate::{
     components::GameEntityMarker, // Add this import
@@ -69,6 +71,7 @@ fn map_transition_system(
     mut floor: ResMut<Floor>,
     q_map: Query<(Entity, &TileStorage), With<DungeonECSMap>>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
+    mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     // Despawn old map entities and their tiles
     for (map_entity, tile_storage) in q_map.iter() {
@@ -84,6 +87,7 @@ fn map_transition_system(
 
     // Increment floor
     floor.0 += 1;
+    log_writer.write(GameLogMessage(format!("Entering floor {}", floor.0)));
 
     message_writer.write(SpawnDungeonMessage);
 }
@@ -165,6 +169,7 @@ pub fn spawn_dungeon(
     monster_spawn_tables: Res<Assets<MonsterSpawnTable>>,
     monster_spawn_table_handle: Res<MonsterSpawnTableHandle>,
     monster_sprite_assets: Res<MonsterSpriteAssets>,
+    mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     let spawn_table = monster_spawn_tables
         .get(&monster_spawn_table_handle.0)
@@ -181,8 +186,8 @@ pub fn spawn_dungeon(
 
     // Bake the map into the ECS
     // Create the Tilemap entity
-    let map_entity = commands.spawn((DungeonECSMap, GameEntityMarker)).id();
-    let tile_storage = spawn_tiles_into_ecs(&mut commands, map_entity, &map, &dungeon_tileset);
+    let map_entity = commands.spawn((DungeonECSMap, GameEntityMarker, RenderLayers::layer(1))).id();
+    let _tile_storage = spawn_tiles_into_ecs(&mut commands, map_entity, &map, &dungeon_tileset);
 
     spawn_dungeon_entities(
         &mut commands,
@@ -197,4 +202,6 @@ pub fn spawn_dungeon(
     // Insert the player spawn point as a resource
     let spawn_point = builder.build_data.starting_position.unwrap();
     commands.insert_resource(PlayerSpawnPoint(Point::new(spawn_point.x, spawn_point.y)));
+    
+    log_writer.write(GameLogMessage(format!("Welcome to floor {}!", floor.0)));
 }
