@@ -25,8 +25,12 @@ https://www.oryxdesignlab.com/products/p/ultimate-fantasy-tileset
 * Update tile visiblity after player moved?? - may not be needed
 * Add hordes
 * WASM
-* Speed up frame rate
 
 * Save game
 * Load game from Menu
 Tooltips are missing
+
+
+Add tests
+- Skill for adding tests?
+- Skill for auto running tests?

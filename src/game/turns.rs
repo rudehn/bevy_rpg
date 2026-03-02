@@ -28,7 +28,6 @@ pub struct TurnManager {
     // Stores (Entity, Scheduled Time). We will keep this sorted.
     pub turn_queue: Vec<(Entity, u32)>,
     pub player_action_pending: Option<Action>,
-    pub acting_entity: Option<Entity>,
     pub current_time: u32, // The global clock
 }
 
@@ -97,32 +96,70 @@ fn setup_turn_order(mut commands: Commands, mut turn_manager: ResMut<TurnManager
     turn_manager.add_entity(turn_marker_entity);
 }
 
-/// The turn system now just labels the entity and steps aside.
+/// The turn system now just labels all entities ready to act.
 fn select_next_actor(
     mut commands: Commands,
     mut turn_manager: ResMut<TurnManager>,
     query_player: Query<Entity, With<Player>>,
     mut next_state: ResMut<NextState<TurnState>>,
 ) {
-    // Remove the first element (lowest scheduled time)
     if turn_manager.turn_queue.is_empty() {
         return;
     }
-    let (current_entity, scheduled_time) = turn_manager.turn_queue.remove(0);
 
-    // Fast-forward the global clock to when this entity is ready
-    turn_manager.current_time = scheduled_time;
-    turn_manager.acting_entity = Some(current_entity);
+    // Sort to ensure we always pick the lowest time first
+    turn_manager.turn_queue.sort_by_key(|&(_, time)| time);
 
-    // Tag the entity so its specific "Brain System" knows to fire
-    commands.entity(current_entity).insert(MyTurn);
+    let next_scheduled_time = turn_manager.turn_queue[0].1;
+    turn_manager.current_time = next_scheduled_time;
 
-    if let Ok(player_entity) = query_player.single() {
-        if current_entity == player_entity {
-            next_state.set(TurnState::PlayerInput);
-        } else {
-            next_state.set(TurnState::Processing);
+    let mut player_ready = false;
+    let mut npc_tagged = false;
+
+    // Identify all actors ready at this time slice
+    // We look at the queue and tag everyone whose time is <= current_time
+    // But we MUST stop if we hit the player to gather input.
+
+    let mut i = 0;
+    while i < turn_manager.turn_queue.len() {
+        let (entity, time) = turn_manager.turn_queue[i];
+        if time > turn_manager.current_time {
+            break;
         }
+
+        if query_player.get(entity).is_ok() {
+            player_ready = true;
+            // If we have already tagged some NPCs this batch, we MUST process them FIRST
+            // before switching to PlayerInput state.
+            if npc_tagged {
+                break;
+            } else {
+                // If no NPCs were tagged yet, the player is the very first one ready.
+                // We'll tag them and go to input.
+                commands.entity(entity).insert(MyTurn);
+                next_state.set(TurnState::PlayerInput);
+                return;
+            }
+        } else {
+            // It's an NPC or Marker
+            commands.entity(entity).insert(MyTurn);
+            npc_tagged = true;
+        }
+        i += 1;
+    }
+
+    // Remove the entities we tagged from the queue (they will be re-inserted by resolve_turn_end)
+    // IMPORTANT: We only remove the ones we tagged.
+    for _ in 0..i {
+        turn_manager.turn_queue.remove(0);
+    }
+
+    if npc_tagged {
+        next_state.set(TurnState::Processing);
+    } else if player_ready {
+        // This case should be handled by the "if no NPCs tagged yet" block above,
+        // but as a fallback:
+        next_state.set(TurnState::PlayerInput);
     }
 }
 
@@ -138,6 +175,9 @@ fn player_ai_bridge(
     let Ok(player_entity) = query.single() else {
         return;
     };
+
+    // Note: Player was already removed from queue in select_next_actor or continue_turn_processing
+    // because they are acting NOW.
 
     // We only act if there's a pending action from the input system
     if let Some(action) = turn_manager.player_action_pending.take() {
@@ -174,16 +214,16 @@ fn player_ai_bridge(
 
 /// BRIDGE: Triggers Monster AI
 fn monster_ai_dispatch(world: &mut World) {
-    // We use a query to find monsters whose turn it is
     let mut query = world.query_filtered::<Entity, (With<MonsterAI>, With<MyTurn>)>();
-    let Some(entity) = query.iter(world).next() else {
-        return;
-    };
+    let entities: Vec<Entity> = query.iter(world).collect();
 
-    let mut monster_ai = world.entity_mut(entity).take::<MonsterAI>().unwrap();
-    monster_ai.execute(entity, world);
-    world.entity_mut(entity).insert(monster_ai);
-    world.entity_mut(entity).remove::<MyTurn>();
+    for entity in entities {
+        if let Some(mut monster_ai) = world.entity_mut(entity).take::<MonsterAI>() {
+            monster_ai.execute(entity, world);
+            world.entity_mut(entity).insert(monster_ai);
+            world.entity_mut(entity).remove::<MyTurn>();
+        }
+    }
 }
 
 /// BRIDGE: Triggers Marker Logic
@@ -193,16 +233,17 @@ fn marker_dispatch(
     mut turn_end_writer: MessageWriter<TurnEndEvent>,
     query: Query<Entity, (With<TurnMarker>, With<MyTurn>)>,
 ) {
-    let Ok(entity) = query.single() else {
-        return;
-    };
-    finish_writer.write(ActionFinishedEvent {
-        entity: entity,
-        base_cost: BASE_ACTION_COST,
-        category: ActionCategory::Movement,
-    });
-    turn_end_writer.write(TurnEndEvent);
-    commands.entity(entity).remove::<MyTurn>();
+    let mut actors = 0;
+    for entity in query.iter() {
+        finish_writer.write(ActionFinishedEvent {
+            entity: entity,
+            base_cost: BASE_ACTION_COST,
+            category: ActionCategory::Movement,
+        });
+        turn_end_writer.write(TurnEndEvent);
+        commands.entity(entity).remove::<MyTurn>();
+        actors += 1;
+    }
 }
 
 fn resolve_turn_end(
@@ -211,26 +252,23 @@ fn resolve_turn_end(
     stats_query: Query<&ActionStats>,
 ) {
     for event in events.read() {
-        if let Some(entity) = turn_manager.acting_entity.take() {
-            // 1. Get the entity's multipliers, defaulting to 1.0 (100%)
-            let stats = stats_query.get(entity).cloned().unwrap_or_default();
+        let entity = event.entity;
+        // 1. Get the entity's multipliers, defaulting to 1.0 (100%)
+        let stats = stats_query.get(entity).cloned().unwrap_or_default();
 
-            // 2. Determine which multiplier applies
-            let multiplier = match event.category {
-                ActionCategory::Movement => stats.move_delay,
-                ActionCategory::General => stats.action_delay,
-            };
+        // 2. Determine which multiplier applies
+        let multiplier = match event.category {
+            ActionCategory::Movement => stats.move_delay,
+            ActionCategory::General => stats.action_delay,
+        };
 
-            // 3. Calculate final cost and their next act time
-            let final_cost = (event.base_cost as f32 * multiplier).round() as u32;
-            let next_act_time = turn_manager.current_time + final_cost;
+        // 3. Calculate final cost and their next act time
+        let final_cost = (event.base_cost as f32 * multiplier).round() as u32;
+        let next_act_time = turn_manager.current_time + final_cost;
 
-            // 4. Put them back in the queue and sort it
-            turn_manager.turn_queue.push((entity, next_act_time));
-
-            // Sort ascending by the scheduled time (the `u32` in the tuple)
-            turn_manager.turn_queue.sort_by_key(|&(_, time)| time);
-        }
+        // 4. Put them back in the queue and sort it
+        turn_manager.turn_queue.push((entity, next_act_time));
+        turn_manager.turn_queue.sort_by_key(|&(_, time)| time);
     }
 }
 
@@ -240,25 +278,38 @@ fn continue_turn_processing(
     query_player: Query<Entity, With<Player>>,
     mut next_state: ResMut<NextState<TurnState>>,
 ) {
-    if turn_manager.acting_entity.is_some() {
-        return;
-    }
+    // Check if we can immediately trigger another batch of NPCs who are ready "now"
+    let mut npc_added = false;
 
-    if turn_manager.turn_queue.is_empty() {
-        next_state.set(TurnState::NextTurn);
-        return;
-    }
+    // Sort just in case
+    turn_manager.turn_queue.sort_by_key(|&(_, time)| time);
 
-    let (next_entity, next_time) = turn_manager.turn_queue[0];
-    let is_player = query_player.get(next_entity).is_ok();
+    while !turn_manager.turn_queue.is_empty() {
+        let (next_entity, next_time) = turn_manager.turn_queue[0];
 
-    if is_player || next_time > turn_manager.current_time {
-        next_state.set(TurnState::NextTurn);
-    } else {
-        let (entity, time) = turn_manager.turn_queue.remove(0);
-        turn_manager.current_time = time;
-        turn_manager.acting_entity = Some(entity);
+        if next_time > turn_manager.current_time {
+            break;
+        }
+
+        if query_player.get(next_entity).is_ok() {
+            // If NPCs were already added this frame, we let them act first.
+            // If not, we switch to player input.
+            if !npc_added {
+                let (entity, _) = turn_manager.turn_queue.remove(0);
+                commands.entity(entity).insert(MyTurn);
+                next_state.set(TurnState::PlayerInput);
+                return;
+            }
+            break;
+        }
+
+        let (entity, _) = turn_manager.turn_queue.remove(0);
         commands.entity(entity).insert(MyTurn);
+        npc_added = true;
+    }
+
+    if !npc_added {
+        next_state.set(TurnState::NextTurn);
     }
 }
 
