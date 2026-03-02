@@ -1,7 +1,9 @@
-use crate::game::{AppState, TurnManager};
+use crate::game::AppState;
 use bevy::prelude::*;
+use bevy::text::TextLayoutInfo;
+use bevy::ui::widget::TextNodeFlags;
 use bevy::ui::{
-    AlignItems, BackgroundColor, BorderColor, Interaction, JustifyContent, UiRect, Val,
+    AlignItems, BackgroundColor, BorderColor, ContentSize, Interaction, JustifyContent, UiRect, Val,
 };
 
 pub struct MenuPlugin;
@@ -23,7 +25,10 @@ impl Plugin for MenuPlugin {
             .register_type::<Interaction>()
             .add_systems(Startup, debug_type_registration)
             .add_systems(OnEnter(AppState::Menu), menu_setup)
-            .add_systems(Update, menu_action.run_if(in_state(AppState::Menu)))
+            .add_systems(
+                Update,
+                (menu_action, dump_menu_scene).run_if(in_state(AppState::Menu)),
+            )
             .add_systems(OnExit(AppState::Menu), despawn_screen::<OnMainMenuScreen>)
             .add_systems(OnEnter(AppState::GameOver), game_over_setup)
             .add_systems(
@@ -37,43 +42,54 @@ impl Plugin for MenuPlugin {
     }
 }
 
-// fn dump_menu_scene(world: &mut World) {
-//     if !world
-//         .resource::<ButtonInput<KeyCode>>()
-//         .just_pressed(KeyCode::KeyS)
-//     {
-//         return;
-//     }
+fn dump_menu_scene(world: &mut World) {
+    if !world
+        .resource::<ButtonInput<KeyCode>>()
+        .just_pressed(KeyCode::KeyS)
+    {
+        return;
+    }
 
-//     info!("Dumping menu scene...");
+    info!("Dumping menu scene...");
 
-//     let mut entities_to_extract = Vec::new();
-//     let mut query = world.query_filtered::<Entity, Or<(With<Node>, With<OnMainMenuScreen>)>>();
-//     for entity in query.iter(world) {
-//         entities_to_extract.push(entity);
-//     }
+    let mut entities_to_extract = Vec::new();
+    let mut query = world.query_filtered::<Entity, Or<(With<Node>, With<OnMainMenuScreen>)>>();
+    for entity in query.iter(world) {
+        entities_to_extract.push(entity);
+    }
 
-//     let mut builder = DynamicSceneBuilder::from_world(world);
-//     for entity in entities_to_extract {
-//         builder.extract_entity(entity);
-//     }
+    let mut builder = DynamicSceneBuilder::from_world(world);
+    // builder = builder
+    //     .deny_component::<ComputedNode>()
+    //     .deny_component::<ContentSize>()
+    //     .deny_component::<TextLayoutInfo>()
+    //     .deny_component::<TextNodeFlags>()
+    //     .deny_component::<InheritedVisibility>()
+    //     .deny_component::<ViewVisibility>()
+    //     .deny_component::<GlobalTransform>()
+    //     .deny_component::<UiGlobalTransform>()
+    //     // Optional: Deny interaction states so the menu loads in a "neutral" state
+    //     .deny_component::<Interaction>();
+    for entity in entities_to_extract {
+        builder = builder.extract_entity(entity);
+    }
 
-//     let scene = builder.build();
-//     let type_registry = world.resource::<AppTypeRegistry>().clone();
-//     let registry = type_registry.read();
+    let scene = builder.build();
+    let type_registry = world.resource::<AppTypeRegistry>().clone();
+    let registry = type_registry.read();
 
-//     match scene.serialize(&registry) {
-//         Ok(serialized) => {
-//             let _ = std::fs::create_dir_all("assets/scenes");
-//             if let Ok(_) = std::fs::write("assets/scenes/dumped_menu.scn.ron", serialized) {
-//                 info!("Successfully dumped menu to assets/scenes/dumped_menu.scn.ron");
-//             }
-//         }
-//         Err(e) => {
-//             error!("Failed to serialize menu scene: {:?}", e);
-//         }
-//     }
-// }
+    match scene.serialize(&registry) {
+        Ok(serialized) => {
+            let _ = std::fs::create_dir_all("assets/scenes");
+            if let Ok(_) = std::fs::write("assets/scenes/dumped_menu.scn.ron", serialized) {
+                info!("Successfully dumped menu to assets/scenes/dumped_menu.scn.ron");
+            }
+        }
+        Err(e) => {
+            error!("Failed to serialize menu scene: {:?}", e);
+        }
+    }
+}
 
 fn debug_type_registration(type_registry: Res<AppTypeRegistry>) {
     let registry = type_registry.read();
