@@ -1,8 +1,8 @@
 use bevy::{prelude::*, window::Window};
 
-use crate::components::{GameEntityMarker, Monster};
-use crate::constants::TILE_SIZE_X; // For rough monster size check
-use crate::game::camera::MainCamera;
+use crate::components::{GameEntityMarker, Monster, Name};
+use crate::constants::TILE_SIZE_X;
+use crate::game::camera::{MainCamera, UiCamera};
 use crate::game::{
     AppState,
     actions::ActionStats,
@@ -58,7 +58,15 @@ pub struct MonsterTooltipActionSpeed;
 // --- Systems ---
 
 /// System that spawns the player stats UI panel on the right side of the screen.
-fn spawn_player_stats_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
+fn spawn_player_stats_ui(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    q_ui_camera: Query<Entity, With<UiCamera>>,
+) {
+    let Ok(ui_camera) = q_ui_camera.single() else {
+        return;
+    };
+
     // Root UI node for the panel
     commands
         .spawn((
@@ -68,7 +76,7 @@ fn spawn_player_stats_ui(mut commands: Commands, asset_server: Res<AssetServer>)
                 height: Val::Percent(100.0),
                 right: Val::Px(0.0),
                 top: Val::Px(0.0),
-                border: UiRect::left(Val::Px(2.0)), // Updated to use UiRect for border
+                border: UiRect::left(Val::Px(2.0)),
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::FlexStart,
                 align_items: AlignItems::FlexStart,
@@ -77,7 +85,8 @@ fn spawn_player_stats_ui(mut commands: Commands, asset_server: Res<AssetServer>)
             },
             BackgroundColor(Color::BLACK),
             BorderColor::all(Color::WHITE),
-            GameEntityMarker, // Add GameEntityMarker here
+            UiTargetCamera(ui_camera),
+            GameEntityMarker,
         ))
         .with_children(|parent| {
             // Title
@@ -135,7 +144,7 @@ fn spawn_player_stats_ui(mut commands: Commands, asset_server: Res<AssetServer>)
 fn update_player_stats_ui(
     player_query: Query<&Health, With<Player>>,
     mut health_text_query: Query<&mut Text, With<PlayerHealthText>>,
-    mut health_bar_query: Query<&mut Node, With<PlayerHealthBar>>, // Style merged into Node
+    mut health_bar_query: Query<&mut Node, With<PlayerHealthBar>>,
 ) {
     let Ok(player_health) = player_query.single() else {
         return;
@@ -153,7 +162,15 @@ fn update_player_stats_ui(
 }
 
 /// System that spawns the monster tooltip UI.
-fn spawn_monster_tooltip_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
+fn spawn_monster_tooltip_ui(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    q_ui_camera: Query<Entity, With<UiCamera>>,
+) {
+    let Ok(ui_camera) = q_ui_camera.single() else {
+        return;
+    };
+
     commands
         .spawn((
             Node {
@@ -164,9 +181,11 @@ fn spawn_monster_tooltip_ui(mut commands: Commands, asset_server: Res<AssetServe
                 border: UiRect::all(Val::Px(1.0)),
                 ..default()
             },
-            BackgroundColor(Color::BLACK),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.8)),
             BorderColor::all(Color::WHITE),
-            Visibility::Hidden, // Explicitly hide alongside display none
+            ZIndex(100),        // Ensure it's on top
+            Visibility::Hidden, // Use Visibility for intent
+            UiTargetCamera(ui_camera),
             MonsterTooltip,
         ))
         .with_children(|parent| {
@@ -223,31 +242,30 @@ fn spawn_monster_tooltip_ui(mut commands: Commands, asset_server: Res<AssetServe
         });
 }
 
-/// System that detects mouse hover over monsters and updates the tooltip.
+/// System that detects mouse hover over monsters/player and updates the tooltip.
 fn update_monster_tooltip_ui(
     windows: Query<&Window>,
     q_camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
-    q_monsters: Query<(Entity, &Transform, &Name, &Health, &Damage, &ActionStats), With<Monster>>,
-    mut q_tooltip_root: Query<(&mut Node, &mut Visibility), With<MonsterTooltip>>, // Style replaced by Node
-    mut q_tooltip_name: Query<
-        &mut Text,
+    q_actors: Query<
         (
-            With<MonsterTooltipName>,
-            Without<MonsterTooltipHealth>,
-            Without<MonsterTooltipDamage>,
-            Without<MonsterTooltipMoveSpeed>,
-            Without<MonsterTooltipActionSpeed>,
+            Entity,
+            &GlobalTransform,
+            &Name,
+            &Health,
+            &Damage,
+            Option<&ActionStats>,
+            &InheritedVisibility,
         ),
+        (Or<(With<Monster>, With<Player>)>, Without<MonsterTooltip>),
     >,
+    mut q_tooltip_root: Query<
+        (&mut Node, &mut Visibility),
+        (With<MonsterTooltip>, Without<Monster>, Without<Player>),
+    >,
+    mut q_tooltip_name: Query<&mut Text, With<MonsterTooltipName>>,
     mut q_tooltip_health: Query<
         &mut Text,
-        (
-            With<MonsterTooltipHealth>,
-            Without<MonsterTooltipName>,
-            Without<MonsterTooltipDamage>,
-            Without<MonsterTooltipMoveSpeed>,
-            Without<MonsterTooltipActionSpeed>,
-        ),
+        (With<MonsterTooltipHealth>, Without<MonsterTooltipName>),
     >,
     mut q_tooltip_damage: Query<
         &mut Text,
@@ -255,8 +273,6 @@ fn update_monster_tooltip_ui(
             With<MonsterTooltipDamage>,
             Without<MonsterTooltipName>,
             Without<MonsterTooltipHealth>,
-            Without<MonsterTooltipMoveSpeed>,
-            Without<MonsterTooltipActionSpeed>,
         ),
     >,
     mut q_tooltip_move_speed: Query<
@@ -266,7 +282,6 @@ fn update_monster_tooltip_ui(
             Without<MonsterTooltipName>,
             Without<MonsterTooltipHealth>,
             Without<MonsterTooltipDamage>,
-            Without<MonsterTooltipActionSpeed>,
         ),
     >,
     mut q_tooltip_action_speed: Query<
@@ -287,38 +302,40 @@ fn update_monster_tooltip_ui(
         return;
     };
 
-    let mut hovered_monster_data = None;
+    let mut hovered_actor_data = None;
 
     if let Some(screen_pos) = window.cursor_position() {
-        // viewport_to_world_2d now returns a Result
         if let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, screen_pos) {
             let mouse_world_x = world_pos.x;
             let mouse_world_y = world_pos.y;
 
-            // Simple AABB check for hover
-            for (entity, monster_transform, name, health, damage, action_stats) in q_monsters.iter()
+            // Simple AABB check for hover using GlobalTransform
+            for (entity, global_transform, name, health, damage, action_stats, visibility) in
+                q_actors.iter()
             {
-                let monster_size = TILE_SIZE_X as f32 * monster_transform.scale.x;
-                let half_size = monster_size / 2.0;
+                if !visibility.get() {
+                    continue;
+                }
 
-                let min_x = monster_transform.translation.x - half_size;
-                let max_x = monster_transform.translation.x + half_size;
-                let min_y = monster_transform.translation.y - half_size;
-                let max_y = monster_transform.translation.y + half_size;
+                let translation = global_transform.translation();
+                let scale = global_transform.compute_transform().scale;
+
+                // Effective size in world units
+                let half_size_x = (TILE_SIZE_X as f32 * scale.x) / 2.0;
+                let half_size_y = (TILE_SIZE_X as f32 * scale.y) / 2.0;
+
+                let min_x = translation.x - half_size_x;
+                let max_x = translation.x + half_size_x;
+                let min_y = translation.y - half_size_y;
+                let max_y = translation.y + half_size_y;
 
                 if mouse_world_x >= min_x
                     && mouse_world_x <= max_x
                     && mouse_world_y >= min_y
                     && mouse_world_y <= max_y
                 {
-                    hovered_monster_data = Some((
-                        entity,
-                        monster_transform,
-                        name,
-                        health,
-                        damage,
-                        action_stats,
-                    ));
+                    hovered_actor_data =
+                        Some((entity, translation, name, health, damage, action_stats));
                     break;
                 }
             }
@@ -329,31 +346,23 @@ fn update_monster_tooltip_ui(
         return;
     };
 
-    if let Some((_entity, monster_transform, name, health, damage, action_stats)) =
-        hovered_monster_data
+    if let Some((_entity, actor_world_pos, name, health, damage, action_stats)) = hovered_actor_data
     {
         // Show tooltip
         *tooltip_visibility = Visibility::Visible;
         tooltip_node.display = Display::Flex;
 
-        // Position tooltip near the monster
-        // world_to_viewport now returns a Result
-        if let Ok(screen_pos_monster) =
-            camera.world_to_viewport(camera_transform, monster_transform.translation)
-        {
-            tooltip_node.left = Val::Px(screen_pos_monster.x + 10.0);
-            tooltip_node.top = Val::Px(screen_pos_monster.y - 10.0);
-        } else {
-            // Fallback: position near cursor if monster not visible on screen
-            if let Some(cursor_pos) = window.cursor_position() {
-                tooltip_node.left = Val::Px(cursor_pos.x + 10.0);
-                tooltip_node.top = Val::Px(cursor_pos.y - 10.0);
-            }
+        // Position tooltip near the actor
+        if let Ok(screen_pos_actor) = camera.world_to_viewport(camera_transform, actor_world_pos) {
+            // Viewport logical coordinates are same as window logical coordinates
+            // since physical_position is (0,0) and logical offset is also (0,0).
+            tooltip_node.left = Val::Px(screen_pos_actor.x + 15.0);
+            tooltip_node.top = Val::Px(screen_pos_actor.y - 15.0);
         }
 
-        // Update tooltip text (Text is now directly mutated)
+        // Update tooltip text
         if let Ok(mut name_text) = q_tooltip_name.single_mut() {
-            name_text.0 = format!("Name: {}", name.as_str());
+            name_text.0 = format!("Name: {}", name.0);
         }
         if let Ok(mut health_text) = q_tooltip_health.single_mut() {
             health_text.0 = format!("Health: {}/{}", health.current, health.max);
@@ -361,11 +370,22 @@ fn update_monster_tooltip_ui(
         if let Ok(mut damage_text) = q_tooltip_damage.single_mut() {
             damage_text.0 = format!("Damage: {}", damage.0);
         }
-        if let Ok(mut move_speed_text) = q_tooltip_move_speed.single_mut() {
-            move_speed_text.0 = format!("Move Delay: {}x", action_stats.move_delay);
-        }
-        if let Ok(mut action_speed_text) = q_tooltip_action_speed.single_mut() {
-            action_speed_text.0 = format!("Action Delay: {}x", action_stats.action_delay);
+
+        if let Some(stats) = action_stats {
+            if let Ok(mut move_speed_text) = q_tooltip_move_speed.single_mut() {
+                move_speed_text.0 = format!("Move Delay: {}x", stats.move_delay);
+            }
+            if let Ok(mut action_speed_text) = q_tooltip_action_speed.single_mut() {
+                action_speed_text.0 = format!("Action Delay: {}x", stats.action_delay);
+            }
+        } else {
+            // Hide speed info for player if ActionStats is missing
+            if let Ok(mut move_speed_text) = q_tooltip_move_speed.single_mut() {
+                move_speed_text.0 = String::new();
+            }
+            if let Ok(mut action_speed_text) = q_tooltip_action_speed.single_mut() {
+                action_speed_text.0 = String::new();
+            }
         }
     } else {
         // Hide tooltip

@@ -1,9 +1,7 @@
 use crate::game::AppState;
 use bevy::prelude::*;
-use bevy::text::TextLayoutInfo;
-use bevy::ui::widget::TextNodeFlags;
 use bevy::ui::{
-    AlignItems, BackgroundColor, BorderColor, ContentSize, Interaction, JustifyContent, UiRect, Val,
+    AlignItems, BackgroundColor, BorderColor, Interaction, JustifyContent, UiRect, Val,
 };
 
 pub struct MenuPlugin;
