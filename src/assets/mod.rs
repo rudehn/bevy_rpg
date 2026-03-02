@@ -17,6 +17,13 @@ mod serde_helpers {
     {
         Ok(Some(f32::deserialize(deserializer)?))
     }
+
+    pub fn deserialize_i32_as_option<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(Some(i32::deserialize(deserializer)?))
+    }
 }
 
 pub struct AssetsPlugin;
@@ -82,6 +89,8 @@ pub struct MonsterAsset {
     pub tile_size: UVec2, // New field
     pub health: i32,      // New field for monster health
     pub damage: String,   // New field for monster damage
+    #[serde(default, deserialize_with = "serde_helpers::deserialize_i32_as_option")]
+    pub regen: Option<i32>, // New field for health regeneration
     #[serde(default, deserialize_with = "serde_helpers::deserialize_f32_as_option")]
     pub move_delay: Option<f32>,
     #[serde(default, deserialize_with = "serde_helpers::deserialize_f32_as_option")]

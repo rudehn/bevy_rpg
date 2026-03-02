@@ -17,6 +17,7 @@
             tile_size: (32, 32),
             health: 8,
             damage: "1d4+1",
+            regen: 20,
         ),
     }
 )

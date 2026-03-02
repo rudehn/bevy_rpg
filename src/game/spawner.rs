@@ -9,7 +9,7 @@ use crate::{
     game::{
         MonsterAI, TurnManager,
         actions::ActionStats,
-        combat::{Damage, Health},
+        combat::{Damage, Health, HealthRegen},
     }, // Added combat::Damage
     map::map::GRID_SIZE,
 };
@@ -53,39 +53,46 @@ pub fn spawn_monster(
         .unwrap()
         .clone();
 
-    let monster_entity = commands
-        .spawn((
-            Monster,
-            GameEntityMarker, // Add GameEntityMarker here
-            Name(monster_asset.name.clone()),
-            MonsterAI::default(),
-            Collider,
-            new_grid_pos,
-            new_pos,
-            Viewshed::new(monster_asset.vision_range as i32),
-            Health {
-                current: monster_asset.health,
-                max: monster_asset.health,
+    let mut monster = commands.spawn((
+        Monster,
+        GameEntityMarker, // Add GameEntityMarker here
+        Name(monster_asset.name.clone()),
+        MonsterAI::default(),
+        Collider,
+        new_grid_pos,
+        new_pos,
+        Viewshed::new(monster_asset.vision_range as i32),
+        Health {
+            current: monster_asset.health,
+            max: monster_asset.health,
+        },
+        Damage(monster_asset.damage.clone()), // Add Damage component
+        ActionStats {
+            move_delay: monster_asset
+                .move_delay
+                .unwrap_or(ActionStats::default().move_delay),
+            action_delay: monster_asset
+                .action_delay
+                .unwrap_or(ActionStats::default().action_delay),
+        },
+        Sprite::from_atlas_image(
+            texture_handle,
+            TextureAtlas {
+                index,
+                layout: layout_handle,
             },
-            Damage(monster_asset.damage.clone()), // Add Damage component
-            ActionStats {
-                move_delay: monster_asset
-                    .move_delay
-                    .unwrap_or(ActionStats::default().move_delay),
-                action_delay: monster_asset
-                    .action_delay
-                    .unwrap_or(ActionStats::default().action_delay),
-            },
-            Sprite::from_atlas_image(
-                texture_handle,
-                TextureAtlas {
-                    index,
-                    layout: layout_handle,
-                },
-            ),
-            RenderLayers::layer(1),
-        ))
-        .id();
+        ),
+        RenderLayers::layer(1),
+    ));
+
+    if let Some(regen_rate) = monster_asset.regen {
+        monster.insert(HealthRegen {
+            regen_rate,
+            regen_accumulator: 0,
+        });
+    }
+
+    let monster_entity = monster.id();
 
     turn_manager.add_entity(monster_entity);
 }

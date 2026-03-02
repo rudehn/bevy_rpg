@@ -3,16 +3,28 @@ use bracket_lib::random::{DiceType, RandomNumberGenerator, parse_dice_string};
 
 use crate::components::{Monster, Name}; // Import Monster marker
 use crate::game::{AppState, TurnManager};
+use crate::game::turns::TurnEndEvent;
 use crate::player::Player; // Import Player marker // Import AppState for game over
 use crate::ui::game_log::GameLogMessage;
 
 // --- Components ---
 
 /// Component for an entity's current and maximum health.
-#[derive(Component, Debug)]
+#[derive(Component, Debug, Reflect, Default)]
+#[reflect(Component)]
 pub struct Health {
     pub current: i32,
     pub max: i32,
+}
+
+/// Component for health regeneration.
+/// regen_rate: points gained per turn (e.g., 20 for 1 health per 5 turns)
+/// regen_accumulator: accumulated points
+#[derive(Component, Debug, Reflect, Default)]
+#[reflect(Component)]
+pub struct HealthRegen {
+    pub regen_rate: i32,
+    pub regen_accumulator: i32,
 }
 
 /// Component for an entity's damage, using dice notation (e.g., "1d6").
@@ -48,6 +60,28 @@ fn roll_dice(dice_string: &str, rng: &mut RandomNumberGenerator) -> i32 {
 }
 
 // --- Systems ---
+
+/// System that handles health regeneration at the end of a global turn cycle.
+fn regen_system(
+    mut turn_end_events: MessageReader<TurnEndEvent>,
+    mut query: Query<(&mut Health, &mut HealthRegen)>,
+) {
+    for _ in turn_end_events.read() {
+        for (mut health, mut regen) in query.iter_mut() {
+            if health.current < health.max {
+                regen.regen_accumulator += regen.regen_rate;
+                while regen.regen_accumulator >= 100 {
+                    health.current = (health.current + 1).min(health.max);
+                    regen.regen_accumulator -= 100;
+                }
+            } else {
+                // If health is full, we cap the accumulator at 100 to prevent 
+                // massive "burst" healing immediately after taking damage.
+                regen.regen_accumulator = regen.regen_accumulator.min(100);
+            }
+        }
+    }
+}
 
 /// System that processes HitEvents, calculates damage, and updates target health.
 fn combat_system(
@@ -129,7 +163,11 @@ impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(GameRng(RandomNumberGenerator::new())) // Initialize wrapped RNG
             .add_message::<HitEvent>() // Changed from add_event to add_message
-            .add_systems(Update, combat_system.run_if(in_state(AppState::InGame))) // Individual systems with run_if
-            .add_systems(Update, death_system.run_if(in_state(AppState::InGame)));
+            .register_type::<Health>()
+            .register_type::<HealthRegen>()
+            .add_systems(
+                Update,
+                (combat_system, regen_system, death_system).run_if(in_state(AppState::InGame)),
+            );
     }
 }

@@ -14,6 +14,10 @@ use crate::player::{MovementTimer, Player};
 #[derive(Component)]
 pub struct TurnMarker;
 
+/// Emitted when the global TurnMarker entity finishes its turn, signaling a full turn cycle.
+#[derive(Message)]
+pub struct TurnEndEvent;
+
 /// Marker component indicating it is currently this entity's turn.
 /// Execution systems or AI systems look for this to know when to act.
 #[derive(Component)]
@@ -52,6 +56,7 @@ impl Plugin for TurnOrderPlugin {
             .add_message::<MeleeIntent>()
             .add_message::<WaitIntent>()
             .add_message::<ActionFinishedEvent>()
+            .add_message::<TurnEndEvent>()
             .add_systems(OnEnter(AppState::InGame), (setup_turn_order, start_turns))
             .add_systems(
                 Update,
@@ -185,6 +190,7 @@ fn monster_ai_dispatch(world: &mut World) {
 fn marker_dispatch(
     mut commands: Commands,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
+    mut turn_end_writer: MessageWriter<TurnEndEvent>,
     query: Query<Entity, (With<TurnMarker>, With<MyTurn>)>,
 ) {
     let Ok(entity) = query.single() else {
@@ -195,6 +201,7 @@ fn marker_dispatch(
         base_cost: BASE_ACTION_COST,
         category: ActionCategory::Movement,
     });
+    turn_end_writer.write(TurnEndEvent);
     commands.entity(entity).remove::<MyTurn>();
 }
 
