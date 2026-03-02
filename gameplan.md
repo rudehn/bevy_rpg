@@ -29,3 +29,4 @@ https://www.oryxdesignlab.com/products/p/ultimate-fantasy-tileset
 
 * Save game
 * Load game from Menu
+Tooltips are missing

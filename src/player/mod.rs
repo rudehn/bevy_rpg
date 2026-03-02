@@ -8,7 +8,7 @@ use crate::{
     constants::Z_PLAYER,
     game::{
         TurnManager,
-        combat::{Damage, Health},
+        combat::{Damage, Health, HealthRegen},
     }, // Added combat::Damage
     map::{
         dungeon::{PlayerSpawnPoint, SpawnDungeonMessage},
@@ -69,6 +69,10 @@ pub fn player_spawn_or_move_system(
                 Health {
                     current: 20,
                     max: 20,
+                },
+                HealthRegen {
+                    regen_rate: 20,
+                    regen_accumulator: 0,
                 },
                 Damage("1d6".to_string()), // Add Damage component
                 Sprite::from_atlas_image(
