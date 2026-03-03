@@ -8,7 +8,9 @@ use crate::{
     constants::Z_PLAYER,
     game::{
         TurnManager,
+        actions::SpeedStats,
         combat::{Damage, Health, HealthRegen},
+        stats::{AttributeModifiers, Attributes, CombatStats, Level},
     }, // Added combat::Damage
     map::{
         dungeon::{PlayerSpawnPoint, SpawnDungeonMessage},
@@ -53,28 +55,42 @@ pub fn player_spawn_or_move_system(
     };
 
     if let Ok((_player_entity, mut _player_tf, mut player_pos)) = q_player.single_mut() {
-        // _player_tf is no longer mutable
         // Player already exists, move them
         *player_pos = new_grid_pos;
     } else {
         // No player exists, spawn a new one
+        // Use multiple insert calls to avoid tuple bundle size limit (15)
         let player_entity = commands
             .spawn((
                 Player,
                 Name("You".to_string()),
-                GameEntityMarker, // Add GameEntityMarker here
+                GameEntityMarker,
                 Collider,
                 new_grid_pos,
                 Viewshed::new(20),
+            ))
+            .insert((
                 Health {
-                    current: 20,
-                    max: 20,
+                    current: 10,
+                    max: 10,
                 },
                 HealthRegen {
-                    regen_rate: 20,
+                    regen_rate: 10,
                     regen_accumulator: 0,
                 },
-                Damage("1d6".to_string()), // Add Damage component
+                Damage("1d6".to_string()),
+                Attributes {
+                    strength: 10,
+                    dexterity: 10,
+                    constitution: 10,
+                    agility: 10,
+                },
+                AttributeModifiers::default(),
+                Level { value: 1 },
+                CombatStats::default(),
+                SpeedStats::default(),
+            ))
+            .insert((
                 Sprite::from_atlas_image(
                     tileset.texture.clone(),
                     TextureAtlas {
@@ -87,7 +103,7 @@ pub fn player_spawn_or_move_system(
                 Transform::from_xyz(0.0, 0.0, Z_PLAYER),
                 RenderLayers::layer(1),
             ))
-            .id(); // Get the entity ID
+            .id();
         turn_manager.add_entity(player_entity); // Add player to the turn queue
     }
 }

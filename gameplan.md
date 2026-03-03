@@ -28,6 +28,7 @@ https://www.oryxdesignlab.com/products/p/ultimate-fantasy-tileset
 * Save game
 * Load game from Menu
 
+add different attack names
 
 Add tests
 - Skill for adding tests?

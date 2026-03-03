@@ -4,7 +4,7 @@ use bracket_lib::prelude::{Algorithm2D, Point};
 use crate::{
     components::{Collider, Monster, Position},
     constants::BASE_ACTION_COST,
-    game::combat::HitEvent,
+    game::combat::AttackIntentMessage,
     map::{Map, tile::is_walkable},
     player::Player,
 };
@@ -36,23 +36,14 @@ pub struct WaitIntent {
 }
 
 #[derive(Component, Clone)]
-pub struct ActionStats {
-    pub move_delay: f32,   // e.g., 0.5 for half time
-    pub action_delay: f32, // e.g., 2.0 for double time
+pub struct SpeedStats {
+    pub delay: f32, // e.g., 0.5 for half time,  2.0 for double time
 }
 
-impl Default for ActionStats {
+impl Default for SpeedStats {
     fn default() -> Self {
-        Self {
-            move_delay: 1.0,
-            action_delay: 1.0,
-        }
+        Self { delay: 1.0 }
     }
-}
-
-pub enum ActionCategory {
-    Movement,
-    General,
 }
 
 /// Emitted by any action system when an action successfully resolves (or fails)
@@ -61,7 +52,6 @@ pub enum ActionCategory {
 pub struct ActionFinishedEvent {
     pub entity: Entity,
     pub base_cost: u32,
-    pub category: ActionCategory,
 }
 
 // --- Systems ---
@@ -72,7 +62,13 @@ pub fn handle_movement(
     mut intents: MessageReader<MovementIntent>,
     mut melee_writer: MessageWriter<MeleeIntent>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
-    mut actors_query: Query<(Entity, &mut Position, Has<Player>, Has<Monster>, Has<Collider>)>,
+    mut actors_query: Query<(
+        Entity,
+        &mut Position,
+        Has<Player>,
+        Has<Monster>,
+        Has<Collider>,
+    )>,
     map: Res<Map>,
 ) {
     for intent in intents.read() {
@@ -80,7 +76,6 @@ pub fn handle_movement(
             finish_writer.write(ActionFinishedEvent {
                 entity: intent.entity,
                 base_cost: BASE_ACTION_COST,
-                category: ActionCategory::Movement,
             });
             continue;
         };
@@ -94,21 +89,24 @@ pub fn handle_movement(
             finish_writer.write(ActionFinishedEvent {
                 entity: intent.entity,
                 base_cost: BASE_ACTION_COST,
-                category: ActionCategory::Movement,
             });
             continue;
         }
 
         // 2. Occupant Check (Bump-to-Attack / Block)
         let mut bump_target = None;
-        for (e, other_pos, other_is_player, other_is_monster, other_has_collider) in actors_query.iter() {
+        for (e, other_pos, other_is_player, other_is_monster, other_has_collider) in
+            actors_query.iter()
+        {
             if other_pos.to_point() == target_pt && e != intent.entity {
                 bump_target = Some((e, other_is_player, other_is_monster, other_has_collider));
                 break;
             }
         }
 
-        if let Some((target_entity, target_is_player, target_is_monster, target_has_collider)) = bump_target {
+        if let Some((target_entity, target_is_player, target_is_monster, target_has_collider)) =
+            bump_target
+        {
             let actor_is_player = actors_query
                 .get(intent.entity)
                 .map(|(_, _, p, _, _)| p)
@@ -132,7 +130,6 @@ pub fn handle_movement(
                 finish_writer.write(ActionFinishedEvent {
                     entity: intent.entity,
                     base_cost: BASE_ACTION_COST,
-                    category: ActionCategory::Movement,
                 });
                 continue;
             }
@@ -147,7 +144,6 @@ pub fn handle_movement(
         finish_writer.write(ActionFinishedEvent {
             entity: intent.entity,
             base_cost: BASE_ACTION_COST,
-            category: ActionCategory::Movement,
         });
     }
 }
@@ -155,17 +151,16 @@ pub fn handle_movement(
 pub fn handle_melee(
     mut intents: MessageReader<MeleeIntent>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
-    mut hit_events: MessageWriter<HitEvent>,
+    mut attack_writer: MessageWriter<AttackIntentMessage>,
 ) {
     for intent in intents.read() {
-        hit_events.write(HitEvent {
+        attack_writer.write(AttackIntentMessage {
             attacker: intent.attacker,
             target: intent.target,
         });
         finish_writer.write(ActionFinishedEvent {
             entity: intent.attacker,
             base_cost: BASE_ACTION_COST,
-            category: ActionCategory::General,
         });
     }
 }
@@ -178,7 +173,6 @@ pub fn handle_wait(
         finish_writer.write(ActionFinishedEvent {
             entity: intent.entity,
             base_cost: BASE_ACTION_COST,
-            category: ActionCategory::General,
         });
     }
 }

@@ -5,7 +5,7 @@ use crate::constants::TILE_SIZE_X;
 use crate::game::camera::{MainCamera, UiCamera};
 use crate::game::{
     AppState,
-    actions::ActionStats,
+    actions::SpeedStats,
     combat::{Damage, Health, HealthRegen},
 };
 use crate::player::Player;
@@ -285,7 +285,7 @@ fn update_monster_tooltip_ui(
             &Health,
             Option<&HealthRegen>,
             &Damage,
-            Option<&ActionStats>,
+            Option<&SpeedStats>,
             &InheritedVisibility,
         ),
         (Or<(With<Monster>, With<Player>)>, Without<MonsterTooltip>),
@@ -422,26 +422,17 @@ fn update_monster_tooltip_ui(
 
         // Handle Speed Traits
         let (mut move_trait_text, mut move_trait_color) = (String::new(), Color::WHITE);
-        let (mut action_trait_text, mut action_trait_color) = (String::new(), Color::WHITE);
 
         if let Some(stats) = action_stats {
-            if let Some((label, color)) = get_speed_trait(stats.move_delay, "Move") {
+            if let Some((label, color)) = get_speed_trait(stats.delay, "Action") {
                 move_trait_text = label;
                 move_trait_color = color;
-            }
-            if let Some((label, color)) = get_speed_trait(stats.action_delay, "Attack") {
-                action_trait_text = label;
-                action_trait_color = color;
             }
         }
 
         if let Ok((mut text, mut color)) = q_tooltip_move_speed.single_mut() {
             text.0 = move_trait_text;
             color.0 = move_trait_color;
-        }
-        if let Ok((mut text, mut color)) = q_tooltip_action_speed.single_mut() {
-            text.0 = action_trait_text;
-            color.0 = action_trait_color;
         }
     } else {
         // Hide tooltip

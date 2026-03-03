@@ -9,8 +9,8 @@ use crate::{
 };
 
 mod serde_helpers {
-    use serde::{Deserialize, Deserializer};
     use bevy::prelude::UVec2;
+    use serde::{Deserialize, Deserializer};
 
     pub fn deserialize_f32_as_option<'de, D>(deserializer: D) -> Result<Option<f32>, D::Error>
     where
@@ -53,11 +53,7 @@ impl Plugin for AssetsPlugin {
             )
             .add_systems(
                 Update,
-                (
-                    load_monster_sprites,
-                    check_assets_loaded,
-                )
-                    .run_if(in_state(AppState::Loading)),
+                (load_monster_sprites, check_assets_loaded).run_if(in_state(AppState::Loading)),
             );
     }
 }
@@ -93,18 +89,28 @@ pub struct MonsterAsset {
     pub name: String,
     pub vision_range: f32,
     pub sprite: String,
-    #[serde(default, deserialize_with = "serde_helpers::deserialize_uvec2_as_option")]
+    #[serde(
+        default,
+        deserialize_with = "serde_helpers::deserialize_uvec2_as_option"
+    )]
     pub grid_size: Option<UVec2>,
-    #[serde(default, deserialize_with = "serde_helpers::deserialize_uvec2_as_option")]
+    #[serde(
+        default,
+        deserialize_with = "serde_helpers::deserialize_uvec2_as_option"
+    )]
     pub tile_size: Option<UVec2>,
-    pub health: i32,      // New field for monster health
-    pub damage: String,   // New field for monster damage
+
+    // New Stat Fields
+    pub level: i32,
+    pub base_hp: i32,
+    pub strength: i32,
+    pub dexterity: i32,
+    pub constitution: i32,
+    pub agility: i32,
+    pub damage: String,
+
     #[serde(default, deserialize_with = "serde_helpers::deserialize_i32_as_option")]
     pub regen: Option<i32>, // New field for health regeneration
-    #[serde(default, deserialize_with = "serde_helpers::deserialize_f32_as_option")]
-    pub move_delay: Option<f32>,
-    #[serde(default, deserialize_with = "serde_helpers::deserialize_f32_as_option")]
-    pub action_delay: Option<f32>,
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]

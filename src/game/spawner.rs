@@ -1,5 +1,5 @@
-use bevy::prelude::*;
 use bevy::camera::visibility::RenderLayers;
+use bevy::prelude::*;
 use bracket_lib::prelude::Point;
 
 use crate::{
@@ -8,8 +8,9 @@ use crate::{
     constants::{TILE_SIZE_X, TILE_SIZE_Y, Z_MONSTER},
     game::{
         MonsterAI, TurnManager,
-        actions::ActionStats,
+        actions::SpeedStats,
         combat::{Damage, Health, HealthRegen},
+        stats::{AttributeModifiers, Attributes, CombatStats, Level, MonsterBaseHealth},
     }, // Added combat::Damage
     map::map::GRID_SIZE,
 };
@@ -54,46 +55,58 @@ pub fn spawn_monster(
         .unwrap()
         .clone();
 
-    let mut monster = commands.spawn((
-        Monster,
-        GameEntityMarker, // Add GameEntityMarker here
-        Name(monster_asset.name.clone()),
-        MonsterAI::default(),
-        Collider,
-        new_grid_pos,
-        new_pos,
-        Viewshed::new(monster_asset.vision_range as i32),
-        Health {
-            current: monster_asset.health,
-            max: monster_asset.health,
-        },
-        Damage(monster_asset.damage.clone()), // Add Damage component
-        ActionStats {
-            move_delay: monster_asset
-                .move_delay
-                .unwrap_or(ActionStats::default().move_delay),
-            action_delay: monster_asset
-                .action_delay
-                .unwrap_or(ActionStats::default().action_delay),
-        },
-        Sprite::from_atlas_image(
-            texture_handle,
-            TextureAtlas {
-                index,
-                layout: layout_handle,
+    // Use multiple insert calls to avoid large tuple bundle limit (15)
+    let monster_entity = commands
+        .spawn((
+            Monster,
+            GameEntityMarker,
+            Name(monster_asset.name.clone()),
+            MonsterAI::default(),
+            Collider,
+            new_grid_pos,
+            new_pos,
+            Viewshed::new(monster_asset.vision_range as i32),
+        ))
+        .insert((
+            Health {
+                current: 10, // Initial value, recalculated by stats system
+                max: 10,
             },
-        ),
-        RenderLayers::layer(1),
-    ));
+            Damage(monster_asset.damage.clone()),
+            SpeedStats::default(),
+            Attributes {
+                strength: monster_asset.strength,
+                dexterity: monster_asset.dexterity,
+                constitution: monster_asset.constitution,
+                agility: monster_asset.agility,
+            },
+            AttributeModifiers::default(),
+            Level {
+                value: monster_asset.level,
+            },
+            MonsterBaseHealth {
+                value: monster_asset.base_hp,
+            },
+            CombatStats::default(),
+        ))
+        .insert((
+            Sprite::from_atlas_image(
+                texture_handle,
+                TextureAtlas {
+                    index,
+                    layout: layout_handle,
+                },
+            ),
+            RenderLayers::layer(1),
+        ))
+        .id();
 
     if let Some(regen_rate) = monster_asset.regen {
-        monster.insert(HealthRegen {
+        commands.entity(monster_entity).insert(HealthRegen {
             regen_rate,
             regen_accumulator: 0,
         });
     }
-
-    let monster_entity = monster.id();
 
     turn_manager.add_entity(monster_entity);
 }

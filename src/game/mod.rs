@@ -3,6 +3,7 @@ use crate::{
     game::{
         camera::{move_camera, toggle_main_camera_visibility},
         combat::CombatPlugin,
+        stats::StatsPlugin,
         systems::{fov_update_system, sync_entity_transforms, update_monster_visibility},
         turns::TurnOrderPlugin,
     },
@@ -19,6 +20,7 @@ pub mod actions;
 mod ai;
 pub mod camera;
 pub mod combat;
+pub mod stats;
 mod spawner;
 mod systems;
 mod turns;
@@ -46,6 +48,7 @@ impl Plugin for GamePlugin {
             DungeonPlugin,
             TurnOrderPlugin,
             CombatPlugin,
+            StatsPlugin,
         ))
         .add_systems(
             Update,

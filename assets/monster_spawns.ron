@@ -3,11 +3,16 @@
     (
       monster: "Goblin",
       min_floor: 1,
-      max_floor: 100,
+      max_floor: 5,
+    ),
+    (
+      monster: "Rat",
+      min_floor: 1,
+      max_floor: 3,
     ),
     (
       monster: "Orc",
-      min_floor: 1,
+      min_floor: 3,
       max_floor: 100,
     ),
   ]

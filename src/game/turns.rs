@@ -5,8 +5,8 @@ use crate::components::GameEntityMarker;
 use crate::constants::BASE_ACTION_COST;
 use crate::game::AppState;
 use crate::game::actions::{
-    Action, ActionCategory, ActionFinishedEvent, ActionStats, Direction, MeleeIntent,
-    MovementIntent, WaitIntent, handle_melee, handle_movement, handle_wait,
+    Action, ActionFinishedEvent, Direction, MeleeIntent, MovementIntent, SpeedStats, WaitIntent,
+    handle_melee, handle_movement, handle_wait,
 };
 use crate::game::ai::MonsterAI;
 use crate::player::{MovementTimer, Player};
@@ -238,7 +238,6 @@ fn marker_dispatch(
         finish_writer.write(ActionFinishedEvent {
             entity: entity,
             base_cost: BASE_ACTION_COST,
-            category: ActionCategory::Movement,
         });
         turn_end_writer.write(TurnEndEvent);
         commands.entity(entity).remove::<MyTurn>();
@@ -249,21 +248,15 @@ fn marker_dispatch(
 fn resolve_turn_end(
     mut events: MessageReader<ActionFinishedEvent>,
     mut turn_manager: ResMut<TurnManager>,
-    stats_query: Query<&ActionStats>,
+    stats_query: Query<&SpeedStats>,
 ) {
     for event in events.read() {
         let entity = event.entity;
         // 1. Get the entity's multipliers, defaulting to 1.0 (100%)
         let stats = stats_query.get(entity).cloned().unwrap_or_default();
 
-        // 2. Determine which multiplier applies
-        let multiplier = match event.category {
-            ActionCategory::Movement => stats.move_delay,
-            ActionCategory::General => stats.action_delay,
-        };
-
         // 3. Calculate final cost and their next act time
-        let final_cost = (event.base_cost as f32 * multiplier).round() as u32;
+        let final_cost = (event.base_cost as f32 * stats.delay).round() as u32;
         let next_act_time = turn_manager.current_time + final_cost;
 
         // 4. Put them back in the queue and sort it
