@@ -1,5 +1,5 @@
-use bevy::prelude::*;
 use crate::components::GameEntityMarker;
+use bevy::prelude::*;
 
 #[derive(Message, Debug, Clone)]
 pub struct GameLogMessage(pub String);
@@ -39,7 +39,17 @@ pub fn add_log_message_system(
     }
 }
 
-pub fn spawn_game_log_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
+use crate::game::camera::UiCamera;
+
+pub fn spawn_game_log_ui(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    q_ui_camera: Query<Entity, With<UiCamera>>,
+) {
+    let Ok(ui_camera) = q_ui_camera.single() else {
+        return;
+    };
+
     commands
         .spawn((
             Node {
@@ -55,6 +65,7 @@ pub fn spawn_game_log_ui(mut commands: Commands, asset_server: Res<AssetServer>)
             },
             BackgroundColor(Color::BLACK.with_alpha(0.85)),
             BorderColor::all(Color::WHITE),
+            UiTargetCamera(ui_camera),
             GameLogNode,
             GameEntityMarker,
         ))
@@ -72,22 +83,19 @@ pub fn spawn_game_log_ui(mut commands: Commands, asset_server: Res<AssetServer>)
         });
 }
 
-pub fn update_game_log_ui(
-    game_log: Res<GameLog>,
-    mut q_text: Query<&mut Text, With<GameLogText>>,
-) {
+pub fn update_game_log_ui(game_log: Res<GameLog>, mut q_text: Query<&mut Text, With<GameLogText>>) {
     if let Ok(mut text) = q_text.single_mut() {
         let max_lines = 5;
         let entries_len = game_log.entries.len();
-        
+
         let start = if entries_len > max_lines {
             entries_len - max_lines
         } else {
             0
         };
-        
+
         let end = entries_len;
-        
+
         let displayed_messages: Vec<String> = game_log.entries[start..end].to_vec();
         text.0 = displayed_messages.join("\n");
     }

@@ -21,8 +21,9 @@ pub fn spawn_monster(
     monster_asset: &MonsterAsset,
     monster_sprite_assets: &Res<MonsterSpriteAssets>,
 ) {
-    let scale_x = TILE_SIZE_X as f32 / monster_asset.tile_size.x as f32;
-    let scale_y = TILE_SIZE_Y as f32 / monster_asset.tile_size.y as f32;
+    let tile_size = monster_asset.tile_size.unwrap_or(UVec2::new(32, 32));
+    let scale_x = TILE_SIZE_X as f32 / tile_size.x as f32;
+    let scale_y = TILE_SIZE_Y as f32 / tile_size.y as f32;
 
     let new_pos = Transform {
         translation: Vec3::new(

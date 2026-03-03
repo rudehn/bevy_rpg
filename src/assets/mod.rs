@@ -10,6 +10,7 @@ use crate::{
 
 mod serde_helpers {
     use serde::{Deserialize, Deserializer};
+    use bevy::prelude::UVec2;
 
     pub fn deserialize_f32_as_option<'de, D>(deserializer: D) -> Result<Option<f32>, D::Error>
     where
@@ -23,6 +24,13 @@ mod serde_helpers {
         D: Deserializer<'de>,
     {
         Ok(Some(i32::deserialize(deserializer)?))
+    }
+
+    pub fn deserialize_uvec2_as_option<'de, D>(deserializer: D) -> Result<Option<UVec2>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(Some(UVec2::deserialize(deserializer)?))
     }
 }
 
@@ -85,8 +93,10 @@ pub struct MonsterAsset {
     pub name: String,
     pub vision_range: f32,
     pub sprite: String,
-    pub grid_size: UVec2, // New field
-    pub tile_size: UVec2, // New field
+    #[serde(default, deserialize_with = "serde_helpers::deserialize_uvec2_as_option")]
+    pub grid_size: Option<UVec2>,
+    #[serde(default, deserialize_with = "serde_helpers::deserialize_uvec2_as_option")]
+    pub tile_size: Option<UVec2>,
     pub health: i32,      // New field for monster health
     pub damage: String,   // New field for monster damage
     #[serde(default, deserialize_with = "serde_helpers::deserialize_i32_as_option")]
@@ -196,10 +206,13 @@ fn load_monster_sprites(
                         .handles
                         .insert(texture_path_string.clone(), texture_handle);
 
+                    let tile_size = monster_asset.tile_size.unwrap_or(UVec2::new(32, 32));
+                    let grid_size = monster_asset.grid_size.unwrap_or(UVec2::new(1, 1));
+
                     let layout_handle = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
-                        monster_asset.tile_size,   // Use tile_size from MonsterAsset
-                        monster_asset.grid_size.x, // Use grid_size.x from MonsterAsset
-                        monster_asset.grid_size.y, // Use grid_size.y from MonsterAsset
+                        tile_size,   // Use tile_size from MonsterAsset
+                        grid_size.x, // Use grid_size.x from MonsterAsset
+                        grid_size.y, // Use grid_size.y from MonsterAsset
                         None,
                         None,
                     ));

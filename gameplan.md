@@ -1,6 +1,5 @@
-Add map generation
+
 Add light source, blocked by walls
-Add player vision
 Add floors & allow player to go up and down floors
 add spawner weight
 
@@ -28,7 +27,6 @@ https://www.oryxdesignlab.com/products/p/ultimate-fantasy-tileset
 
 * Save game
 * Load game from Menu
-Tooltips are missing
 
 
 Add tests

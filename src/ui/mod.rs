@@ -6,7 +6,7 @@ use crate::game::camera::{MainCamera, UiCamera};
 use crate::game::{
     AppState,
     actions::ActionStats,
-    combat::{Damage, Health},
+    combat::{Damage, Health, HealthRegen},
 };
 use crate::player::Player;
 
@@ -142,18 +142,29 @@ fn spawn_player_stats_ui(
 
 /// System that updates the player's health display in the UI.
 fn update_player_stats_ui(
-    player_query: Query<&Health, With<Player>>,
+    player_query: Query<(&Health, Option<&HealthRegen>), With<Player>>,
     mut health_text_query: Query<&mut Text, With<PlayerHealthText>>,
     mut health_bar_query: Query<&mut Node, With<PlayerHealthBar>>,
 ) {
-    let Ok(player_health) = player_query.single() else {
+    let Ok((player_health, player_regen)) = player_query.single() else {
         return;
     };
 
     let health_percentage = player_health.current as f32 / player_health.max as f32;
 
     if let Ok(mut text) = health_text_query.single_mut() {
-        text.0 = format!("Health: {}/{}", player_health.current, player_health.max);
+        let mut health_str = format!("Health: {}/{}", player_health.current, player_health.max);
+        if let Some(regen) = player_regen {
+            if regen.regen_rate > 0 {
+                if regen.regen_rate >= 100 {
+                    health_str.push_str(&format!(" (+{}/t)", regen.regen_rate / 100));
+                } else {
+                    let turns = 100 / regen.regen_rate;
+                    health_str.push_str(&format!(" (+1/{}t)", turns));
+                }
+            }
+        }
+        text.0 = health_str;
     }
 
     if let Ok(mut health_bar_node) = health_bar_query.single_mut() {
@@ -181,7 +192,7 @@ fn spawn_monster_tooltip_ui(
                 border: UiRect::all(Val::Px(1.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.8)),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
             BorderColor::all(Color::WHITE),
             ZIndex(100),        // Ensure it's on top
             Visibility::Hidden, // Use Visibility for intent
@@ -220,7 +231,7 @@ fn spawn_monster_tooltip_ui(
                 MonsterTooltipDamage,
             ));
             parent.spawn((
-                Text::new("Move Speed: "),
+                Text::new(""),
                 TextFont {
                     font: asset_server.load("fonts/Macondo-Regular.ttf"),
                     font_size: 16.0,
@@ -230,7 +241,7 @@ fn spawn_monster_tooltip_ui(
                 MonsterTooltipMoveSpeed,
             ));
             parent.spawn((
-                Text::new("Action Speed: "),
+                Text::new(""),
                 TextFont {
                     font: asset_server.load("fonts/Macondo-Regular.ttf"),
                     font_size: 16.0,
@@ -240,6 +251,26 @@ fn spawn_monster_tooltip_ui(
                 MonsterTooltipActionSpeed,
             ));
         });
+}
+
+/// Helper to get semantic speed traits and their colors based on dangerousness.
+/// Fast = Low Multiplier = RED (Dangerous)
+/// Slow = High Multiplier = GREEN (Advantage)
+fn get_speed_trait(multiplier: f32, category: &str) -> Option<(String, Color)> {
+    if multiplier < 0.75 {
+        Some((
+            format!("Very Quick {}", category),
+            Color::srgb(1.0, 0.2, 0.2),
+        )) // Bright Red
+    } else if multiplier < 0.95 {
+        Some((format!("Fast {}", category), Color::srgb(1.0, 0.6, 0.2))) // Orange
+    } else if multiplier > 1.3 {
+        Some((format!("Sluggish {}", category), Color::srgb(0.2, 1.0, 0.2))) // Bright Green
+    } else if multiplier > 1.05 {
+        Some((format!("Slow {}", category), Color::srgb(0.5, 1.0, 0.5))) // Pale Green
+    } else {
+        None
+    }
 }
 
 /// System that detects mouse hover over monsters/player and updates the tooltip.
@@ -252,6 +283,7 @@ fn update_monster_tooltip_ui(
             &GlobalTransform,
             &Name,
             &Health,
+            Option<&HealthRegen>,
             &Damage,
             Option<&ActionStats>,
             &InheritedVisibility,
@@ -276,7 +308,7 @@ fn update_monster_tooltip_ui(
         ),
     >,
     mut q_tooltip_move_speed: Query<
-        &mut Text,
+        (&mut Text, &mut TextColor),
         (
             With<MonsterTooltipMoveSpeed>,
             Without<MonsterTooltipName>,
@@ -285,7 +317,7 @@ fn update_monster_tooltip_ui(
         ),
     >,
     mut q_tooltip_action_speed: Query<
-        &mut Text,
+        (&mut Text, &mut TextColor),
         (
             With<MonsterTooltipActionSpeed>,
             Without<MonsterTooltipName>,
@@ -310,7 +342,7 @@ fn update_monster_tooltip_ui(
             let mouse_world_y = world_pos.y;
 
             // Simple AABB check for hover using GlobalTransform
-            for (entity, global_transform, name, health, damage, action_stats, visibility) in
+            for (entity, global_transform, name, health, regen, damage, action_stats, visibility) in
                 q_actors.iter()
             {
                 if !visibility.get() {
@@ -334,8 +366,15 @@ fn update_monster_tooltip_ui(
                     && mouse_world_y >= min_y
                     && mouse_world_y <= max_y
                 {
-                    hovered_actor_data =
-                        Some((entity, translation, name, health, damage, action_stats));
+                    hovered_actor_data = Some((
+                        entity,
+                        translation,
+                        name,
+                        health,
+                        regen,
+                        damage,
+                        action_stats,
+                    ));
                     break;
                 }
             }
@@ -346,7 +385,8 @@ fn update_monster_tooltip_ui(
         return;
     };
 
-    if let Some((_entity, actor_world_pos, name, health, damage, action_stats)) = hovered_actor_data
+    if let Some((_entity, actor_world_pos, name, health, regen, damage, action_stats)) =
+        hovered_actor_data
     {
         // Show tooltip
         *tooltip_visibility = Visibility::Visible;
@@ -354,8 +394,6 @@ fn update_monster_tooltip_ui(
 
         // Position tooltip near the actor
         if let Ok(screen_pos_actor) = camera.world_to_viewport(camera_transform, actor_world_pos) {
-            // Viewport logical coordinates are same as window logical coordinates
-            // since physical_position is (0,0) and logical offset is also (0,0).
             tooltip_node.left = Val::Px(screen_pos_actor.x + 15.0);
             tooltip_node.top = Val::Px(screen_pos_actor.y - 15.0);
         }
@@ -365,27 +403,45 @@ fn update_monster_tooltip_ui(
             name_text.0 = format!("Name: {}", name.0);
         }
         if let Ok(mut health_text) = q_tooltip_health.single_mut() {
-            health_text.0 = format!("Health: {}/{}", health.current, health.max);
+            let mut health_str = format!("Health: {}/{}", health.current, health.max);
+            if let Some(r) = regen {
+                if r.regen_rate > 0 {
+                    if r.regen_rate >= 100 {
+                        health_str.push_str(&format!(" (+{}/t)", r.regen_rate / 100));
+                    } else {
+                        let turns = 100 / r.regen_rate;
+                        health_str.push_str(&format!(" (+1/{}t)", turns));
+                    }
+                }
+            }
+            health_text.0 = health_str;
         }
         if let Ok(mut damage_text) = q_tooltip_damage.single_mut() {
             damage_text.0 = format!("Damage: {}", damage.0);
         }
 
+        // Handle Speed Traits
+        let (mut move_trait_text, mut move_trait_color) = (String::new(), Color::WHITE);
+        let (mut action_trait_text, mut action_trait_color) = (String::new(), Color::WHITE);
+
         if let Some(stats) = action_stats {
-            if let Ok(mut move_speed_text) = q_tooltip_move_speed.single_mut() {
-                move_speed_text.0 = format!("Move Delay: {}x", stats.move_delay);
+            if let Some((label, color)) = get_speed_trait(stats.move_delay, "Move") {
+                move_trait_text = label;
+                move_trait_color = color;
             }
-            if let Ok(mut action_speed_text) = q_tooltip_action_speed.single_mut() {
-                action_speed_text.0 = format!("Action Delay: {}x", stats.action_delay);
+            if let Some((label, color)) = get_speed_trait(stats.action_delay, "Attack") {
+                action_trait_text = label;
+                action_trait_color = color;
             }
-        } else {
-            // Hide speed info for player if ActionStats is missing
-            if let Ok(mut move_speed_text) = q_tooltip_move_speed.single_mut() {
-                move_speed_text.0 = String::new();
-            }
-            if let Ok(mut action_speed_text) = q_tooltip_action_speed.single_mut() {
-                action_speed_text.0 = String::new();
-            }
+        }
+
+        if let Ok((mut text, mut color)) = q_tooltip_move_speed.single_mut() {
+            text.0 = move_trait_text;
+            color.0 = move_trait_color;
+        }
+        if let Ok((mut text, mut color)) = q_tooltip_action_speed.single_mut() {
+            text.0 = action_trait_text;
+            color.0 = action_trait_color;
         }
     } else {
         // Hide tooltip
