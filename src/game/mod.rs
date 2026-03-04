@@ -6,6 +6,7 @@ use crate::{
         stats::StatsPlugin,
         systems::{fov_update_system, sync_entity_transforms, update_monster_visibility},
         turns::TurnOrderPlugin,
+        level::LevelPlugin,
     },
     map::{
         dungeon::{DungeonPlugin, Floor},
@@ -24,6 +25,7 @@ pub mod stats;
 mod spawner;
 mod systems;
 mod turns;
+pub mod level;
 pub use ai::*;
 use bevy_ecs_tilemap::tiles::TileStorage;
 pub use spawner::*;
@@ -58,6 +60,7 @@ impl Plugin for GamePlugin {
             TurnOrderPlugin,
             CombatPlugin,
             StatsPlugin,
+            LevelPlugin,
         ))
         .add_systems(
             Update,

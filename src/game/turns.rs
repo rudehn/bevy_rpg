@@ -101,6 +101,7 @@ fn select_next_actor(
     mut commands: Commands,
     mut turn_manager: ResMut<TurnManager>,
     query_player: Query<Entity, With<Player>>,
+    query_all: Query<Entity>,
     mut next_state: ResMut<NextState<TurnState>>,
 ) {
     if turn_manager.turn_queue.is_empty() {
@@ -127,6 +128,12 @@ fn select_next_actor(
             break;
         }
 
+        // Safety check: ensure entity still exists in the world
+        if !query_all.contains(entity) {
+            turn_manager.turn_queue.remove(i);
+            continue;
+        }
+
         if query_player.get(entity).is_ok() {
             player_ready = true;
             // If we have already tagged some NPCs this batch, we MUST process them FIRST
@@ -136,13 +143,17 @@ fn select_next_actor(
             } else {
                 // If no NPCs were tagged yet, the player is the very first one ready.
                 // We'll tag them and go to input.
-                commands.entity(entity).insert(MyTurn);
+                if let Ok(mut ec) = commands.get_entity(entity) {
+                    ec.insert(MyTurn);
+                }
                 next_state.set(TurnState::PlayerInput);
                 return;
             }
         } else {
             // It's an NPC or Marker
-            commands.entity(entity).insert(MyTurn);
+            if let Ok(mut ec) = commands.get_entity(entity) {
+                ec.insert(MyTurn);
+            }
             npc_tagged = true;
         }
         i += 1;

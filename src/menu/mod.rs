@@ -128,50 +128,45 @@ pub struct OnMainMenuScreen;
 pub struct OnGameOverScreen;
 
 fn menu_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
-    commands.spawn(DynamicSceneRoot(
-        asset_server.load("scenes/main_menu.scn.ron"),
-    ));
-    // During migration, we keep the imperative spawning active
-    // so we can "dump" it to a file. Once the file works, we'll
-    // switch to DynamicSceneRoot.
-    // commands
-    //     .spawn((
-    //         Node {
-    //             width: Val::Percent(100.0),
-    //             height: Val::Percent(100.0),
-    //             align_items: AlignItems::Center,
-    //             justify_content: JustifyContent::Center,
-    //             ..default()
-    //         },
-    //         BackgroundColor(Color::NONE),
-    //         OnMainMenuScreen,
-    //     ))
-    //     .with_children(|parent| {
-    //         parent
-    //             .spawn((
-    //                 Button,
-    //                 Node {
-    //                     width: Val::Px(150.0),
-    //                     height: Val::Px(65.0),
-    //                     border: UiRect::all(Val::Px(5.0)),
-    //                     justify_content: JustifyContent::Center,
-    //                     align_items: AlignItems::Center,
-    //                     ..default()
-    //                 },
-    //                 BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
-    //                 BorderColor::all(Color::BLACK),
-    //             ))
-    //             .with_children(|parent| {
-    //                 parent.spawn((
-    //                     Text::new("Play"),
-    //                     TextFont {
-    //                         font_size: 40.0,
-    //                         ..default()
-    //                     },
-    //                     TextColor(Color::WHITE),
-    //                 ));
-    //             });
-    //     });
+    commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            BackgroundColor(Color::NONE),
+            OnMainMenuScreen,
+        ))
+        .with_children(|parent| {
+            parent
+                .spawn((
+                    Button,
+                    Node {
+                        width: Val::Px(150.0),
+                        height: Val::Px(65.0),
+                        border: UiRect::all(Val::Px(5.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
+                    BorderColor::all(Color::BLACK),
+                ))
+                .with_children(|parent| {
+                    parent.spawn((
+                        Text::new("Play"),
+                        TextFont {
+                            font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                            font_size: 40.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+                });
+        });
 }
 
 fn menu_action(

@@ -11,6 +11,7 @@ use crate::{
         actions::SpeedStats,
         combat::{Damage, Health, HealthRegen},
         stats::{AttributeModifiers, Attributes, CombatStats, Level},
+        level::{Experience, AvailableStatPoints},
     }, // Added combat::Damage
     map::{
         dungeon::{PlayerSpawnPoint, SpawnDungeonMessage},
@@ -89,6 +90,11 @@ pub fn player_spawn_or_move_system(
                 Level { value: 1 },
                 CombatStats::default(),
                 SpeedStats::default(),
+                Experience {
+                    current: 0,
+                    next_level: 100,
+                },
+                AvailableStatPoints(0),
             ))
             .insert((
                 Sprite::from_atlas_image(

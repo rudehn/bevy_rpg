@@ -11,6 +11,7 @@ use crate::{
         actions::SpeedStats,
         combat::{Damage, Health, HealthRegen},
         stats::{AttributeModifiers, Attributes, CombatStats, Level, MonsterBaseHealth},
+        level::ExperienceReward,
     }, // Added combat::Damage
     map::map::GRID_SIZE,
 };
@@ -55,6 +56,9 @@ pub fn spawn_monster(
         .unwrap()
         .clone();
 
+    // Calculate XP reward: Base 10 + (Level * 5) + (Base HP / 2)
+    let xp_reward = 10 + (monster_asset.level * 5) + (monster_asset.base_hp / 2);
+
     // Use multiple insert calls to avoid large tuple bundle limit (15)
     let monster_entity = commands
         .spawn((
@@ -88,6 +92,7 @@ pub fn spawn_monster(
                 value: monster_asset.base_hp,
             },
             CombatStats::default(),
+            ExperienceReward(xp_reward),
         ))
         .insert((
             Sprite::from_atlas_image(

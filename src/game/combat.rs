@@ -64,11 +64,17 @@ pub struct ApplyDamageMessage {
     pub final_damage: i32,
 }
 
+#[derive(Message, Debug, Clone, Copy)]
+pub struct DeathEvent {
+    pub attacker: Entity,
+    pub target: Entity,
+}
+
 // --- Resources ---
 
 /// Wrapper for bracket_lib's RandomNumberGenerator to be used as a Bevy Resource.
 #[derive(Resource)]
-pub struct GameRng(RandomNumberGenerator);
+pub struct GameRng(pub RandomNumberGenerator);
 
 // --- Utility Functions ---
 
@@ -177,6 +183,7 @@ fn armor_reduction_system(
 /// 4. Damage Application: Update health and log the result.
 fn damage_application_system(
     mut apply_messages: MessageReader<ApplyDamageMessage>,
+    mut death_writer: MessageWriter<DeathEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut query_health: Query<(&mut Health, &Name)>,
     query_names: Query<&Name>,
@@ -191,6 +198,13 @@ fn damage_application_system(
             "{} hits {} for {} damage.",
             attacker_name.0, target_name.0, message.final_damage
         )));
+
+        if target_health.current <= 0 {
+            death_writer.write(DeathEvent {
+                attacker: message.attacker,
+                target: message.target,
+            });
+        }
 
         info!(
             "Entity {:?} hit Entity {:?} for {} damage. Target health: {}/{}",
@@ -237,6 +251,7 @@ impl Plugin for CombatPlugin {
             .add_message::<DamageRollMessage>()
             .add_message::<DamageReductionMessage>()
             .add_message::<ApplyDamageMessage>()
+            .add_message::<DeathEvent>()
             .register_type::<Health>()
             .register_type::<HealthRegen>()
             .add_systems(

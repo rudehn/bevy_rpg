@@ -1,18 +1,34 @@
-use bevy::prelude::*;
 use crate::game::AppState;
-use crate::player::Player;
-use crate::game::combat::{Health, Damage};
-use crate::game::stats::{Attributes, CombatStats, Level};
 use crate::game::InGameState;
+use crate::game::combat::{Damage, Health};
+use crate::game::level::{AvailableStatPoints, Experience};
+use crate::game::stats::{Attributes, CombatStats, Level};
+use crate::player::Player;
+use bevy::prelude::*;
 
 pub struct CharacterInfoPlugin;
 
 impl Plugin for CharacterInfoPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(AppState::InGame), spawn_hotkey_bar)
-            .add_systems(Update, character_info_input_system.run_if(in_state(AppState::InGame)))
-            .add_systems(OnEnter(InGameState::CharacterInfo), spawn_character_info_ui)
-            .add_systems(OnExit(InGameState::CharacterInfo), despawn_character_info_ui);
+        app.init_resource::<StatDraft>()
+            .add_systems(OnEnter(AppState::InGame), spawn_hotkey_bar)
+            .add_systems(
+                Update,
+                character_info_input_system.run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(
+                OnEnter(InGameState::CharacterInfo),
+                (spawn_character_info_ui, reset_stat_draft),
+            )
+            .add_systems(
+                Update,
+                (handle_allocation_buttons, update_character_info_ui)
+                    .run_if(in_state(InGameState::CharacterInfo)),
+            )
+            .add_systems(
+                OnExit(InGameState::CharacterInfo),
+                despawn_character_info_ui,
+            );
     }
 }
 
@@ -22,10 +38,44 @@ pub struct OnCharacterInfoScreen;
 #[derive(Component)]
 pub struct HotkeyBar;
 
-fn spawn_hotkey_bar(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-) {
+#[derive(Resource, Default, Clone, Copy)]
+pub struct StatDraft {
+    pub strength: i32,
+    pub dexterity: i32,
+    pub constitution: i32,
+    pub agility: i32,
+}
+
+impl StatDraft {
+    pub fn total_points(&self) -> u32 {
+        (self.strength + self.dexterity + self.constitution + self.agility) as u32
+    }
+}
+
+#[derive(Component)]
+pub enum AllocationAction {
+    PlusStrength,
+    MinusStrength,
+    PlusDexterity,
+    MinusDexterity,
+    PlusConstitution,
+    MinusConstitution,
+    PlusAgility,
+    MinusAgility,
+    Confirm,
+}
+
+// Marker components for updating text
+#[derive(Component)]
+pub struct XpText;
+#[derive(Component)]
+pub struct StatPointsText;
+#[derive(Component)]
+pub struct AttrText(pub crate::game::stats::Attributes); // Which attribute this text displays
+#[derive(Component)]
+pub struct CombatStatText;
+
+fn spawn_hotkey_bar(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands
         .spawn((
             Node {
@@ -71,14 +121,31 @@ fn character_info_input_system(
     }
 }
 
+fn reset_stat_draft(mut draft: ResMut<StatDraft>) {
+    *draft = StatDraft::default();
+}
+
 fn spawn_character_info_ui(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    player_query: Query<(&Health, &Attributes, &CombatStats, &Level, &Damage), With<Player>>,
+    player_query: Query<
+        (
+            &Health,
+            &Attributes,
+            &CombatStats,
+            &Level,
+            &Damage,
+            &Experience,
+            &AvailableStatPoints,
+        ),
+        With<Player>,
+    >,
 ) {
-    let Ok((health, attrs, stats, level, damage)) = player_query.single() else {
+    let Ok((health, attrs, _stats, level, damage, exp, points)) = player_query.single() else {
         return;
     };
+
+    let font = asset_server.load("fonts/Macondo-Regular.ttf");
 
     commands
         .spawn((
@@ -98,7 +165,7 @@ fn spawn_character_info_ui(
             parent
                 .spawn((
                     Node {
-                        width: Val::Px(400.0),
+                        width: Val::Px(500.0),
                         padding: UiRect::all(Val::Px(20.0)),
                         flex_direction: FlexDirection::Column,
                         border: UiRect::all(Val::Px(2.0)),
@@ -112,22 +179,53 @@ fn spawn_character_info_ui(
                     parent.spawn((
                         Text::new("CHARACTER INFO"),
                         TextFont {
-                            font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                            font: font.clone(),
                             font_size: 32.0,
                             ..default()
                         },
                         TextColor(Color::srgb(1.0, 0.84, 0.0).into()), // Gold
                     ));
 
-                    // Level & Health
+                    // Level, Health, XP
                     parent.spawn((
-                        Text::new(format!("Level: {} | HP: {}/{}", level.value, health.current, health.max)),
+                        Text::new(format!(
+                            "Level: {} | HP: {}/{}",
+                            level.value, health.current, health.max
+                        )),
                         TextFont {
-                            font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                            font: font.clone(),
                             font_size: 24.0,
                             ..default()
                         },
                         TextColor(Color::WHITE),
+                    ));
+
+                    parent.spawn((
+                        Text::new(format!("XP: {} / {}", exp.current, exp.next_level)),
+                        TextFont {
+                            font: font.clone(),
+                            font_size: 18.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.8, 0.8, 0.8).into()),
+                        XpText,
+                    ));
+
+                    parent.spawn(Node {
+                        height: Val::Px(10.0),
+                        ..default()
+                    });
+
+                    // Stat Points
+                    parent.spawn((
+                        Text::new(format!("Available Stat Points: {}", points.0)),
+                        TextFont {
+                            font: font.clone(),
+                            font_size: 20.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.0, 1.0, 1.0).into()), // Cyan
+                        StatPointsText,
                     ));
 
                     parent.spawn(Node {
@@ -139,26 +237,41 @@ fn spawn_character_info_ui(
                     parent.spawn((
                         Text::new("ATTRIBUTES"),
                         TextFont {
-                            font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                            font: font.clone(),
                             font_size: 20.0,
                             ..default()
                         },
                         TextColor(Color::srgb(0.7, 0.7, 1.0).into()),
                     ));
 
-                    let attr_style = (
-                        TextFont {
-                            font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                            font_size: 18.0,
-                            ..default()
-                        },
-                        TextColor(Color::WHITE),
+                    spawn_attribute_row(
+                        parent,
+                        "Strength",
+                        font.clone(),
+                        AllocationAction::PlusStrength,
+                        AllocationAction::MinusStrength,
                     );
-
-                    parent.spawn((Text::new(format!("Strength:     {}", attrs.strength)), attr_style.0.clone(), attr_style.1.clone()));
-                    parent.spawn((Text::new(format!("Dexterity:    {}", attrs.dexterity)), attr_style.0.clone(), attr_style.1.clone()));
-                    parent.spawn((Text::new(format!("Constitution: {}", attrs.constitution)), attr_style.0.clone(), attr_style.1.clone()));
-                    parent.spawn((Text::new(format!("Agility:      {}", attrs.agility)), attr_style.0.clone(), attr_style.1.clone()));
+                    spawn_attribute_row(
+                        parent,
+                        "Dexterity",
+                        font.clone(),
+                        AllocationAction::PlusDexterity,
+                        AllocationAction::MinusDexterity,
+                    );
+                    spawn_attribute_row(
+                        parent,
+                        "Constitution",
+                        font.clone(),
+                        AllocationAction::PlusConstitution,
+                        AllocationAction::MinusConstitution,
+                    );
+                    spawn_attribute_row(
+                        parent,
+                        "Agility",
+                        font.clone(),
+                        AllocationAction::PlusAgility,
+                        AllocationAction::MinusAgility,
+                    );
 
                     parent.spawn(Node {
                         height: Val::Px(10.0),
@@ -167,19 +280,59 @@ fn spawn_character_info_ui(
 
                     // Combat Stats Section
                     parent.spawn((
-                        Text::new("COMBAT STATS"),
+                        Text::new("COMBAT STATS (Preview)"),
                         TextFont {
-                            font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                            font: font.clone(),
                             font_size: 20.0,
                             ..default()
                         },
                         TextColor(Color::srgb(1.0, 0.7, 0.7).into()),
                     ));
 
-                    parent.spawn((Text::new(format!("Damage:       {}", damage.0)), attr_style.0.clone(), attr_style.1.clone()));
-                    parent.spawn((Text::new(format!("Hit Chance:   {}", stats.hit_chance)), attr_style.0.clone(), attr_style.1.clone()));
-                    parent.spawn((Text::new(format!("Dodge Chance: {}", stats.dodge_chance)), attr_style.0.clone(), attr_style.1.clone()));
-                    parent.spawn((Text::new(format!("Armor:        {}", stats.armor)), attr_style.0.clone(), attr_style.1.clone()));
+                    parent.spawn((
+                        Text::new(""),
+                        TextFont {
+                            font: font.clone(),
+                            font_size: 18.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                        CombatStatText,
+                    ));
+
+                    // Confirm Button
+                    parent
+                        .spawn(Node {
+                            height: Val::Px(20.0),
+                            ..default()
+                        })
+                        .with_children(|p| {
+                            p.spawn((
+                                Button,
+                                Node {
+                                    width: Val::Px(120.0),
+                                    height: Val::Px(40.0),
+                                    border: UiRect::all(Val::Px(2.0)),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgb(0.2, 0.5, 0.2)),
+                                BorderColor::all(Color::WHITE),
+                                AllocationAction::Confirm,
+                            ))
+                            .with_children(|b| {
+                                b.spawn((
+                                    Text::new("Confirm"),
+                                    TextFont {
+                                        font: font.clone(),
+                                        font_size: 20.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::WHITE),
+                                ));
+                            });
+                        });
 
                     // Footer
                     parent.spawn(Node {
@@ -189,7 +342,7 @@ fn spawn_character_info_ui(
                     parent.spawn((
                         Text::new("Press (C) to Close"),
                         TextFont {
-                            font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                            font: font.clone(),
                             font_size: 16.0,
                             ..default()
                         },
@@ -197,6 +350,248 @@ fn spawn_character_info_ui(
                     ));
                 });
         });
+}
+
+fn spawn_attribute_row(
+    parent: &mut ChildSpawnerCommands,
+    label: &str,
+    font: Handle<Font>,
+    plus: AllocationAction,
+    minus: AllocationAction,
+) {
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            margin: UiRect::vertical(Val::Px(2.0)),
+            ..default()
+        })
+        .with_children(|row| {
+            row.spawn((
+                Text::new(format!("{}: 10", label)),
+                TextFont {
+                    font: font.clone(),
+                    font_size: 18.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                AttrText(match label {
+                    "Strength" => Attributes {
+                        strength: 1,
+                        ..default()
+                    },
+                    "Dexterity" => Attributes {
+                        dexterity: 1,
+                        ..default()
+                    },
+                    "Constitution" => Attributes {
+                        constitution: 1,
+                        ..default()
+                    },
+                    "Agility" => Attributes {
+                        agility: 1,
+                        ..default()
+                    },
+                    _ => default(),
+                }),
+            ));
+
+            row.spawn(Node {
+                width: Val::Px(20.0),
+                ..default()
+            });
+
+            // Minus Button
+            row.spawn((
+                Button,
+                Node {
+                    width: Val::Px(25.0),
+                    height: Val::Px(25.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.5, 0.2, 0.2)),
+                minus,
+            ))
+            .with_children(|b| {
+                b.spawn((
+                    Text::new("-"),
+                    TextFont {
+                        font: font.clone(),
+                        font_size: 20.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            });
+
+            row.spawn(Node {
+                width: Val::Px(10.0),
+                ..default()
+            });
+
+            // Plus Button
+            row.spawn((
+                Button,
+                Node {
+                    width: Val::Px(25.0),
+                    height: Val::Px(25.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.2, 0.5, 0.2)),
+                plus,
+            ))
+            .with_children(|b| {
+                b.spawn((
+                    Text::new("+"),
+                    TextFont {
+                        font: font.clone(),
+                        font_size: 20.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            });
+        });
+}
+
+fn handle_allocation_buttons(
+    mut interaction_query: Query<
+        (&Interaction, &AllocationAction),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut draft: ResMut<StatDraft>,
+    mut player_query: Query<(&mut Attributes, &mut AvailableStatPoints), With<Player>>,
+    mut next_state: ResMut<NextState<InGameState>>,
+) {
+    let Ok((mut player_attrs, mut points)) = player_query.single_mut() else {
+        return;
+    };
+
+    for (interaction, action) in &mut interaction_query {
+        if *interaction == Interaction::Pressed {
+            match action {
+                AllocationAction::PlusStrength => {
+                    if draft.total_points() < points.0 {
+                        draft.strength += 1;
+                    }
+                }
+                AllocationAction::MinusStrength => {
+                    if draft.strength > 0 {
+                        draft.strength -= 1;
+                    }
+                }
+                AllocationAction::PlusDexterity => {
+                    if draft.total_points() < points.0 {
+                        draft.dexterity += 1;
+                    }
+                }
+                AllocationAction::MinusDexterity => {
+                    if draft.dexterity > 0 {
+                        draft.dexterity -= 1;
+                    }
+                }
+                AllocationAction::PlusConstitution => {
+                    if draft.total_points() < points.0 {
+                        draft.constitution += 1;
+                    }
+                }
+                AllocationAction::MinusConstitution => {
+                    if draft.constitution > 0 {
+                        draft.constitution -= 1;
+                    }
+                }
+                AllocationAction::PlusAgility => {
+                    if draft.total_points() < points.0 {
+                        draft.agility += 1;
+                    }
+                }
+                AllocationAction::MinusAgility => {
+                    if draft.agility > 0 {
+                        draft.agility -= 1;
+                    }
+                }
+                AllocationAction::Confirm => {
+                    player_attrs.strength += draft.strength;
+                    player_attrs.dexterity += draft.dexterity;
+                    player_attrs.constitution += draft.constitution;
+                    player_attrs.agility += draft.agility;
+                    points.0 -= draft.total_points();
+                    *draft = StatDraft::default();
+                    next_state.set(InGameState::Running);
+                }
+            }
+        }
+    }
+}
+
+fn update_character_info_ui(
+    draft: Res<StatDraft>,
+    player_query: Query<(&Attributes, &AvailableStatPoints, &Damage), With<Player>>,
+    mut attr_texts: Query<(&mut Text, &AttrText), Without<StatPointsText>>,
+    mut points_text: Query<&mut Text, (With<StatPointsText>, Without<AttrText>)>,
+    mut combat_text: Query<
+        &mut Text,
+        (
+            With<CombatStatText>,
+            Without<AttrText>,
+            Without<StatPointsText>,
+        ),
+    >,
+) {
+    let Ok((player_attrs, points, damage)) = player_query.single() else {
+        return;
+    };
+
+    if let Ok(mut text) = points_text.single_mut() {
+        text.0 = format!("Available Stat Points: {}", points.0 - draft.total_points());
+    }
+
+    for (mut text, attr_marker) in &mut attr_texts {
+        if attr_marker.0.strength > 0 {
+            text.0 = format!(
+                "Strength:     {} (+{})",
+                player_attrs.strength, draft.strength
+            );
+        } else if attr_marker.0.dexterity > 0 {
+            text.0 = format!(
+                "Dexterity:    {} (+{})",
+                player_attrs.dexterity, draft.dexterity
+            );
+        } else if attr_marker.0.constitution > 0 {
+            text.0 = format!(
+                "Constitution: {} (+{})",
+                player_attrs.constitution, draft.constitution
+            );
+        } else if attr_marker.0.agility > 0 {
+            text.0 = format!(
+                "Agility:      {} (+{})",
+                player_attrs.agility, draft.agility
+            );
+        }
+    }
+
+    if let Ok(mut text) = combat_text.single_mut() {
+        // Simple preview of derived stats
+        let eff_str = player_attrs.strength + draft.strength;
+        let eff_dex = player_attrs.dexterity + draft.dexterity;
+        let eff_con = player_attrs.constitution + draft.constitution;
+
+        let str_bonus = (eff_str - 10) / 2;
+        let dex_bonus = (eff_dex - 10) / 2;
+
+        text.0 = format!(
+            "Damage:       {} + {}\nHit Chance:   {}\nDodge Chance: {}\nArmor:        {}",
+            damage.0,
+            str_bonus,
+            10 + str_bonus,
+            5 + dex_bonus,
+            (eff_con - 10) / 2
+        );
+    }
 }
 
 fn despawn_character_info_ui(
