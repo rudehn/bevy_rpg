@@ -38,10 +38,19 @@ pub enum AppState {
     GameOver,
 }
 
+#[derive(SubStates, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[source(AppState = AppState::InGame)]
+pub enum InGameState {
+    #[default]
+    Running,
+    CharacterInfo,
+}
+
 pub struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((
+        app.add_sub_state::<InGameState>()
+            .add_plugins((
             LightPlugin,
             MapPlugin,
             PlayerPlugin,
@@ -60,7 +69,7 @@ impl Plugin for GamePlugin {
                     .after(fov_update_system),
                 move_camera.after(sync_entity_transforms),
             )
-                .run_if(in_state(AppState::InGame)),
+                .run_if(in_state(InGameState::Running)),
         )
         .add_systems(Update, toggle_main_camera_visibility.run_if(state_changed::<AppState>))
         .add_systems(OnExit(AppState::GameOver), despawn_game_entities)

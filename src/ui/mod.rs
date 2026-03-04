@@ -11,11 +11,13 @@ use crate::game::{
 use crate::player::Player;
 
 pub mod game_log;
+pub mod character_info;
 
 use game_log::{
     GameLog, GameLogMessage, GameLogSettings, add_log_message_system, game_log_input_system,
     spawn_game_log_ui, update_game_log_ui,
 };
+use character_info::CharacterInfoPlugin;
 
 // --- Components ---
 
@@ -450,6 +452,7 @@ impl Plugin for UiPlugin {
         app.init_resource::<GameLog>()
             .init_resource::<GameLogSettings>()
             .add_message::<GameLogMessage>()
+            .add_plugins(CharacterInfoPlugin)
             .add_systems(
                 OnEnter(AppState::InGame),
                 (
