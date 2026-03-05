@@ -76,6 +76,14 @@ pub struct AttrText(pub crate::game::stats::Attributes); // Which attribute this
 #[derive(Component)]
 pub struct CombatStatText;
 
+// Marker components for showing/hiding buttons
+#[derive(Component)]
+pub struct StatPlusButton;
+#[derive(Component)]
+pub struct StatMinusButton(pub crate::game::stats::Attributes);
+#[derive(Component)]
+pub struct StatConfirmButton;
+
 fn spawn_hotkey_bar(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands
         .spawn((
@@ -142,7 +150,7 @@ fn spawn_character_info_ui(
         With<Player>,
     >,
 ) {
-    let Ok((health, attrs, _stats, level, damage, exp, points)) = player_query.single() else {
+    let Ok((health, _attrs, _stats, level, _damage, exp, points)) = player_query.single() else {
         return;
     };
 
@@ -303,10 +311,15 @@ fn spawn_character_info_ui(
 
                     // Confirm Button
                     parent
-                        .spawn(Node {
-                            height: Val::Px(20.0),
-                            ..default()
-                        })
+                        .spawn((
+                            Node {
+                                height: Val::Px(40.0),
+                                margin: UiRect::top(Val::Px(20.0)),
+                                display: Display::None, // Hidden by default
+                                ..default()
+                            },
+                            StatConfirmButton,
+                        ))
                         .with_children(|p| {
                             p.spawn((
                                 Button,
@@ -410,10 +423,30 @@ fn spawn_attribute_row(
                     height: Val::Px(25.0),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
+                    display: Display::None, // Hidden by default
                     ..default()
                 },
                 BackgroundColor(Color::srgb(0.5, 0.2, 0.2)),
                 minus,
+                StatMinusButton(match label {
+                    "Strength" => Attributes {
+                        strength: 1,
+                        ..default()
+                    },
+                    "Dexterity" => Attributes {
+                        dexterity: 1,
+                        ..default()
+                    },
+                    "Constitution" => Attributes {
+                        constitution: 1,
+                        ..default()
+                    },
+                    "Agility" => Attributes {
+                        agility: 1,
+                        ..default()
+                    },
+                    _ => default(),
+                }),
             ))
             .with_children(|b| {
                 b.spawn((
@@ -440,10 +473,12 @@ fn spawn_attribute_row(
                     height: Val::Px(25.0),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
+                    display: Display::None, // Hidden by default
                     ..default()
                 },
                 BackgroundColor(Color::srgb(0.2, 0.5, 0.2)),
                 plus,
+                StatPlusButton,
             ))
             .with_children(|b| {
                 b.spawn((
@@ -551,14 +586,76 @@ fn update_character_info_ui(
             Without<StatPointsText>,
         ),
     >,
+    mut plus_buttons: Query<
+        &mut Node,
+        (
+            With<StatPlusButton>,
+            Without<StatMinusButton>,
+            Without<StatConfirmButton>,
+        ),
+    >,
+    mut minus_buttons: Query<
+        (&mut Node, &StatMinusButton),
+        (Without<StatPlusButton>, Without<StatConfirmButton>),
+    >,
+    mut confirm_button: Query<
+        &mut Node,
+        (
+            With<StatConfirmButton>,
+            Without<StatPlusButton>,
+            Without<StatMinusButton>,
+        ),
+    >,
 ) {
     let Ok((player_attrs, points, damage, level, rolled_hp)) = player_query.single() else {
         return;
     };
 
-    if let Ok(mut text) = points_text.single_mut() {
-        text.0 = format!("Available Stat Points: {}", points.0 - draft.total_points());
+    let available_points = points.0 - draft.total_points();
+
+    let Ok(mut points_t) = points_text.single_mut() else {
+        return;
+    };
+    points_t.0 = format!("Available Stat Points: {}", available_points);
+
+    // Update plus buttons visibility
+    for mut node in &mut plus_buttons {
+        node.display = if available_points > 0 {
+            Display::Flex
+        } else {
+            Display::None
+        };
     }
+
+    // Update minus buttons visibility
+    for (mut node, marker) in &mut minus_buttons {
+        let draft_val = if marker.0.strength > 0 {
+            draft.strength
+        } else if marker.0.dexterity > 0 {
+            draft.dexterity
+        } else if marker.0.constitution > 0 {
+            draft.constitution
+        } else if marker.0.agility > 0 {
+            draft.agility
+        } else {
+            0
+        };
+        node.display = if draft_val > 0 {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+
+    // Update confirm button visibility
+    let Ok(mut confirm_node) = confirm_button.single_mut() else {
+        return;
+    };
+    confirm_node.display = if draft.total_points() > 0 {
+        Display::Flex
+    } else {
+        Display::None
+    };
 
     for (mut text, attr_marker) in &mut attr_texts {
         if attr_marker.0.strength > 0 {
@@ -597,7 +694,7 @@ fn update_character_info_ui(
         let agi_bonus = (eff_agi - 10) / 2;
 
         let max_hp = 10 + rolled_hp.0 + (con_bonus * level.value);
-        let action_delay = (1.0 - (agi_bonus as f32 * 0.05)).clamp(0.5, 2.0);
+        let action_delay = (1.0f32 - (agi_bonus as f32 * 0.05)).clamp(0.5, 2.0);
 
         text.0 = format!(
             "Max HP:       {}\nDamage:       {} + {}\nHit Chance:   {}\nDodge Chance: {}\nArmor:        {}\nAction Delay: {:.2}x",
