@@ -10,8 +10,8 @@ use crate::{
         MonsterAI, TurnManager,
         actions::SpeedStats,
         combat::{Damage, Health, HealthRegen},
-        stats::{AttributeModifiers, Attributes, CombatStats, Level, MonsterBaseHealth},
         level::ExperienceReward,
+        stats::{AttributeModifiers, Attributes, CombatStats, Level, MonsterBaseHealth},
     }, // Added combat::Damage
     map::map::GRID_SIZE,
 };
@@ -57,7 +57,7 @@ pub fn spawn_monster(
         .clone();
 
     // Calculate XP reward: Base 10 + (Level * 5) + (Base HP / 2)
-    let xp_reward = 10 + (monster_asset.level * 5) + (monster_asset.base_hp / 2);
+    let xp_reward = 100 + 10 + (monster_asset.level * 5) + (monster_asset.base_hp / 2);
 
     // Use multiple insert calls to avoid large tuple bundle limit (15)
     let monster_entity = commands

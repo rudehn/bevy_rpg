@@ -45,6 +45,11 @@ pub struct CombatStats {
     pub armor: i32,
 }
 
+/// Component to store the sum of 1d4 HP rolls gained on level up.
+#[derive(Component, Debug, Clone, Reflect, Default)]
+#[reflect(Component)]
+pub struct RolledHp(pub i32);
+
 /// New component specifically for monsters to store their raw base health
 #[derive(Component, Debug, Clone, Reflect, Default)]
 #[reflect(Component)]
@@ -65,6 +70,7 @@ pub fn stat_recalculation_system(
             &mut Viewshed,
             Option<&mut HealthRegen>,
             Option<&MonsterBaseHealth>,
+            Option<&RolledHp>,
             Option<&Player>,
             Option<&Monster>,
         ),
@@ -84,6 +90,7 @@ pub fn stat_recalculation_system(
         mut viewshed,
         regen,
         monster_base,
+        rolled_hp,
         is_player,
         is_monster,
     ) in query.iter_mut()
@@ -98,13 +105,14 @@ pub fn stat_recalculation_system(
         stats.strength_bonus = (eff_str - 10) / 2;
         stats.dexterity_bonus = (eff_dex - 10) / 2;
         stats.constitution_bonus = (eff_con - 10) / 2;
-        stats.constitution_bonus = (eff_agi - 10) / 2;
+        stats.agility_bonus = (eff_agi - 10) / 2;
 
         // 3. Update Health
         let old_max = health.max;
         if is_player.is_some() {
-            // Player HP = Constitution Score
-            health.max = eff_con;
+            // Player HP = 10 (base) + rolled_hp (sum of 1d4s) + (CON bonus * Level)
+            let roll_sum = rolled_hp.map(|r| r.0).unwrap_or(0);
+            health.max = 10 + roll_sum + (stats.constitution_bonus * level.value);
         } else if is_monster.is_some() {
             // Monster HP = base + (constitution_bonus * level)
             let base = monster_base.map(|b| b.value).unwrap_or(10);

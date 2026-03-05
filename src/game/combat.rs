@@ -2,9 +2,10 @@ use bevy::prelude::*;
 use bracket_lib::random::{RandomNumberGenerator, parse_dice_string};
 
 use crate::components::{Monster, Name}; // Import Monster marker
-use crate::game::{AppState, TurnManager};
-use crate::game::turns::TurnEndEvent;
+use crate::game::level::ExperienceReward;
 use crate::game::stats::CombatStats;
+use crate::game::turns::TurnEndEvent;
+use crate::game::{AppState, TurnManager};
 use crate::player::Player; // Import Player marker // Import AppState for game over
 use crate::ui::game_log::GameLogMessage;
 
@@ -68,6 +69,7 @@ pub struct ApplyDamageMessage {
 pub struct DeathEvent {
     pub attacker: Entity,
     pub target: Entity,
+    pub xp: i32,
 }
 
 // --- Resources ---
@@ -105,7 +107,7 @@ fn regen_system(
                     regen.regen_accumulator -= 100;
                 }
             } else {
-                // If health is full, we cap the accumulator at 100 to prevent 
+                // If health is full, we cap the accumulator at 100 to prevent
                 // massive "burst" healing immediately after taking damage.
                 regen.regen_accumulator = regen.regen_accumulator.min(100);
             }
@@ -122,8 +124,12 @@ fn hit_check_system(
     query: Query<(&Name, &CombatStats)>,
 ) {
     for intent in intents.read() {
-        let Ok((attacker_name, attacker_stats)) = query.get(intent.attacker) else { continue };
-        let Ok((target_name, target_stats)) = query.get(intent.target) else { continue };
+        let Ok((attacker_name, attacker_stats)) = query.get(intent.attacker) else {
+            continue;
+        };
+        let Ok((target_name, target_stats)) = query.get(intent.target) else {
+            continue;
+        };
 
         let hit_roll = game_rng.0.roll_dice(1, 20);
         let hit_target = 10 + target_stats.dodge_chance;
@@ -135,7 +141,10 @@ fn hit_check_system(
                 target: intent.target,
             });
         } else {
-            log_writer.write(GameLogMessage(format!("{} misses {}.", attacker_name.0, target_name.0)));
+            log_writer.write(GameLogMessage(format!(
+                "{} misses {}.",
+                attacker_name.0, target_name.0
+            )));
         }
     }
 }
@@ -148,7 +157,9 @@ fn damage_roll_system(
     query: Query<(&Damage, &CombatStats)>,
 ) {
     for message in roll_messages.read() {
-        let Ok((damage_dice, attacker_stats)) = query.get(message.attacker) else { continue };
+        let Ok((damage_dice, attacker_stats)) = query.get(message.attacker) else {
+            continue;
+        };
 
         let rolled_damage = roll_dice(&damage_dice.0, &mut game_rng.0);
         let raw_damage = rolled_damage + attacker_stats.damage_bonus;
@@ -168,7 +179,9 @@ fn armor_reduction_system(
     query: Query<&CombatStats>,
 ) {
     for message in reduction_messages.read() {
-        let Ok(target_stats) = query.get(message.target) else { continue };
+        let Ok(target_stats) = query.get(message.target) else {
+            continue;
+        };
 
         let final_damage = (message.raw_damage - target_stats.armor).max(1);
 
@@ -185,12 +198,17 @@ fn damage_application_system(
     mut apply_messages: MessageReader<ApplyDamageMessage>,
     mut death_writer: MessageWriter<DeathEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
-    mut query_health: Query<(&mut Health, &Name)>,
+    mut query_health: Query<(&mut Health, &Name, Option<&ExperienceReward>)>,
     query_names: Query<&Name>,
 ) {
     for message in apply_messages.read() {
-        let Ok((mut target_health, target_name)) = query_health.get_mut(message.target) else { continue };
-        let Ok(attacker_name) = query_names.get(message.attacker) else { continue };
+        let Ok((mut target_health, target_name, xp_reward)) = query_health.get_mut(message.target)
+        else {
+            continue;
+        };
+        let Ok(attacker_name) = query_names.get(message.attacker) else {
+            continue;
+        };
 
         target_health.current -= message.final_damage;
 
@@ -203,18 +221,23 @@ fn damage_application_system(
             death_writer.write(DeathEvent {
                 attacker: message.attacker,
                 target: message.target,
+                xp: xp_reward.map(|r| r.0).unwrap_or(0),
             });
         }
 
         info!(
             "Entity {:?} hit Entity {:?} for {} damage. Target health: {}/{}",
-            message.attacker, message.target, message.final_damage, target_health.current, target_health.max
+            message.attacker,
+            message.target,
+            message.final_damage,
+            target_health.current,
+            target_health.max
         );
     }
 }
 
 /// System that checks for entities with Health <= 0 and handles death.
-fn death_system(
+pub fn death_system(
     mut commands: Commands,
     query_dead: Query<(Entity, &Health, &Name, Option<&Player>, Option<&Monster>)>,
     mut next_state: ResMut<NextState<AppState>>,
@@ -262,10 +285,12 @@ impl Plugin for CombatPlugin {
                         damage_roll_system,
                         armor_reduction_system,
                         damage_application_system,
-                    ).chain(),
+                    )
+                        .chain(),
                     regen_system,
                     death_system,
-                ).run_if(in_state(AppState::InGame)),
+                )
+                    .run_if(in_state(AppState::InGame)),
             );
     }
 }

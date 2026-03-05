@@ -10,7 +10,7 @@ use crate::{
         TurnManager,
         actions::SpeedStats,
         combat::{Damage, Health, HealthRegen},
-        stats::{AttributeModifiers, Attributes, CombatStats, Level},
+        stats::{AttributeModifiers, Attributes, CombatStats, Level, RolledHp},
         level::{Experience, AvailableStatPoints},
     }, // Added combat::Damage
     map::{
@@ -95,6 +95,7 @@ pub fn player_spawn_or_move_system(
                     next_level: 100,
                 },
                 AvailableStatPoints(0),
+                RolledHp(0),
             ))
             .insert((
                 Sprite::from_atlas_image(

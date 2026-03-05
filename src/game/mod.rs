@@ -2,11 +2,11 @@ use crate::{
     components::{GameEntityMarker, Position},
     game::{
         camera::{move_camera, toggle_main_camera_visibility},
-        combat::CombatPlugin,
+        combat::{CombatPlugin, death_system},
+        level::{LevelPlugin, xp_award_system},
         stats::StatsPlugin,
         systems::{fov_update_system, sync_entity_transforms, update_monster_visibility},
         turns::TurnOrderPlugin,
-        level::LevelPlugin,
     },
     map::{
         dungeon::{DungeonPlugin, Floor},
@@ -21,11 +21,11 @@ pub mod actions;
 mod ai;
 pub mod camera;
 pub mod combat;
-pub mod stats;
+pub mod level;
 mod spawner;
+pub mod stats;
 mod systems;
 mod turns;
-pub mod level;
 pub use ai::*;
 use bevy_ecs_tilemap::tiles::TileStorage;
 pub use spawner::*;
@@ -53,31 +53,35 @@ impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.add_sub_state::<InGameState>()
             .add_plugins((
-            LightPlugin,
-            MapPlugin,
-            PlayerPlugin,
-            DungeonPlugin,
-            TurnOrderPlugin,
-            CombatPlugin,
-            StatsPlugin,
-            LevelPlugin,
-        ))
-        .add_systems(
-            Update,
-            (
-                sync_entity_transforms,
-                fov_update_system.after(sync_entity_transforms),
-                update_monster_visibility
-                    .run_if(|query: Query<(), Changed<Position>>| !query.is_empty())
-                    .after(fov_update_system),
-                move_camera.after(sync_entity_transforms),
+                LightPlugin,
+                MapPlugin,
+                PlayerPlugin,
+                DungeonPlugin,
+                TurnOrderPlugin,
+                CombatPlugin,
+                StatsPlugin,
+                LevelPlugin,
+            ))
+            .add_systems(
+                Update,
+                (
+                    sync_entity_transforms,
+                    fov_update_system.after(sync_entity_transforms),
+                    update_monster_visibility
+                        .run_if(|query: Query<(), Changed<Position>>| !query.is_empty())
+                        .after(fov_update_system),
+                    move_camera.after(sync_entity_transforms),
+                    death_system.after(xp_award_system),
+                )
+                    .run_if(in_state(InGameState::Running)),
             )
-                .run_if(in_state(InGameState::Running)),
-        )
-        .add_systems(Update, toggle_main_camera_visibility.run_if(state_changed::<AppState>))
-        .add_systems(OnExit(AppState::GameOver), despawn_game_entities)
-        .add_systems(OnExit(AppState::GameOver), despawn_map)
-        .init_resource::<TurnManager>();
+            .add_systems(
+                Update,
+                toggle_main_camera_visibility.run_if(state_changed::<AppState>),
+            )
+            .add_systems(OnExit(AppState::GameOver), despawn_game_entities)
+            .add_systems(OnExit(AppState::GameOver), despawn_map)
+            .init_resource::<TurnManager>();
     }
 }
 

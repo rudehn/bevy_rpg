@@ -10,14 +10,14 @@ use crate::game::{
 };
 use crate::player::Player;
 
-pub mod game_log;
 pub mod character_info;
+pub mod game_log;
 
+use character_info::CharacterInfoPlugin;
 use game_log::{
     GameLog, GameLogMessage, GameLogSettings, add_log_message_system, game_log_input_system,
     spawn_game_log_ui, update_game_log_ui,
 };
-use character_info::CharacterInfoPlugin;
 
 // --- Components ---
 
@@ -144,7 +144,7 @@ fn spawn_player_stats_ui(
 
 /// System that updates the player's health display in the UI.
 fn update_player_stats_ui(
-    player_query: Query<(&Health, Option<&HealthRegen>), With<Player>>,
+    player_query: Query<(&Health, Option<&HealthRegen>), (With<Player>, Changed<Health>)>,
     mut health_text_query: Query<&mut Text, With<PlayerHealthText>>,
     mut health_bar_query: Query<&mut Node, With<PlayerHealthBar>>,
 ) {

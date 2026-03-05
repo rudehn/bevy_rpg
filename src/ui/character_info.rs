@@ -2,6 +2,7 @@ use crate::game::AppState;
 use crate::game::InGameState;
 use crate::game::combat::{Damage, Health};
 use crate::game::level::{AvailableStatPoints, Experience};
+use crate::game::stats::RolledHp;
 use crate::game::stats::{Attributes, CombatStats, Level};
 use crate::player::Player;
 use bevy::prelude::*;
@@ -530,7 +531,16 @@ fn handle_allocation_buttons(
 
 fn update_character_info_ui(
     draft: Res<StatDraft>,
-    player_query: Query<(&Attributes, &AvailableStatPoints, &Damage), With<Player>>,
+    player_query: Query<
+        (
+            &Attributes,
+            &AvailableStatPoints,
+            &Damage,
+            &Level,
+            &RolledHp,
+        ),
+        With<Player>,
+    >,
     mut attr_texts: Query<(&mut Text, &AttrText), Without<StatPointsText>>,
     mut points_text: Query<&mut Text, (With<StatPointsText>, Without<AttrText>)>,
     mut combat_text: Query<
@@ -542,7 +552,7 @@ fn update_character_info_ui(
         ),
     >,
 ) {
-    let Ok((player_attrs, points, damage)) = player_query.single() else {
+    let Ok((player_attrs, points, damage, level, rolled_hp)) = player_query.single() else {
         return;
     };
 
@@ -579,17 +589,25 @@ fn update_character_info_ui(
         let eff_str = player_attrs.strength + draft.strength;
         let eff_dex = player_attrs.dexterity + draft.dexterity;
         let eff_con = player_attrs.constitution + draft.constitution;
+        let eff_agi = player_attrs.agility + draft.agility;
 
         let str_bonus = (eff_str - 10) / 2;
         let dex_bonus = (eff_dex - 10) / 2;
+        let con_bonus = (eff_con - 10) / 2;
+        let agi_bonus = (eff_agi - 10) / 2;
+
+        let max_hp = 10 + rolled_hp.0 + (con_bonus * level.value);
+        let action_delay = (1.0 - (agi_bonus as f32 * 0.05)).clamp(0.5, 2.0);
 
         text.0 = format!(
-            "Damage:       {} + {}\nHit Chance:   {}\nDodge Chance: {}\nArmor:        {}",
+            "Max HP:       {}\nDamage:       {} + {}\nHit Chance:   {}\nDodge Chance: {}\nArmor:        {}\nAction Delay: {:.2}x",
+            max_hp,
             damage.0,
             str_bonus,
             10 + str_bonus,
             5 + dex_bonus,
-            (eff_con - 10) / 2
+            con_bonus,
+            action_delay
         );
     }
 }
