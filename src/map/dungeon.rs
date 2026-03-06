@@ -1,30 +1,32 @@
-use bevy::prelude::*;
 use bevy::camera::visibility::RenderLayers;
+use bevy::prelude::*;
+use bevy_ecs_tilemap::TilemapBundle;
 use bevy_ecs_tilemap::map::{TilemapTexture, TilemapType};
 use bevy_ecs_tilemap::prelude::TilePos;
 use bevy_ecs_tilemap::tiles::TileStorage;
-use bevy_ecs_tilemap::TilemapBundle;
-use bracket_lib::prelude::Point;
+use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::assets::{
     CandleSpritesheet, DungeonTileset, MonsterManifest, MonsterManifestHandle, MonsterSpawnTable,
     MonsterSpawnTableHandle, MonsterSpriteAssets,
 };
-use crate::game::{spawn_monster_by_name, TurnManager};
+use crate::game::{TurnManager, spawn_monster_by_name, turns::TurnMarker};
+use crate::map::Map;
 use crate::map::builders::BuilderMap;
 use crate::map::map::TILE_SIZE; // Import BuildData
-use crate::map::Map;
+use crate::map::tile::TileType;
+use crate::player::Player;
 use crate::ui::game_log::GameLogMessage;
 
 use crate::{
-    components::GameEntityMarker, // Add this import
+    AppState,
+    components::{FloorEntityMarker, GameEntityMarker, Position},
     map::{
         builders::level_builder,
         light::spawn_candle,
         map::{DungeonECSMap, GRID_SIZE, MAP_SIZE},
         tile::spawn_tile_entity,
     },
-    AppState,
 };
 
 #[derive(Message, Clone, Copy)]
@@ -58,7 +60,12 @@ impl Plugin for DungeonPlugin {
             )
             .add_systems(
                 Update,
-                map_transition_system.run_if(on_message::<MapTransitionMessage>),
+                (
+                    player_stair_system,
+                    map_transition_system.run_if(on_message::<MapTransitionMessage>),
+                )
+                    .chain()
+                    .run_if(in_state(AppState::InGame)),
             );
     }
 }
@@ -66,14 +73,31 @@ impl Plugin for DungeonPlugin {
 #[derive(Message)]
 pub struct MapTransitionMessage;
 
+fn player_stair_system(
+    player_query: Query<&Position, (With<Player>, Changed<Position>)>,
+    map: Res<Map>,
+    mut transition_writer: MessageWriter<MapTransitionMessage>,
+) {
+    for pos in player_query.iter() {
+        if map.in_bounds(pos.to_point()) {
+            let idx = map.xy_idx(pos.x, pos.y);
+            if map.tiles[idx] == TileType::DownStairs {
+                transition_writer.write(MapTransitionMessage);
+            }
+        }
+    }
+}
+
 fn map_transition_system(
     mut commands: Commands,
     mut floor: ResMut<Floor>,
     q_map: Query<(Entity, &TileStorage), With<DungeonECSMap>>,
+    q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
+    mut turn_manager: ResMut<TurnManager>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
-    // Despawn old map entities and their tiles
+    // 1. Despawn old map entities and their tiles
     for (map_entity, tile_storage) in q_map.iter() {
         for x in 0..MAP_SIZE.x {
             for y in 0..MAP_SIZE.y {
@@ -85,9 +109,17 @@ fn map_transition_system(
         commands.entity(map_entity).despawn();
     }
 
-    // Increment floor
+    // 2. Despawn all floor-specific entities (monsters, candles, etc.)
+    for entity in q_floor_entities.iter() {
+        commands.entity(entity).despawn();
+    }
+
+    // 3. Reset turn manager queue (monsters are gone)
+    *turn_manager = TurnManager::default();
+
+    // 4. Increment floor
     floor.0 += 1;
-    log_writer.write(GameLogMessage(format!("Entering floor {}", floor.0)));
+    log_writer.write(GameLogMessage(format!("Descending to floor {}", floor.0)));
 
     message_writer.write(SpawnDungeonMessage);
 }
@@ -126,8 +158,6 @@ fn spawn_tiles_into_ecs(
     });
     tile_storage
 }
-
-// ... existing code ...
 
 fn spawn_dungeon_entities(
     commands: &mut Commands,
@@ -170,6 +200,8 @@ pub fn spawn_dungeon(
     monster_spawn_table_handle: Res<MonsterSpawnTableHandle>,
     monster_sprite_assets: Res<MonsterSpriteAssets>,
     mut log_writer: MessageWriter<GameLogMessage>,
+    player_query: Query<Entity, With<Player>>,
+    turn_marker_query: Query<Entity, With<TurnMarker>>,
 ) {
     let spawn_table = monster_spawn_tables
         .get(&monster_spawn_table_handle.0)
@@ -186,7 +218,9 @@ pub fn spawn_dungeon(
 
     // Bake the map into the ECS
     // Create the Tilemap entity
-    let map_entity = commands.spawn((DungeonECSMap, GameEntityMarker, RenderLayers::layer(1))).id();
+    let map_entity = commands
+        .spawn((DungeonECSMap, GameEntityMarker, RenderLayers::layer(1)))
+        .id();
     let _tile_storage = spawn_tiles_into_ecs(&mut commands, map_entity, &map, &dungeon_tileset);
 
     spawn_dungeon_entities(
@@ -202,6 +236,14 @@ pub fn spawn_dungeon(
     // Insert the player spawn point as a resource
     let spawn_point = builder.build_data.starting_position.unwrap();
     commands.insert_resource(PlayerSpawnPoint(Point::new(spawn_point.x, spawn_point.y)));
-    
+
+    // Re-add persistent actors to turn manager if they already exist (changing floors)
+    if let Ok(player_entity) = player_query.single() {
+        turn_manager.add_entity(player_entity);
+    }
+    if let Ok(marker_entity) = turn_marker_query.single() {
+        turn_manager.add_entity(marker_entity);
+    }
+
     log_writer.write(GameLogMessage(format!("Welcome to floor {}!", floor.0)));
 }

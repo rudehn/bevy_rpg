@@ -25,7 +25,7 @@ pub mod level;
 mod spawner;
 pub mod stats;
 mod systems;
-mod turns;
+pub mod turns;
 pub use ai::*;
 use bevy_ecs_tilemap::tiles::TileStorage;
 pub use spawner::*;

@@ -5,7 +5,7 @@ use bracket_lib::prelude::Point;
 
 use crate::{
     assets::CandleSpritesheet,
-    components::{GameEntityMarker, Position, Viewshed},
+    components::{GameEntityMarker, Position, Viewshed, FloorEntityMarker},
     constants::Z_ITEM,
     game::AppState,
     map::map::GRID_SIZE,
@@ -55,7 +55,8 @@ pub fn spawn_candle(
 ) {
     commands.spawn((
         Candle,
-        GameEntityMarker, // Add GameEntityMarker here
+        GameEntityMarker, 
+        FloorEntityMarker,
         Position { x: pt.x, y: pt.y },
         PointLight2d {
             radius: 200.0,

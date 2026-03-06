@@ -4,7 +4,7 @@ use bracket_lib::prelude::Point;
 
 use crate::{
     assets::{MonsterAsset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets},
-    components::{Collider, GameEntityMarker, Monster, Name, Position, Viewshed},
+    components::{Collider, GameEntityMarker, Monster, Name, Position, Viewshed, FloorEntityMarker},
     constants::{TILE_SIZE_X, TILE_SIZE_Y, Z_MONSTER},
     game::{
         MonsterAI, TurnManager,
@@ -64,6 +64,7 @@ pub fn spawn_monster(
         .spawn((
             Monster,
             GameEntityMarker,
+            FloorEntityMarker,
             Name(monster_asset.name.clone()),
             MonsterAI::default(),
             Collider,

@@ -143,17 +143,21 @@ fn select_next_actor(
             } else {
                 // If no NPCs were tagged yet, the player is the very first one ready.
                 // We'll tag them and go to input.
-                if let Ok(mut ec) = commands.get_entity(entity) {
-                    ec.insert(MyTurn);
-                }
+                commands.queue(move |world: &mut World| {
+                    if let Ok(mut ec) = world.get_entity_mut(entity) {
+                        ec.insert(MyTurn);
+                    }
+                });
                 next_state.set(TurnState::PlayerInput);
                 return;
             }
         } else {
             // It's an NPC or Marker
-            if let Ok(mut ec) = commands.get_entity(entity) {
-                ec.insert(MyTurn);
-            }
+            commands.queue(move |world: &mut World| {
+                if let Ok(mut ec) = world.get_entity_mut(entity) {
+                    ec.insert(MyTurn);
+                }
+            });
             npc_tagged = true;
         }
         i += 1;

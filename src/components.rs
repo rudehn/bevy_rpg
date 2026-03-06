@@ -52,3 +52,6 @@ pub struct Name(pub String);
 
 #[derive(Component)]
 pub struct GameEntityMarker;
+
+#[derive(Component)]
+pub struct FloorEntityMarker;
