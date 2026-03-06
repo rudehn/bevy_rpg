@@ -53,8 +53,16 @@ impl MonsterSpawner {
     }
 
     fn get_random_room_point(&self, room: &Rect, rng: &mut RandomNumberGenerator) -> (i32, i32) {
-        let x = rng.roll_dice(1, room.width() - 2) + room.x1 + 1;
-        let y = rng.roll_dice(1, room.height() - 2) + room.y1 + 1;
+        let x = if room.width() > 2 {
+            rng.roll_dice(1, room.width() - 2) + room.x1 + 1
+        } else {
+            room.x1 + 1
+        };
+        let y = if room.height() > 2 {
+            rng.roll_dice(1, room.height() - 2) + room.y1 + 1
+        } else {
+            room.y1 + 1
+        };
         (x, y)
     }
 }

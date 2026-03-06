@@ -235,4 +235,18 @@ impl Direction {
             Direction::NoDirection => Point { x: 0, y: 0 },
         }
     }
+
+    pub fn opposite(&self) -> Self {
+        match self {
+            Direction::NW => Direction::SE,
+            Direction::N => Direction::S,
+            Direction::NE => Direction::SW,
+            Direction::E => Direction::W,
+            Direction::SE => Direction::NW,
+            Direction::S => Direction::N,
+            Direction::SW => Direction::NE,
+            Direction::W => Direction::E,
+            Direction::NoDirection => Direction::NoDirection,
+        }
+    }
 }

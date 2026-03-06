@@ -3,7 +3,7 @@
         "Goblin": (
             name: "Goblin",
             vision_range: 8.0,
-            sprite: "monsters/goblin.png#0",
+            sprite: "sprites/monsters/goblin.png#0",
             damage: "1d4",
             level: 1,
             base_hp: 5,
@@ -15,7 +15,7 @@
         "Rat": (
             name: "Rat",
             vision_range: 8.0,
-            sprite: "monsters/rat.png#0",
+            sprite: "sprites/monsters/rat.png#0",
             damage: "1d4",
             level: 1,
             base_hp: 4,
@@ -27,7 +27,7 @@
         "Orc": (
             name: "Orc",
             vision_range: 10.0,
-            sprite: "monsters/orc.png#0",
+            sprite: "sprites/monsters/orc.png#0",
             damage: "1d4+1",
             level: 1,
             base_hp: 10,

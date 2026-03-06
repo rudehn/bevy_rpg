@@ -24,7 +24,7 @@ https://www.oryxdesignlab.com/products/p/ultimate-fantasy-tileset
 * Update tile visiblity after player moved?? - may not be needed
 * Add hordes
 * WASM
-
+particle effects
 * Save game
 * Load game from Menu
 
@@ -33,3 +33,7 @@ add different attack names
 Add tests
 - Skill for adding tests?
 - Skill for auto running tests?
+
+Fix character status line not despawned on game over
+Add better sprites for:
+- downstairs

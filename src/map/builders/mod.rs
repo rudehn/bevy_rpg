@@ -9,12 +9,9 @@ use crate::{
     map::{
         Map,
         builders::{
-            bsp_dungeon::BspDungeonBuilder,
             candle_spawner::CandleSpawner,
-            corridors::NearestCorridors,
             exit_points::DistantExit,
             monster_spawner::MonsterSpawner,
-            room_drawer::RoomDrawer,
             start_point::{StartPointBuilder, XStart, YStart},
             unseen_culler::UnseenCuller,
         },
@@ -29,6 +26,7 @@ pub mod monster_spawner;
 mod room_drawer;
 mod start_point; // Declare the new module
 mod unseen_culler; // Declare the new module
+mod brogelike;
 
 pub struct BuilderMap {
     // pub spawn_list: Vec<(usize, String)>,
@@ -162,9 +160,7 @@ pub fn floor_builder(
     let mut builder = BuilderChain::new(new_depth, width, height, map_name);
 
     // MAP Generation
-    builder.start_with(BspDungeonBuilder::dungeon());
-    builder.with(RoomDrawer::new());
-    builder.with(NearestCorridors::new());
+    builder.start_with(brogelike::BrogueLikeBuilder::dungeon(new_depth, width, height));
     builder.with(StartPointBuilder::new());
     builder.with(CandleSpawner::new()); // Add the CandleSpawner
     builder.with(MonsterSpawner::new(spawn_table));

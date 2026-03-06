@@ -20,6 +20,7 @@ impl CandleSpawner {
         if let Some(rooms) = &build_data.rooms {
             let mut rng = RandomNumberGenerator::new();
             for room in rooms.iter() {
+                if room.width() < 1 || room.height() < 1 { continue; }
                 let center_x = (room.x1 + room.x2) / 2;
                 let center_y = (room.y1 + room.y2) / 2;
                 let center_pt = Point::new(center_x, center_y);
@@ -28,8 +29,8 @@ impl CandleSpawner {
                 let mut found_wall = false;
                 let mut attempts = 0;
                 while !found_wall && attempts < 100 {
-                    let wall_x = rng.roll_dice(1, room.width()) + room.x1;
-                    let wall_y = rng.roll_dice(1, room.height()) + room.y1;
+                    let wall_x = rng.roll_dice(1, room.width().max(1)) + room.x1 - 1;
+                    let wall_y = rng.roll_dice(1, room.height().max(1)) + room.y1 - 1;
                     let wall_pt = Point::new(wall_x, wall_y);
 
                     // Check if it's on the perimeter of the room (a wall)
