@@ -239,12 +239,17 @@ fn game_over_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 fn game_over_action(
     interaction_query: Query<&Interaction, (With<Button>, Changed<Interaction>)>,
     mut next_state: ResMut<NextState<AppState>>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
 ) {
     for interaction in &interaction_query {
         if *interaction == Interaction::Pressed {
             next_state.set(AppState::Menu);
             return;
         }
+    }
+
+    if keyboard_input.just_pressed(KeyCode::Enter) {
+        next_state.set(AppState::Menu);
     }
 }
 

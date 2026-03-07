@@ -1,3 +1,4 @@
+use crate::components::{GameEntityMarker, Position};
 use crate::game::AppState;
 use crate::game::InGameState;
 use crate::game::combat::{Damage, Health};
@@ -99,6 +100,7 @@ fn spawn_hotkey_bar(mut commands: Commands, asset_server: Res<AssetServer>) {
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
             HotkeyBar,
+            GameEntityMarker,
         ))
         .with_children(|parent| {
             parent.spawn((

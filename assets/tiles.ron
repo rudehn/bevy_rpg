@@ -2,15 +2,19 @@
     tiles: {
         "Floor": (
             name: "Floor",
-            sprite: "tilemap_packed.png#49",
+            sprite: "sprites/floors/floor_stone.png#0",
             walkable: true,
             opaque: false,
+            tile_size: (32, 32),
+            grid_size: (1, 1),
         ),
         "Wall": (
             name: "Wall",
-            sprite: "tilemap_packed.png#40",
+            sprite: "sprites/walls/wall_brick.png#0",
             walkable: false,
             opaque: true,
+            tile_size: (32, 32),
+            grid_size: (1, 1),
         ),
         "DownStairs": (
             name: "DownStairs",
@@ -30,9 +34,11 @@
         ),
         "Empty": (
             name: "Empty",
-            sprite: "tilemap_packed.png#49",
+            sprite: "sprites/floors/floor_stone.png#0",
             walkable: false,
             opaque: false,
+            tile_size: (32, 32),
+            grid_size: (1, 1),
         ),
         "Door": (
             name: "Door",

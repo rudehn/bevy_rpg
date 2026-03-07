@@ -1,7 +1,7 @@
 (
     name: "You",
     vision_range: 20.0,
-    sprite: "tilemap_packed.png#97",
+    sprite: "sprites/hero.png#0",
     level: 1,
     base_hp: 10,
     strength: 10,

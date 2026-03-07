@@ -4,7 +4,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use crate::{
-    constants::{TILE_MAP_PATH, TILE_SIZE_X, TILE_SIZE_Y},
+    constants::{TILE_SIZE_X, TILE_SIZE_Y},
     game::{AppState, camera},
 };
 
@@ -38,8 +38,7 @@ pub struct AssetsPlugin;
 
 impl Plugin for AssetsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<DungeonTileset>()
-            .init_resource::<CandleSpritesheet>()
+        app.init_resource::<CandleSpritesheet>()
             .init_resource::<MonsterManifestHandle>()
             .init_resource::<MonsterSpawnTableHandle>()
             .init_resource::<TileManifestHandle>()
@@ -47,7 +46,6 @@ impl Plugin for AssetsPlugin {
             .add_systems(
                 OnEnter(AppState::Loading),
                 (
-                    setup_dungeon_tileset,
                     setup_candle_spritesheet,
                     load_monster_manifest,
                     load_monster_spawn_table,
@@ -176,27 +174,6 @@ pub struct TileManifest {
     pub tiles: HashMap<String, TileAsset>,
 }
 
-#[derive(Resource, Default)]
-pub struct DungeonTileset {
-    pub layout: Handle<TextureAtlasLayout>,
-    pub texture: Handle<Image>,
-}
-
-fn setup_dungeon_tileset(
-    asset_server: Res<AssetServer>,
-    mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
-    mut dungeon_tileset: ResMut<DungeonTileset>,
-) {
-    dungeon_tileset.texture = asset_server.load(TILE_MAP_PATH);
-    dungeon_tileset.layout = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
-        UVec2::new(16, 16),
-        12,
-        11,
-        None,
-        None,
-    ));
-}
-
 fn setup_candle_spritesheet(
     asset_server: Res<AssetServer>,
     mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
@@ -292,6 +269,8 @@ fn load_tile_sprites(
     asset_server: Res<AssetServer>,
     tile_manifest_handle: Res<TileManifestHandle>,
     tile_manifests: Res<Assets<TileManifest>>,
+    player_asset_handle: Res<PlayerAssetHandle>,
+    player_assets: Res<Assets<PlayerAsset>>,
     mut tile_sprite_assets: ResMut<TileSpriteAssets>,
     mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
 ) {
@@ -312,11 +291,7 @@ fn load_tile_sprites(
                         .insert(texture_path_string.clone(), texture_handle);
 
                     let tile_size = tile_asset.tile_size.unwrap_or(UVec2::new(16, 16));
-                    let grid_size = if texture_path_string == "tilemap_packed.png" {
-                        UVec2::new(12, 11)
-                    } else {
-                        tile_asset.grid_size.unwrap_or(UVec2::new(1, 1))
-                    };
+                    let grid_size = tile_asset.grid_size.unwrap_or(UVec2::new(1, 1));
 
                     let layout_handle = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
                         tile_size,
@@ -331,12 +306,43 @@ fn load_tile_sprites(
                 }
             }
         }
+
+        // Ensure player sprite is also loaded
+        if let Some(player_asset) = player_assets.get(&player_asset_handle.0) {
+            let sprite_path_parts: Vec<&str> = player_asset.sprite.split('#').collect();
+            let texture_path = sprite_path_parts[0];
+            let texture_path_string = texture_path.to_string();
+
+            if !tile_sprite_assets
+                .handles
+                .contains_key(&texture_path_string)
+            {
+                let texture_handle = asset_server.load::<Image>(texture_path_string.clone());
+                tile_sprite_assets
+                    .handles
+                    .insert(texture_path_string.clone(), texture_handle);
+
+                // For individual player sprites like hero.png, assume 32x32 based on request
+                let tile_size = UVec2::new(32, 32);
+                let grid_size = UVec2::new(1, 1);
+
+                let layout_handle = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
+                    tile_size,
+                    grid_size.x,
+                    grid_size.y,
+                    None,
+                    None,
+                ));
+                tile_sprite_assets
+                    .layouts
+                    .insert(texture_path_string, layout_handle);
+            }
+        }
     }
 }
 
 fn check_assets_loaded(
     asset_server: Res<AssetServer>,
-    dungeon_tileset: Res<DungeonTileset>,
     candle_spritesheet: Res<CandleSpritesheet>,
     monster_manifest_handle: Res<MonsterManifestHandle>,
     monster_manifests: Res<Assets<MonsterManifest>>,
@@ -350,8 +356,7 @@ fn check_assets_loaded(
     player_assets: Res<Assets<PlayerAsset>>,
     mut next_state: ResMut<NextState<AppState>>,
 ) {
-    let core_textures_loaded = asset_server.is_loaded_with_dependencies(&dungeon_tileset.texture)
-        && asset_server.is_loaded_with_dependencies(&candle_spritesheet.texture);
+    let core_textures_loaded = asset_server.is_loaded_with_dependencies(&candle_spritesheet.texture);
 
     if !core_textures_loaded {
         return;

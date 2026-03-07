@@ -200,6 +200,7 @@ fn spawn_monster_tooltip_ui(
             Visibility::Hidden, // Use Visibility for intent
             UiTargetCamera(ui_camera),
             MonsterTooltip,
+            GameEntityMarker,
         ))
         .with_children(|parent| {
             parent.spawn((

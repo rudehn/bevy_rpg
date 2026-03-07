@@ -81,8 +81,7 @@ impl Plugin for GamePlugin {
                 Update,
                 toggle_main_camera_visibility.run_if(state_changed::<AppState>),
             )
-            .add_systems(OnExit(AppState::GameOver), despawn_game_entities)
-            .add_systems(OnExit(AppState::GameOver), despawn_map)
+            .add_systems(OnEnter(AppState::GameOver), (despawn_game_entities, despawn_map))
             .init_resource::<TurnManager>();
     }
 }

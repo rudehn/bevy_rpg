@@ -13,6 +13,7 @@ use crate::{
         stats::{AttributeModifiers, Attributes, CombatStats, Level, RolledHp},
         level::{Experience, AvailableStatPoints},
     },
+    map::map::GRID_SIZE,
     map::dungeon::{PlayerSpawnPoint, SpawnDungeonMessage},
 };
 
@@ -65,6 +66,12 @@ pub fn player_spawn_or_move_system(
         let texture_handle = tile_sprite_assets.handles.get(texture_path).unwrap().clone();
         let layout_handle = tile_sprite_assets.layouts.get(texture_path).unwrap().clone();
 
+        // Determine scale to fit one game map tile (GRID_SIZE)
+        // Default to 32x32 for new assets
+        let tile_size = UVec2::new(32, 32);
+        let scale_x = GRID_SIZE.x / tile_size.x as f32;
+        let scale_y = GRID_SIZE.y / tile_size.y as f32;
+
         let player_entity = commands
             .spawn((
                 Player,
@@ -109,7 +116,11 @@ pub fn player_spawn_or_move_system(
                         layout: layout_handle,
                     },
                 ),
-                Transform::from_xyz(0.0, 0.0, Z_PLAYER),
+                Transform {
+                    translation: Vec3::new(0.0, 0.0, Z_PLAYER),
+                    scale: Vec3::new(scale_x, scale_y, 1.0),
+                    ..Default::default()
+                },
                 RenderLayers::layer(1),
             ))
             .id();
