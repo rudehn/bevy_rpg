@@ -7,8 +7,8 @@ use bevy_ecs_tilemap::tiles::TileStorage;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::assets::{
-    CandleSpritesheet, DungeonTileset, MonsterManifest, MonsterManifestHandle, MonsterSpawnTable,
-    MonsterSpawnTableHandle, MonsterSpriteAssets,
+    CandleSpritesheet, MonsterManifest, MonsterManifestHandle, MonsterSpawnTable,
+    MonsterSpawnTableHandle, MonsterSpriteAssets, TileManifest, TileManifestHandle, TileSpriteAssets,
 };
 use crate::game::{TurnManager, spawn_monster_by_name, turns::TurnMarker};
 use crate::map::Map;
@@ -128,7 +128,8 @@ fn spawn_tiles_into_ecs(
     commands: &mut Commands,
     map_entity: Entity,
     game_map: &Map,
-    dungeon_tileset: &Res<DungeonTileset>,
+    tile_manifest: &TileManifest,
+    tile_sprite_assets: &TileSpriteAssets,
 ) -> TileStorage {
     let mut tile_storage = TileStorage::empty(MAP_SIZE);
 
@@ -141,7 +142,15 @@ fn spawn_tiles_into_ecs(
             };
             let tile_type = game_map.get_tile(pt).unwrap();
 
-            let tile_entity = spawn_tile_entity(commands, map_entity, tile_pos, tile_type, pt);
+            let tile_entity = spawn_tile_entity(
+                commands, 
+                map_entity, 
+                tile_pos, 
+                tile_type, 
+                pt,
+                tile_manifest,
+                tile_sprite_assets
+            );
             tile_storage.set(&tile_pos, tile_entity);
         }
     }
@@ -151,7 +160,7 @@ fn spawn_tiles_into_ecs(
         map_type: TilemapType::Square,
         size: MAP_SIZE,
         storage: tile_storage.clone(),
-        texture: TilemapTexture::Single(dungeon_tileset.texture.clone()),
+        texture: TilemapTexture::Single(tile_sprite_assets.handles.get("tilemap_packed.png").unwrap().clone()),
         tile_size: TILE_SIZE,
         transform: Transform::from_xyz(0.0, 0.0, 0.0),
         ..Default::default()
@@ -189,8 +198,7 @@ fn spawn_dungeon_entities(
 
 pub fn spawn_dungeon(
     mut commands: Commands,
-    dungeon_tileset: Res<DungeonTileset>,
-    candle_spritesheet: Res<CandleSpritesheet>, // New parameter
+    candle_spritesheet: Res<CandleSpritesheet>,
     floor: Res<Floor>,
     mut map: ResMut<Map>,
     mut turn_manager: ResMut<TurnManager>,
@@ -199,10 +207,15 @@ pub fn spawn_dungeon(
     monster_spawn_tables: Res<Assets<MonsterSpawnTable>>,
     monster_spawn_table_handle: Res<MonsterSpawnTableHandle>,
     monster_sprite_assets: Res<MonsterSpriteAssets>,
+    tile_manifests: Res<Assets<TileManifest>>,
+    tile_manifest_handle: Res<TileManifestHandle>,
+    tile_sprite_assets: Res<TileSpriteAssets>,
     mut log_writer: MessageWriter<GameLogMessage>,
     player_query: Query<Entity, With<Player>>,
     turn_marker_query: Query<Entity, With<TurnMarker>>,
 ) {
+    let tile_manifest = tile_manifests.get(&tile_manifest_handle.0).expect("Tile manifest not loaded");
+
     let spawn_table = monster_spawn_tables
         .get(&monster_spawn_table_handle.0)
         .unwrap();
@@ -221,7 +234,13 @@ pub fn spawn_dungeon(
     let map_entity = commands
         .spawn((DungeonECSMap, GameEntityMarker, RenderLayers::layer(1)))
         .id();
-    let _tile_storage = spawn_tiles_into_ecs(&mut commands, map_entity, &map, &dungeon_tileset);
+    let _tile_storage = spawn_tiles_into_ecs(
+        &mut commands, 
+        map_entity, 
+        &map, 
+        tile_manifest,
+        &tile_sprite_assets
+    );
 
     spawn_dungeon_entities(
         &mut commands,

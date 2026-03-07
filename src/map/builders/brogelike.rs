@@ -298,7 +298,7 @@ impl InitialMapBuilder for BrogueLikeBuilder {
                                 }
                             }
                             // Don't forget the door itself!
-                            build_data.map.set_tile(d_pt, TileType::Floor);
+                            build_data.map.set_tile(d_pt, TileType::Door);
                             
                             rooms.push(Rect::with_exact(r_min_x, r_min_y, r_max_x, r_max_y));
                             placed += 1;

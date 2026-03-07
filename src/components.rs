@@ -27,6 +27,7 @@ impl Position {
 pub struct Viewshed {
     pub visible_tiles: Vec<Point>,
     pub range: i32,
+    pub dirty: bool,
 }
 
 impl Viewshed {
@@ -34,6 +35,7 @@ impl Viewshed {
         Self {
             visible_tiles: Vec::new(),
             range,
+            dirty: true,
         }
     }
 }

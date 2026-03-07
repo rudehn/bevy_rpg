@@ -1,0 +1,12 @@
+(
+    name: "You",
+    vision_range: 20.0,
+    sprite: "tilemap_packed.png#97",
+    level: 1,
+    base_hp: 10,
+    strength: 10,
+    dexterity: 10,
+    constitution: 10,
+    agility: 10,
+    damage: "1d6",
+)

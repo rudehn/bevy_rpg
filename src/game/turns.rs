@@ -1,12 +1,11 @@
 use bevy::prelude::*;
-use std::collections::VecDeque;
 
 use crate::components::GameEntityMarker;
 use crate::constants::BASE_ACTION_COST;
 use crate::game::AppState;
 use crate::game::actions::{
-    Action, ActionFinishedEvent, Direction, MeleeIntent, MovementIntent, SpeedStats, WaitIntent,
-    handle_melee, handle_movement, handle_wait,
+    Action, ActionFinishedEvent, Direction, MeleeIntent, MovementIntent, OpenDoorIntent,
+    SpeedStats, WaitIntent, handle_door_open, handle_melee, handle_movement, handle_wait,
 };
 use crate::game::ai::MonsterAI;
 use crate::player::{MovementTimer, Player};
@@ -54,6 +53,7 @@ impl Plugin for TurnOrderPlugin {
             .add_message::<MovementIntent>()
             .add_message::<MeleeIntent>()
             .add_message::<WaitIntent>()
+            .add_message::<OpenDoorIntent>()
             .add_message::<ActionFinishedEvent>()
             .add_message::<TurnEndEvent>()
             .add_systems(OnEnter(AppState::InGame), (setup_turn_order, start_turns))
@@ -71,6 +71,7 @@ impl Plugin for TurnOrderPlugin {
                         // --- Execution Systems ---
                         handle_movement,
                         handle_melee,
+                        handle_door_open,
                         handle_wait,
                         // --- Cleanup ---
                         resolve_turn_end,
@@ -122,7 +123,7 @@ fn select_next_actor(
     // But we MUST stop if we hit the player to gather input.
 
     let mut i = 0;
-    while i < turn_manager.turn_queue.len() {
+    while i < turn_queue_len(turn_manager.as_ref()) {
         let (entity, time) = turn_manager.turn_queue[i];
         if time > turn_manager.current_time {
             break;
@@ -176,6 +177,10 @@ fn select_next_actor(
         // but as a fallback:
         next_state.set(TurnState::PlayerInput);
     }
+}
+
+fn turn_queue_len(tm: &TurnManager) -> usize {
+    tm.turn_queue.len()
 }
 
 /// BRIDGE: Converts Player Input Resource into Action Intents
@@ -248,7 +253,6 @@ fn marker_dispatch(
     mut turn_end_writer: MessageWriter<TurnEndEvent>,
     query: Query<Entity, (With<TurnMarker>, With<MyTurn>)>,
 ) {
-    let mut actors = 0;
     for entity in query.iter() {
         finish_writer.write(ActionFinishedEvent {
             entity: entity,
@@ -256,7 +260,6 @@ fn marker_dispatch(
         });
         turn_end_writer.write(TurnEndEvent);
         commands.entity(entity).remove::<MyTurn>();
-        actors += 1;
     }
 }
 
@@ -304,7 +307,11 @@ fn continue_turn_processing(
             // If not, we switch to player input.
             if !npc_added {
                 let (entity, _) = turn_manager.turn_queue.remove(0);
-                commands.entity(entity).insert(MyTurn);
+                commands.queue(move |world: &mut World| {
+                    if let Ok(mut ec) = world.get_entity_mut(entity) {
+                        ec.insert(MyTurn);
+                    }
+                });
                 next_state.set(TurnState::PlayerInput);
                 return;
             }
@@ -312,7 +319,11 @@ fn continue_turn_processing(
         }
 
         let (entity, _) = turn_manager.turn_queue.remove(0);
-        commands.entity(entity).insert(MyTurn);
+        commands.queue(move |world: &mut World| {
+            if let Ok(mut ec) = world.get_entity_mut(entity) {
+                ec.insert(MyTurn);
+            }
+        });
         npc_added = true;
     }
 

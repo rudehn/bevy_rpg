@@ -51,6 +51,7 @@ pub fn update_tile_visibility(
         &mut TileColor,
         &mut TileVisibility,
         &mut TileExplored,
+        &mut Sprite,
     )>,
 ) {
     let Ok(player_viewshed) = player_query.single() else {
@@ -60,7 +61,7 @@ pub fn update_tile_visibility(
     let fov_tiles = &player_viewshed.visible_tiles;
 
     // Update tile visibility and color
-    for (tile_pos, mut tile_color, mut tile_visibility, mut tile_explored) in
+    for (tile_pos, mut tile_color, mut tile_visibility, mut tile_explored, mut sprite) in
         tile_render_query.iter_mut()
     {
         let current_point = Point::new(tile_pos.x as i32, tile_pos.y as i32);
@@ -68,13 +69,19 @@ pub fn update_tile_visibility(
         if fov_tiles.contains(&current_point) {
             *tile_visibility = TileVisibility::Visible;
             *tile_explored = TileExplored::Explored;
-            tile_color.0 = Color::WHITE; // Visible tiles are full bright
+            let visible_color = Color::WHITE;
+            tile_color.0 = visible_color;
+            sprite.color = visible_color;
         } else {
             *tile_visibility = TileVisibility::Hidden;
             if *tile_explored == TileExplored::Explored {
-                tile_color.0 = Color::srgb(0.5, 0.5, 0.5); // Explored but not visible are dim
+                let explored_color = Color::srgb(0.5, 0.5, 0.5); // Explored but not visible are dim
+                tile_color.0 = explored_color;
+                sprite.color = explored_color;
             } else {
-                tile_color.0 = Color::BLACK; // Unexplored and not visible are black
+                let hidden_color = Color::BLACK; // Unexplored and not visible are black
+                tile_color.0 = hidden_color;
+                sprite.color = hidden_color;
             }
         }
     }

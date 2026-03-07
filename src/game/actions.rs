@@ -1,12 +1,14 @@
 use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
+use bevy_ecs_tilemap::prelude::{TilePos, TileStorage, TileTextureIndex};
 
 use crate::{
-    components::{Collider, Monster, Position},
+    components::{Collider, Monster, Position, Viewshed},
     constants::BASE_ACTION_COST,
     game::combat::AttackIntentMessage,
-    map::{Map, tile::is_walkable},
+    map::{Map, tile::{is_walkable, TileType}, map::DungeonECSMap},
     player::Player,
+    assets::{TileManifest, TileManifestHandle, TileSpriteAssets},
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -35,6 +37,12 @@ pub struct WaitIntent {
     pub entity: Entity,
 }
 
+#[derive(Message)]
+pub struct OpenDoorIntent {
+    pub entity: Entity,
+    pub door_pos: Point,
+}
+
 #[derive(Component, Clone)]
 pub struct SpeedStats {
     pub delay: f32, // e.g., 0.5 for half time,  2.0 for double time
@@ -58,9 +66,11 @@ pub struct ActionFinishedEvent {
 
 /// Handles movement. If a collision with a hostile entity is detected,
 /// it converts the movement into a MeleeIntent instead.
+/// If the target tile is a closed door, it converts it into an OpenDoorIntent.
 pub fn handle_movement(
     mut intents: MessageReader<MovementIntent>,
     mut melee_writer: MessageWriter<MeleeIntent>,
+    mut open_door_writer: MessageWriter<OpenDoorIntent>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut actors_query: Query<(
         Entity,
@@ -82,10 +92,8 @@ pub fn handle_movement(
 
         let target_pt = pos.to_point() + intent.dir.offset();
 
-        // 1. Bounds/Wall Check
-        if !map.in_bounds(target_pt)
-            || !is_walkable(map.tiles[map.xy_idx(target_pt.x, target_pt.y)])
-        {
+        // 1. Bounds check
+        if !map.in_bounds(target_pt) {
             finish_writer.write(ActionFinishedEvent {
                 entity: intent.entity,
                 base_cost: BASE_ACTION_COST,
@@ -93,7 +101,27 @@ pub fn handle_movement(
             continue;
         }
 
-        // 2. Occupant Check (Bump-to-Attack / Block)
+        let target_tile = map.tiles[map.xy_idx(target_pt.x, target_pt.y)];
+
+        // 2. Closed Door Check
+        if target_tile == TileType::Door {
+            open_door_writer.write(OpenDoorIntent {
+                entity: intent.entity,
+                door_pos: target_pt,
+            });
+            continue;
+        }
+
+        // 3. Wall/Obstacle Check
+        if !is_walkable(target_tile) {
+            finish_writer.write(ActionFinishedEvent {
+                entity: intent.entity,
+                base_cost: BASE_ACTION_COST,
+            });
+            continue;
+        }
+
+        // 4. Occupant Check (Bump-to-Attack / Block)
         let mut bump_target = None;
         for (e, other_pos, other_is_player, other_is_monster, other_has_collider) in
             actors_query.iter()
@@ -136,7 +164,7 @@ pub fn handle_movement(
             // If neither hostile nor blocking collider, fall through to movement
         }
 
-        // 3. Apply Movement
+        // 5. Apply Movement
         if let Ok((_, mut pos, _, _, _)) = actors_query.get_mut(intent.entity) {
             pos.x = target_pt.x;
             pos.y = target_pt.y;
@@ -170,6 +198,77 @@ pub fn handle_wait(
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
 ) {
     for intent in intents.read() {
+        finish_writer.write(ActionFinishedEvent {
+            entity: intent.entity,
+            base_cost: BASE_ACTION_COST,
+        });
+    }
+}
+
+pub fn handle_door_open(
+    mut commands: Commands,
+    mut intents: MessageReader<OpenDoorIntent>,
+    mut finish_writer: MessageWriter<ActionFinishedEvent>,
+    mut map: ResMut<Map>,
+    q_map: Query<&TileStorage, With<DungeonECSMap>>,
+    mut tile_query: Query<(&mut TileType, &mut Sprite, &mut TileTextureIndex)>,
+    mut viewshed_query: Query<&mut Viewshed>,
+    tile_manifests: Res<Assets<TileManifest>>,
+    tile_manifest_handle: Res<TileManifestHandle>,
+    tile_sprite_assets: Res<TileSpriteAssets>,
+) {
+    let Some(tile_manifest) = tile_manifests.get(&tile_manifest_handle.0) else {
+        return;
+    };
+
+    for intent in intents.read() {
+        let idx = map.xy_idx(intent.door_pos.x, intent.door_pos.y);
+        
+        // Logical Update
+        map.tiles[idx] = TileType::OpenDoor;
+
+        // Visual Update via TileStorage for efficiency
+        if let Ok(tile_storage) = q_map.single() {
+            let tile_pos = TilePos { 
+                x: intent.door_pos.x as u32, 
+                y: intent.door_pos.y as u32 
+            };
+            
+            if let Some(tile_entity) = tile_storage.get(&tile_pos) {
+                if let Ok((mut tile_type, mut sprite, mut texture_index)) = tile_query.get_mut(tile_entity) {
+                    *tile_type = TileType::OpenDoor;
+                    
+                    if let Some(asset) = tile_manifest.tiles.get(TileType::OpenDoor.name()) {
+                        let sprite_path_parts: Vec<&str> = asset.sprite.split('#').collect();
+                        let texture_path = sprite_path_parts[0];
+                        let index = sprite_path_parts[1].parse::<usize>().unwrap_or_default();
+                        
+                        // Update Tilemap index (though it may not render if texture doesn't match)
+                        texture_index.0 = index as u32;
+
+                        // Update Sprite image, index, and layout
+                        if let Some(texture_handle) = tile_sprite_assets.handles.get(texture_path) {
+                            sprite.image = texture_handle.clone();
+                        }
+                        if let Some(layout_handle) = tile_sprite_assets.layouts.get(texture_path) {
+                            if let Some(ref mut texture_atlas) = sprite.texture_atlas {
+                                texture_atlas.index = index;
+                                texture_atlas.layout = layout_handle.clone();
+                            }
+                        }
+                    }
+
+                    // Remove collider so we can walk through it
+                    commands.entity(tile_entity).remove::<Collider>();
+                }
+            }
+        }
+
+        // Trigger vision refresh for everyone
+        for mut viewshed in viewshed_query.iter_mut() {
+            viewshed.dirty = true;
+        }
+
         finish_writer.write(ActionFinishedEvent {
             entity: intent.entity,
             base_cost: BASE_ACTION_COST,

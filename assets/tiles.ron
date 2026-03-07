@@ -1,0 +1,54 @@
+(
+    tiles: {
+        "Floor": (
+            name: "Floor",
+            sprite: "tilemap_packed.png#49",
+            walkable: true,
+            opaque: false,
+        ),
+        "Wall": (
+            name: "Wall",
+            sprite: "tilemap_packed.png#40",
+            walkable: false,
+            opaque: true,
+        ),
+        "DownStairs": (
+            name: "DownStairs",
+            sprite: "sprites/stairs/stone_stairs_down.png#0",
+            walkable: true,
+            opaque: false,
+            tile_size: (32, 32),
+            grid_size: (1, 1),
+        ),
+        "UpStairs": (
+            name: "UpStairs",
+            sprite: "sprites/stairs/stone_stairs_up.png#0",
+            walkable: true,
+            opaque: false,
+            tile_size: (32, 32),
+            grid_size: (1, 1),
+        ),
+        "Empty": (
+            name: "Empty",
+            sprite: "tilemap_packed.png#49",
+            walkable: false,
+            opaque: false,
+        ),
+        "Door": (
+            name: "Door",
+            sprite: "sprites/doors/closed_door.png#0",
+            walkable: false,
+            opaque: true,
+            tile_size: (32, 32),
+            grid_size: (1, 1),
+        ),
+        "OpenDoor": (
+            name: "OpenDoor",
+            sprite: "sprites/doors/open_door.png#0",
+            walkable: true,
+            opaque: false,
+            tile_size: (32, 32),
+            grid_size: (1, 1),
+        ),
+    }
+)

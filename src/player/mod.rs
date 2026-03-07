@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use bevy::time::Timer;
 
 use crate::{
-    assets::DungeonTileset,
+    assets::{PlayerAsset, PlayerAssetHandle, TileSpriteAssets},
     components::{Collider, GameEntityMarker, Name, Position, Viewshed},
     constants::Z_PLAYER,
     game::{
@@ -12,11 +12,8 @@ use crate::{
         combat::{Damage, Health, HealthRegen},
         stats::{AttributeModifiers, Attributes, CombatStats, Level, RolledHp},
         level::{Experience, AvailableStatPoints},
-    }, // Added combat::Damage
-    map::{
-        dungeon::{PlayerSpawnPoint, SpawnDungeonMessage},
-        tile::SOLDIER,
     },
+    map::dungeon::{PlayerSpawnPoint, SpawnDungeonMessage},
 };
 
 pub struct PlayerPlugin;
@@ -30,12 +27,11 @@ impl Plugin for PlayerPlugin {
             0.1,
             TimerMode::Repeating,
         )))
-        // Player spawn/move now happens on SpawnDungeonMessage, after the dungeon has been spawned
         .add_systems(
             Update,
             player_spawn_or_move_system
                 .run_if(on_message::<SpawnDungeonMessage>)
-                .after(crate::map::dungeon::spawn_dungeon), // Reference the system correctly
+                .after(crate::map::dungeon::spawn_dungeon),
         );
     }
 }
@@ -45,49 +41,57 @@ pub struct Player;
 
 pub fn player_spawn_or_move_system(
     mut commands: Commands,
-    tileset: Res<DungeonTileset>,
+    player_asset_handle: Res<PlayerAssetHandle>,
+    player_assets: Res<Assets<PlayerAsset>>,
+    tile_sprite_assets: Res<TileSpriteAssets>,
     spawn_point: Res<PlayerSpawnPoint>,
     mut q_player: Query<(Entity, &mut Transform, &mut Position), With<Player>>,
-    mut turn_manager: ResMut<TurnManager>, // Added TurnManager
+    mut turn_manager: ResMut<TurnManager>,
 ) {
+    let player_asset = player_assets.get(&player_asset_handle.0).expect("Player asset not loaded");
+    
     let new_grid_pos = Position {
         x: spawn_point.0.x,
         y: spawn_point.0.y,
     };
 
     if let Ok((_player_entity, mut _player_tf, mut player_pos)) = q_player.single_mut() {
-        // Player already exists, move them
         *player_pos = new_grid_pos;
     } else {
-        // No player exists, spawn a new one
-        // Use multiple insert calls to avoid tuple bundle size limit (15)
+        let sprite_path_parts: Vec<&str> = player_asset.sprite.split('#').collect();
+        let texture_path = sprite_path_parts[0];
+        let index = sprite_path_parts[1].parse::<usize>().unwrap_or_default();
+
+        let texture_handle = tile_sprite_assets.handles.get(texture_path).unwrap().clone();
+        let layout_handle = tile_sprite_assets.layouts.get(texture_path).unwrap().clone();
+
         let player_entity = commands
             .spawn((
                 Player,
-                Name("You".to_string()),
+                Name(player_asset.name.clone()),
                 GameEntityMarker,
                 Collider,
                 new_grid_pos,
-                Viewshed::new(20),
+                Viewshed::new(player_asset.vision_range as i32),
             ))
             .insert((
                 Health {
-                    current: 10,
-                    max: 10,
+                    current: player_asset.base_hp,
+                    max: player_asset.base_hp,
                 },
                 HealthRegen {
                     regen_rate: 10,
                     regen_accumulator: 0,
                 },
-                Damage("1d6".to_string()),
+                Damage(player_asset.damage.clone()),
                 Attributes {
-                    strength: 10,
-                    dexterity: 10,
-                    constitution: 10,
-                    agility: 10,
+                    strength: player_asset.strength,
+                    dexterity: player_asset.dexterity,
+                    constitution: player_asset.constitution,
+                    agility: player_asset.agility,
                 },
                 AttributeModifiers::default(),
-                Level { value: 1 },
+                Level { value: player_asset.level },
                 CombatStats::default(),
                 SpeedStats::default(),
                 Experience {
@@ -99,18 +103,16 @@ pub fn player_spawn_or_move_system(
             ))
             .insert((
                 Sprite::from_atlas_image(
-                    tileset.texture.clone(),
+                    texture_handle,
                     TextureAtlas {
-                        index: SOLDIER,
-                        layout: tileset.layout.clone(),
+                        index,
+                        layout: layout_handle,
                     },
                 ),
-                // Provide an initial Transform with the correct Z-order.
-                // X and Y will be set by sync_entity_transforms when Position changes.
                 Transform::from_xyz(0.0, 0.0, Z_PLAYER),
                 RenderLayers::layer(1),
             ))
             .id();
-        turn_manager.add_entity(player_entity); // Add player to the turn queue
+        turn_manager.add_entity(player_entity);
     }
 }
