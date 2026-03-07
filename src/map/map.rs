@@ -1,9 +1,8 @@
 use bevy::prelude::*;
-use bevy_ecs_tilemap::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, BaseMap, DistanceAlg, Point, SmallVec};
 
 use crate::{
-    components::Viewshed,
+    components::{Position, Viewshed},
     game::AppState,
     map::tile::{TileExplored, TileType, TileVisibility, is_opaque, is_walkable},
     player::Player,
@@ -15,20 +14,18 @@ There are two map types.
 1. The Map struct defined here. This grid based map handles all game logic, from map generation
    to collision and fog of war.
 
-2. The Bevy_ecs_tilemap. This third party map handles all the rendering of all entities on the level.
+2. The ECS Entity tiles. This handles the rendering of all entities on the level.
    This handles sprites, visibility, pixel location, etc.
 
 */
-pub const TILE_SIZE: TilemapTileSize = TilemapTileSize { x: 16.0, y: 16.0 };
-pub const GRID_SIZE: TilemapGridSize = TilemapGridSize { x: 16.0, y: 16.0 };
-pub const MAP_SIZE: TilemapSize = TilemapSize { x: 80, y: 60 };
+pub const GRID_SIZE: Vec2 = Vec2 { x: 16.0, y: 16.0 };
+pub const MAP_SIZE: UVec2 = UVec2 { x: 80, y: 60 };
 
 pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(TilemapPlugin)
-            .insert_resource(Map::default()) // This will always be the active level
+        app.insert_resource(Map::default()) // This will always be the active level
             .add_systems(
                 Update,
                 update_tile_visibility.run_if(in_state(AppState::InGame)), // .after(move_player),
@@ -38,7 +35,7 @@ impl Plugin for MapPlugin {
 
 // Tag for the entity that holds the map storage
 #[derive(Component)]
-pub struct DungeonECSMap; // Tag for entity holding the active ECS tilemap
+pub struct DungeonECSMap; // Tag for entity holding the active ECS map marker
 
 // --------------------------------------------------------------------------------
 // SYSTEMS
@@ -47,11 +44,11 @@ pub struct DungeonECSMap; // Tag for entity holding the active ECS tilemap
 pub fn update_tile_visibility(
     player_query: Query<&Viewshed, (With<Player>, Changed<Viewshed>)>,
     mut tile_render_query: Query<(
-        &TilePos,
-        &mut TileColor,
+        &Position,
         &mut TileVisibility,
         &mut TileExplored,
         &mut Sprite,
+        &mut Visibility,
     )>,
 ) {
     let Ok(player_viewshed) = player_query.single() else {
@@ -61,27 +58,24 @@ pub fn update_tile_visibility(
     let fov_tiles = &player_viewshed.visible_tiles;
 
     // Update tile visibility and color
-    for (tile_pos, mut tile_color, mut tile_visibility, mut tile_explored, mut sprite) in
+    for (tile_pos, mut tile_visibility, mut tile_explored, mut sprite, mut visibility) in
         tile_render_query.iter_mut()
     {
-        let current_point = Point::new(tile_pos.x as i32, tile_pos.y as i32);
+        let current_point = Point::new(tile_pos.x, tile_pos.y);
 
         if fov_tiles.contains(&current_point) {
             *tile_visibility = TileVisibility::Visible;
             *tile_explored = TileExplored::Explored;
-            let visible_color = Color::WHITE;
-            tile_color.0 = visible_color;
-            sprite.color = visible_color;
+            *visibility = Visibility::Visible;
+            sprite.color = Color::WHITE;
         } else {
             *tile_visibility = TileVisibility::Hidden;
             if *tile_explored == TileExplored::Explored {
-                let explored_color = Color::srgb(0.5, 0.5, 0.5); // Explored but not visible are dim
-                tile_color.0 = explored_color;
-                sprite.color = explored_color;
+                *visibility = Visibility::Visible;
+                sprite.color = Color::srgb(0.5, 0.5, 0.5); // Explored but not visible are dim
             } else {
-                let hidden_color = Color::BLACK; // Unexplored and not visible are black
-                tile_color.0 = hidden_color;
-                sprite.color = hidden_color;
+                *visibility = Visibility::Hidden;
+                sprite.color = Color::BLACK; // Unexplored and not visible are black
             }
         }
     }

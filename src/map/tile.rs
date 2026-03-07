@@ -1,12 +1,14 @@
 use bevy::ecs::component::Component;
 use bevy::prelude::{Color, Commands, Entity, Transform, TextureAtlas, Sprite, Vec3};
 use bevy::camera::visibility::RenderLayers;
-use bevy_ecs_tilemap::prelude::{TileColor, TilePos, TilemapId, TileTextureIndex};
 use bracket_lib::prelude::Point;
 
 use crate::components::Collider;
 use crate::map::map::GRID_SIZE;
 use crate::assets::{TileManifest, TileSpriteAssets};
+
+#[derive(Component)]
+pub struct TileMarker;
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TileType {
@@ -71,7 +73,6 @@ pub fn is_opaque(tile: TileType) -> bool {
 pub fn spawn_tile_entity(
     commands: &mut Commands,
     map_entity: Entity,
-    tile_pos: TilePos,
     tile_type: TileType,
     pt: Point,
     tile_manifest: &TileManifest,
@@ -92,10 +93,7 @@ pub fn spawn_tile_entity(
     let scale_y = GRID_SIZE.y / tile_size.y as f32;
 
     let mut command = commands.spawn((
-        tile_pos,
-        TilemapId(map_entity),
-        TileTextureIndex(index as u32), // Add for tilemap rendering support
-        TileColor(Color::BLACK), // Keep for visibility system compatibility
+        TileMarker,
         Sprite::from_atlas_image(
             texture_handle,
             TextureAtlas {

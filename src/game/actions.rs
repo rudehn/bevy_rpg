@@ -1,12 +1,11 @@
 use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
-use bevy_ecs_tilemap::prelude::{TilePos, TileStorage, TileTextureIndex};
 
 use crate::{
     components::{Collider, Monster, Position, Viewshed},
     constants::BASE_ACTION_COST,
     game::combat::AttackIntentMessage,
-    map::{Map, tile::{is_walkable, TileType}, map::DungeonECSMap},
+    map::{Map, tile::{is_walkable, TileType, TileMarker}, map::DungeonECSMap},
     player::Player,
     assets::{TileManifest, TileManifestHandle, TileSpriteAssets},
 };
@@ -78,7 +77,7 @@ pub fn handle_movement(
         Has<Player>,
         Has<Monster>,
         Has<Collider>,
-    )>,
+    ), Without<TileMarker>>,
     map: Res<Map>,
 ) {
     for intent in intents.read() {
@@ -210,8 +209,7 @@ pub fn handle_door_open(
     mut intents: MessageReader<OpenDoorIntent>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut map: ResMut<Map>,
-    q_map: Query<&TileStorage, With<DungeonECSMap>>,
-    mut tile_query: Query<(&mut TileType, &mut Sprite, &mut TileTextureIndex)>,
+    mut tile_query: Query<(Entity, &Position, &mut TileType, &mut Sprite)>,
     mut viewshed_query: Query<&mut Viewshed>,
     tile_manifests: Res<Assets<TileManifest>>,
     tile_manifest_handle: Res<TileManifestHandle>,
@@ -227,40 +225,31 @@ pub fn handle_door_open(
         // Logical Update
         map.tiles[idx] = TileType::OpenDoor;
 
-        // Visual Update via TileStorage for efficiency
-        if let Ok(tile_storage) = q_map.single() {
-            let tile_pos = TilePos { 
-                x: intent.door_pos.x as u32, 
-                y: intent.door_pos.y as u32 
-            };
-            
-            if let Some(tile_entity) = tile_storage.get(&tile_pos) {
-                if let Ok((mut tile_type, mut sprite, mut texture_index)) = tile_query.get_mut(tile_entity) {
-                    *tile_type = TileType::OpenDoor;
+        // Visual Update by querying for the tile entity at the correct position
+        for (tile_entity, pos, mut tile_type, mut sprite) in tile_query.iter_mut() {
+            if pos.x == intent.door_pos.x && pos.y == intent.door_pos.y {
+                *tile_type = TileType::OpenDoor;
+                
+                if let Some(asset) = tile_manifest.tiles.get(TileType::OpenDoor.name()) {
+                    let sprite_path_parts: Vec<&str> = asset.sprite.split('#').collect();
+                    let texture_path = sprite_path_parts[0];
+                    let index = sprite_path_parts[1].parse::<usize>().unwrap_or_default();
                     
-                    if let Some(asset) = tile_manifest.tiles.get(TileType::OpenDoor.name()) {
-                        let sprite_path_parts: Vec<&str> = asset.sprite.split('#').collect();
-                        let texture_path = sprite_path_parts[0];
-                        let index = sprite_path_parts[1].parse::<usize>().unwrap_or_default();
-                        
-                        // Update Tilemap index (though it may not render if texture doesn't match)
-                        texture_index.0 = index as u32;
-
-                        // Update Sprite image, index, and layout
-                        if let Some(texture_handle) = tile_sprite_assets.handles.get(texture_path) {
-                            sprite.image = texture_handle.clone();
-                        }
-                        if let Some(layout_handle) = tile_sprite_assets.layouts.get(texture_path) {
-                            if let Some(ref mut texture_atlas) = sprite.texture_atlas {
-                                texture_atlas.index = index;
-                                texture_atlas.layout = layout_handle.clone();
-                            }
+                    // Update Sprite image, index, and layout
+                    if let Some(texture_handle) = tile_sprite_assets.handles.get(texture_path) {
+                        sprite.image = texture_handle.clone();
+                    }
+                    if let Some(layout_handle) = tile_sprite_assets.layouts.get(texture_path) {
+                        if let Some(ref mut texture_atlas) = sprite.texture_atlas {
+                            texture_atlas.index = index;
+                            texture_atlas.layout = layout_handle.clone();
                         }
                     }
-
-                    // Remove collider so we can walk through it
-                    commands.entity(tile_entity).remove::<Collider>();
                 }
+
+                // Remove collider so we can walk through it
+                commands.entity(tile_entity).remove::<Collider>();
+                break;
             }
         }
 

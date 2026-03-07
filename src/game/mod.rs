@@ -27,9 +27,11 @@ pub mod stats;
 mod systems;
 pub mod turns;
 pub use ai::*;
-use bevy_ecs_tilemap::tiles::TileStorage;
 pub use spawner::*;
 pub use turns::*;
+
+use crate::map::map::DungeonECSMap;
+use crate::map::tile::TileMarker;
 
 #[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum AppState {
@@ -106,17 +108,15 @@ fn despawn_game_entities(
     info!("Finished despawning game entities.");
 }
 
-fn despawn_map(mut commands: Commands, mut maps: Query<(Entity, &mut TileStorage, &Transform)>) {
-    let Some((tilemap_entity, mut tile_storage, _)) = maps
-        .iter_mut()
-        .sort_by::<&Transform>(|a, b| b.translation.z.partial_cmp(&a.translation.z).unwrap())
-        .next()
-    else {
-        return;
-    };
-
-    commands.entity(tilemap_entity).despawn();
-    for entity in tile_storage.drain() {
+fn despawn_map(
+    mut commands: Commands, 
+    q_map: Query<Entity, With<DungeonECSMap>>,
+    q_tiles: Query<Entity, With<TileMarker>>,
+) {
+    for entity in q_map.iter() {
+        commands.entity(entity).despawn();
+    }
+    for entity in q_tiles.iter() {
         commands.entity(entity).despawn();
     }
 }

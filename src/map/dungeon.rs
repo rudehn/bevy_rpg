@@ -1,9 +1,5 @@
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
-use bevy_ecs_tilemap::TilemapBundle;
-use bevy_ecs_tilemap::map::{TilemapTexture, TilemapType};
-use bevy_ecs_tilemap::prelude::TilePos;
-use bevy_ecs_tilemap::tiles::TileStorage;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::assets::{
@@ -13,7 +9,6 @@ use crate::assets::{
 use crate::game::{TurnManager, spawn_monster_by_name, turns::TurnMarker};
 use crate::map::Map;
 use crate::map::builders::BuilderMap;
-use crate::map::map::TILE_SIZE; // Import BuildData
 use crate::map::tile::TileType;
 use crate::player::Player;
 use crate::ui::game_log::GameLogMessage;
@@ -24,8 +19,8 @@ use crate::{
     map::{
         builders::level_builder,
         light::spawn_candle,
-        map::{DungeonECSMap, GRID_SIZE, MAP_SIZE},
-        tile::spawn_tile_entity,
+        map::{DungeonECSMap, MAP_SIZE},
+        tile::{spawn_tile_entity, TileMarker},
     },
 };
 
@@ -91,33 +86,32 @@ fn player_stair_system(
 fn map_transition_system(
     mut commands: Commands,
     mut floor: ResMut<Floor>,
-    q_map: Query<(Entity, &TileStorage), With<DungeonECSMap>>,
+    q_map_markers: Query<Entity, With<DungeonECSMap>>,
+    q_tiles: Query<Entity, With<TileMarker>>,
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
     mut turn_manager: ResMut<TurnManager>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
-    // 1. Despawn old map entities and their tiles
-    for (map_entity, tile_storage) in q_map.iter() {
-        for x in 0..MAP_SIZE.x {
-            for y in 0..MAP_SIZE.y {
-                if let Some(tile_entity) = tile_storage.get(&TilePos { x, y }) {
-                    commands.entity(tile_entity).despawn();
-                }
-            }
-        }
+    // 1. Despawn old map markers
+    for map_entity in q_map_markers.iter() {
         commands.entity(map_entity).despawn();
     }
 
-    // 2. Despawn all floor-specific entities (monsters, candles, etc.)
+    // 2. Despawn all tiles
+    for tile_entity in q_tiles.iter() {
+        commands.entity(tile_entity).despawn();
+    }
+
+    // 3. Despawn all floor-specific entities (monsters, candles, etc.)
     for entity in q_floor_entities.iter() {
         commands.entity(entity).despawn();
     }
 
-    // 3. Reset turn manager queue (monsters are gone)
+    // 4. Reset turn manager queue (monsters are gone)
     *turn_manager = TurnManager::default();
 
-    // 4. Increment floor
+    // 5. Increment floor
     floor.0 += 1;
     log_writer.write(GameLogMessage(format!("Descending to floor {}", floor.0)));
 
@@ -130,42 +124,24 @@ fn spawn_tiles_into_ecs(
     game_map: &Map,
     tile_manifest: &TileManifest,
     tile_sprite_assets: &TileSpriteAssets,
-) -> TileStorage {
-    let mut tile_storage = TileStorage::empty(MAP_SIZE);
-
+) {
     for y in 0..game_map.height() {
         for x in 0..game_map.width() {
             let pt = Point::new(x, y);
-            let tile_pos = TilePos {
-                x: x as u32,
-                y: y as u32,
-            };
             let tile_type = game_map.get_tile(pt).unwrap();
 
             let tile_entity = spawn_tile_entity(
                 commands, 
                 map_entity, 
-                tile_pos, 
                 tile_type, 
                 pt,
                 tile_manifest,
                 tile_sprite_assets
             );
-            tile_storage.set(&tile_pos, tile_entity);
+            // Add Position component for our visibility system
+            commands.entity(tile_entity).insert(Position { x: pt.x, y: pt.y });
         }
     }
-
-    commands.entity(map_entity).insert(TilemapBundle {
-        grid_size: GRID_SIZE,
-        map_type: TilemapType::Square,
-        size: MAP_SIZE,
-        storage: tile_storage.clone(),
-        texture: TilemapTexture::Single(tile_sprite_assets.handles.get("tilemap_packed.png").unwrap().clone()),
-        tile_size: TILE_SIZE,
-        transform: Transform::from_xyz(0.0, 0.0, 0.0),
-        ..Default::default()
-    });
-    tile_storage
 }
 
 fn spawn_dungeon_entities(
@@ -234,7 +210,7 @@ pub fn spawn_dungeon(
     let map_entity = commands
         .spawn((DungeonECSMap, GameEntityMarker, RenderLayers::layer(1)))
         .id();
-    let _tile_storage = spawn_tiles_into_ecs(
+    spawn_tiles_into_ecs(
         &mut commands, 
         map_entity, 
         &map, 
