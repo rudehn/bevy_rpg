@@ -1,3 +1,4 @@
+use std::collections::{VecDeque, HashSet};
 use bracket_lib::prelude::{Point, Algorithm2D, Rect};
 use rand::prelude::*;
 use crate::map::tile::TileType;
@@ -35,13 +36,14 @@ impl BrogueLikeBuilder {
         let h = MAX_ROOM_SIZE;
         let mut tiles = vec![TileType::Wall; (w * h) as usize];
 
-        let room_type = rng.random_range(0..5);
+        let room_type = rng.random_range(0..6);
         match room_type {
             0 => self.draw_cross_room(&mut tiles, w, h),
             1 => self.draw_symmetrical_cross_room(&mut tiles, w, h),
             2 => self.draw_small_room(&mut tiles, w, h),
             3 => self.draw_circular_room(&mut tiles, w, h),
-            _ => self.draw_chunky_room(&mut tiles, w, h),
+            4 => self.draw_chunky_room(&mut tiles, w, h),
+            _ => self.draw_cavern_room(&mut tiles, w, h),
         }
 
         let mut design = RoomDesign {
@@ -197,6 +199,112 @@ impl BrogueLikeBuilder {
             }
             // The new door site is at the end of the hallway
             design.door_sites = vec![(curr, dir)];
+        }
+    }
+
+    fn draw_cavern_room(&self, tiles: &mut [TileType], w: i32, h: i32) {
+        let mut rng = rand::rng();
+        
+        // 1. Randomize
+        for tile in tiles.iter_mut() {
+            if rng.random_range(0..100) < 55 {
+                *tile = TileType::Floor;
+            } else {
+                *tile = TileType::Wall;
+            }
+        }
+
+        // 2. Iterate CA
+        for _ in 0..4 {
+            let old_tiles = tiles.to_vec();
+            for y in 1..h-1 {
+                for x in 1..w-1 {
+                    let idx = (y * w + x) as usize;
+                    let neighbors = self.count_floor_neighbors(&old_tiles, w, h, x, y);
+                    if old_tiles[idx] == TileType::Wall {
+                        if neighbors >= 5 {
+                            tiles[idx] = TileType::Floor;
+                        }
+                    } else {
+                        if neighbors >= 4 {
+                            tiles[idx] = TileType::Floor;
+                        } else {
+                            tiles[idx] = TileType::Wall;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Keep only the largest region
+        self.retain_largest_region(tiles, w, h);
+    }
+
+    fn count_floor_neighbors(&self, tiles: &[TileType], w: i32, h: i32, x: i32, y: i32) -> i32 {
+        let mut count = 0;
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                if dx == 0 && dy == 0 { continue; }
+                let nx = x + dx;
+                let ny = y + dy;
+                if nx >= 0 && nx < w && ny >= 0 && ny < h {
+                    if tiles[(ny * w + nx) as usize] == TileType::Floor {
+                        count += 1;
+                    }
+                }
+            }
+        }
+        count
+    }
+
+    fn retain_largest_region(&self, tiles: &mut [TileType], w: i32, h: i32) {
+        let mut visited = vec![false; (w * h) as usize];
+        let mut regions: Vec<Vec<usize>> = Vec::new();
+
+        for y in 0..h {
+            for x in 0..w {
+                let idx = (y * w + x) as usize;
+                if tiles[idx] == TileType::Floor && !visited[idx] {
+                    let mut region = Vec::new();
+                    let mut queue = VecDeque::new();
+                    queue.push_back(idx);
+                    visited[idx] = true;
+
+                    while let Some(curr_idx) = queue.pop_front() {
+                        region.push(curr_idx);
+                        let (cx, cy) = (curr_idx as i32 % w, curr_idx as i32 / w);
+
+                        for dy in -1..=1 {
+                            for dx in -1..=1 {
+                                if dx == 0 && dy == 0 { continue; }
+                                let nx = cx + dx;
+                                let ny = cy + dy;
+                                if nx >= 0 && nx < w && ny >= 0 && ny < h {
+                                    let n_idx = (ny * w + nx) as usize;
+                                    if tiles[n_idx] == TileType::Floor && !visited[n_idx] {
+                                        visited[n_idx] = true;
+                                        queue.push_back(n_idx);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    regions.push(region);
+                }
+            }
+        }
+
+        if let Some(largest) = regions.iter().max_by_key(|r| r.len()) {
+            let largest_set: HashSet<usize> = largest.iter().cloned().collect();
+            for (idx, tile) in tiles.iter_mut().enumerate() {
+                if !largest_set.contains(&idx) {
+                    *tile = TileType::Wall;
+                }
+            }
+        } else {
+            for tile in tiles.iter_mut() {
+                *tile = TileType::Wall;
+            }
         }
     }
 

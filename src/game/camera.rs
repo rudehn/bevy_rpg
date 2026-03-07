@@ -47,7 +47,7 @@ pub fn setup_camera(mut commands: Commands, windows: Query<&Window>) {
             Projection::Orthographic(projection),
             Light2d {
                 ambient_light: AmbientLight2d {
-                    brightness: 0.1,
+                    brightness: 0.3,
                     ..default()
                 },
             },
@@ -84,7 +84,7 @@ pub fn setup_camera(mut commands: Commands, windows: Query<&Window>) {
         Projection::Orthographic(projection),
         Light2d {
             ambient_light: AmbientLight2d {
-                brightness: 0.1,
+                brightness: 0.3,
                 ..default()
             },
         },
