@@ -121,13 +121,13 @@ fn hit_check_system(
     mut roll_writer: MessageWriter<DamageRollMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut game_rng: ResMut<GameRng>,
-    query: Query<(&Name, &CombatStats)>,
+    query: Query<(&Name, &CombatStats, Has<Player>)>,
 ) {
     for intent in intents.read() {
-        let Ok((attacker_name, attacker_stats)) = query.get(intent.attacker) else {
+        let Ok((attacker_name, attacker_stats, is_player)) = query.get(intent.attacker) else {
             continue;
         };
-        let Ok((target_name, target_stats)) = query.get(intent.target) else {
+        let Ok((target_name, target_stats, _)) = query.get(intent.target) else {
             continue;
         };
 
@@ -141,9 +141,10 @@ fn hit_check_system(
                 target: intent.target,
             });
         } else {
+            let verb = if is_player { "miss" } else { "misses" };
             log_writer.write(GameLogMessage(format!(
-                "{} misses {}.",
-                attacker_name.0, target_name.0
+                "{} {} {}.",
+                attacker_name.0, verb, target_name.0
             )));
         }
     }
@@ -199,22 +200,23 @@ fn damage_application_system(
     mut death_writer: MessageWriter<DeathEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut query_health: Query<(&mut Health, &Name, Option<&ExperienceReward>)>,
-    query_names: Query<&Name>,
+    query_names: Query<(&Name, Has<Player>)>,
 ) {
     for message in apply_messages.read() {
         let Ok((mut target_health, target_name, xp_reward)) = query_health.get_mut(message.target)
         else {
             continue;
         };
-        let Ok(attacker_name) = query_names.get(message.attacker) else {
+        let Ok((attacker_name, is_player)) = query_names.get(message.attacker) else {
             continue;
         };
 
         target_health.current -= message.final_damage;
 
+        let verb = if is_player { "hit" } else { "hits" };
         log_writer.write(GameLogMessage(format!(
-            "{} hits {} for {} damage.",
-            attacker_name.0, target_name.0, message.final_damage
+            "{} {} {} for {} damage.",
+            attacker_name.0, verb, target_name.0, message.final_damage
         )));
 
         if target_health.current <= 0 {
