@@ -26,9 +26,16 @@ impl DistantExit {
             .map
             .point2d_to_index(Point::new(starting_pos.x, starting_pos.y));
         let map_starts: Vec<usize> = vec![start_idx];
-        // Need to remove the doors since they block paths
 
-        // let dijkstra_map = DijkstraMap::new(build_data.map.width() as usize, build_data.map.height() as usize, &map_starts , &map_clone, 3000.0);
+        // 1. Temporarily swap doors for floors so pathfinding can pass through them
+        let original_tiles = build_data.map.tiles.clone();
+        for tile in build_data.map.tiles.iter_mut() {
+            if *tile == TileType::Door {
+                *tile = TileType::Floor;
+            }
+        }
+
+        // 2. Compute the Dijkstra map
         let dijkstra_map = DijkstraMap::new(
             build_data.map.width() as usize,
             build_data.map.height() as usize,
@@ -36,6 +43,10 @@ impl DistantExit {
             &build_data.map,
             3000.0,
         );
+
+        // 3. Restore the original tiles (putting the doors back)
+        build_data.map.tiles = original_tiles;
+
         let mut exit_tile = (0, 0.0f32);
         for y in 0..build_data.map.height() {
             for x in 0..build_data.map.width() {
