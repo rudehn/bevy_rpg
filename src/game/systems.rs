@@ -1,4 +1,5 @@
 use bevy::ecs::change_detection::DetectChanges;
+use bevy::ecs::world::Ref;
 use bevy::prelude::{Or, Visibility};
 use bevy::{
     ecs::{
@@ -16,15 +17,18 @@ use crate::{
     player::Player, // Corrected import
 };
 
-pub fn fov_update_system(
-    mut query: Query<(&mut Viewshed, &Position), Or<(Changed<Position>, Changed<Viewshed>)>>,
-    map: Res<Map>,
-) {
+pub fn fov_update_system(mut query: Query<(&mut Viewshed, Ref<Position>)>, map: Res<Map>) {
+    // We check if the map itself has changed (e.g. new level loaded) because
+    // viewsheds calculated on the old map will be invalid even if the entity
+    // hasn't moved yet.
+    let map_changed = map.is_changed();
     for (mut viewshed, position) in query.iter_mut() {
-        viewshed.visible_tiles.clear();
-        viewshed.visible_tiles =
-            field_of_view(Point::new(position.x, position.y), viewshed.range, &*map);
-        viewshed.dirty = false;
+        if viewshed.dirty || map_changed || viewshed.is_changed() || position.is_changed() {
+            viewshed.visible_tiles.clear();
+            viewshed.visible_tiles =
+                field_of_view(Point::new(position.x, position.y), viewshed.range, &*map);
+            viewshed.dirty = false;
+        }
     }
 }
 

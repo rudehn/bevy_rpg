@@ -6,6 +6,7 @@ use crate::map::builders::{BuilderMap, InitialMapBuilder};
 use crate::game::actions::Direction;
 use crate::map::map::Map;
 use crate::map::builders::algorithms::{Grid, BlobGenConfig, create_blob};
+use crate::map::builders::choke_map::ChokeMap;
 
 const MAX_ROOM_SIZE: i32 = 20;
 
@@ -61,6 +62,52 @@ impl BrogueLikeBuilder {
         }
 
         design
+    }
+
+    fn design_reward_room(&self) -> RoomDesign {
+        let mut rng = rand::rng();
+        let w = MAX_ROOM_SIZE;
+        let h = MAX_ROOM_SIZE;
+        let mut tiles = vec![TerrainType::Wall; (w * h) as usize];
+
+        // Reward rooms are often specialized. Let's make a circular one with a "pedestal"
+        let radius = rng.random_range(4..6);
+        let cx = w / 2;
+        let cy = h / 2;
+        for x in -radius..=radius {
+            for y_offset in -radius..=radius {
+                if x * x + y_offset * y_offset <= radius * radius {
+                    let pt = Point::new(cx + x, cy + y_offset);
+                    if pt.x >= 0 && pt.x < w && pt.y >= 0 && pt.y < h {
+                        tiles[(pt.y * w + pt.x) as usize] = TerrainType::Floor;
+                    }
+                }
+            }
+        }
+
+        // Add a "pedestal" in the middle (can be used for items later)
+        // For now, we'll just keep it floor but maybe add a liquid border
+        if rng.random_bool(0.5) {
+             for x in -radius..=radius {
+                for y_offset in -radius..=radius {
+                    let dist_sq = x * x + y_offset * y_offset;
+                    if dist_sq == radius * radius || dist_sq == (radius-1) * (radius-1) {
+                         let pt = Point::new(cx + x, cy + y_offset);
+                         if pt.x >= 0 && pt.x < w && pt.y >= 0 && pt.y < h {
+                             // We'll use a special marker or just keep it floor for now
+                         }
+                    }
+                }
+            }
+        }
+
+        let door_sites = self.find_door_sites(&tiles, w, h);
+        RoomDesign {
+            tiles,
+            width: w,
+            height: h,
+            door_sites,
+        }
     }
 
     fn draw_cross_room(&self, tiles: &mut [TerrainType], w: i32, h: i32) {
@@ -202,15 +249,22 @@ impl BrogueLikeBuilder {
     }
 
     fn draw_cavern_room(&self, tiles: &mut [TerrainType], w: i32, h: i32) {
-        // Create an initial grid representation for the algorithms module
+        let mut rng = rand::rng();
         let initial_grid_dims = Grid::new(w, h, TerrainType::Wall);
+
+        // Pick one of the 3 room-sized cavern varieties from Architect.c
+        let (min_bw, max_w, min_bh, max_h) = match rng.random_range(0..3) {
+            0 => (3, 12, 4, 8),    // Compact cave room
+            1 => (3, 12, 15, h-2), // Large north-south cave room
+            _ => (15, w-2, 4, 8),  // Large east-west cave room
+        };
 
         let config = BlobGenConfig {
             round_count: 5,
-            min_blob_width: 5,
-            min_blob_height: 5,
-            max_blob_width: w - 2, // Allow blobs to fill most of the room, leaving a border
-            max_blob_height: h - 2,
+            min_blob_width: min_bw,
+            min_blob_height: min_bh,
+            max_blob_width: max_w,
+            max_blob_height: max_h,
             initial_alive_percent: 55,
             birth_threshold: 5,
             survival_threshold: 4,
@@ -337,17 +391,16 @@ impl InitialMapBuilder for BrogueLikeBuilder {
         }
         rooms.push(Rect::with_exact(min_x, min_y, max_x, max_y));
 
-        // 2. Iteratively attach
+        // 2. Iteratively attach normal rooms
         let mut attempts = 0;
         let mut placed = 1;
-        while placed < 30 && attempts < 2000 {
+        while placed < 25 && attempts < 2000 {
             attempts += 1;
             let design = self.design_random_room();
             if design.door_sites.is_empty() { continue; }
 
             // Find all potential door sites in the dungeon
             let mut dungeon_sites = Vec::new();
-            // Pre-calculate terrain slice once per room attempt (still a bit slow but better than once per site)
             let terrain_slice: Vec<TerrainType> = build_data.map.tiles.iter().map(|t| t.terrain).collect();
             
             for y in 1..self.height - 1 {
@@ -367,13 +420,9 @@ impl InitialMapBuilder for BrogueLikeBuilder {
                 for (r_pt, r_dir) in &design.door_sites {
                     if d_dir == r_dir.opposite() {
                         let offset = d_pt - *r_pt;
-                        
-                        // Check if we can fit the room (ignoring the tile that connected them)
-                        // The "ignore" tile is the floor tile in the dungeon that d_pt is adjacent to.
                         let dungeon_floor_pt = d_pt + d_dir.opposite().offset();
 
                         if self.room_fits(build_data, &design, offset, dungeon_floor_pt) {
-                            // Carve room
                             let mut r_min_x = i32::MAX; let mut r_max_x = i32::MIN;
                             let mut r_min_y = i32::MAX; let mut r_max_y = i32::MIN;
 
@@ -387,9 +436,7 @@ impl InitialMapBuilder for BrogueLikeBuilder {
                                     }
                                 }
                             }
-                            // Don't forget the door itself!
                             build_data.map.set_tile(d_pt, TerrainType::Door);
-                            
                             rooms.push(Rect::with_exact(r_min_x, r_min_y, r_max_x, r_max_y));
                             placed += 1;
                             break 'attach;
@@ -398,6 +445,64 @@ impl InitialMapBuilder for BrogueLikeBuilder {
                 }
             }
         }
+
+        // 3. Place Reward Room using ChokeMap
+        let chokemap = ChokeMap::generate(&build_data.map);
+        let mut reward_candidates = Vec::new();
+        let terrain_slice: Vec<TerrainType> = build_data.map.tiles.iter().map(|t| t.terrain).collect();
+
+        for y in 1..self.height - 1 {
+            for x in 1..self.width - 1 {
+                let idx = build_data.map.xy_idx(x, y);
+                // We look for wall tiles that could be doors (direction_of_door_site)
+                // and prioritize those with high choke values (isolated regions)
+                if build_data.map.tiles[idx].terrain == TerrainType::Wall {
+                    if let Some(dir) = self.direction_of_door_site(&terrain_slice, self.width, self.height, Point::new(x, y)) {
+                        let choke_val = chokemap.choke_values[idx];
+                        if choke_val > 10 && choke_val < 29000 { // Isolated but not infinite
+                            reward_candidates.push((Point::new(x, y), dir, choke_val));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sort by choke value descending
+        reward_candidates.sort_by(|a, b| b.2.cmp(&a.2));
+
+        let reward_design = self.design_reward_room();
+        let mut reward_placed = false;
+
+        for (d_pt, d_dir, _) in reward_candidates {
+            for (r_pt, r_dir) in &reward_design.door_sites {
+                if d_dir == r_dir.opposite() {
+                    let offset = d_pt - *r_pt;
+                    let dungeon_floor_pt = d_pt + d_dir.opposite().offset();
+
+                    if self.room_fits(build_data, &reward_design, offset, dungeon_floor_pt) {
+                        let mut r_min_x = i32::MAX; let mut r_max_x = i32::MIN;
+                        let mut r_min_y = i32::MAX; let mut r_max_y = i32::MIN;
+
+                        for ry in 0..reward_design.height {
+                            for rx in 0..reward_design.width {
+                                if reward_design.tiles[(ry * reward_design.width + rx) as usize] == TerrainType::Floor {
+                                    let dp = Point::new(rx, ry) + offset;
+                                    build_data.map.set_tile(dp, TerrainType::Floor);
+                                    r_min_x = r_min_x.min(dp.x); r_max_x = r_max_x.max(dp.x);
+                                    r_min_y = r_min_y.min(dp.y); r_max_y = r_max_y.max(dp.y);
+                                }
+                            }
+                        }
+                        build_data.map.set_tile(d_pt, TerrainType::Door);
+                        rooms.push(Rect::with_exact(r_min_x, r_min_y, r_max_x, r_max_y));
+                        reward_placed = true;
+                        break;
+                    }
+                }
+            }
+            if reward_placed { break; }
+        }
+
         build_data.rooms = Some(rooms);
         // Add loops after rooms are attached
         self.add_loops(&mut build_data.map.tiles, build_data.map.width, build_data.map.height, 20);

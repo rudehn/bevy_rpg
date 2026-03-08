@@ -6,6 +6,7 @@ use crate::{
     game::AppState,
     map::tile::{TileExplored, Tile, TerrainType, LiquidType, TileVisibility, is_opaque, is_walkable},
     player::Player,
+    ui::game_log::GameLogMessage,
 };
 
 /*
@@ -21,14 +22,21 @@ There are two map types.
 pub const GRID_SIZE: Vec2 = Vec2 { x: 16.0, y: 16.0 };
 pub const MAP_SIZE: UVec2 = UVec2 { x: 80, y: 60 };
 
+#[derive(Message, Debug, Clone, Copy)]
+pub struct RevealMapMessage;
+
 pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Map::default()) // This will always be the active level
+            .add_message::<RevealMapMessage>()
             .add_systems(
                 Update,
-                update_tile_visibility.run_if(in_state(AppState::InGame)), // .after(move_player),
+                (
+                    update_tile_visibility,
+                    handle_reveal_map_system.run_if(on_message::<RevealMapMessage>),
+                ).run_if(in_state(AppState::InGame)),
             );
     }
 }
@@ -40,6 +48,21 @@ pub struct DungeonECSMap; // Tag for entity holding the active ECS map marker
 // --------------------------------------------------------------------------------
 // SYSTEMS
 // --------------------------------------------------------------------------------
+
+pub fn handle_reveal_map_system(
+    mut messages: MessageReader<RevealMapMessage>,
+    mut tile_render_query: Query<(&mut TileExplored, &mut Sprite, &mut Visibility)>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+) {
+    for _ in messages.read() {
+        for (mut tile_explored, mut sprite, mut visibility) in tile_render_query.iter_mut() {
+            *tile_explored = TileExplored::Explored;
+            *visibility = Visibility::Visible;
+            sprite.color = Color::srgb(0.5, 0.5, 0.5);
+        }
+        log_writer.write(GameLogMessage("The map has been revealed!".to_string()));
+    }
+}
 
 pub fn update_tile_visibility(
     player_query: Query<&Viewshed, (With<Player>, Changed<Viewshed>)>,
@@ -144,6 +167,27 @@ impl Map {
             self.tiles[idx].liquid = liquid;
         }
     }
+
+    /// Determine the cost to move to this cell
+    /// None: Can't move to this cell
+    /// Some(f32): The cost to move to this cell (usually 1.0 for normal terrain)
+    pub fn get_pathing_cost(&self, x: i32, y: i32) -> Option<f32> {
+        if !self.in_bounds(Point::new(x, y)) {
+            return None;
+        }
+
+        let idx = self.xy_idx(x, y);
+        let tile = self.tiles[idx];
+
+        // Topologically passable: anywhere an entity *could* go, or doors.
+        if !crate::map::tile::is_passable(tile) {
+            return None;
+        }
+
+        // For now, we return 1.0 for all passable tiles. 
+        // Later we can add higher costs for things like shallow water or debris.
+        Some(1.0)
+    }
 }
 
 impl BaseMap for Map {
@@ -159,23 +203,20 @@ impl BaseMap for Map {
         let (x, y) = self.idx_xy(idx);
 
         // Check all 8 directions
-        for i in -1..=1 {
-            for j in -1..=1 {
-                if i == 0 && j == 0 {
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                if dx == 0 && dy == 0 {
                     continue; // Skip current position
                 }
 
-                let nx = x + i;
-                let ny = y + j;
-                let np = Point::new(nx, ny);
+                let nx = x + dx;
+                let ny = y + dy;
 
-                if self.in_bounds(np) {
+                if let Some(base_cost) = self.get_pathing_cost(nx, ny) {
                     let next_idx = self.xy_idx(nx, ny);
-                    if is_walkable(self.tiles[next_idx]) {
-                        // Diagonal moves cost slightly more
-                        let cost = if i != 0 && j != 0 { 1.45 } else { 1.0 };
-                        exits.push((next_idx, cost));
-                    }
+                    // Diagonal moves cost slightly more
+                    let cost = if dx != 0 && dy != 0 { base_cost * 1.45 } else { base_cost };
+                    exits.push((next_idx, cost));
                 }
             }
         }

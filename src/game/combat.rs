@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bracket_lib::random::{RandomNumberGenerator, parse_dice_string};
 
-use crate::components::{Monster, Name}; // Import Monster marker
+use crate::components::{Monster, Name, GodMode}; // Import Monster marker
 use crate::game::level::ExperienceReward;
 use crate::game::stats::CombatStats;
 use crate::game::turns::TurnEndEvent;
@@ -63,6 +63,19 @@ pub struct ApplyDamageMessage {
     pub attacker: Entity,
     pub target: Entity,
     pub final_damage: i32,
+}
+
+/// Message sent to heal an entity.
+#[derive(Message, Debug)]
+pub struct HealMessage {
+    pub entity: Entity,
+    pub amount: i32,
+}
+
+/// Message sent to toggle GodMode on an entity.
+#[derive(Message, Debug)]
+pub struct ToggleGodModeMessage {
+    pub entity: Entity,
 }
 
 #[derive(Message, Debug, Clone, Copy)]
@@ -199,14 +212,20 @@ fn damage_application_system(
     mut apply_messages: MessageReader<ApplyDamageMessage>,
     mut death_writer: MessageWriter<DeathEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
-    mut query_health: Query<(&mut Health, &Name, Option<&ExperienceReward>)>,
+    mut query_health: Query<(&mut Health, &Name, Option<&ExperienceReward>, Has<GodMode>)>,
     query_names: Query<(&Name, Has<Player>)>,
 ) {
     for message in apply_messages.read() {
-        let Ok((mut target_health, target_name, xp_reward)) = query_health.get_mut(message.target)
+        let Ok((mut target_health, target_name, xp_reward, has_god_mode)) = query_health.get_mut(message.target)
         else {
             continue;
         };
+
+        if has_god_mode {
+            info!("{} is in GodMode, ignoring damage!", target_name.0);
+            continue;
+        }
+
         let Ok((attacker_name, is_player)) = query_names.get(message.attacker) else {
             continue;
         };
@@ -235,6 +254,44 @@ fn damage_application_system(
             target_health.current,
             target_health.max
         );
+    }
+}
+
+/// System that handles healing for entities.
+pub fn handle_heal_system(
+    mut messages: MessageReader<HealMessage>,
+    mut query: Query<(&mut Health, &Name)>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+) {
+    for msg in messages.read() {
+        if let Ok((mut health, name)) = query.get_mut(msg.entity) {
+            let old_health = health.current;
+            health.current = (health.current + msg.amount).min(health.max);
+            let healed_amount = health.current - old_health;
+            if healed_amount > 0 {
+                log_writer.write(GameLogMessage(format!("{} is healed for {} HP.", name.0, healed_amount)));
+            }
+        }
+    }
+}
+
+/// System that toggles GodMode on an entity.
+pub fn handle_toggle_god_mode_system(
+    mut commands: Commands,
+    mut messages: MessageReader<ToggleGodModeMessage>,
+    query: Query<(&Name, Has<GodMode>)>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+) {
+    for msg in messages.read() {
+        if let Ok((name, has_god_mode)) = query.get(msg.entity) {
+            if has_god_mode {
+                commands.entity(msg.entity).remove::<GodMode>();
+                log_writer.write(GameLogMessage(format!("{} Godmode DISABLED.", name.0)));
+            } else {
+                commands.entity(msg.entity).insert(GodMode);
+                log_writer.write(GameLogMessage(format!("{} Godmode ENABLED.", name.0)));
+            }
+        }
     }
 }
 
@@ -276,9 +333,12 @@ impl Plugin for CombatPlugin {
             .add_message::<DamageRollMessage>()
             .add_message::<DamageReductionMessage>()
             .add_message::<ApplyDamageMessage>()
+            .add_message::<HealMessage>()
+            .add_message::<ToggleGodModeMessage>()
             .add_message::<DeathEvent>()
             .register_type::<Health>()
             .register_type::<HealthRegen>()
+            .register_type::<GodMode>()
             .add_systems(
                 Update,
                 (
@@ -291,6 +351,8 @@ impl Plugin for CombatPlugin {
                         .chain(),
                     regen_system,
                     death_system,
+                    handle_heal_system,
+                    handle_toggle_god_mode_system,
                 )
                     .run_if(in_state(AppState::InGame)),
             );

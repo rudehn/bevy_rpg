@@ -1,4 +1,5 @@
 use bevy::ecs::component::Component;
+use bevy::prelude::{Reflect, ReflectComponent};
 use bracket_lib::prelude::Point;
 
 #[derive(Component)]
@@ -57,3 +58,7 @@ pub struct GameEntityMarker;
 
 #[derive(Component)]
 pub struct FloorEntityMarker;
+
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct GodMode;

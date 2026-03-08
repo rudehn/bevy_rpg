@@ -42,3 +42,9 @@ Are we rendering tiles twice? With sprites & ecs_tilemap (see update_tile_visibi
 
 Add map building snapshots
 Add cheat menu
+
+
+Lakes
+- Aren't checking connectiveity
+- too big?
+- visual animations

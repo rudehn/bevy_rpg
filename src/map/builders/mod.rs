@@ -32,6 +32,7 @@ mod unseen_culler; // Declare the new module
 mod brogelike;
 mod diagonal_culler;
 mod lake_builder;
+mod choke_map;
 pub mod algorithms; // Declare the new algorithms module
 
 pub struct BuilderMap {

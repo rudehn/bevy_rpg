@@ -126,7 +126,7 @@ where T: Copy + Clone + PartialEq + Default
 {
     let mut rng = rand::rng(); 
     for val in grid.data.iter_mut() {
-        if rng.gen_range(0..100) < alive_percent {
+        if rng.random_range(0..100) < alive_percent {
             *val = floor_val;
         } else {
             *val = wall_val;
