@@ -4,7 +4,7 @@ use bracket_lib::{
 }; // Added Point
 
 use crate::{
-    assets::{MonsterSpawnInfo, MonsterSpawnTable, MonsterSpawnTableHandle},
+    assets::MonsterSpawnInfo,
     components::Position,
     map::{
         Map,
@@ -15,7 +15,9 @@ use crate::{
             start_point::{StartPointBuilder, XStart, YStart},
             unseen_culler::UnseenCuller,
             diagonal_culler::DiagonalCuller,
+            lake_builder::LakeBuilder,
         },
+        tile::LiquidType,
     },
 };
 
@@ -29,6 +31,7 @@ mod start_point; // Declare the new module
 mod unseen_culler; // Declare the new module
 mod brogelike;
 mod diagonal_culler;
+mod lake_builder;
 pub mod algorithms; // Declare the new algorithms module
 
 pub struct BuilderMap {
@@ -166,6 +169,7 @@ pub fn floor_builder(
     builder.start_with(brogelike::BrogueLikeBuilder::dungeon(new_depth, width, height));
     builder.with(DiagonalCuller::new());
     builder.with(StartPointBuilder::new());
+    builder.with(LakeBuilder::new(LiquidType::Water));
     builder.with(CandleSpawner::new()); // Add the CandleSpawner
     builder.with(MonsterSpawner::new(spawn_table));
     builder.with(UnseenCuller::new());

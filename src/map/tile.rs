@@ -1,5 +1,5 @@
 use bevy::ecs::component::Component;
-use bevy::prelude::{Color, Commands, Entity, Transform, TextureAtlas, Sprite, Vec3};
+use bevy::prelude::{Commands, Entity, Transform, TextureAtlas, Sprite, Vec3, Visibility, InheritedVisibility, ViewVisibility};
 use bevy::camera::visibility::RenderLayers;
 use bracket_lib::prelude::Point;
 
@@ -10,8 +10,8 @@ use crate::assets::{TileManifest, TileSpriteAssets};
 #[derive(Component)]
 pub struct TileMarker;
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum TileType {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Component)]
+pub enum TerrainType {
     #[default]
     Wall,
     Floor,
@@ -22,16 +22,42 @@ pub enum TileType {
     OpenDoor,
 }
 
-impl TileType {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Component)]
+pub enum LiquidType {
+    #[default]
+    None,
+    Water,
+    ShallowWater,
+    Lava,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Tile {
+    pub terrain: TerrainType,
+    pub liquid: LiquidType,
+}
+
+impl TerrainType {
     pub fn name(&self) -> &'static str {
         match self {
-            TileType::Wall => "Wall",
-            TileType::Floor => "Floor",
-            TileType::DownStairs => "DownStairs",
-            TileType::UpStairs => "UpStairs",
-            TileType::Empty => "Empty",
-            TileType::Door => "Door",
-            TileType::OpenDoor => "OpenDoor",
+            TerrainType::Wall => "Wall",
+            TerrainType::Floor => "Floor",
+            TerrainType::DownStairs => "DownStairs",
+            TerrainType::UpStairs => "UpStairs",
+            TerrainType::Empty => "Empty",
+            TerrainType::Door => "Door",
+            TerrainType::OpenDoor => "OpenDoor",
+        }
+    }
+}
+
+impl LiquidType {
+    pub fn name(&self) -> &'static str {
+        match self {
+            LiquidType::None => "None",
+            LiquidType::Water => "Water",
+            LiquidType::ShallowWater => "ShallowWater",
+            LiquidType::Lava => "Lava",
         }
     }
 }
@@ -50,38 +76,48 @@ pub enum TileExplored {
     Explored,
 }
 
-pub fn is_walkable(tile: TileType) -> bool {
-    match tile {
-        TileType::Wall => false,
-        TileType::Floor => true,
-        TileType::DownStairs => true,
-        TileType::UpStairs => true,
-        TileType::Empty => false,
-        TileType::Door => false, // Closed doors are obstacles
-        TileType::OpenDoor => true,
-    }
+pub fn is_walkable(tile: Tile) -> bool {
+    // Both terrain and liquid must be walkable
+    let terrain_walkable = match tile.terrain {
+        TerrainType::Wall => false,
+        TerrainType::Floor => true,
+        TerrainType::DownStairs => true,
+        TerrainType::UpStairs => true,
+        TerrainType::Empty => false,
+        TerrainType::Door => false,
+        TerrainType::OpenDoor => true,
+    };
+
+    let liquid_walkable = match tile.liquid {
+        LiquidType::None => true,
+        LiquidType::Water => false,
+        LiquidType::ShallowWater => true,
+        LiquidType::Lava => false,
+    };
+
+    terrain_walkable && liquid_walkable
 }
 
-pub fn is_opaque(tile: TileType) -> bool {
-    match tile {
-        TileType::Wall => true,
-        TileType::Door => true,
-        TileType::OpenDoor => false,
+pub fn is_opaque(tile: Tile) -> bool {
+    // If either layer is opaque, the tile is opaque
+    match tile.terrain {
+        TerrainType::Wall => true,
+        TerrainType::Door => true,
         _ => false,
     }
 }
 
 pub fn spawn_tile_entity(
     commands: &mut Commands,
-    map_entity: Entity,
-    tile_type: TileType,
+    _map_entity: Entity,
+    tile: Tile,
     pt: Point,
     tile_manifest: &TileManifest,
     tile_sprite_assets: &TileSpriteAssets,
 ) -> Entity {
-    let asset = tile_manifest.tiles.get(tile_type.name()).expect("Tile type not in manifest");
+    let terrain_asset = tile_manifest.tiles.get(tile.terrain.name()).expect("Terrain type not in manifest");
     
-    let sprite_path_parts: Vec<&str> = asset.sprite.split('#').collect();
+    let sprite_path_parts: Vec<&str> = terrain_asset.sprite.split('#').collect();
     let texture_path = sprite_path_parts[0];
     let index = sprite_path_parts[1].parse::<usize>().unwrap_or_default();
 
@@ -89,7 +125,7 @@ pub fn spawn_tile_entity(
     let layout_handle = tile_sprite_assets.layouts.get(texture_path).expect("Layout handle not found").clone();
 
     // Determine scale to fit one game map tile (GRID_SIZE)
-    let tile_size = asset.tile_size.unwrap_or(bevy::prelude::UVec2::new(16, 16));
+    let tile_size = terrain_asset.tile_size.unwrap_or(bevy::prelude::UVec2::new(16, 16));
     let scale_x = GRID_SIZE.x / tile_size.x as f32;
     let scale_y = GRID_SIZE.y / tile_size.y as f32;
 
@@ -102,7 +138,8 @@ pub fn spawn_tile_entity(
                 layout: layout_handle,
             },
         ),
-        tile_type,
+        tile.terrain,
+        tile.liquid,
         TileVisibility::Hidden,
         TileExplored::Unexplored,
         Transform {
@@ -110,12 +147,42 @@ pub fn spawn_tile_entity(
             scale: Vec3::new(scale_x, scale_y, 1.0),
             ..Default::default()
         },
+        Visibility::Hidden,
+        InheritedVisibility::default(),
+        ViewVisibility::default(),
         RenderLayers::layer(1),
     ));
 
-    if !is_walkable(tile_type) {
+    if !is_walkable(tile) {
         command.insert(Collider);
     }
 
-    command.id()
+    let tile_entity = command.id();
+
+    // If there's a liquid, spawn it as a child overlay
+    if tile.liquid != LiquidType::None {
+        let liquid_asset = tile_manifest.tiles.get(tile.liquid.name()).expect("Liquid type not in manifest");
+        let l_sprite_parts: Vec<&str> = liquid_asset.sprite.split('#').collect();
+        let l_texture_path = l_sprite_parts[0];
+        let l_index = l_sprite_parts[1].parse::<usize>().unwrap_or_default();
+
+        let l_texture_handle = tile_sprite_assets.handles.get(l_texture_path).expect("Liquid texture not found").clone();
+        let l_layout_handle = tile_sprite_assets.layouts.get(l_texture_path).expect("Liquid layout not found").clone();
+
+        let l_child = commands.spawn((
+            Sprite::from_atlas_image(
+                l_texture_handle,
+                TextureAtlas {
+                    index: l_index,
+                    layout: l_layout_handle,
+                },
+            ),
+            Transform::from_translation(Vec3::new(0.0, 0.0, 0.1)), // Slightly above terrain
+            RenderLayers::layer(1),
+        )).id();
+
+        commands.entity(tile_entity).add_child(l_child);
+    }
+
+    tile_entity
 }

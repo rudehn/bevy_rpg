@@ -1,7 +1,12 @@
 use std::collections::{VecDeque, HashSet};
-use bracket_lib::prelude::Point;
-use crate::map::tile::TileType; // Assuming TileType is in crate::map::tile
 use rand::Rng; // Add this for rng.gen_range
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BlobType {
+    #[default]
+    Wall,
+    Floor,
+}
 
 // --- Grid<T> Definition ---
 #[derive(Clone, Debug, PartialEq)]
@@ -75,21 +80,6 @@ where
     }
 }
 
-// Custom conversion for Grid<TileType> to/from Vec<TileType>
-impl Grid<TileType> {
-    pub fn from_vec(tiles: Vec<TileType>, width: i32, height: i32) -> Self {
-        Grid {
-            data: tiles,
-            width,
-            height,
-        }
-    }
-
-    pub fn to_vec(&self) -> Vec<TileType> {
-        self.data.clone()
-    }
-}
-
 // --- FloodFillResult Struct ---
 #[derive(Debug, Clone)]
 pub struct FloodFillResult {
@@ -112,7 +102,9 @@ pub struct BlobGenConfig {
 
 // --- Cellular Automata Helper Functions ---
 
-pub fn count_neighbors(grid: &Grid<TileType>, x: i32, y: i32, radius: i32) -> i32 {
+pub fn count_neighbors<T>(grid: &Grid<T>, x: i32, y: i32, radius: i32, floor_val: T) -> i32 
+where T: Copy + Clone + PartialEq + Default
+{
     let mut count = 0;
     for dy in -radius..=radius {
         for dx in -radius..=radius {
@@ -120,7 +112,7 @@ pub fn count_neighbors(grid: &Grid<TileType>, x: i32, y: i32, radius: i32) -> i3
             let nx = x + dx;
             let ny = y + dy;
             if grid.in_bounds(nx, ny) {
-                if *grid.at(nx, ny).unwrap() == TileType::Floor {
+                if *grid.at(nx, ny).unwrap() == floor_val {
                     count += 1;
                 }
             }
@@ -129,52 +121,56 @@ pub fn count_neighbors(grid: &Grid<TileType>, x: i32, y: i32, radius: i32) -> i3
     count
 }
 
-pub fn randomize_grid(grid: &mut Grid<TileType>, alive_percent: i32) {
-    let mut rng = rand::thread_rng(); // Use thread_rng for non-deterministic behavior
+pub fn randomize_grid<T>(grid: &mut Grid<T>, alive_percent: i32, floor_val: T, wall_val: T) 
+where T: Copy + Clone + PartialEq + Default
+{
+    let mut rng = rand::rng(); 
     for val in grid.data.iter_mut() {
         if rng.gen_range(0..100) < alive_percent {
-            *val = TileType::Floor;
+            *val = floor_val;
         } else {
-            *val = TileType::Wall;
+            *val = wall_val;
         }
     }
 }
 
-pub fn cellular_automata_iteration(grid: &mut Grid<TileType>, birth_threshold: i32, survival_threshold: i32) {
-    let old_grid = grid.clone(); // Create a copy to read from previous state
+pub fn cellular_automata_iteration<T>(grid: &mut Grid<T>, birth_threshold: i32, survival_threshold: i32, floor_val: T, wall_val: T) 
+where T: Copy + Clone + PartialEq + Default
+{
+    let old_grid = grid.clone(); 
     for y in 1..grid.height - 1 {
         for x in 1..grid.width - 1 {
             let idx = grid.xy_idx(x, y);
-            let neighbors = count_neighbors(&old_grid, x, y, 1); // Check 8 neighbors (radius 1)
+            let neighbors = count_neighbors(&old_grid, x, y, 1, floor_val); 
 
-            if old_grid.data[idx] == TileType::Wall {
-                // Cell is currently a wall
+            if old_grid.data[idx] == wall_val {
                 if neighbors >= birth_threshold {
-                    grid.data[idx] = TileType::Floor; // Wall becomes floor
+                    grid.data[idx] = floor_val; 
                 }
             } else {
-                // Cell is currently a floor
-                if neighbors >= survival_threshold {
-                    // Floor remains floor
-                } else {
-                    grid.data[idx] = TileType::Wall; // Floor becomes wall
+                if neighbors < survival_threshold {
+                    grid.data[idx] = wall_val; 
                 }
             }
         }
     }
 }
 
-pub fn flood_fill_region(
-    grid: &Grid<TileType>,
+pub fn flood_fill_region<T>(
+    grid: &Grid<T>,
     start_x: i32,
     start_y: i32,
     connectivity: u8,
-) -> FloodFillResult {
+    floor_val: T,
+    wall_val: T,
+) -> FloodFillResult 
+where T: Copy + Clone + PartialEq + Default
+{
     let mut visited: HashSet<usize> = HashSet::new();
     let mut queue: VecDeque<usize> = VecDeque::new();
     let mut region_tiles: Vec<usize> = Vec::new();
 
-    if !grid.in_bounds(start_x, start_y) || *grid.at(start_x, start_y).unwrap_or(&TileType::Wall) == TileType::Wall {
+    if !grid.in_bounds(start_x, start_y) || *grid.at(start_x, start_y).unwrap_or(&wall_val) == wall_val {
         return FloodFillResult { size: 0, tiles: vec![] };
     }
 
@@ -201,7 +197,7 @@ pub fn flood_fill_region(
 
             if grid.in_bounds(nx, ny) {
                 let n_idx = grid.xy_idx(nx, ny);
-                if !visited.contains(&n_idx) && *grid.at(nx, ny).unwrap() == TileType::Floor {
+                if !visited.contains(&n_idx) && *grid.at(nx, ny).unwrap() == floor_val {
                     visited.insert(n_idx);
                     queue.push_back(n_idx);
                 }
@@ -215,15 +211,17 @@ pub fn flood_fill_region(
     }
 }
 
-pub fn get_all_regions(grid: &Grid<TileType>) -> Vec<FloodFillResult> {
+pub fn get_all_regions<T>(grid: &Grid<T>, floor_val: T, wall_val: T) -> Vec<FloodFillResult> 
+where T: Copy + Clone + PartialEq + Default
+{
     let mut regions: Vec<FloodFillResult> = Vec::new();
     let mut visited_all: HashSet<usize> = HashSet::new();
 
     for y in 0..grid.height {
         for x in 0..grid.width {
             let idx = grid.xy_idx(x, y);
-            if *grid.at(x, y).unwrap() == TileType::Floor && !visited_all.contains(&idx) {
-                let result = flood_fill_region(grid, x, y, 8); // Use 8-connectivity for region finding
+            if *grid.at(x, y).unwrap() == floor_val && !visited_all.contains(&idx) {
+                let result = flood_fill_region(grid, x, y, 8, floor_val, wall_val); 
                 if result.size > 0 {
                     for &i in &result.tiles {
                         visited_all.insert(i);
@@ -236,11 +234,13 @@ pub fn get_all_regions(grid: &Grid<TileType>) -> Vec<FloodFillResult> {
     regions
 }
 
-pub fn retain_specific_region(grid: &mut Grid<TileType>, region: &FloodFillResult) {
+pub fn retain_specific_region<T>(grid: &mut Grid<T>, region: &FloodFillResult, wall_val: T) 
+where T: Copy + Clone + PartialEq + Default
+{
     let region_set: HashSet<usize> = region.tiles.iter().cloned().collect();
     for idx in 0..grid.len() {
         if !region_set.contains(&idx) {
-            grid.data[idx] = TileType::Wall;
+            grid.data[idx] = wall_val;
         }
     }
 }
@@ -257,29 +257,33 @@ pub fn size_score(width: i32, height: i32, min_w: i32, min_h: i32, max_w: i32, m
     ((width_score + height_score) / 2.0) * overshoot_penalty
 }
 
-pub fn create_blob(
-    initial_grid: &Grid<TileType>, // Pass an initial grid to get dimensions
+pub fn create_blob<T>(
+    initial_grid: &Grid<T>, 
     config: &BlobGenConfig,
-) -> (Grid<TileType>, i32, i32, i32, i32) {
-    let mut best_blob: Option<(Grid<TileType>, i32, i32, i32, i32, f32)> = None; // (grid, min_x, min_y, w, h, score)
+    floor_val: T,
+    wall_val: T,
+) -> (Grid<T>, i32, i32, i32, i32) 
+where T: Copy + Clone + PartialEq + Default
+{
+    let mut best_blob: Option<(Grid<T>, i32, i32, i32, i32, f32)> = None; 
 
-    for _ in 0..50 { // Number of attempts to generate a good blob
-        let mut current_grid = Grid::new(initial_grid.width, initial_grid.height, TileType::Wall);
+    for _ in 0..50 { 
+        let mut current_grid = Grid::new(initial_grid.width, initial_grid.height, wall_val);
 
-        randomize_grid(&mut current_grid, config.initial_alive_percent);
+        randomize_grid(&mut current_grid, config.initial_alive_percent, floor_val, wall_val);
 
         for _ in 0..config.round_count {
-            cellular_automata_iteration(&mut current_grid, config.birth_threshold, config.survival_threshold);
+            cellular_automata_iteration(&mut current_grid, config.birth_threshold, config.survival_threshold, floor_val, wall_val);
         }
 
-        let regions = get_all_regions(&current_grid);
+        let regions = get_all_regions(&current_grid, floor_val, wall_val);
         if regions.is_empty() {
             continue;
         }
 
         for region in regions {
             let mut blob_grid = current_grid.clone();
-            retain_specific_region(&mut blob_grid, &region);
+            retain_specific_region(&mut blob_grid, &region, wall_val);
 
             let (min_x, max_x, min_y, max_y) = region.tiles.iter().fold(
                 (initial_grid.width, 0, initial_grid.height, 0),
@@ -305,7 +309,7 @@ pub fn create_blob(
                 Some((_, _, _, _, _, best_score)) if *best_score >= score => {}
                 _ => {
                     best_blob = Some((
-                        blob_grid.clone(), // Clone here
+                        blob_grid.clone(), 
                         min_x,
                         min_y,
                         blob_width,
@@ -320,7 +324,6 @@ pub fn create_blob(
                 && blob_width <= config.max_blob_width
                 && blob_height <= config.max_blob_height
             {
-                // Found a blob that fits within the desired range, return it immediately
                 return (blob_grid.clone(), min_x, min_y, blob_width, blob_height);
             }
         }
@@ -329,9 +332,8 @@ pub fn create_blob(
     if let Some((grid, min_x, min_y, blob_width, blob_height, _)) = best_blob {
         (grid.clone(), min_x, min_y, blob_width, blob_height)
     } else {
-        // Fallback: return a grid of all walls if no suitable blob was found after many attempts
         (
-            Grid::new(initial_grid.width, initial_grid.height, TileType::Wall),
+            Grid::new(initial_grid.width, initial_grid.height, wall_val),
             0,
             0,
             initial_grid.width,

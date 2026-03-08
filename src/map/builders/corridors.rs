@@ -1,6 +1,6 @@
 use crate::map::Map;
 use crate::map::builders::{BuilderMap, MetaMapBuilder};
-use crate::map::tile::TileType;
+use crate::map::tile::TerrainType;
 use bracket_lib::geometry::{Point, Rect};
 use bracket_lib::pathfinding::DistanceAlg::Pythagoras;
 use std::collections::HashSet;
@@ -22,10 +22,10 @@ pub fn draw_corridor(map: &mut Map, x1: i32, y1: i32, x2: i32, y2: i32) -> Vec<u
         }
 
         let pt = Point::new(x, y);
-        if map.get_tile(pt) != Some(TileType::Floor) {
+        if map.get_tile(pt).map(|t| t.terrain) != Some(TerrainType::Floor) {
             let idx = map.xy_idx(pt.x, pt.y);
             corridor.push(idx);
-            map.set_tile(pt, TileType::Floor);
+            map.set_tile(pt, TerrainType::Floor);
         }
     }
 
@@ -53,7 +53,7 @@ impl NearestCorridors {
         if let Some(rooms_builder) = &build_data.rooms {
             rooms = rooms_builder.clone();
         } else {
-            panic!("Nearest Corridors require a builder with room structures");
+            return; // No rooms to connect
         }
 
         let mut connected: HashSet<usize> = HashSet::new();

@@ -1,7 +1,7 @@
 use bracket_lib::prelude::{Point, Algorithm2D, DijkstraMap, Rect};
 use rand::prelude::*;
-use rand::seq::{IndexedRandom, SliceRandom};
-use crate::map::tile::{is_walkable, TileType};
+use rand::seq::SliceRandom;
+use crate::map::tile::{is_walkable, Tile, TerrainType, LiquidType};
 use crate::map::builders::{BuilderMap, InitialMapBuilder};
 use crate::game::actions::Direction;
 use crate::map::map::Map;
@@ -10,7 +10,7 @@ use crate::map::builders::algorithms::{Grid, BlobGenConfig, create_blob};
 const MAX_ROOM_SIZE: i32 = 20;
 
 struct RoomDesign {
-    tiles: Vec<TileType>,
+    tiles: Vec<TerrainType>,
     width: i32,
     height: i32,
     door_sites: Vec<(Point, Direction)>,
@@ -19,15 +19,13 @@ struct RoomDesign {
 pub struct BrogueLikeBuilder {
     width: i32,
     height: i32,
-    depth: i32,
 }
 
 impl BrogueLikeBuilder {
-    pub fn dungeon(depth: i32, width: i32, height: i32) -> Box<Self> {
+    pub fn dungeon(_depth: i32, width: i32, height: i32) -> Box<Self> {
         Box::new(Self {
             width,
             height,
-            depth,
         })
     }
 
@@ -36,7 +34,7 @@ impl BrogueLikeBuilder {
         // Brogue rooms are designed on a large grid but we'll use a local one for efficiency
         let w = MAX_ROOM_SIZE;
         let h = MAX_ROOM_SIZE;
-        let mut tiles = vec![TileType::Wall; (w * h) as usize];
+        let mut tiles = vec![TerrainType::Wall; (w * h) as usize];
 
         let room_type = rng.random_range(0..6);
         match room_type {
@@ -65,7 +63,7 @@ impl BrogueLikeBuilder {
         design
     }
 
-    fn draw_cross_room(&self, tiles: &mut [TileType], w: i32, h: i32) {
+    fn draw_cross_room(&self, tiles: &mut [TerrainType], w: i32, h: i32) {
         let mut rng = rand::rng();
         let w1 = rng.random_range(3..10);
         let h1 = rng.random_range(3..6);
@@ -75,34 +73,33 @@ impl BrogueLikeBuilder {
         let cx = w / 2;
         let cy = h / 2;
 
-        self.fill_rect(tiles, w, Rect::with_size(cx - w1 / 2, cy - h1 / 2, w1, h1), TileType::Floor);
+        self.fill_rect(tiles, w, Rect::with_size(cx - w1 / 2, cy - h1 / 2, w1, h1), TerrainType::Floor);
         let ox = rng.random_range(-2..2);
         let oy = rng.random_range(-1..1);
-        self.fill_rect(tiles, w, Rect::with_size(cx - w2 / 2 + ox, cy - h2 / 2 + oy, w2, h2), TileType::Floor);
+        self.fill_rect(tiles, w, Rect::with_size(cx - w2 / 2 + ox, cy - h2 / 2 + oy, w2, h2), TerrainType::Floor);
     }
 
-    fn draw_symmetrical_cross_room(&self, tiles: &mut [TileType], w: i32, h: i32) {
-        let mut rng = rand::rng();
-        let major_w = rng.random_range(4..9);
-        let major_h = rng.random_range(4..6);
+    fn draw_symmetrical_cross_room(&self, tiles: &mut [TerrainType], w: i32, h: i32) {
+        let major_w = rand::rng().random_range(4..9);
+        let major_h = rand::rng().random_range(4..6);
         let minor_w = (major_w - 2).max(1);
         let minor_h = major_h + 2;
 
         let cx = w / 2;
         let cy = h / 2;
 
-        self.fill_rect(tiles, w, Rect::with_size(cx - major_w / 2, cy - major_h / 2, major_w, major_h), TileType::Floor);
-        self.fill_rect(tiles, w, Rect::with_size(cx - minor_w / 2, cy - minor_h / 2, minor_w, minor_h), TileType::Floor);
+        self.fill_rect(tiles, w, Rect::with_size(cx - major_w / 2, cy - major_h / 2, major_w, major_h), TerrainType::Floor);
+        self.fill_rect(tiles, w, Rect::with_size(cx - minor_w / 2, cy - minor_h / 2, minor_w, minor_h), TerrainType::Floor);
     }
 
-    fn draw_small_room(&self, tiles: &mut [TileType], w: i32, h: i32) {
+    fn draw_small_room(&self, tiles: &mut [TerrainType], w: i32, h: i32) {
         let mut rng = rand::rng();
         let rw = rng.random_range(3..6);
         let rh = rng.random_range(2..4);
-        self.fill_rect(tiles, w, Rect::with_size(w / 2 - rw / 2, h / 2 - rh / 2, rw, rh), TileType::Floor);
+        self.fill_rect(tiles, w, Rect::with_size(w / 2 - rw / 2, h / 2 - rh / 2, rw, rh), TerrainType::Floor);
     }
 
-    fn draw_circular_room(&self, tiles: &mut [TileType], w: i32, h: i32) {
+    fn draw_circular_room(&self, tiles: &mut [TerrainType], w: i32, h: i32) {
         let mut rng = rand::rng();
         let radius = rng.random_range(2..5);
         let cx = w / 2;
@@ -112,21 +109,21 @@ impl BrogueLikeBuilder {
                 if x * x + y_offset * y_offset <= radius * radius {
                     let pt = Point::new(cx + x, cy + y_offset);
                     if pt.x >= 0 && pt.x < w && pt.y >= 0 && pt.y < h {
-                        tiles[(pt.y * w + pt.x) as usize] = TileType::Floor;
+                        tiles[(pt.y * w + pt.x) as usize] = TerrainType::Floor;
                     }
                 }
             }
         }
     }
 
-    fn draw_chunky_room(&self, tiles: &mut [TileType], w: i32, h: i32) {
+    fn draw_chunky_room(&self, tiles: &mut [TerrainType], w: i32, h: i32) {
         let mut rng = rand::rng();
         let chunk_count = rng.random_range(2..6);
         let cx = w / 2;
         let cy = h / 2;
 
         // Core
-        self.fill_rect(tiles, w, Rect::with_size(cx - 1, cy - 1, 3, 3), TileType::Floor);
+        self.fill_rect(tiles, w, Rect::with_size(cx - 1, cy - 1, 3, 3), TerrainType::Floor);
 
         for _ in 0..chunk_count {
             let rx = rng.random_range(cx - 3..cx + 3);
@@ -137,7 +134,7 @@ impl BrogueLikeBuilder {
                     if x * x + y * y <= radius * radius {
                         let pt = Point::new(rx + x, ry + y);
                         if pt.x >= 0 && pt.x < w && pt.y >= 0 && pt.y < h {
-                            tiles[(pt.y * w + pt.x) as usize] = TileType::Floor;
+                            tiles[(pt.y * w + pt.x) as usize] = TerrainType::Floor;
                         }
                     }
                 }
@@ -145,7 +142,7 @@ impl BrogueLikeBuilder {
         }
     }
 
-    fn fill_rect(&self, tiles: &mut [TileType], w: i32, rect: Rect, tile: TileType) {
+    fn fill_rect(&self, tiles: &mut [TerrainType], w: i32, rect: Rect, tile: TerrainType) {
         for x in rect.x1..=rect.x2 {
             for y in rect.y1..=rect.y2 {
                 if x >= 0 && x < w && y >= 0 && y < tiles.len() as i32 / w {
@@ -155,12 +152,12 @@ impl BrogueLikeBuilder {
         }
     }
 
-    fn find_door_sites(&self, tiles: &[TileType], w: i32, h: i32) -> Vec<(Point, Direction)> {
+    fn find_door_sites(&self, tiles: &[TerrainType], w: i32, h: i32) -> Vec<(Point, Direction)> {
         let mut sites = Vec::new();
         for y in 1..h - 1 {
             for x in 1..w - 1 {
                 let pt = Point::new(x, y);
-                if tiles[(y * w + x) as usize] == TileType::Wall {
+                if tiles[(y * w + x) as usize] == TerrainType::Wall {
                     if let Some(dir) = self.direction_of_door_site(tiles, w, h, pt) {
                         sites.push((pt, dir));
                     }
@@ -170,7 +167,7 @@ impl BrogueLikeBuilder {
         sites
     }
 
-    fn direction_of_door_site(&self, tiles: &[TileType], w: i32, h: i32, pt: Point) -> Option<Direction> {
+    fn direction_of_door_site(&self, tiles: &[TerrainType], w: i32, h: i32, pt: Point) -> Option<Direction> {
         let mut solution = None;
         for dir in [Direction::N, Direction::E, Direction::S, Direction::W] {
             let neighbor = pt + dir.offset();
@@ -179,7 +176,7 @@ impl BrogueLikeBuilder {
             if neighbor.x >= 0 && neighbor.x < w && neighbor.y >= 0 && neighbor.y < h
                 && opp.x >= 0 && opp.x < w && opp.y >= 0 && opp.y < h
             {
-                if tiles[(opp.y * w + opp.x) as usize] == TileType::Floor {
+                if tiles[(opp.y * w + opp.x) as usize] == TerrainType::Floor {
                     if solution.is_some() { return None; } // Multiple floor neighbors = not a door site
                     solution = Some(dir);
                 }
@@ -196,7 +193,7 @@ impl BrogueLikeBuilder {
             let mut curr = start_pt;
             for _ in 0..length {
                 if curr.x < 0 || curr.x >= design.width || curr.y < 0 || curr.y >= design.height { break; }
-                design.tiles[(curr.y * design.width + curr.x) as usize] = TileType::Floor;
+                design.tiles[(curr.y * design.width + curr.x) as usize] = TerrainType::Floor;
                 curr = curr + dir.offset();
             }
             // The new door site is at the end of the hallway
@@ -204,9 +201,9 @@ impl BrogueLikeBuilder {
         }
     }
 
-    fn draw_cavern_room(&self, tiles: &mut [TileType], w: i32, h: i32) {
+    fn draw_cavern_room(&self, tiles: &mut [TerrainType], w: i32, h: i32) {
         // Create an initial grid representation for the algorithms module
-        let initial_grid_dims = Grid::new(w, h, TileType::Wall);
+        let initial_grid_dims = Grid::new(w, h, TerrainType::Wall);
 
         let config = BlobGenConfig {
             round_count: 5,
@@ -220,7 +217,7 @@ impl BrogueLikeBuilder {
         };
 
         // Generate the blob using the algorithms module
-        let (blob_grid, _, _, _, _) = create_blob(&initial_grid_dims, &config);
+        let (blob_grid, _, _, _, _) = create_blob(&initial_grid_dims, &config, TerrainType::Floor, TerrainType::Wall);
         
         // Copy the generated blob back into the room's tiles vector
         tiles.copy_from_slice(&blob_grid.data);
@@ -229,7 +226,7 @@ impl BrogueLikeBuilder {
     fn room_fits(&self, build_data: &BuilderMap, design: &RoomDesign, offset: Point, ignore_dungeon_pt: Point) -> bool {
         for y in 0..design.height {
             for x in 0..design.width {
-                if design.tiles[(y * design.width + x) as usize] == TileType::Floor {
+                if design.tiles[(y * design.width + x) as usize] == TerrainType::Floor {
                     let dungeon_pt = Point::new(x, y) + offset;
                     if !build_data.map.in_bounds(dungeon_pt) { return false; }
 
@@ -239,8 +236,8 @@ impl BrogueLikeBuilder {
                             let check_pt = dungeon_pt + Point::new(dx, dy);
                             if check_pt == ignore_dungeon_pt { continue; }
                             if !build_data.map.in_bounds(check_pt) { return false; }
-                            let idx = build_data.map.xy_idx(check_pt.x, check_pt.y);
-                            if build_data.map.tiles[idx] != TileType::Wall {
+                            let tile = build_data.map.tiles[build_data.map.xy_idx(check_pt.x, check_pt.y)];
+                            if tile.terrain != TerrainType::Wall {
                                 return false;
                             }
                         }
@@ -251,7 +248,7 @@ impl BrogueLikeBuilder {
         true
     }
 
-    pub fn add_loops(&self, tiles: &mut Vec<TileType>, w: i32, h: i32, minimum_path_distance: i32) {
+    pub fn add_loops(&self, tiles: &mut Vec<Tile>, w: i32, h: i32, minimum_path_distance: i32) {
         let total_cells = (w * h) as usize;
         let mut indices: Vec<usize> = (0..total_cells).collect();
         indices.shuffle(&mut rand::rng());
@@ -264,8 +261,8 @@ impl BrogueLikeBuilder {
 
         // Make all doors open in the Dijkstra map for pathfinding
         for i in 0..map_for_dijkstra.tiles.len() {
-            if map_for_dijkstra.tiles[i] == TileType::Door {
-                map_for_dijkstra.tiles[i] = TileType::OpenDoor;
+            if map_for_dijkstra.tiles[i].terrain == TerrainType::Door {
+                map_for_dijkstra.tiles[i].terrain = TerrainType::OpenDoor;
             }
         }
 
@@ -273,7 +270,7 @@ impl BrogueLikeBuilder {
             let (x, y) = map_for_dijkstra.idx_xy(idx); // Use Map's idx_xy
 
             // Only consider walls as potential new doors
-            if map_for_dijkstra.tiles[idx] != TileType::Wall {
+            if map_for_dijkstra.tiles[idx].terrain != TerrainType::Wall {
                 continue;
             }
 
@@ -288,9 +285,9 @@ impl BrogueLikeBuilder {
                 }
 
                 // Check if flanking tiles are Floor (open space)
-                // Note: simplified as we don't have T_CAN_BE_BRIDGED etc.
-                if !is_walkable(map_for_dijkstra.tiles[map_for_dijkstra.xy_idx(nx, ny)])
-                    || !is_walkable(map_for_dijkstra.tiles[map_for_dijkstra.xy_idx(ox, oy)])
+                let t1 = map_for_dijkstra.tiles[map_for_dijkstra.xy_idx(nx, ny)];
+                let t2 = map_for_dijkstra.tiles[map_for_dijkstra.xy_idx(ox, oy)];
+                if !is_walkable(t1) || !is_walkable(t2)
                 {
                     continue;
                 }
@@ -306,8 +303,8 @@ impl BrogueLikeBuilder {
                 if let Some(distance) = dijkstra.map.get(goal_idx) {
                     if *distance > minimum_path_distance as f32 {
                         // The two areas are far apart — add a connecting door here
-                        tiles[idx] = TileType::Door; // Update the actual tiles being built
-                        map_for_dijkstra.tiles[idx] = TileType::Door; // Update temp map for consistency
+                        tiles[idx].terrain = TerrainType::Door; // Update the actual tiles being built
+                        map_for_dijkstra.tiles[idx].terrain = TerrainType::Door; // Update temp map for consistency
                         break; // Only add one door per wall tile
                     }
                 }
@@ -330,9 +327,9 @@ impl InitialMapBuilder for BrogueLikeBuilder {
 
         for y in 0..first.height {
             for x in 0..first.width {
-                if first.tiles[(y * first.width + x) as usize] == TileType::Floor {
+                if first.tiles[(y * first.width + x) as usize] == TerrainType::Floor {
                     let dp = Point::new(x, y) + offset;
-                    build_data.map.set_tile(dp, TileType::Floor);
+                    build_data.map.set_tile(dp, TerrainType::Floor);
                     min_x = min_x.min(dp.x); max_x = max_x.max(dp.x);
                     min_y = min_y.min(dp.y); max_y = max_y.max(dp.y);
                 }
@@ -350,12 +347,15 @@ impl InitialMapBuilder for BrogueLikeBuilder {
 
             // Find all potential door sites in the dungeon
             let mut dungeon_sites = Vec::new();
+            // Pre-calculate terrain slice once per room attempt (still a bit slow but better than once per site)
+            let terrain_slice: Vec<TerrainType> = build_data.map.tiles.iter().map(|t| t.terrain).collect();
+            
             for y in 1..self.height - 1 {
                 for x in 1..self.width - 1 {
                     let pt = Point::new(x, y);
                     let idx = build_data.map.xy_idx(x, y);
-                    if build_data.map.tiles[idx] == TileType::Wall {
-                        if let Some(dir) = self.direction_of_door_site(&build_data.map.tiles, self.width, self.height, pt) {
+                    if build_data.map.tiles[idx].terrain == TerrainType::Wall {
+                        if let Some(dir) = self.direction_of_door_site(&terrain_slice, self.width, self.height, pt) {
                             dungeon_sites.push((pt, dir));
                         }
                     }
@@ -379,16 +379,16 @@ impl InitialMapBuilder for BrogueLikeBuilder {
 
                             for ry in 0..design.height {
                                 for rx in 0..design.width {
-                                    if design.tiles[(ry * design.width + rx) as usize] == TileType::Floor {
+                                    if design.tiles[(ry * design.width + rx) as usize] == TerrainType::Floor {
                                         let dp = Point::new(rx, ry) + offset;
-                                        build_data.map.set_tile(dp, TileType::Floor);
+                                        build_data.map.set_tile(dp, TerrainType::Floor);
                                         r_min_x = r_min_x.min(dp.x); r_max_x = r_max_x.max(dp.x);
                                         r_min_y = r_min_y.min(dp.y); r_max_y = r_max_y.max(dp.y);
                                     }
                                 }
                             }
                             // Don't forget the door itself!
-                            build_data.map.set_tile(d_pt, TileType::Door);
+                            build_data.map.set_tile(d_pt, TerrainType::Door);
                             
                             rooms.push(Rect::with_exact(r_min_x, r_min_y, r_max_x, r_max_y));
                             placed += 1;

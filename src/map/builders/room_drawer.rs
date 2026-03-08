@@ -1,6 +1,6 @@
 use crate::map::{
     builders::{BuilderMap, MetaMapBuilder},
-    tile::TileType,
+    tile::TerrainType,
 };
 use bracket_lib::prelude::{Point, Rect};
 
@@ -24,7 +24,7 @@ impl RoomDrawer {
         if let Some(rooms_builder) = &build_data.rooms {
             rooms = rooms_builder.clone();
         } else {
-            panic!("Room Drawing requires a builder with room structures");
+            return;
         }
 
         for room in rooms.iter() {
@@ -32,7 +32,7 @@ impl RoomDrawer {
             for y in room.y1 + 1..room.y2 {
                 for x in room.x1 + 1..room.x2 {
                     let pt = Point::new(x, y);
-                    build_data.map.set_tile(pt, TileType::Floor);
+                    build_data.map.set_tile(pt, TerrainType::Floor);
                 }
             }
             build_data.take_snapshot();

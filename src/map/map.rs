@@ -4,7 +4,7 @@ use bracket_lib::prelude::{Algorithm2D, BaseMap, DistanceAlg, Point, SmallVec};
 use crate::{
     components::{Position, Viewshed},
     game::AppState,
-    map::tile::{TileExplored, TileType, TileVisibility, is_opaque, is_walkable},
+    map::tile::{TileExplored, Tile, TerrainType, LiquidType, TileVisibility, is_opaque, is_walkable},
     player::Player,
 };
 
@@ -84,7 +84,7 @@ pub fn update_tile_visibility(
 #[derive(Default, Clone, Resource)]
 pub struct Map {
     pub name: String,
-    pub tiles: Vec<TileType>,
+    pub tiles: Vec<Tile>,
     pub width: i32,
     pub height: i32,
     pub depth: i32,
@@ -96,7 +96,7 @@ impl Map {
         let map_tile_count = (width * height) as usize;
         Self {
             name: name.to_string(),
-            tiles: vec![TileType::Wall; map_tile_count],
+            tiles: vec![Tile { terrain: TerrainType::Wall, liquid: LiquidType::None }; map_tile_count],
             width,
             height,
             depth,
@@ -122,7 +122,7 @@ impl Map {
         self.depth
     }
 
-    pub fn get_tile(&self, pt: Point) -> Option<TileType> {
+    pub fn get_tile(&self, pt: Point) -> Option<Tile> {
         if self.in_bounds(pt) {
             let idx = self.xy_idx(pt.x, pt.y);
             Some(self.tiles[idx])
@@ -131,10 +131,17 @@ impl Map {
         }
     }
 
-    pub fn set_tile(&mut self, pt: Point, tile: TileType) {
+    pub fn set_tile(&mut self, pt: Point, terrain: TerrainType) {
         if self.in_bounds(pt) {
             let idx = self.xy_idx(pt.x, pt.y);
-            self.tiles[idx] = tile;
+            self.tiles[idx].terrain = terrain;
+        }
+    }
+
+    pub fn set_liquid(&mut self, pt: Point, liquid: LiquidType) {
+        if self.in_bounds(pt) {
+            let idx = self.xy_idx(pt.x, pt.y);
+            self.tiles[idx].liquid = liquid;
         }
     }
 }

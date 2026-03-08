@@ -56,5 +56,29 @@
             tile_size: (32, 32),
             grid_size: (1, 1),
         ),
+        "Water": (
+            name: "Water",
+            sprite: "sprites/liquid/shoals_deep_water_8.png#0",
+            walkable: false,
+            opaque: false,
+            tile_size: (32, 32),
+            grid_size: (1, 1),
+        ),
+        "ShallowWater": (
+            name: "ShallowWater",
+            sprite: "sprites/liquid/shoals_shallow_water_8.png#0",
+            walkable: true,
+            opaque: false,
+            tile_size: (32, 32),
+            grid_size: (1, 1),
+        ),
+        "Lava": (
+            name: "Lava",
+            sprite: "sprites/liquid/lava_2.png#0",
+            walkable: false,
+            opaque: false,
+            tile_size: (32, 32),
+            grid_size: (1, 1),
+        ),
     }
 )

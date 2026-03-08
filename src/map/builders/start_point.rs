@@ -2,7 +2,7 @@ use crate::{
     components::Position,
     map::{
         builders::{BuilderMap, MetaMapBuilder},
-        tile::TileType,
+        tile::TerrainType,
     },
 };
 
@@ -52,7 +52,7 @@ impl StartPointBuilder {
                     y: start_pos.y,
                 });
                 if build_data.map.depth() > 1 {
-                    build_data.map.set_tile(start_pos, TileType::UpStairs);
+                    build_data.map.set_tile(start_pos, TerrainType::UpStairs);
                 }
             } else {
                 panic!("Cannot determine starting point: No rooms have been generated.");

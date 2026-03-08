@@ -1,5 +1,5 @@
 use super::{BuilderMap, MetaMapBuilder};
-use crate::map::tile::{is_walkable, TileType};
+use crate::map::tile::TerrainType;
 use bracket_lib::prelude::Point;
 use rand::prelude::*;
 
@@ -36,36 +36,32 @@ impl MetaMapBuilder for DiagonalCuller {
                         let tile_c = build_data.map.tiles[idx_c];
                         let tile_d = build_data.map.tiles[idx_d];
 
-                        if is_walkable(tile_a)
-                            && !is_walkable(tile_b)
-                            && !is_walkable(tile_c)
-                            && is_walkable(tile_d)
+                        // We check terrain logic. 
+                        // Note: simplified check since is_walkable works on Tile.
+                        // We'll treat any non-wall as walkable for this culler's logic.
+                        let is_w = |t: crate::map::tile::Tile| t.terrain != TerrainType::Wall && t.terrain != TerrainType::Empty;
+
+                        if is_w(tile_a)
+                            && !is_w(tile_b)
+                            && !is_w(tile_c)
+                            && is_w(tile_d)
                         {
-                            // Diagonal crack found:
-                            // (x+k, y+1): Wall    (x+1-k, y+1): Floor
-                            // (x+k, y):   Floor   (x+1-k, y):   Wall
-                            // OR vice versa depending on k.
-                            
-                            // We choose one of the walls to fill.
                             let (target_x, source_x, target_y) = if rng.random_bool(0.5) {
                                 (x + (1 - k), x + k, y)
                             } else {
                                 (x + k, x + (1 - k), y + 1)
                             };
 
-                            changes.push((target_x, target_y, build_data.map.tiles[build_data.map.xy_idx(source_x, target_y)]));
+                            changes.push((target_x, target_y, build_data.map.tiles[build_data.map.xy_idx(source_x, target_y)].terrain));
                             diagonal_corner_removed = true;
                         }
                     }
                 }
             }
 
-            for (tx, ty, tile) in changes {
-                build_data.map.set_tile(Point::new(tx, ty), tile);
+            for (tx, ty, terrain) in changes {
+                build_data.map.set_tile(Point::new(tx, ty), terrain);
             }
-            
-            // If we found any, we loop again to catch any new cracks created by the filling.
-            // In practice, this usually converges very quickly.
         }
 
         build_data.take_snapshot();

@@ -5,7 +5,7 @@ use crate::{
     components::{Collider, Monster, Position, Viewshed},
     constants::BASE_ACTION_COST,
     game::combat::AttackIntentMessage,
-    map::{Map, tile::{is_walkable, TileType, TileMarker}, map::DungeonECSMap},
+    map::{Map, tile::{is_walkable, TerrainType, TileMarker}, map::DungeonECSMap},
     player::Player,
     assets::{TileManifest, TileManifestHandle, TileSpriteAssets},
 };
@@ -103,7 +103,7 @@ pub fn handle_movement(
         let target_tile = map.tiles[map.xy_idx(target_pt.x, target_pt.y)];
 
         // 2. Closed Door Check
-        if target_tile == TileType::Door {
+        if target_tile.terrain == TerrainType::Door {
             open_door_writer.write(OpenDoorIntent {
                 entity: intent.entity,
                 door_pos: target_pt,
@@ -209,7 +209,7 @@ pub fn handle_door_open(
     mut intents: MessageReader<OpenDoorIntent>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut map: ResMut<Map>,
-    mut tile_query: Query<(Entity, &Position, &mut TileType, &mut Sprite)>,
+    mut tile_query: Query<(Entity, &Position, &mut TerrainType, &mut Sprite)>,
     mut viewshed_query: Query<&mut Viewshed>,
     tile_manifests: Res<Assets<TileManifest>>,
     tile_manifest_handle: Res<TileManifestHandle>,
@@ -223,14 +223,14 @@ pub fn handle_door_open(
         let idx = map.xy_idx(intent.door_pos.x, intent.door_pos.y);
         
         // Logical Update
-        map.tiles[idx] = TileType::OpenDoor;
+        map.tiles[idx].terrain = TerrainType::OpenDoor;
 
         // Visual Update by querying for the tile entity at the correct position
-        for (tile_entity, pos, mut tile_type, mut sprite) in tile_query.iter_mut() {
+        for (tile_entity, pos, mut terrain_type, mut sprite) in tile_query.iter_mut() {
             if pos.x == intent.door_pos.x && pos.y == intent.door_pos.y {
-                *tile_type = TileType::OpenDoor;
+                *terrain_type = TerrainType::OpenDoor;
                 
-                if let Some(asset) = tile_manifest.tiles.get(TileType::OpenDoor.name()) {
+                if let Some(asset) = tile_manifest.tiles.get(TerrainType::OpenDoor.name()) {
                     let sprite_path_parts: Vec<&str> = asset.sprite.split('#').collect();
                     let texture_path = sprite_path_parts[0];
                     let index = sprite_path_parts[1].parse::<usize>().unwrap_or_default();

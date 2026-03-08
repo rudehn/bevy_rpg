@@ -4,23 +4,24 @@ use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::assets::{
     CandleSpritesheet, MonsterManifest, MonsterManifestHandle, MonsterSpawnTable,
-    MonsterSpawnTableHandle, MonsterSpriteAssets, TileManifest, TileManifestHandle, TileSpriteAssets,
+    MonsterSpawnTableHandle, MonsterSpriteAssets, TileManifest, TileManifestHandle,
+    TileSpriteAssets,
 };
 use crate::game::{TurnManager, spawn_monster_by_name, turns::TurnMarker};
 use crate::map::Map;
 use crate::map::builders::BuilderMap;
-use crate::map::tile::TileType;
+use crate::map::tile::TerrainType;
 use crate::player::Player;
 use crate::ui::game_log::GameLogMessage;
 
 use crate::{
     AppState,
-    components::{FloorEntityMarker, GameEntityMarker, Position},
+    components::Position,
     map::{
         builders::level_builder,
         light::spawn_candle,
         map::{DungeonECSMap, MAP_SIZE},
-        tile::{spawn_tile_entity, TileMarker},
+        tile::{TileMarker, spawn_tile_entity},
     },
 };
 
@@ -76,7 +77,7 @@ fn player_stair_system(
     for pos in player_query.iter() {
         if map.in_bounds(pos.to_point()) {
             let idx = map.xy_idx(pos.x, pos.y);
-            if map.tiles[idx] == TileType::DownStairs {
+            if map.tiles[idx].terrain == TerrainType::DownStairs {
                 transition_writer.write(MapTransitionMessage);
             }
         }
@@ -88,7 +89,6 @@ fn map_transition_system(
     mut floor: ResMut<Floor>,
     q_map_markers: Query<Entity, With<DungeonECSMap>>,
     q_tiles: Query<Entity, With<TileMarker>>,
-    q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
     mut turn_manager: ResMut<TurnManager>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
@@ -101,11 +101,6 @@ fn map_transition_system(
     // 2. Despawn all tiles
     for tile_entity in q_tiles.iter() {
         commands.entity(tile_entity).despawn();
-    }
-
-    // 3. Despawn all floor-specific entities (monsters, candles, etc.)
-    for entity in q_floor_entities.iter() {
-        commands.entity(entity).despawn();
     }
 
     // 4. Reset turn manager queue (monsters are gone)
@@ -128,18 +123,20 @@ fn spawn_tiles_into_ecs(
     for y in 0..game_map.height() {
         for x in 0..game_map.width() {
             let pt = Point::new(x, y);
-            let tile_type = game_map.get_tile(pt).unwrap();
+            let tile = game_map.get_tile(pt).unwrap();
 
             let tile_entity = spawn_tile_entity(
-                commands, 
-                map_entity, 
-                tile_type, 
+                commands,
+                map_entity,
+                tile,
                 pt,
                 tile_manifest,
-                tile_sprite_assets
+                tile_sprite_assets,
             );
             // Add Position component for our visibility system
-            commands.entity(tile_entity).insert(Position { x: pt.x, y: pt.y });
+            commands
+                .entity(tile_entity)
+                .insert(Position { x: pt.x, y: pt.y });
         }
     }
 }
@@ -188,9 +185,11 @@ pub fn spawn_dungeon(
     tile_sprite_assets: Res<TileSpriteAssets>,
     mut log_writer: MessageWriter<GameLogMessage>,
     player_query: Query<Entity, With<Player>>,
-    turn_marker_query: Query<Entity, With<TurnMarker>>,
+    turn_marker_query: Query<Entity, (With<TurnMarker>, Without<Player>)>,
 ) {
-    let tile_manifest = tile_manifests.get(&tile_manifest_handle.0).expect("Tile manifest not loaded");
+    let tile_manifest = tile_manifests
+        .get(&tile_manifest_handle.0)
+        .expect("Tile manifest not loaded");
 
     let spawn_table = monster_spawn_tables
         .get(&monster_spawn_table_handle.0)
@@ -207,15 +206,13 @@ pub fn spawn_dungeon(
 
     // Bake the map into the ECS
     // Create the Tilemap entity
-    let map_entity = commands
-        .spawn((DungeonECSMap, GameEntityMarker, RenderLayers::layer(1)))
-        .id();
+    let map_entity = commands.spawn((DungeonECSMap, RenderLayers::layer(1))).id();
     spawn_tiles_into_ecs(
-        &mut commands, 
-        map_entity, 
-        &map, 
+        &mut commands,
+        map_entity,
+        &map,
         tile_manifest,
-        &tile_sprite_assets
+        &tile_sprite_assets,
     );
 
     spawn_dungeon_entities(
@@ -236,7 +233,7 @@ pub fn spawn_dungeon(
     if let Ok(player_entity) = player_query.single() {
         turn_manager.add_entity(player_entity);
     }
-    if let Ok(marker_entity) = turn_marker_query.single() {
+    for marker_entity in turn_marker_query.iter() {
         turn_manager.add_entity(marker_entity);
     }
 

@@ -2,7 +2,7 @@ use bracket_lib::prelude::{Algorithm2D, DijkstraMap, Point};
 
 use crate::map::{
     builders::{BuilderMap, MetaMapBuilder},
-    tile::TileType,
+    tile::TerrainType,
 };
 
 #[derive(Clone)]
@@ -30,8 +30,8 @@ impl DistantExit {
         // 1. Temporarily swap doors for floors so pathfinding can pass through them
         let original_tiles = build_data.map.tiles.clone();
         for tile in build_data.map.tiles.iter_mut() {
-            if *tile == TileType::Door {
-                *tile = TileType::Floor;
+            if tile.terrain == TerrainType::Door {
+                tile.terrain = TerrainType::Floor;
             }
         }
 
@@ -52,7 +52,7 @@ impl DistantExit {
             for x in 0..build_data.map.width() {
                 let pt = Point::new(x, y);
                 let idx = build_data.map.point2d_to_index(pt);
-                if build_data.map.get_tile(pt) == Some(TileType::Floor) {
+                if build_data.map.get_tile(pt).map(|t| t.terrain) == Some(TerrainType::Floor) {
                     let distance_to_start = dijkstra_map.map[idx];
                     if distance_to_start != std::f32::MAX {
                         // If it is further away than our current exit candidate, move the exit
@@ -68,7 +68,7 @@ impl DistantExit {
         // Place a staircase
         let stairs_idx = exit_tile.0;
         let stairs_pos = build_data.map.index_to_point2d(stairs_idx);
-        build_data.map.set_tile(stairs_pos, TileType::DownStairs);
+        build_data.map.set_tile(stairs_pos, TerrainType::DownStairs);
         build_data.take_snapshot();
     }
 }
