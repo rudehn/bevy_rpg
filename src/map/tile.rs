@@ -10,8 +10,9 @@ use crate::assets::{TileManifest, TileSpriteAssets};
 #[derive(Component)]
 pub struct TileMarker;
 
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TileType {
+    #[default]
     Wall,
     Floor,
     DownStairs,

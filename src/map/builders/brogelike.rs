@@ -1,9 +1,9 @@
-use std::collections::{VecDeque, HashSet};
 use bracket_lib::prelude::{Point, Algorithm2D, Rect};
 use rand::prelude::*;
 use crate::map::tile::TileType;
 use crate::map::builders::{BuilderMap, InitialMapBuilder};
 use crate::game::actions::Direction;
+use crate::map::builders::algorithms::{Grid, BlobGenConfig, create_blob}; // Import Grid, BlobGenConfig, and create_blob
 
 const MAX_ROOM_SIZE: i32 = 20;
 
@@ -106,9 +106,9 @@ impl BrogueLikeBuilder {
         let cx = w / 2;
         let cy = h / 2;
         for x in -radius..=radius {
-            for y in -radius..=radius {
-                if x * x + y * y <= radius * radius {
-                    let pt = Point::new(cx + x, cy + y);
+            for y_offset in -radius..=radius {
+                if x * x + y_offset * y_offset <= radius * radius {
+                    let pt = Point::new(cx + x, cy + y_offset);
                     if pt.x >= 0 && pt.x < w && pt.y >= 0 && pt.y < h {
                         tiles[(pt.y * w + pt.x) as usize] = TileType::Floor;
                     }
@@ -203,109 +203,25 @@ impl BrogueLikeBuilder {
     }
 
     fn draw_cavern_room(&self, tiles: &mut [TileType], w: i32, h: i32) {
-        let mut rng = rand::rng();
+        // Create an initial grid representation for the algorithms module
+        let initial_grid_dims = Grid::new(w, h, TileType::Wall);
+
+        let config = BlobGenConfig {
+            round_count: 5,
+            min_blob_width: 5,
+            min_blob_height: 5,
+            max_blob_width: w - 2, // Allow blobs to fill most of the room, leaving a border
+            max_blob_height: h - 2,
+            initial_alive_percent: 55,
+            birth_threshold: 5,
+            survival_threshold: 4,
+        };
+
+        // Generate the blob using the algorithms module
+        let (blob_grid, _, _, _, _) = create_blob(&initial_grid_dims, &config);
         
-        // 1. Randomize
-        for tile in tiles.iter_mut() {
-            if rng.random_range(0..100) < 55 {
-                *tile = TileType::Floor;
-            } else {
-                *tile = TileType::Wall;
-            }
-        }
-
-        // 2. Iterate CA
-        for _ in 0..4 {
-            let old_tiles = tiles.to_vec();
-            for y in 1..h-1 {
-                for x in 1..w-1 {
-                    let idx = (y * w + x) as usize;
-                    let neighbors = self.count_floor_neighbors(&old_tiles, w, h, x, y);
-                    if old_tiles[idx] == TileType::Wall {
-                        if neighbors >= 5 {
-                            tiles[idx] = TileType::Floor;
-                        }
-                    } else {
-                        if neighbors >= 4 {
-                            tiles[idx] = TileType::Floor;
-                        } else {
-                            tiles[idx] = TileType::Wall;
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. Keep only the largest region
-        self.retain_largest_region(tiles, w, h);
-    }
-
-    fn count_floor_neighbors(&self, tiles: &[TileType], w: i32, h: i32, x: i32, y: i32) -> i32 {
-        let mut count = 0;
-        for dy in -1..=1 {
-            for dx in -1..=1 {
-                if dx == 0 && dy == 0 { continue; }
-                let nx = x + dx;
-                let ny = y + dy;
-                if nx >= 0 && nx < w && ny >= 0 && ny < h {
-                    if tiles[(ny * w + nx) as usize] == TileType::Floor {
-                        count += 1;
-                    }
-                }
-            }
-        }
-        count
-    }
-
-    fn retain_largest_region(&self, tiles: &mut [TileType], w: i32, h: i32) {
-        let mut visited = vec![false; (w * h) as usize];
-        let mut regions: Vec<Vec<usize>> = Vec::new();
-
-        for y in 0..h {
-            for x in 0..w {
-                let idx = (y * w + x) as usize;
-                if tiles[idx] == TileType::Floor && !visited[idx] {
-                    let mut region = Vec::new();
-                    let mut queue = VecDeque::new();
-                    queue.push_back(idx);
-                    visited[idx] = true;
-
-                    while let Some(curr_idx) = queue.pop_front() {
-                        region.push(curr_idx);
-                        let (cx, cy) = (curr_idx as i32 % w, curr_idx as i32 / w);
-
-                        for dy in -1..=1 {
-                            for dx in -1..=1 {
-                                if dx == 0 && dy == 0 { continue; }
-                                let nx = cx + dx;
-                                let ny = cy + dy;
-                                if nx >= 0 && nx < w && ny >= 0 && ny < h {
-                                    let n_idx = (ny * w + nx) as usize;
-                                    if tiles[n_idx] == TileType::Floor && !visited[n_idx] {
-                                        visited[n_idx] = true;
-                                        queue.push_back(n_idx);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    regions.push(region);
-                }
-            }
-        }
-
-        if let Some(largest) = regions.iter().max_by_key(|r| r.len()) {
-            let largest_set: HashSet<usize> = largest.iter().cloned().collect();
-            for (idx, tile) in tiles.iter_mut().enumerate() {
-                if !largest_set.contains(&idx) {
-                    *tile = TileType::Wall;
-                }
-            }
-        } else {
-            for tile in tiles.iter_mut() {
-                *tile = TileType::Wall;
-            }
-        }
+        // Copy the generated blob back into the room's tiles vector
+        tiles.copy_from_slice(&blob_grid.data);
     }
 
     fn room_fits(&self, build_data: &BuilderMap, design: &RoomDesign, offset: Point, ignore_dungeon_pt: Point) -> bool {
@@ -419,3 +335,4 @@ impl InitialMapBuilder for BrogueLikeBuilder {
         build_data.rooms = Some(rooms);
     }
 }
+

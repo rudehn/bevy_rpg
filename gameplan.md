@@ -37,3 +37,5 @@ Add tests
 Fix character status line not despawned on game over
 Add better sprites for:
 - downstairs
+
+Are we rendering tiles twice? With sprites & ecs_tilemap (see update_tile_visibility)

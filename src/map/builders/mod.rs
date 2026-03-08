@@ -27,6 +27,7 @@ mod room_drawer;
 mod start_point; // Declare the new module
 mod unseen_culler; // Declare the new module
 mod brogelike;
+pub mod algorithms; // Declare the new algorithms module
 
 pub struct BuilderMap {
     // pub spawn_list: Vec<(usize, String)>,
