@@ -14,6 +14,7 @@ use crate::{
             monster_spawner::MonsterSpawner,
             start_point::{StartPointBuilder, XStart, YStart},
             unseen_culler::UnseenCuller,
+            diagonal_culler::DiagonalCuller,
         },
     },
 };
@@ -27,6 +28,7 @@ mod room_drawer;
 mod start_point; // Declare the new module
 mod unseen_culler; // Declare the new module
 mod brogelike;
+mod diagonal_culler;
 pub mod algorithms; // Declare the new algorithms module
 
 pub struct BuilderMap {
@@ -162,6 +164,7 @@ pub fn floor_builder(
 
     // MAP Generation
     builder.start_with(brogelike::BrogueLikeBuilder::dungeon(new_depth, width, height));
+    builder.with(DiagonalCuller::new());
     builder.with(StartPointBuilder::new());
     builder.with(CandleSpawner::new()); // Add the CandleSpawner
     builder.with(MonsterSpawner::new(spawn_table));
