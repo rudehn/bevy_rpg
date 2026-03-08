@@ -39,3 +39,6 @@ Add better sprites for:
 - downstairs
 
 Are we rendering tiles twice? With sprites & ecs_tilemap (see update_tile_visibility)
+
+Add map building snapshots
+Add cheat menu

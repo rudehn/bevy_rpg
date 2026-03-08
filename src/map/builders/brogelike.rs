@@ -1,9 +1,11 @@
-use bracket_lib::prelude::{Point, Algorithm2D, Rect};
+use bracket_lib::prelude::{Point, Algorithm2D, DijkstraMap, Rect};
 use rand::prelude::*;
-use crate::map::tile::TileType;
+use rand::seq::{IndexedRandom, SliceRandom};
+use crate::map::tile::{is_walkable, TileType};
 use crate::map::builders::{BuilderMap, InitialMapBuilder};
 use crate::game::actions::Direction;
-use crate::map::builders::algorithms::{Grid, BlobGenConfig, create_blob}; // Import Grid, BlobGenConfig, and create_blob
+use crate::map::map::Map;
+use crate::map::builders::algorithms::{Grid, BlobGenConfig, create_blob};
 
 const MAX_ROOM_SIZE: i32 = 20;
 
@@ -248,6 +250,70 @@ impl BrogueLikeBuilder {
         }
         true
     }
+
+    pub fn add_loops(&self, tiles: &mut Vec<TileType>, w: i32, h: i32, minimum_path_distance: i32) {
+        let total_cells = (w * h) as usize;
+        let mut indices: Vec<usize> = (0..total_cells).collect();
+        indices.shuffle(&mut rand::rng());
+
+        let directions = [(1, 0), (0, 1)]; // Horizontal & vertical checks
+
+        // Create a temporary Map instance for Dijkstra calculations
+        let mut map_for_dijkstra = Map::new(1, w, h, "tmp");
+        map_for_dijkstra.tiles = tiles.clone(); // Copy current tiles for pathfinding
+
+        // Make all doors open in the Dijkstra map for pathfinding
+        for i in 0..map_for_dijkstra.tiles.len() {
+            if map_for_dijkstra.tiles[i] == TileType::Door {
+                map_for_dijkstra.tiles[i] = TileType::OpenDoor;
+            }
+        }
+
+        for idx in indices {
+            let (x, y) = map_for_dijkstra.idx_xy(idx); // Use Map's idx_xy
+
+            // Only consider walls as potential new doors
+            if map_for_dijkstra.tiles[idx] != TileType::Wall {
+                continue;
+            }
+
+            for &(dx, dy) in &directions {
+                let nx = x + dx;
+                let ny = y + dy;
+                let ox = x - dx;
+                let oy = y - dy;
+
+                if !map_for_dijkstra.in_bounds(Point::new(nx, ny)) || !map_for_dijkstra.in_bounds(Point::new(ox, oy)) {
+                    continue;
+                }
+
+                // Check if flanking tiles are Floor (open space)
+                // Note: simplified as we don't have T_CAN_BE_BRIDGED etc.
+                if !is_walkable(map_for_dijkstra.tiles[map_for_dijkstra.xy_idx(nx, ny)])
+                    || !is_walkable(map_for_dijkstra.tiles[map_for_dijkstra.xy_idx(ox, oy)])
+                {
+                    continue;
+                }
+
+                // Compute Dijkstra distance between the two flanking floor tiles
+                let start_idx = map_for_dijkstra.xy_idx(nx, ny);
+                let goal_idx = map_for_dijkstra.xy_idx(ox, oy);
+                
+                // DijkstraMap needs a BaseMap
+                let dijkstra =
+                    DijkstraMap::new(w as usize, h as usize, &[start_idx], &map_for_dijkstra, 3000.0);
+                
+                if let Some(distance) = dijkstra.map.get(goal_idx) {
+                    if *distance > minimum_path_distance as f32 {
+                        // The two areas are far apart — add a connecting door here
+                        tiles[idx] = TileType::Door; // Update the actual tiles being built
+                        map_for_dijkstra.tiles[idx] = TileType::Door; // Update temp map for consistency
+                        break; // Only add one door per wall tile
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl InitialMapBuilder for BrogueLikeBuilder {
@@ -333,6 +399,8 @@ impl InitialMapBuilder for BrogueLikeBuilder {
             }
         }
         build_data.rooms = Some(rooms);
+        // Add loops after rooms are attached
+        self.add_loops(&mut build_data.map.tiles, build_data.map.width, build_data.map.height, 20);
+        build_data.take_snapshot();
     }
 }
-
