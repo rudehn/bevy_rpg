@@ -226,7 +226,18 @@ pub fn spawn_dungeon(
     );
 
     // Insert the player spawn point as a resource
-    let spawn_point = builder.build_data.starting_position.unwrap();
+    let spawn_point = builder.build_data.starting_position.unwrap_or_else(|| {
+        warn!("Map builder did not set a starting position; falling back to first walkable tile.");
+        map.tiles
+            .iter()
+            .enumerate()
+            .find(|(_, t)| crate::map::tile::is_walkable(**t))
+            .map(|(idx, _)| {
+                let (x, y) = map.idx_xy(idx);
+                crate::components::Position { x, y }
+            })
+            .expect("Map has no walkable tiles — cannot place player")
+    });
     commands.insert_resource(PlayerSpawnPoint(Point::new(spawn_point.x, spawn_point.y)));
 
     // Re-add persistent actors to turn manager if they already exist (changing floors)

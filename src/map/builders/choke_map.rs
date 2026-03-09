@@ -3,6 +3,12 @@ use crate::map::map::Map;
 use crate::map::tile::is_passable;
 use std::collections::{VecDeque, HashSet};
 
+/// Maximum region size reported by the flood fill. Regions larger than this
+/// are treated as "open" and capped at this value. All three uses (flood-fill
+/// break, choke_values init, and min_region_size seed) must share this constant
+/// so comparisons stay meaningful.
+const FLOOD_FILL_CAP: i32 = 1000;
+
 pub struct ChokeMap {
     pub width: i32,
     pub height: i32,
@@ -16,10 +22,10 @@ impl ChokeMap {
         let width = map.width;
         let height = map.height;
         let size = (width * height) as usize;
-        
+
         let mut in_loop = vec![false; size];
         let mut chokepoints = vec![false; size];
-        let mut choke_values = vec![30000; size];
+        let mut choke_values = vec![FLOOD_FILL_CAP; size];
 
         // 1. Initial loop marking: all passable tiles are potentially in a loop
         for i in 0..size {
@@ -73,7 +79,7 @@ impl ChokeMap {
                 let idx = map.xy_idx(x, y);
                 if chokepoints[idx] {
                     // Try to flood fill from neighbors
-                    let mut min_region_size = 30000;
+                    let mut min_region_size = FLOOD_FILL_CAP;
                     
                     // Orthogonal neighbors
                     let neighbors = [
@@ -190,7 +196,7 @@ impl ChokeMap {
 
         while let Some(current) = queue.pop_front() {
             count += 1;
-            if count > 1000 { break; } // Optimization: Brogue caps at 10000/30000 but we'll cap smaller for now
+            if count >= FLOOD_FILL_CAP { break; }
 
             for dir in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
                 let next = Point::new(current.x + dir.0, current.y + dir.1);
