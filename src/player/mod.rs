@@ -14,7 +14,7 @@ use crate::{
         level::{Experience, AvailableStatPoints},
     },
     map::map::GRID_SIZE,
-    map::dungeon::{PlayerSpawnPoint, SpawnDungeonMessage},
+    map::dungeon::{PlayerSpawnPoint, SpawnDungeonMessage, SpawnDungeonSet},
 };
 
 pub struct PlayerPlugin;
@@ -32,7 +32,7 @@ impl Plugin for PlayerPlugin {
             Update,
             player_spawn_or_move_system
                 .run_if(on_message::<SpawnDungeonMessage>)
-                .after(crate::map::dungeon::spawn_dungeon),
+                .after(SpawnDungeonSet),
         );
     }
 }

@@ -47,6 +47,7 @@ pub struct BuilderMap {
     pub width: i32,
     pub height: i32,
     pub spawn_list: Vec<(Point, String)>, // Add spawn_list for entities
+    pub item_spawn_list: Vec<(Point, String)>, // Add item_spawn_list for items
 }
 
 impl BuilderMap {
@@ -84,6 +85,7 @@ impl BuilderChain {
                 width,
                 height,
                 spawn_list: Vec::new(), // Initialize spawn_list
+                item_spawn_list: Vec::new(), // Initialize item_spawn_list
             },
         }
     }

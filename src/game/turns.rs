@@ -5,7 +5,8 @@ use crate::constants::BASE_ACTION_COST;
 use crate::game::AppState;
 use crate::game::actions::{
     Action, ActionFinishedEvent, Direction, MeleeIntent, MovementIntent, OpenDoorIntent,
-    SpeedStats, WaitIntent, handle_door_open, handle_melee, handle_movement, handle_wait,
+    PickUpIntent, SpeedStats, WaitIntent, handle_door_open, handle_melee, handle_movement,
+    handle_pickup, handle_wait,
 };
 use crate::game::ai::MonsterAI;
 use crate::player::{MovementTimer, Player};
@@ -53,6 +54,7 @@ impl Plugin for TurnOrderPlugin {
             .add_message::<MovementIntent>()
             .add_message::<MeleeIntent>()
             .add_message::<WaitIntent>()
+            .add_message::<PickUpIntent>()
             .add_message::<OpenDoorIntent>()
             .add_message::<ActionFinishedEvent>()
             .add_message::<TurnEndEvent>()
@@ -72,6 +74,7 @@ impl Plugin for TurnOrderPlugin {
                         handle_movement,
                         handle_melee,
                         handle_door_open,
+                        handle_pickup,
                         handle_wait,
                         // --- Cleanup ---
                         resolve_turn_end,
@@ -190,6 +193,7 @@ fn player_ai_bridge(
     mut move_events: MessageWriter<MovementIntent>,
     mut melee_events: MessageWriter<MeleeIntent>,
     mut wait_events: MessageWriter<WaitIntent>,
+    mut pickup_events: MessageWriter<PickUpIntent>,
     query: Query<Entity, (With<Player>, With<MyTurn>)>,
 ) {
     let Ok(player_entity) = query.single() else {
@@ -218,6 +222,11 @@ fn player_ai_bridge(
                 melee_events.write(MeleeIntent {
                     attacker: player_entity,
                     target,
+                });
+            }
+            Action::PickUp => {
+                pickup_events.write(PickUpIntent {
+                    entity: player_entity,
                 });
             }
         }
@@ -359,6 +368,9 @@ fn handle_player_input(
     }
     if keys.pressed(KeyCode::Space) {
         action = Some(Action::Wait);
+    }
+    if keys.pressed(KeyCode::KeyG) {
+        action = Some(Action::PickUp);
     }
 
     if let Some(act) = action {

@@ -8,10 +8,10 @@ use bracket_lib::prelude::{Algorithm2D, Point};
 use crate::assets::{
     CandleSpritesheet, MonsterManifest, MonsterManifestHandle, MonsterSpawnTable,
     MonsterSpawnTableHandle, MonsterSpriteAssets, TileManifest, TileManifestHandle,
-    TileSpriteAssets,
+    TileSpriteAssets, ItemManifest, ItemManifestHandle, ItemSpriteAssets,
 };
-use crate::components::{FloorEntityMarker, Monster, Name, Position};
-use crate::game::{TurnManager, spawn_monster_by_name, turns::TurnMarker};
+use crate::components::{FloorEntityMarker, Monster, Name, Position, Item};
+use crate::game::{TurnManager, spawn_monster_by_name, spawn_item, turns::TurnMarker};
 use crate::map::Map;
 use crate::map::builders::BuilderMap;
 use crate::map::light::{Candle, spawn_candle};
@@ -37,6 +37,20 @@ pub struct TileAssets<'w> {
     sprite_assets: Res<'w, TileSpriteAssets>,
 }
 
+/// Groups monster, item, and candle assets to keep parameter count down.
+#[derive(SystemParam)]
+pub struct EntityAssets<'w> {
+    pub candle_spritesheet: Res<'w, CandleSpritesheet>,
+    pub monster_manifests: Res<'w, Assets<MonsterManifest>>,
+    pub monster_manifest_handle: Res<'w, MonsterManifestHandle>,
+    pub monster_spawn_tables: Res<'w, Assets<MonsterSpawnTable>>,
+    pub monster_spawn_table_handle: Res<'w, MonsterSpawnTableHandle>,
+    pub monster_sprite_assets: Res<'w, MonsterSpriteAssets>,
+    pub item_manifests: Res<'w, Assets<ItemManifest>>,
+    pub item_manifest_handle: Res<'w, ItemManifestHandle>,
+    pub item_sprite_assets: Res<'w, ItemSpriteAssets>,
+}
+
 // ---------------------------------------------------------------------------
 // Floor caching — preserves a visited floor's state so returning via UpStairs
 // restores the map and its surviving entities rather than regenerating.
@@ -46,6 +60,8 @@ pub struct CachedFloor {
     pub map: Map,
     /// Alive monsters: their last-known grid position and manifest name.
     pub monster_list: Vec<(Point, String)>,
+    /// Surrounding items: their position and name.
+    pub item_list: Vec<(Point, String)>,
     pub candle_spawn_points: Vec<Point>,
     /// Position of the DownStairs on this floor; player lands adjacent to it
     /// when returning from below.
@@ -85,6 +101,9 @@ impl Default for Floor {
 #[derive(Resource)]
 pub struct PlayerSpawnPoint(pub Point);
 
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SpawnDungeonSet;
+
 pub struct DungeonPlugin;
 
 impl Plugin for DungeonPlugin {
@@ -95,6 +114,7 @@ impl Plugin for DungeonPlugin {
             .add_message::<SpawnDungeonMessage>()
             .add_message::<MapTransitionMessage>()
             .add_message::<AscendStairsMessage>()
+            .configure_sets(Update, SpawnDungeonSet)
             .add_systems(
                 OnEnter(AppState::InGame),
                 |mut writer: MessageWriter<SpawnDungeonMessage>| {
@@ -103,7 +123,9 @@ impl Plugin for DungeonPlugin {
             )
             .add_systems(
                 Update,
-                spawn_dungeon.run_if(on_message::<SpawnDungeonMessage>),
+                spawn_dungeon
+                    .run_if(on_message::<SpawnDungeonMessage>)
+                    .in_set(SpawnDungeonSet),
             )
             .add_systems(
                 Update,
@@ -151,9 +173,15 @@ fn find_adjacent_floor(map: &Map, target: Point) -> Option<Point> {
 fn snapshot_floor(
     map: &Map,
     monster_query: &Query<(&Position, &Name), With<Monster>>,
+    item_query: &Query<(&Position, &Name), With<Item>>,
     candle_query: &Query<&Position, With<Candle>>,
 ) -> CachedFloor {
     let monster_list = monster_query
+        .iter()
+        .map(|(pos, name)| (pos.to_point(), name.0.clone()))
+        .collect();
+
+    let item_list = item_query
         .iter()
         .map(|(pos, name)| (pos.to_point(), name.0.clone()))
         .collect();
@@ -168,6 +196,7 @@ fn snapshot_floor(
     CachedFloor {
         map: map.clone(),
         monster_list,
+        item_list,
         candle_spawn_points,
         down_stairs_pos,
     }
@@ -227,13 +256,14 @@ fn map_transition_system(
     q_tiles: Query<Entity, With<TileMarker>>,
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
     q_monsters: Query<(&Position, &Name), With<Monster>>,
+    q_items: Query<(&Position, &Name), With<Item>>,
     q_candles: Query<&Position, With<Candle>>,
     mut turn_manager: ResMut<TurnManager>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     // Snapshot before despawning so we can return to this floor later.
-    let cached = snapshot_floor(&map, &q_monsters, &q_candles);
+    let cached = snapshot_floor(&map, &q_monsters, &q_items, &q_candles);
     floor_cache.0.insert(floor.0, cached);
 
     despawn_floor_entities(&mut commands, &q_map_markers, &q_tiles, &q_floor_entities);
@@ -254,6 +284,7 @@ fn ascend_stairs_system(
     q_tiles: Query<Entity, With<TileMarker>>,
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
     q_monsters: Query<(&Position, &Name), With<Monster>>,
+    q_items: Query<(&Position, &Name), With<Item>>,
     q_candles: Query<&Position, With<Candle>>,
     mut turn_manager: ResMut<TurnManager>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
@@ -264,7 +295,7 @@ fn ascend_stairs_system(
     }
 
     // Snapshot current floor before leaving it.
-    let cached = snapshot_floor(&map, &q_monsters, &q_candles);
+    let cached = snapshot_floor(&map, &q_monsters, &q_items, &q_candles);
     floor_cache.0.insert(floor.0, cached);
 
     despawn_floor_entities(&mut commands, &q_map_markers, &q_tiles, &q_floor_entities);
@@ -314,13 +345,10 @@ fn spawn_dungeon_entities(
     commands: &mut Commands,
     build_data: &BuilderMap,
     turn_manager: &mut ResMut<TurnManager>,
-    candle_spritesheet: &Res<CandleSpritesheet>,
-    monster_manifests: &Res<Assets<MonsterManifest>>,
-    monster_manifest_handle: &Res<MonsterManifestHandle>,
-    monster_sprite_assets: &Res<MonsterSpriteAssets>,
+    assets: &EntityAssets,
 ) {
     for pt in build_data.candle_spawn_points.iter() {
-        spawn_candle(commands, candle_spritesheet, pt);
+        spawn_candle(commands, &assets.candle_spritesheet, pt);
     }
 
     for (pt, name) in build_data.spawn_list.iter() {
@@ -329,25 +357,31 @@ fn spawn_dungeon_entities(
             name.as_str(),
             pt,
             turn_manager,
-            monster_manifests,
-            monster_manifest_handle,
-            monster_sprite_assets,
+            &assets.monster_manifests,
+            &assets.monster_manifest_handle,
+            &assets.monster_sprite_assets,
+        );
+    }
+
+    for (pt, name) in build_data.item_spawn_list.iter() {
+        spawn_item(
+            commands,
+            name.as_str(),
+            pt,
+            &assets.item_manifests,
+            &assets.item_manifest_handle,
+            &assets.item_sprite_assets,
         );
     }
 }
 
 pub fn spawn_dungeon(
     mut commands: Commands,
-    candle_spritesheet: Res<CandleSpritesheet>,
     floor: Res<Floor>,
     mut map: ResMut<Map>,
     mut turn_manager: ResMut<TurnManager>,
     mut pending_restore: ResMut<PendingFloorRestore>,
-    monster_manifests: Res<Assets<MonsterManifest>>,
-    monster_manifest_handle: Res<MonsterManifestHandle>,
-    monster_spawn_tables: Res<Assets<MonsterSpawnTable>>,
-    monster_spawn_table_handle: Res<MonsterSpawnTableHandle>,
-    monster_sprite_assets: Res<MonsterSpriteAssets>,
+    assets: EntityAssets,
     tile_assets: TileAssets,
     mut log_writer: MessageWriter<GameLogMessage>,
     player_query: Query<Entity, With<Player>>,
@@ -369,14 +403,25 @@ pub fn spawn_dungeon(
                 name.as_str(),
                 pt,
                 &mut turn_manager,
-                &monster_manifests,
-                &monster_manifest_handle,
-                &monster_sprite_assets,
+                &assets.monster_manifests,
+                &assets.monster_manifest_handle,
+                &assets.monster_sprite_assets,
+            );
+        }
+
+        for (pt, name) in &cached.item_list {
+            spawn_item(
+                &mut commands,
+                name.as_str(),
+                pt,
+                &assets.item_manifests,
+                &assets.item_manifest_handle,
+                &assets.item_sprite_assets,
             );
         }
 
         for pt in &cached.candle_spawn_points {
-            spawn_candle(&mut commands, &candle_spritesheet, pt);
+            spawn_candle(&mut commands, &assets.candle_spritesheet, pt);
         }
 
         // Land the player on a walkable tile adjacent to the down stairs so
@@ -387,8 +432,8 @@ pub fn spawn_dungeon(
         // ---------------------------------------------------------------
         // Generate a fresh floor
         // ---------------------------------------------------------------
-        let spawn_table = monster_spawn_tables
-            .get(&monster_spawn_table_handle.0)
+        let spawn_table = assets.monster_spawn_tables
+            .get(&assets.monster_spawn_table_handle.0)
             .unwrap();
 
         let mut builder = level_builder(
@@ -406,10 +451,7 @@ pub fn spawn_dungeon(
             &mut commands,
             &builder.build_data,
             &mut turn_manager,
-            &candle_spritesheet,
-            &monster_manifests,
-            &monster_manifest_handle,
-            &monster_sprite_assets,
+            &assets,
         );
 
         let starting_pos = builder.build_data.starting_position.unwrap_or_else(|| {

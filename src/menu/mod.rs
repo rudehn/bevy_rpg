@@ -10,6 +10,7 @@ impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<OnMainMenuScreen>()
             .register_type::<OnGameOverScreen>()
+            .register_type::<OnVictoryScreen>()
             // Essential UI components for reflection
             .register_type::<ChildOf>()
             .register_type::<Node>()
@@ -36,6 +37,15 @@ impl Plugin for MenuPlugin {
             .add_systems(
                 OnExit(AppState::GameOver),
                 despawn_screen::<OnGameOverScreen>,
+            )
+            .add_systems(OnEnter(AppState::Victory), victory_setup)
+            .add_systems(
+                Update,
+                victory_action.run_if(in_state(AppState::Victory)),
+            )
+            .add_systems(
+                OnExit(AppState::Victory),
+                despawn_screen::<OnVictoryScreen>,
             );
     }
 }
@@ -126,6 +136,11 @@ pub struct OnMainMenuScreen;
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
 pub struct OnGameOverScreen;
+
+// Tag component to mark entities added by the victory_setup system.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct OnVictoryScreen;
 
 fn menu_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands
@@ -237,6 +252,79 @@ fn game_over_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 }
 
 fn game_over_action(
+    interaction_query: Query<&Interaction, (With<Button>, Changed<Interaction>)>,
+    mut next_state: ResMut<NextState<AppState>>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+) {
+    for interaction in &interaction_query {
+        if *interaction == Interaction::Pressed {
+            next_state.set(AppState::Menu);
+            return;
+        }
+    }
+
+    if keyboard_input.just_pressed(KeyCode::Enter) {
+        next_state.set(AppState::Menu);
+    }
+}
+
+fn victory_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
+            OnVictoryScreen,
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text::new("VICTORY!"),
+                TextFont {
+                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                    font_size: 60.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(1.0, 0.84, 0.0)), // Gold
+            ));
+
+            parent.spawn((
+                Text::new("You have retrieved the Amulet of Bevy!"),
+                TextFont::from_font_size(30.0),
+                TextColor(Color::WHITE),
+            ));
+
+            parent
+                .spawn((
+                    Button,
+                    Node {
+                        width: Val::Px(250.0),
+                        height: Val::Px(65.0),
+                        border: UiRect::all(Val::Px(5.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        margin: UiRect::top(Val::Px(40.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
+                    BorderColor::all(Color::WHITE),
+                ))
+                .with_children(|parent| {
+                    parent.spawn((
+                        Text::new("Return to Menu"),
+                        TextFont::from_font_size(30.0),
+                        TextColor(Color::WHITE),
+                    ));
+                });
+        });
+}
+
+fn victory_action(
     interaction_query: Query<&Interaction, (With<Button>, Changed<Interaction>)>,
     mut next_state: ResMut<NextState<AppState>>,
     keyboard_input: Res<ButtonInput<KeyCode>>,

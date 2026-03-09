@@ -1,0 +1,11 @@
+(
+    items: {
+        "Amulet of Bevy": (
+            name: "Amulet of Bevy",
+            sprite: "32rogues/items.png#2",
+            tile_size: (32, 32),
+            grid_size: (8, 8),
+            is_victory: true,
+        ),
+    }
+)

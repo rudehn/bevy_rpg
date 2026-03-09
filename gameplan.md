@@ -38,10 +38,10 @@ Fix character status line not despawned on game over
 Add better sprites for:
 - downstairs
 
-Are we rendering tiles twice? With sprites & ecs_tilemap (see update_tile_visibility)
+
+Going back up maps doesn't leave a downstairs back down
 
 Add map building snapshots
-Add cheat menu
 
 
 Lakes

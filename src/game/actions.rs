@@ -2,9 +2,9 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::{
-    components::{Collider, Monster, Position, Viewshed},
+    components::{Collider, Monster, Position, Viewshed, Item, AmuletOfBevy},
     constants::BASE_ACTION_COST,
-    game::combat::AttackIntentMessage,
+    game::{combat::AttackIntentMessage, AppState},
     map::{Map, tile::{is_walkable, TerrainType, TileMarker}, map::DungeonECSMap},
     player::Player,
     assets::{TileManifest, TileManifestHandle, TileSpriteAssets},
@@ -15,6 +15,7 @@ pub enum Action {
     Wait,
     Move { dir: Direction },
     MeleeAttack { target: Entity },
+    PickUp,
 }
 
 // --- Events ---
@@ -33,6 +34,11 @@ pub struct MeleeIntent {
 
 #[derive(Message)]
 pub struct WaitIntent {
+    pub entity: Entity,
+}
+
+#[derive(Message)]
+pub struct PickUpIntent {
     pub entity: Entity,
 }
 
@@ -62,6 +68,49 @@ pub struct ActionFinishedEvent {
 }
 
 // --- Systems ---
+
+pub fn handle_pickup(
+    mut commands: Commands,
+    mut intents: MessageReader<PickUpIntent>,
+    mut finish_writer: MessageWriter<ActionFinishedEvent>,
+    actors_query: Query<(Entity, &Position, Has<Player>)>,
+    items_query: Query<(Entity, &Position, Has<AmuletOfBevy>), With<Item>>,
+    mut next_state: ResMut<NextState<AppState>>,
+) {
+    for intent in intents.read() {
+        let Ok((actor_entity, actor_pos, is_player)) = actors_query.get(intent.entity) else {
+            continue;
+        };
+
+        let mut picked_up = false;
+        for (item_entity, item_pos, is_amulet) in items_query.iter() {
+            if actor_pos == item_pos {
+                if is_player && is_amulet {
+                    info!("Player picked up the Amulet of Bevy! VICTORY!");
+                    next_state.set(AppState::Victory);
+                }
+                
+                // For now, just despawn the item (we'll add inventory later)
+                commands.entity(item_entity).despawn();
+                picked_up = true;
+                break;
+            }
+        }
+
+        if picked_up {
+             finish_writer.write(ActionFinishedEvent {
+                entity: actor_entity,
+                base_cost: BASE_ACTION_COST,
+            });
+        } else if is_player {
+            info!("Nothing here to pick up.");
+             finish_writer.write(ActionFinishedEvent {
+                entity: actor_entity,
+                base_cost: BASE_ACTION_COST,
+            });
+        }
+    }
+}
 
 /// Handles movement. If a collision with a hostile entity is detected,
 /// it converts the movement into a MeleeIntent instead.

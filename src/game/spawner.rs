@@ -3,11 +3,11 @@ use bevy::prelude::*;
 use bracket_lib::prelude::Point;
 
 use crate::{
-    assets::{MonsterAsset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets},
+    assets::{MonsterAsset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets, ItemManifest, ItemManifestHandle, ItemSpriteAssets},
     components::{
-        Collider, FloorEntityMarker, GameEntityMarker, Monster, Name, Position, Viewshed,
+        Collider, FloorEntityMarker, GameEntityMarker, Monster, Name, Position, Viewshed, Item, AmuletOfBevy,
     },
-    constants::{TILE_SIZE_X, TILE_SIZE_Y, Z_MONSTER},
+    constants::{TILE_SIZE_X, TILE_SIZE_Y, Z_MONSTER, Z_ITEM},
     game::{
         MonsterAI, TurnManager,
         actions::SpeedStats,
@@ -142,5 +142,63 @@ pub fn spawn_monster_by_name(
         }
     } else {
         error!("Monster manifest not loaded.");
+    }
+}
+
+pub fn spawn_item(
+    commands: &mut Commands,
+    item_name: &str,
+    spawn_point: &Point,
+    item_manifests: &Res<Assets<ItemManifest>>,
+    item_manifest_handle: &Res<ItemManifestHandle>,
+    item_sprite_assets: &Res<ItemSpriteAssets>,
+) {
+    let Some(manifest) = item_manifests.get(&item_manifest_handle.0) else {
+        return;
+    };
+    let Some(asset) = manifest.items.get(item_name) else {
+        warn!("Item '{}' not found in manifest.", item_name);
+        return;
+    };
+
+    let sprite_path_parts: Vec<&str> = asset.sprite.split('#').collect();
+    let texture_path = sprite_path_parts[0];
+    let index = sprite_path_parts[1].parse::<usize>().unwrap_or_default();
+
+    let texture_handle = item_sprite_assets.handles.get(texture_path).unwrap().clone();
+    let layout_handle = item_sprite_assets.layouts.get(texture_path).unwrap().clone();
+
+    // Determine scale to fit one game map tile (GRID_SIZE)
+    let tile_size = asset.tile_size.unwrap_or(UVec2::new(32, 32));
+    let scale_x = GRID_SIZE.x / tile_size.x as f32;
+    let scale_y = GRID_SIZE.y / tile_size.y as f32;
+
+    let mut entity = commands.spawn((
+        Item,
+        Name(asset.name.clone()),
+        GameEntityMarker,
+        FloorEntityMarker,
+        Position { x: spawn_point.x, y: spawn_point.y },
+        Sprite::from_atlas_image(
+            texture_handle,
+            TextureAtlas {
+                index,
+                layout: layout_handle,
+            },
+        ),
+        Transform {
+            translation: Vec3::new(
+                spawn_point.x as f32 * GRID_SIZE.x,
+                spawn_point.y as f32 * GRID_SIZE.y,
+                Z_ITEM,
+            ),
+            scale: Vec3::new(scale_x, scale_y, 1.0),
+            ..Default::default()
+        },
+        RenderLayers::layer(1),
+    ));
+
+    if asset.is_victory {
+        entity.insert(AmuletOfBevy);
     }
 }

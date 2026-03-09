@@ -40,6 +40,7 @@ pub enum AppState {
     Menu,
     InGame,
     GameOver,
+    Victory,
 }
 
 #[derive(SubStates, Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -82,6 +83,7 @@ impl Plugin for GamePlugin {
                 toggle_main_camera_visibility.run_if(state_changed::<AppState>),
             )
             .add_systems(OnEnter(AppState::GameOver), (despawn_game_entities, despawn_map))
+            .add_systems(OnEnter(AppState::Victory), (despawn_game_entities, despawn_map))
             .init_resource::<TurnManager>();
     }
 }

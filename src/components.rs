@@ -54,6 +54,12 @@ pub struct Monster;
 pub struct Name(pub String);
 
 #[derive(Component)]
+pub struct Item;
+
+#[derive(Component)]
+pub struct AmuletOfBevy;
+
+#[derive(Component)]
 pub struct GameEntityMarker;
 
 #[derive(Component)]

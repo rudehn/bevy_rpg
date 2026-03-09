@@ -42,6 +42,7 @@ impl Plugin for AssetsPlugin {
             .init_resource::<MonsterManifestHandle>()
             .init_resource::<MonsterSpawnTableHandle>()
             .init_resource::<TileManifestHandle>()
+            .init_resource::<ItemManifestHandle>()
             .init_resource::<PlayerAssetHandle>()
             .add_systems(
                 OnEnter(AppState::Loading),
@@ -50,12 +51,18 @@ impl Plugin for AssetsPlugin {
                     load_monster_manifest,
                     load_monster_spawn_table,
                     load_tile_manifest,
+                    load_item_manifest,
                     load_player_asset,
                 ),
             )
             .add_systems(
                 Update,
-                (load_monster_sprites, load_tile_sprites, check_assets_loaded)
+                (
+                    load_monster_sprites,
+                    load_tile_sprites,
+                    load_item_sprites,
+                    check_assets_loaded,
+                )
                     .run_if(in_state(AppState::Loading)),
             );
     }
@@ -69,11 +76,13 @@ impl Plugin for LoadingPlugin {
             RonAssetPlugin::<MonsterManifest>::new(&["monsters.ron"]),
             RonAssetPlugin::<MonsterSpawnTable>::new(&["monster_spawns.ron"]),
             RonAssetPlugin::<TileManifest>::new(&["tiles.ron"]),
+            RonAssetPlugin::<ItemManifest>::new(&["items.ron"]),
             RonAssetPlugin::<PlayerAsset>::new(&["player.ron"]),
         ))
         .add_systems(Startup, (camera::setup_camera, set_clear_color))
         .init_resource::<MonsterSpriteAssets>()
-        .init_resource::<TileSpriteAssets>();
+        .init_resource::<TileSpriteAssets>()
+        .init_resource::<ItemSpriteAssets>();
     }
 }
 
@@ -85,6 +94,12 @@ pub struct MonsterSpriteAssets {
 
 #[derive(Resource, Default)]
 pub struct TileSpriteAssets {
+    pub handles: HashMap<String, Handle<Image>>,
+    pub layouts: HashMap<String, Handle<TextureAtlasLayout>>,
+}
+
+#[derive(Resource, Default)]
+pub struct ItemSpriteAssets {
     pub handles: HashMap<String, Handle<Image>>,
     pub layouts: HashMap<String, Handle<TextureAtlasLayout>>,
 }
@@ -174,6 +189,28 @@ pub struct TileManifest {
     pub tiles: HashMap<String, TileAsset>,
 }
 
+#[derive(Asset, TypePath, Deserialize, Debug, Clone)]
+pub struct ItemAsset {
+    pub name: String,
+    pub sprite: String,
+    #[serde(
+        default,
+        deserialize_with = "serde_helpers::deserialize_uvec2_as_option"
+    )]
+    pub grid_size: Option<UVec2>,
+    #[serde(
+        default,
+        deserialize_with = "serde_helpers::deserialize_uvec2_as_option"
+    )]
+    pub tile_size: Option<UVec2>,
+    pub is_victory: bool,
+}
+
+#[derive(Asset, TypePath, Deserialize, Resource, Debug, Clone)]
+pub struct ItemManifest {
+    pub items: HashMap<String, ItemAsset>,
+}
+
 fn setup_candle_spritesheet(
     asset_server: Res<AssetServer>,
     mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
@@ -199,6 +236,9 @@ pub struct MonsterSpawnTableHandle(pub Handle<MonsterSpawnTable>);
 pub struct TileManifestHandle(pub Handle<TileManifest>);
 
 #[derive(Resource, Default)]
+pub struct ItemManifestHandle(pub Handle<ItemManifest>);
+
+#[derive(Resource, Default)]
 pub struct PlayerAssetHandle(pub Handle<PlayerAsset>);
 
 fn load_monster_manifest(
@@ -217,6 +257,10 @@ fn load_monster_spawn_table(
 
 fn load_tile_manifest(asset_server: Res<AssetServer>, mut handle: ResMut<TileManifestHandle>) {
     handle.0 = asset_server.load("tiles.ron");
+}
+
+fn load_item_manifest(asset_server: Res<AssetServer>, mut handle: ResMut<ItemManifestHandle>) {
+    handle.0 = asset_server.load("items.ron");
 }
 
 fn load_player_asset(asset_server: Res<AssetServer>, mut handle: ResMut<PlayerAssetHandle>) {
@@ -341,6 +385,48 @@ fn load_tile_sprites(
     }
 }
 
+fn load_item_sprites(
+    asset_server: Res<AssetServer>,
+    item_manifest_handle: Res<ItemManifestHandle>,
+    item_manifests: Res<Assets<ItemManifest>>,
+    mut item_sprite_assets: ResMut<ItemSpriteAssets>,
+    mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
+) {
+    if item_sprite_assets.handles.is_empty() {
+        if let Some(manifest) = item_manifests.get(&item_manifest_handle.0) {
+            for item_asset in manifest.items.values() {
+                let sprite_path_parts: Vec<&str> = item_asset.sprite.split('#').collect();
+                let texture_path = sprite_path_parts[0];
+                let texture_path_string = texture_path.to_string();
+
+                if !item_sprite_assets
+                    .handles
+                    .contains_key(&texture_path_string)
+                {
+                    let texture_handle = asset_server.load::<Image>(texture_path_string.clone());
+                    item_sprite_assets
+                        .handles
+                        .insert(texture_path_string.clone(), texture_handle);
+
+                    let tile_size = item_asset.tile_size.unwrap_or(UVec2::new(32, 32));
+                    let grid_size = item_asset.grid_size.unwrap_or(UVec2::new(1, 1));
+
+                    let layout_handle = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
+                        tile_size,
+                        grid_size.x,
+                        grid_size.y,
+                        None,
+                        None,
+                    ));
+                    item_sprite_assets
+                        .layouts
+                        .insert(texture_path_string, layout_handle);
+                }
+            }
+        }
+    }
+}
+
 fn check_assets_loaded(
     asset_server: Res<AssetServer>,
     candle_spritesheet: Res<CandleSpritesheet>,
@@ -352,6 +438,9 @@ fn check_assets_loaded(
     tile_manifest_handle: Res<TileManifestHandle>,
     tile_manifests: Res<Assets<TileManifest>>,
     tile_sprite_assets: Res<TileSpriteAssets>,
+    item_manifest_handle: Res<ItemManifestHandle>,
+    item_manifests: Res<Assets<ItemManifest>>,
+    item_sprite_assets: Res<ItemSpriteAssets>,
     player_asset_handle: Res<PlayerAssetHandle>,
     player_assets: Res<Assets<PlayerAsset>>,
     mut next_state: ResMut<NextState<AppState>>,
@@ -377,11 +466,18 @@ fn check_assets_loaded(
         return;
     }
 
+    if item_manifests.get(&item_manifest_handle.0).is_none() {
+        return;
+    }
+
     if player_assets.get(&player_asset_handle.0).is_none() {
         return;
     }
 
-    if monster_sprite_assets.handles.is_empty() || tile_sprite_assets.handles.is_empty() {
+    if monster_sprite_assets.handles.is_empty()
+        || tile_sprite_assets.handles.is_empty()
+        || item_sprite_assets.handles.is_empty()
+    {
         return;
     }
 
@@ -392,6 +488,12 @@ fn check_assets_loaded(
     }
 
     for handle in tile_sprite_assets.handles.values() {
+        if !asset_server.is_loaded_with_dependencies(handle) {
+            return;
+        }
+    }
+
+    for handle in item_sprite_assets.handles.values() {
         if !asset_server.is_loaded_with_dependencies(handle) {
             return;
         }
