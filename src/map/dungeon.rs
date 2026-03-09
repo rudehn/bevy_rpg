@@ -425,7 +425,19 @@ pub fn spawn_dungeon(
                 .expect("Map has no walkable tiles — cannot place player")
         });
 
-        Point::new(starting_pos.x, starting_pos.y)
+        let starting_pt = Point::new(starting_pos.x, starting_pos.y);
+        // If the builder placed UpStairs at the starting position (depth > 1),
+        // step the player off it so player_stair_system doesn't immediately
+        // fire AscendStairsMessage on the first Changed<Position>.
+        if map
+            .get_tile(starting_pt)
+            .map(|t| t.terrain == TerrainType::UpStairs)
+            .unwrap_or(false)
+        {
+            find_adjacent_floor(&map, starting_pt).unwrap_or(starting_pt)
+        } else {
+            starting_pt
+        }
     };
 
     commands.insert_resource(PlayerSpawnPoint(player_spawn));
