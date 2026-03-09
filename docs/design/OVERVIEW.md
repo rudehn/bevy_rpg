@@ -12,6 +12,7 @@ The game draws inspiration from Brogue: respect the player's intelligence, rewar
 - **Risk vs. reward** — every decision has a cost. Burning a spell, drinking an unknown potion, pushing deeper.
 - **Emergent builds** — with no fixed class, each run's identity comes from which items and spells the player finds and combines.
 - **Readable danger** — enemies telegraph their threat level. The player should be able to make informed decisions.
+- **Symmetric combat** — the player and all monsters share the same stat system (STR, DEX, CON, AGI, INT, PER) and combat formulas. There are no separate "player rules" vs "monster rules." A buff or debuff works the same regardless of who receives it.
 
 ## Core Gameplay Loop
 

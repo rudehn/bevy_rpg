@@ -3,8 +3,7 @@ use crate::game::AppState;
 use crate::game::InGameState;
 use crate::game::combat::{Damage, Health};
 use crate::game::level::{AvailableStatPoints, Experience};
-use crate::game::stats::RolledHp;
-use crate::game::stats::{Attributes, CombatStats, Level};
+use crate::game::stats::{Attributes, CombatStats, Level, Mana, RolledHp};
 use crate::player::Player;
 use bevy::prelude::*;
 
@@ -46,11 +45,14 @@ pub struct StatDraft {
     pub dexterity: i32,
     pub constitution: i32,
     pub agility: i32,
+    pub intelligence: i32,
+    pub perception: i32,
 }
 
 impl StatDraft {
     pub fn total_points(&self) -> u32 {
-        (self.strength + self.dexterity + self.constitution + self.agility) as u32
+        (self.strength + self.dexterity + self.constitution + self.agility
+            + self.intelligence + self.perception) as u32
     }
 }
 
@@ -64,6 +66,10 @@ pub enum AllocationAction {
     MinusConstitution,
     PlusAgility,
     MinusAgility,
+    PlusIntelligence,
+    MinusIntelligence,
+    PlusPerception,
+    MinusPerception,
     Confirm,
 }
 
@@ -124,6 +130,7 @@ fn character_info_input_system(
         match state.get() {
             InGameState::Running => next_state.set(InGameState::CharacterInfo),
             InGameState::CharacterInfo => next_state.set(InGameState::Running),
+            InGameState::Inventory => {} // C does nothing while inventory is open
         }
     }
 
@@ -283,6 +290,20 @@ fn spawn_character_info_ui(
                         AllocationAction::PlusAgility,
                         AllocationAction::MinusAgility,
                     );
+                    spawn_attribute_row(
+                        parent,
+                        "Intelligence",
+                        font.clone(),
+                        AllocationAction::PlusIntelligence,
+                        AllocationAction::MinusIntelligence,
+                    );
+                    spawn_attribute_row(
+                        parent,
+                        "Perception",
+                        font.clone(),
+                        AllocationAction::PlusPerception,
+                        AllocationAction::MinusPerception,
+                    );
 
                     parent.spawn(Node {
                         height: Val::Px(10.0),
@@ -392,22 +413,12 @@ fn spawn_attribute_row(
                 },
                 TextColor(Color::WHITE),
                 AttrText(match label {
-                    "Strength" => Attributes {
-                        strength: 1,
-                        ..default()
-                    },
-                    "Dexterity" => Attributes {
-                        dexterity: 1,
-                        ..default()
-                    },
-                    "Constitution" => Attributes {
-                        constitution: 1,
-                        ..default()
-                    },
-                    "Agility" => Attributes {
-                        agility: 1,
-                        ..default()
-                    },
+                    "Strength" => Attributes { strength: 1, ..default() },
+                    "Dexterity" => Attributes { dexterity: 1, ..default() },
+                    "Constitution" => Attributes { constitution: 1, ..default() },
+                    "Agility" => Attributes { agility: 1, ..default() },
+                    "Intelligence" => Attributes { intelligence: 1, ..default() },
+                    "Perception" => Attributes { perception: 1, ..default() },
                     _ => default(),
                 }),
             ));
@@ -431,22 +442,12 @@ fn spawn_attribute_row(
                 BackgroundColor(Color::srgb(0.5, 0.2, 0.2)),
                 minus,
                 StatMinusButton(match label {
-                    "Strength" => Attributes {
-                        strength: 1,
-                        ..default()
-                    },
-                    "Dexterity" => Attributes {
-                        dexterity: 1,
-                        ..default()
-                    },
-                    "Constitution" => Attributes {
-                        constitution: 1,
-                        ..default()
-                    },
-                    "Agility" => Attributes {
-                        agility: 1,
-                        ..default()
-                    },
+                    "Strength" => Attributes { strength: 1, ..default() },
+                    "Dexterity" => Attributes { dexterity: 1, ..default() },
+                    "Constitution" => Attributes { constitution: 1, ..default() },
+                    "Agility" => Attributes { agility: 1, ..default() },
+                    "Intelligence" => Attributes { intelligence: 1, ..default() },
+                    "Perception" => Attributes { perception: 1, ..default() },
                     _ => default(),
                 }),
             ))
@@ -552,11 +553,33 @@ fn handle_allocation_buttons(
                         draft.agility -= 1;
                     }
                 }
+                AllocationAction::PlusIntelligence => {
+                    if draft.total_points() < points.0 {
+                        draft.intelligence += 1;
+                    }
+                }
+                AllocationAction::MinusIntelligence => {
+                    if draft.intelligence > 0 {
+                        draft.intelligence -= 1;
+                    }
+                }
+                AllocationAction::PlusPerception => {
+                    if draft.total_points() < points.0 {
+                        draft.perception += 1;
+                    }
+                }
+                AllocationAction::MinusPerception => {
+                    if draft.perception > 0 {
+                        draft.perception -= 1;
+                    }
+                }
                 AllocationAction::Confirm => {
                     player_attrs.strength += draft.strength;
                     player_attrs.dexterity += draft.dexterity;
                     player_attrs.constitution += draft.constitution;
                     player_attrs.agility += draft.agility;
+                    player_attrs.intelligence += draft.intelligence;
+                    player_attrs.perception += draft.perception;
                     points.0 -= draft.total_points();
                     *draft = StatDraft::default();
                     next_state.set(InGameState::Running);
@@ -575,6 +598,7 @@ fn update_character_info_ui(
             &Damage,
             &Level,
             &RolledHp,
+            &Mana,
         ),
         With<Player>,
     >,
@@ -609,7 +633,7 @@ fn update_character_info_ui(
         ),
     >,
 ) {
-    let Ok((player_attrs, points, damage, level, rolled_hp)) = player_query.single() else {
+    let Ok((player_attrs, points, damage, level, rolled_hp, mana)) = player_query.single() else {
         return;
     };
 
@@ -639,6 +663,10 @@ fn update_character_info_ui(
             draft.constitution
         } else if marker.0.agility > 0 {
             draft.agility
+        } else if marker.0.intelligence > 0 {
+            draft.intelligence
+        } else if marker.0.perception > 0 {
+            draft.perception
         } else {
             0
         };
@@ -661,52 +689,49 @@ fn update_character_info_ui(
 
     for (mut text, attr_marker) in &mut attr_texts {
         if attr_marker.0.strength > 0 {
-            text.0 = format!(
-                "Strength:     {} (+{})",
-                player_attrs.strength, draft.strength
-            );
+            text.0 = format!("Strength:     {} (+{})", player_attrs.strength, draft.strength);
         } else if attr_marker.0.dexterity > 0 {
-            text.0 = format!(
-                "Dexterity:    {} (+{})",
-                player_attrs.dexterity, draft.dexterity
-            );
+            text.0 = format!("Dexterity:    {} (+{})", player_attrs.dexterity, draft.dexterity);
         } else if attr_marker.0.constitution > 0 {
-            text.0 = format!(
-                "Constitution: {} (+{})",
-                player_attrs.constitution, draft.constitution
-            );
+            text.0 = format!("Constitution: {} (+{})", player_attrs.constitution, draft.constitution);
         } else if attr_marker.0.agility > 0 {
-            text.0 = format!(
-                "Agility:      {} (+{})",
-                player_attrs.agility, draft.agility
-            );
+            text.0 = format!("Agility:      {} (+{})", player_attrs.agility, draft.agility);
+        } else if attr_marker.0.intelligence > 0 {
+            text.0 = format!("Intelligence: {} (+{})", player_attrs.intelligence, draft.intelligence);
+        } else if attr_marker.0.perception > 0 {
+            text.0 = format!("Perception:   {} (+{})", player_attrs.perception, draft.perception);
         }
     }
 
     if let Ok(mut text) = combat_text.single_mut() {
-        // Simple preview of derived stats
         let eff_str = player_attrs.strength + draft.strength;
         let eff_dex = player_attrs.dexterity + draft.dexterity;
         let eff_con = player_attrs.constitution + draft.constitution;
         let eff_agi = player_attrs.agility + draft.agility;
+        let eff_int = player_attrs.intelligence + draft.intelligence;
+        let eff_per = player_attrs.perception + draft.perception;
 
-        let str_bonus = (eff_str - 10) / 2;
-        let dex_bonus = (eff_dex - 10) / 2;
-        let con_bonus = (eff_con - 10) / 2;
-        let agi_bonus = (eff_agi - 10) / 2;
+        let str_bonus = eff_str - 10;
+        let dex_bonus = eff_dex - 10;
+        let con_bonus = eff_con - 10;
+        let agi_bonus = eff_agi - 10;
+        let per_bonus = eff_per - 10;
 
         let max_hp = 10 + rolled_hp.0 + (con_bonus * level.value);
-        let action_delay = (1.0f32 - (agi_bonus as f32 * 0.05)).clamp(0.5, 2.0);
+        let max_mana = eff_int * 5;
+        let action_delay = (1.0f32 - (agi_bonus as f32 * 0.025)).clamp(0.5, 2.0);
+        let vision_range = (8 + per_bonus).max(2);
 
         text.0 = format!(
-            "Max HP:       {}\nDamage:       {} + {}\nHit Chance:   {}\nDodge Chance: {}\nArmor:        {}\nAction Delay: {:.2}x",
+            "Max HP:       {}\nMana:         {}/{}\nDamage:       {} + {}\nHit Chance:   {}\nDodge Chance: {}\nAction Delay: {:.2}x\nVision Range: {} tiles",
             max_hp,
+            mana.current, max_mana,
             damage.0,
             str_bonus,
             10 + str_bonus,
             5 + dex_bonus,
-            con_bonus,
-            action_delay
+            action_delay,
+            vision_range
         );
     }
 }

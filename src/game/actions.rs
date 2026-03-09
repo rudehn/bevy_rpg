@@ -2,12 +2,13 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::{
-    components::{Collider, Monster, Position, Viewshed, Item, AmuletOfBevy},
+    components::{Collider, InInventory, Inventory, Monster, Name, Position, Viewshed, Item, AmuletOfBevy},
     constants::BASE_ACTION_COST,
     game::{combat::AttackIntentMessage, AppState},
     map::{Map, tile::{is_walkable, TerrainType, TileMarker}, map::DungeonECSMap},
     player::Player,
     assets::{TileManifest, TileManifestHandle, TileSpriteAssets},
+    ui::game_log::GameLogMessage,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -73,8 +74,10 @@ pub fn handle_pickup(
     mut commands: Commands,
     mut intents: MessageReader<PickUpIntent>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
+    mut log_writer: MessageWriter<GameLogMessage>,
     actors_query: Query<(Entity, &Position, Has<Player>)>,
-    items_query: Query<(Entity, &Position, Has<AmuletOfBevy>), With<Item>>,
+    items_query: Query<(Entity, &Position, &Name, Has<AmuletOfBevy>), (With<Item>, Without<InInventory>)>,
+    mut inv_query: Query<&mut Inventory, With<Player>>,
     mut next_state: ResMut<NextState<AppState>>,
 ) {
     for intent in intents.read() {
@@ -83,28 +86,44 @@ pub fn handle_pickup(
         };
 
         let mut picked_up = false;
-        for (item_entity, item_pos, is_amulet) in items_query.iter() {
-            if actor_pos == item_pos {
-                if is_player && is_amulet {
-                    info!("Player picked up the Amulet of Bevy! VICTORY!");
-                    next_state.set(AppState::Victory);
+        for (item_entity, item_pos, item_name, is_amulet) in items_query.iter() {
+            if actor_pos != item_pos {
+                continue;
+            }
+
+            if is_player && is_amulet {
+                info!("Player picked up the Amulet of Bevy! VICTORY!");
+                next_state.set(AppState::Victory);
+                commands.entity(item_entity).despawn();
+                picked_up = true;
+                break;
+            }
+
+            if is_player {
+                if let Ok(mut inv) = inv_query.single_mut() {
+                    if inv.items.len() < inv.capacity {
+                        inv.items.push(item_entity);
+                        commands
+                            .entity(item_entity)
+                            .insert(InInventory)
+                            .insert(Visibility::Hidden)
+                            .remove::<crate::components::FloorEntityMarker>();
+                        log_writer.write(GameLogMessage(format!("You pick up the {}.", item_name.0)));
+                        picked_up = true;
+                        break;
+                    } else {
+                        log_writer.write(GameLogMessage("Your inventory is full!".to_string()));
+                    }
                 }
-                
-                // For now, just despawn the item (we'll add inventory later)
+            } else {
                 commands.entity(item_entity).despawn();
                 picked_up = true;
                 break;
             }
         }
 
-        if picked_up {
-             finish_writer.write(ActionFinishedEvent {
-                entity: actor_entity,
-                base_cost: BASE_ACTION_COST,
-            });
-        } else if is_player {
-            info!("Nothing here to pick up.");
-             finish_writer.write(ActionFinishedEvent {
+        if picked_up || is_player {
+            finish_writer.write(ActionFinishedEvent {
                 entity: actor_entity,
                 base_cost: BASE_ACTION_COST,
             });

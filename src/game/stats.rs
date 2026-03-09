@@ -14,6 +14,8 @@ pub struct Attributes {
     pub dexterity: i32,
     pub constitution: i32,
     pub agility: i32,
+    pub intelligence: i32,
+    pub perception: i32,
 }
 
 #[derive(Component, Debug, Clone, Reflect, Default)]
@@ -23,6 +25,16 @@ pub struct AttributeModifiers {
     pub dexterity: i32,
     pub constitution: i32,
     pub agility: i32,
+    pub intelligence: i32,
+    pub perception: i32,
+}
+
+/// Mana pool — derived from Intelligence (max = INT × 5). Updated by stat_recalculation_system.
+#[derive(Component, Debug, Clone, Reflect, Default)]
+#[reflect(Component)]
+pub struct Mana {
+    pub current: i32,
+    pub max: i32,
 }
 
 #[derive(Component, Debug, Clone, Reflect, Default)]
@@ -38,6 +50,8 @@ pub struct CombatStats {
     pub dexterity_bonus: i32,
     pub constitution_bonus: i32,
     pub agility_bonus: i32,
+    pub intelligence_bonus: i32,
+    pub perception_bonus: i32,
 
     pub damage_bonus: i32,
     pub hit_chance: i32,
@@ -67,8 +81,9 @@ pub fn stat_recalculation_system(
             &Level,
             &mut CombatStats,
             &mut Health,
-            &mut Viewshed,
+            &mut Viewshed,  // perception drives vision range
             Option<&mut HealthRegen>,
+            Option<&mut Mana>,
             Option<&MonsterBaseHealth>,
             Option<&RolledHp>,
             Option<&Player>,
@@ -89,6 +104,7 @@ pub fn stat_recalculation_system(
         mut health,
         mut viewshed,
         regen,
+        mana,
         monster_base,
         rolled_hp,
         is_player,
@@ -100,12 +116,16 @@ pub fn stat_recalculation_system(
         let eff_dex = attr.dexterity + mods.dexterity;
         let eff_con = attr.constitution + mods.constitution;
         let eff_agi = attr.agility + mods.agility;
+        let eff_int = attr.intelligence + mods.intelligence;
+        let eff_per = attr.perception + mods.perception;
 
-        // 2. Calculate Bonuses (+1 per 2 points above 10)
-        stats.strength_bonus = (eff_str - 10) / 2;
-        stats.dexterity_bonus = (eff_dex - 10) / 2;
-        stats.constitution_bonus = (eff_con - 10) / 2;
-        stats.agility_bonus = (eff_agi - 10) / 2;
+        // 2. Calculate Bonuses (+1 per point above 10 — every point is immediately impactful)
+        stats.strength_bonus = eff_str - 10;
+        stats.dexterity_bonus = eff_dex - 10;
+        stats.constitution_bonus = eff_con - 10;
+        stats.agility_bonus = eff_agi - 10;
+        stats.intelligence_bonus = eff_int - 10;
+        stats.perception_bonus = eff_per - 10;
 
         // 3. Update Health
         let old_max = health.max;
@@ -127,20 +147,27 @@ pub fn stat_recalculation_system(
 
         // 4. Update Secondary Combat Values
         stats.damage_bonus = stats.strength_bonus;
-        stats.hit_chance = 10 + stats.strength_bonus; // Example: Base 10 + STR
-        stats.dodge_chance = 5 + stats.dexterity_bonus; // Example: Base 5 + DEX
-        // stats.armor = stats.constitution_bonus; // Example: CON provides armor
+        stats.hit_chance = 10 + stats.strength_bonus;
+        stats.dodge_chance = 5 + stats.dexterity_bonus;
 
-        // 5. Update Viewshed/Vision (based on DEX/Quickness)
-        // Ensure range doesn't drop below 1
-        // viewshed.range = (8 + stats.dexterity_bonus).max(1);
+        // 5. Update Mana (max = INT × 5)
+        if let Some(mut m) = mana {
+            let new_max = eff_int * 5;
+            if new_max > m.max {
+                m.current += new_max - m.max;
+            }
+            m.max = new_max;
+            m.current = m.current.min(m.max).max(0);
+        }
 
         // 6. Update Regeneration (based on CON bonus)
         if let Some(mut r) = regen {
-            // e.g., 10 points per turn base + 5 per CON bonus
-            // At 20 points, gain 1 HP every 5 turns.
             r.regen_rate = (20 + (stats.constitution_bonus * 5)).max(0);
         }
+
+        // 7. Update Vision Range (PER drives Viewshed — base 8 tiles + PER bonus)
+        viewshed.range = (8 + stats.perception_bonus).max(2);
+        viewshed.dirty = true;
     }
 }
 
@@ -150,8 +177,8 @@ pub fn sync_action_speed_system(
 ) {
     for (stats, mut actions) in query.iter_mut() {
         // High AGI bonus = Low Delay (Faster)
-        // 1.0 is default. Each point of AGI bonus reduces delay by 5%
-        let multiplier = 1.0 - (stats.agility_bonus as f32 * 0.05);
+        // 1.0 is default. Each point of AGI bonus (above 10) reduces delay by 2.5%
+        let multiplier = 1.0 - (stats.agility_bonus as f32 * 0.025);
         actions.delay = multiplier.clamp(0.5, 2.0);
     }
 }
@@ -165,6 +192,7 @@ impl Plugin for StatsPlugin {
         app.register_type::<Attributes>()
             .register_type::<AttributeModifiers>()
             .register_type::<CombatStats>()
+            .register_type::<Mana>()
             .register_type::<Level>()
             .register_type::<MonsterBaseHealth>()
             .add_systems(

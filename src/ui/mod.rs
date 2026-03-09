@@ -13,9 +13,11 @@ use crate::player::Player;
 pub mod character_info;
 pub mod cheat_menu;
 pub mod game_log;
+pub mod inventory;
 
 use character_info::CharacterInfoPlugin;
 use cheat_menu::CheatMenuPlugin;
+use inventory::InventoryPlugin;
 use game_log::{
     GameLog, GameLogMessage, GameLogSettings, add_log_message_system, game_log_input_system,
     spawn_game_log_ui, update_game_log_ui,
@@ -455,7 +457,7 @@ impl Plugin for UiPlugin {
         app.init_resource::<GameLog>()
             .init_resource::<GameLogSettings>()
             .add_message::<GameLogMessage>()
-            .add_plugins((CharacterInfoPlugin, CheatMenuPlugin))
+            .add_plugins((CharacterInfoPlugin, CheatMenuPlugin, InventoryPlugin))
             .add_systems(
                 OnEnter(AppState::InGame),
                 (

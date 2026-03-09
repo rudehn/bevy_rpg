@@ -3,6 +3,8 @@ use bevy_common_assets::ron::RonAssetPlugin;
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use crate::game::items::{ArmorSlot, ItemKind, Rarity};
+
 use crate::{
     constants::{TILE_SIZE_X, TILE_SIZE_Y},
     game::{AppState, camera},
@@ -113,7 +115,7 @@ pub struct CandleSpritesheet {
 #[derive(Asset, TypePath, Deserialize, Resource, Debug, Clone)]
 pub struct PlayerAsset {
     pub name: String,
-    pub vision_range: f32,
+    pub perception: i32,
     pub sprite: String,
     pub level: i32,
     pub base_hp: i32,
@@ -121,13 +123,14 @@ pub struct PlayerAsset {
     pub dexterity: i32,
     pub constitution: i32,
     pub agility: i32,
+    pub intelligence: i32,
     pub damage: String,
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
 pub struct MonsterAsset {
     pub name: String,
-    pub vision_range: f32,
+    pub perception: i32,
     pub sprite: String,
     #[serde(
         default,
@@ -204,6 +207,29 @@ pub struct ItemAsset {
     )]
     pub tile_size: Option<UVec2>,
     pub is_victory: bool,
+
+    #[serde(default)]
+    pub item_kind: ItemKind,
+    #[serde(default)]
+    pub armor_slot: Option<ArmorSlot>,
+    #[serde(default)]
+    pub damage: Option<String>,
+    #[serde(default)]
+    pub defense: i32,
+    #[serde(default)]
+    pub rarity: Rarity,
+    #[serde(default)]
+    pub str_bonus: i32,
+    #[serde(default)]
+    pub dex_bonus: i32,
+    #[serde(default)]
+    pub con_bonus: i32,
+    #[serde(default)]
+    pub agi_bonus: i32,
+    #[serde(default)]
+    pub int_bonus: i32,
+    #[serde(default)]
+    pub per_bonus: i32,
 }
 
 #[derive(Asset, TypePath, Deserialize, Resource, Debug, Clone)]

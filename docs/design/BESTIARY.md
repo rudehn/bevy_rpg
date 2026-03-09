@@ -4,12 +4,43 @@
 
 Enemies are organized into four factions that correspond to dungeon depth. Encounters escalate in HP, damage, and tactical complexity as the player descends.
 
-**Stat notation:**
-- `HP`: Hit points
-- `ATK`: Attack damage (dice)
-- `DEF`: Flat damage reduction
-- `SPD`: Turn delay multiplier (1.0 = default; higher = slower)
-- `XP`: Experience reward on kill
+## Unified Stat System
+
+**Monsters and the player share the same ECS component system.** Both have:
+
+| Component | Purpose |
+|-----------|---------|
+| `Attributes` | Raw stats: STR, DEX, CON, AGI, INT, PER |
+| `AttributeModifiers` | Additive modifiers from status effects, gear |
+| `CombatStats` | Derived bonuses: damage_bonus, hit_chance, dodge_chance, armor |
+| `Level` | Scales HP and combat effectiveness |
+| `Health` | Current/max HP |
+| `Viewshed` | Vision range, driven by PER |
+
+`stat_recalculation_system` runs identically for every entity. The combat pipeline (`hit_check → damage_roll → armor_reduction → apply_damage`) has no player vs. monster special cases — both sides of every fight use the same formulas.
+
+**Practical implications:**
+- Status effects that modify `AttributeModifiers` (e.g. Poison reducing CON, a Zombie's "Plague Touch") work the same on player and monsters
+- Monster special abilities (Enrage, charge bonuses) are implemented as temporary `AttributeModifiers`
+- A monster with STR 18 gets `hit_chance = 10 + (18-10) = 18`, just like a player would
+- Monsters use `MonsterBaseHealth` for their HP base (instead of the player's rolled HP sum)
+
+**Stat notation in tables below:**
+- `HP`: base_hp value (actual max depends on Level + CON)
+- `ATK`: damage dice string (e.g. `1d6+2`)
+- `DEF`: planned armor value (flat damage reduction from `CombatStats.armor`)
+- `SPD`: turn delay multiplier (1.0 = default; 0.9 = 10% faster; 1.2 = 20% slower)
+- `XP`: experience reward on kill
+
+**How table stats map to `MonsterAsset` fields:**
+
+| Table column | Asset field | Notes |
+|---|---|---|
+| HP | `base_hp` | Added to CON bonus × level in stat system |
+| ATK | `damage` | Dice string, e.g. `"2d6+1"` |
+| DEF | `armor` | Not yet in asset — to be added in M3 (equipment) |
+| SPD | `agility` | `delay = 1.0 - (AGI-10) × 0.025` |
+| STR/DEX/CON/AGI/PER | direct fields | Set per-monster in `monsters.ron` |
 
 ---
 

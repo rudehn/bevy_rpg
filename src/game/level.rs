@@ -12,6 +12,8 @@ use crate::components::Name;
 pub struct Experience {
     pub current: i32,
     pub next_level: i32,
+    /// Active spell slots unlocked. Starts at 1 (granted at spawn), gains at levels 3,5,8,11,14.
+    pub spell_slots_unlocked: u8,
 }
 
 #[derive(Component, Debug, Reflect, Default)]
@@ -47,22 +49,28 @@ pub fn xp_award_system(
     }
 }
 
+const SPELL_SLOT_LEVELS: &[i32] = &[3, 5, 8, 11, 14];
+
 pub fn level_up_check_system(
     mut query: Query<(Entity, &mut Level, &mut Experience, &mut RolledHp, &mut AvailableStatPoints, &CombatStats), (With<Player>, Changed<Experience>)>,
     mut level_up_writer: MessageWriter<LevelUpEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut game_rng: ResMut<GameRng>,
 ) {
-    for (entity, mut level, mut exp, mut rolled_hp, mut points, stats) in query.iter_mut() {
+    for (entity, mut level, mut exp, mut rolled_hp, mut points, _stats) in query.iter_mut() {
         while exp.current >= exp.next_level {
             level.value += 1;
             exp.current -= exp.next_level;
-            exp.next_level = (level.value as f32 * 100.0 * 1.2).round() as i32; // Scaling XP
+            exp.next_level = (level.value as f32 * 100.0 * 1.2).round() as i32;
             points.0 += 1;
 
-            // Roll for HP: 1d4. CON bonus is handled retroactively by stat_recalculation_system.
             let hp_roll = game_rng.0.roll_dice(1, 4);
             rolled_hp.0 += hp_roll;
+
+            if SPELL_SLOT_LEVELS.contains(&level.value) {
+                exp.spell_slots_unlocked += 1;
+                log_writer.write(GameLogMessage("A new spell slot has been unlocked!".to_string()));
+            }
 
             level_up_writer.write(LevelUpEvent {
                 entity,

@@ -3,6 +3,7 @@ use crate::{
     game::{
         camera::{move_camera, toggle_main_camera_visibility},
         combat::{CombatPlugin, death_system},
+        items::ItemsPlugin,
         level::{LevelPlugin, xp_award_system},
         stats::StatsPlugin,
         systems::{fov_update_system, sync_entity_transforms, update_monster_visibility},
@@ -21,6 +22,7 @@ pub mod actions;
 mod ai;
 pub mod camera;
 pub mod combat;
+pub mod items;
 pub mod level;
 mod spawner;
 pub mod stats;
@@ -49,6 +51,7 @@ pub enum InGameState {
     #[default]
     Running,
     CharacterInfo,
+    Inventory,
 }
 
 pub struct GamePlugin;
@@ -64,6 +67,7 @@ impl Plugin for GamePlugin {
                 CombatPlugin,
                 StatsPlugin,
                 LevelPlugin,
+                ItemsPlugin,
             ))
             .add_systems(
                 Update,

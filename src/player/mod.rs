@@ -4,13 +4,13 @@ use bevy::time::Timer;
 
 use crate::{
     assets::{PlayerAsset, PlayerAssetHandle, TileSpriteAssets},
-    components::{Collider, GameEntityMarker, Name, Position, Viewshed},
+    components::{Collider, GameEntityMarker, Inventory, Name, Position, Viewshed},
     constants::Z_PLAYER,
     game::{
         TurnManager,
         actions::SpeedStats,
         combat::{Damage, Health, HealthRegen},
-        stats::{AttributeModifiers, Attributes, CombatStats, Level, RolledHp},
+        stats::{AttributeModifiers, Attributes, CombatStats, Level, Mana, RolledHp},
         level::{Experience, AvailableStatPoints},
     },
     map::map::GRID_SIZE,
@@ -79,7 +79,8 @@ pub fn player_spawn_or_move_system(
                 GameEntityMarker,
                 Collider,
                 new_grid_pos,
-                Viewshed::new(player_asset.vision_range as i32),
+                Viewshed::new(8), // Initial range; recalculated by stat_recalculation_system via PER
+                Inventory { items: Vec::new(), capacity: 20 },
             ))
             .insert((
                 Health {
@@ -96,6 +97,8 @@ pub fn player_spawn_or_move_system(
                     dexterity: player_asset.dexterity,
                     constitution: player_asset.constitution,
                     agility: player_asset.agility,
+                    intelligence: player_asset.intelligence,
+                    perception: player_asset.perception,
                 },
                 AttributeModifiers::default(),
                 Level { value: player_asset.level },
@@ -104,9 +107,14 @@ pub fn player_spawn_or_move_system(
                 Experience {
                     current: 0,
                     next_level: 100,
+                    spell_slots_unlocked: 1,
                 },
                 AvailableStatPoints(0),
                 RolledHp(0),
+                Mana {
+                    current: player_asset.intelligence * 5,
+                    max: player_asset.intelligence * 5,
+                },
             ))
             .insert((
                 Sprite::from_atlas_image(

@@ -5,25 +5,37 @@
 | Stat | Abbrev | Governs |
 |------|--------|---------|
 | Strength | STR | Melee damage bonus, carry weight, heavy armor/weapon requirements |
-| Dexterity | DEX | Accuracy, dodge chance, speed modifier, light armor/ranged requirements |
-| Intelligence | INT | Max mana, spell power scaling, spellbook identification chance |
+| Dexterity | DEX | Accuracy, dodge chance, light armor/ranged weapon requirements |
 | Constitution | CON | Max HP, HP gained per level, poison/stun resistance |
-| Luck | LCK | Crit chance, rare item find rate, trap detection |
+| Agility | AGI | Turn speed (lower delay = more turns per cycle) |
+| Intelligence | INT | Max mana (INT × 5), spell power scaling, spellbook requirements |
+| Perception | PER | Vision range, trap/secret detection, ranged accuracy |
 
-**Starting values:** All stats begin at 5. The player gets +2 points to distribute freely at character creation (or could be randomized — TBD).
+**Starting values:** All stats begin at 10. The player receives 1 stat point per level-up.
+
+## Bonus Formula
+
+Every stat uses the same formula: **`bonus = stat - 10`**
+
+This means:
+- At stat **10** (starting baseline): bonus is **+0** — neutral
+- At stat **11**: bonus is **+1** — immediately visible the turn you level up
+- At stat **14**: bonus is **+4** — a meaningful jump after a few floors
+- At stat **8** (debuffed/cursed): bonus is **−2** — noticeable penalty
+
+Every single stat point directly changes derived combat values. There are no "dead" odd-numbered points.
 
 ## Derived Values
 
 | Value | Formula |
 |-------|---------|
-| Max HP | `10 + (CON × 3) + (level × CON)` |
+| Max HP | `10 + rolled_hp_sum + (CON bonus × level)` |
 | Max Mana | `INT × 5` |
-| Melee Damage | `weapon base damage + STR bonus` |
-| Accuracy | `base 80% + DEX bonus` |
-| Dodge Chance | `DEX bonus (capped at ~30%)` |
-| Speed | Turn delay multiplier; `1.0 - ((DEX - 5) × 0.02)` (lower = faster; feeds into TurnManager) |
-
-STR/DEX/INT bonus = `(stat - 5)` (so stat 5 = +0, stat 8 = +3, stat 3 = -2).
+| Melee Damage | `weapon dice + STR bonus` |
+| Hit Chance | `10 + STR bonus` (roll 1d20 + hit_chance vs 10 + target dodge) |
+| Dodge Chance | `5 + DEX bonus` |
+| Action Delay | `1.0 − (AGI bonus × 0.025)` clamped to [0.5, 2.0] |
+| Vision Range | `(8 + PER bonus).max(2)` tiles |
 
 ## Leveling & XP
 
@@ -66,6 +78,17 @@ The player has 9 equipment slots:
 
 See [ITEMS.md](ITEMS.md) for full equipment details.
 
+## Unified Stat System (Player & Monsters)
+
+The player and all monsters share the same ECS components and formulas. `stat_recalculation_system` runs on every entity with `Attributes` — no special-casing for who is the player. The combat pipeline is fully symmetric.
+
+The only structural differences:
+- **HP source:** Player uses a sum of 1d4 rolls per level (`RolledHp`); monsters use a flat `MonsterBaseHealth` value
+- **Mana:** Only the player has a `Mana` component; monsters have no mana pool
+- **Spell slots:** Player-only feature
+
+This means status effects, debuffs, and buff items work identically whether applied to the player or an enemy. See [BESTIARY.md](BESTIARY.md) for full details on the shared system.
+
 ## Combat
 
 ### Melee Attack
@@ -89,9 +112,10 @@ See [ITEMS.md](ITEMS.md) for full equipment details.
 The player's turn delay is computed as:
 ```
 delay = base_cost × SpeedStats::delay_multiplier
-delay_multiplier = 1.0 - ((DEX - 5) × 0.02)  // capped at 0.6 min
+delay_multiplier = 1.0 - (AGI_bonus × 0.025)   // clamped [0.5, 2.0]
+AGI_bonus = agility - 10
 ```
-Higher DEX = faster turns relative to enemies. This feeds directly into the existing `TurnManager` queue.
+At AGI 10 (start): delay = 1.0x (baseline). At AGI 18: delay = 0.8x (20% faster). At AGI 6 (debuffed): delay = 1.1x (slower). Higher AGI = more turns per cycle relative to enemies. Feeds directly into the existing `TurnManager` queue.
 
 ## Death & Death Screen
 

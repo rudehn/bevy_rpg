@@ -1,4 +1,5 @@
 use bevy::ecs::component::Component;
+use bevy::ecs::entity::Entity;
 use bevy::prelude::{Reflect, ReflectComponent};
 use bracket_lib::prelude::Point;
 
@@ -68,3 +69,15 @@ pub struct FloorEntityMarker;
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
 pub struct GodMode;
+
+/// Holds entity IDs of all items currently in the player's inventory.
+#[derive(Component, Debug, Default)]
+pub struct Inventory {
+    pub items: Vec<Entity>,
+    pub capacity: usize,
+}
+
+/// Marker component for items currently held in an inventory (not on the floor).
+/// Items with this component are invisible and excluded from floor-level queries.
+#[derive(Component, Debug, Default)]
+pub struct InInventory;

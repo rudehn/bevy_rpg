@@ -12,9 +12,10 @@ use crate::{
         MonsterAI, TurnManager,
         actions::SpeedStats,
         combat::{Damage, Health, HealthRegen},
+        items::ItemProperties,
         level::ExperienceReward,
         stats::{AttributeModifiers, Attributes, CombatStats, Level, MonsterBaseHealth},
-    }, // Added combat::Damage
+    },
     map::map::GRID_SIZE,
 };
 
@@ -72,7 +73,7 @@ pub fn spawn_monster(
             Collider,
             new_grid_pos,
             new_pos,
-            Viewshed::new(monster_asset.vision_range as i32),
+            Viewshed::new(8), // Initial range; recalculated by stat_recalculation_system via PER
         ))
         .insert((
             Health {
@@ -86,6 +87,8 @@ pub fn spawn_monster(
                 dexterity: monster_asset.dexterity,
                 constitution: monster_asset.constitution,
                 agility: monster_asset.agility,
+                perception: monster_asset.perception,
+                ..Default::default()
             },
             AttributeModifiers::default(),
             Level {
@@ -197,6 +200,20 @@ pub fn spawn_item(
         },
         RenderLayers::layer(1),
     ));
+
+    entity.insert(ItemProperties {
+        kind: asset.item_kind.clone(),
+        armor_slot: asset.armor_slot.clone(),
+        damage: asset.damage.clone(),
+        defense: asset.defense,
+        rarity: asset.rarity.clone(),
+        str_bonus: asset.str_bonus,
+        dex_bonus: asset.dex_bonus,
+        con_bonus: asset.con_bonus,
+        agi_bonus: asset.agi_bonus,
+        int_bonus: asset.int_bonus,
+        per_bonus: asset.per_bonus,
+    });
 
     if asset.is_victory {
         entity.insert(AmuletOfBevy);
