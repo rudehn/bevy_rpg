@@ -72,6 +72,13 @@ pub struct HealMessage {
     pub amount: i32,
 }
 
+/// Message sent when an attack misses its target.
+#[derive(Message, Debug)]
+pub struct MissMessage {
+    pub attacker: Entity,
+    pub target: Entity,
+}
+
 /// Message sent to toggle GodMode on an entity.
 #[derive(Message, Debug)]
 pub struct ToggleGodModeMessage {
@@ -132,6 +139,7 @@ fn regen_system(
 fn hit_check_system(
     mut intents: MessageReader<AttackIntentMessage>,
     mut roll_writer: MessageWriter<DamageRollMessage>,
+    mut miss_writer: MessageWriter<MissMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut game_rng: ResMut<GameRng>,
     query: Query<(&Name, &CombatStats, Has<Player>)>,
@@ -159,6 +167,10 @@ fn hit_check_system(
                 "{} {} {}.",
                 attacker_name.0, verb, target_name.0
             )));
+            miss_writer.write(MissMessage {
+                attacker: intent.attacker,
+                target: intent.target,
+            });
         }
     }
 }
@@ -341,6 +353,7 @@ impl Plugin for CombatPlugin {
             .add_message::<DamageReductionMessage>()
             .add_message::<ApplyDamageMessage>()
             .add_message::<HealMessage>()
+            .add_message::<MissMessage>()
             .add_message::<ToggleGodModeMessage>()
             .add_message::<DeathEvent>()
             .register_type::<Health>()

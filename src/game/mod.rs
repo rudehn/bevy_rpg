@@ -7,6 +7,7 @@ use crate::{
         combat::{CombatDamageSet, CombatPlugin, DeathEvent, GameRng, death_system},
         items::{ItemsPlugin, LootTable},
         level::LevelPlugin,
+        particles::ParticlesPlugin,
         stats::StatsPlugin,
         systems::{fov_update_system, sync_entity_transforms, update_monster_visibility, update_item_visibility},
         turns::TurnOrderPlugin,
@@ -26,6 +27,7 @@ pub mod camera;
 pub mod combat;
 pub mod items;
 pub mod level;
+pub mod particles;
 pub mod spawner;
 pub mod stats;
 mod systems;
@@ -70,6 +72,7 @@ impl Plugin for GamePlugin {
                 StatsPlugin,
                 LevelPlugin,
                 ItemsPlugin,
+                ParticlesPlugin,
             ))
             .add_systems(
                 Update,
