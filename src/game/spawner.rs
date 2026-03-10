@@ -225,6 +225,7 @@ pub fn spawn_item(
         agi_bonus: asset.agi_bonus,
         int_bonus: asset.int_bonus,
         per_bonus: asset.per_bonus,
+        effect: asset.effect.clone(),
     });
 
     if asset.is_victory {

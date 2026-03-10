@@ -49,6 +49,7 @@
             is_victory: false,
             item_kind: Consumable,
             rarity: Common,
+            effect: Some(HealHp(15)),
         ),
         "Strength Potion": (
             name: "Strength Potion",
@@ -58,6 +59,7 @@
             is_victory: false,
             item_kind: Consumable,
             rarity: Uncommon,
+            effect: Some(GainStr(2)),
         ),
         "Ring of Perception": (
             name: "Ring of Perception",

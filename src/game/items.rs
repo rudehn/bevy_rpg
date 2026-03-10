@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::components::{Equipped, FloorEntityMarker, InInventory, Inventory, Name, Position};
 use crate::constants::BASE_ACTION_COST;
 use crate::game::actions::ActionFinishedEvent;
+use crate::game::effects::Effect;
 use crate::game::AppState;
 use crate::game::stats::{AttributeModifiers, CombatStats};
 use crate::player::Player;
@@ -112,6 +113,8 @@ pub struct ItemProperties {
     pub agi_bonus: i32,
     pub int_bonus: i32,
     pub per_bonus: i32,
+    /// One-shot effect applied when the item is consumed (Consumables only).
+    pub effect: Option<Effect>,
 }
 
 impl ItemProperties {
@@ -452,6 +455,7 @@ impl Plugin for ItemsPlugin {
         app.register_type::<ItemKind>()
             .register_type::<ArmorSlot>()
             .register_type::<Rarity>()
+            .register_type::<Effect>()
             .register_type::<ItemProperties>()
             .register_type::<Equipment>()
             .init_resource::<SelectedInventorySlot>()

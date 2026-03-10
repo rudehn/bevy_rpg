@@ -9,6 +9,7 @@ use crate::game::actions::{
     handle_pickup, handle_wait,
 };
 use crate::game::ai::MonsterAI;
+use crate::game::effects::{UseItemMessage, handle_use_item};
 use crate::game::items::{
     DropItemMessage, EquipItemMessage, UnequipItemMessage,
     handle_drop_item, handle_equip_item, handle_unequip_item,
@@ -61,6 +62,7 @@ impl Plugin for TurnOrderPlugin {
             .add_message::<WaitIntent>()
             .add_message::<PickUpIntent>()
             .add_message::<OpenDoorIntent>()
+            .add_message::<UseItemMessage>()
             .add_message::<ActionFinishedEvent>()
             .add_message::<TurnEndEvent>()
             .add_systems(OnEnter(AppState::InGame), (setup_turn_order, start_turns))
@@ -86,6 +88,7 @@ impl Plugin for TurnOrderPlugin {
                         handle_equip_item,
                         handle_unequip_item,
                         handle_drop_item,
+                        handle_use_item,
                         // --- Cleanup ---
                         resolve_turn_end,
                         continue_turn_processing,
@@ -207,6 +210,7 @@ fn player_ai_bridge(
     mut equip_events: MessageWriter<EquipItemMessage>,
     mut unequip_events: MessageWriter<UnequipItemMessage>,
     mut drop_events: MessageWriter<DropItemMessage>,
+    mut use_item_events: MessageWriter<UseItemMessage>,
     query: Query<Entity, (With<Player>, With<MyTurn>)>,
 ) {
     let Ok(player_entity) = query.single() else {
@@ -250,6 +254,9 @@ fn player_ai_bridge(
             }
             Action::DropItem { item } => {
                 drop_events.write(DropItemMessage { item_entity: item });
+            }
+            Action::UseItem { item } => {
+                use_item_events.write(UseItemMessage { item_entity: item });
             }
         }
     } else {

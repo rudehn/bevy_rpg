@@ -20,6 +20,7 @@ pub enum Action {
     EquipItem   { item: Entity },
     UnequipItem { item: Entity },
     DropItem    { item: Entity },
+    UseItem     { item: Entity },
 }
 
 // --- Events ---

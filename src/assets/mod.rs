@@ -3,6 +3,7 @@ use bevy_common_assets::ron::RonAssetPlugin;
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use crate::game::effects::Effect;
 use crate::game::items::{ArmorSlot, ItemKind, Rarity};
 
 use crate::{
@@ -261,6 +262,8 @@ pub struct ItemAsset {
     pub int_bonus: i32,
     #[serde(default)]
     pub per_bonus: i32,
+    #[serde(default)]
+    pub effect: Option<Effect>,
 }
 
 #[derive(Asset, TypePath, Deserialize, Resource, Debug, Clone)]

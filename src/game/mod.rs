@@ -25,6 +25,7 @@ pub mod actions;
 mod ai;
 pub mod camera;
 pub mod combat;
+pub mod effects;
 pub mod items;
 pub mod level;
 pub mod particles;

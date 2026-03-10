@@ -48,3 +48,6 @@ Lakes
 - Aren't checking connectiveity
 - too big?
 - visual animations
+
+
+Get all assets for monsters/player/items

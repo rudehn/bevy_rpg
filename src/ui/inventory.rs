@@ -149,7 +149,7 @@ fn spawn_inventory_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                 panel.spawn(Node { height: Val::Px(10.0), ..default() });
 
                 panel.spawn((
-                    Text::new("↑/↓ Navigate  |  E - Equip/Unequip  |  D - Drop  |  I/Esc - Close"),
+                    Text::new("↑/↓ Navigate  |  E - Equip/Unequip  |  U - Use  |  D - Drop  |  I/Esc - Close"),
                     TextFont { font: font.clone(), font_size: 14.0, ..default() },
                     TextColor(Color::srgb(0.5, 0.5, 0.5)),
                 ));
@@ -222,6 +222,24 @@ fn update_inventory_ui(
         }
     }
 
+    // Use / consume — costs a turn (consumables only)
+    if keys.just_pressed(KeyCode::KeyU) {
+        if let Some(&item_entity) = inv.items.get(slot.0) {
+            if let Ok((_, props, _)) = item_query.get(item_entity) {
+                if props.kind == ItemKind::Consumable {
+                    if slot.0 > 0 && slot.0 >= item_count.saturating_sub(1) {
+                        slot.0 -= 1;
+                    }
+                    turn_manager.player_action_pending =
+                        Some(Action::UseItem { item: item_entity });
+                    next_ingame.set(InGameState::Running);
+                    next_turn.set(TurnState::Processing);
+                    return;
+                }
+            }
+        }
+    }
+
     // Update slot list
     for (mut text, mut color, slot_marker) in &mut slot_texts {
         let i = slot_marker.0;
@@ -279,6 +297,9 @@ fn update_inventory_ui(
                     || props.kind == ItemKind::Ring;
                 if is_equippable {
                     lines.push(if is_equipped { "[E] Unequip" } else { "[E] Equip" }.to_string());
+                }
+                if props.kind == ItemKind::Consumable {
+                    lines.push("[U] Use item".to_string());
                 }
                 lines.push("[D] Drop item".to_string());
 
