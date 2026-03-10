@@ -1,12 +1,12 @@
 use crate::{
-    components::{GameEntityMarker, Position},
+    components::{GameEntityMarker, Position, Viewshed},
     game::{
         camera::{move_camera, toggle_main_camera_visibility},
         combat::{CombatPlugin, death_system},
         items::ItemsPlugin,
         level::{LevelPlugin, xp_award_system},
         stats::StatsPlugin,
-        systems::{fov_update_system, sync_entity_transforms, update_monster_visibility},
+        systems::{fov_update_system, sync_entity_transforms, update_monster_visibility, update_item_visibility},
         turns::TurnOrderPlugin,
     },
     map::{
@@ -24,7 +24,7 @@ pub mod camera;
 pub mod combat;
 pub mod items;
 pub mod level;
-mod spawner;
+pub mod spawner;
 pub mod stats;
 mod systems;
 pub mod turns;
@@ -76,6 +76,9 @@ impl Plugin for GamePlugin {
                     fov_update_system.after(sync_entity_transforms),
                     update_monster_visibility
                         .run_if(|query: Query<(), Changed<Position>>| !query.is_empty())
+                        .after(fov_update_system),
+                    update_item_visibility
+                        .run_if(|query: Query<(), Changed<Viewshed>>| !query.is_empty())
                         .after(fov_update_system),
                     move_camera.after(sync_entity_transforms),
                     death_system.after(xp_award_system),

@@ -1,0 +1,17 @@
+(
+    spawns: [
+        // Consumables — common across all floors
+        (item: "Healing Potion",     min_floor: 1,  max_floor: 10, weight: 5),
+        (item: "Strength Potion",    min_floor: 2,  max_floor: 10, weight: 2),
+
+        // Weapons — early tiers fade out as depth increases
+        (item: "Iron Sword",         min_floor: 1,  max_floor: 5,  weight: 3),
+        (item: "Steel Sword",        min_floor: 3,  max_floor: 10, weight: 2),
+
+        // Armor
+        (item: "Leather Armor",      min_floor: 1,  max_floor: 6,  weight: 3),
+
+        // Accessories
+        (item: "Ring of Perception", min_floor: 3,  max_floor: 10, weight: 1),
+    ]
+)

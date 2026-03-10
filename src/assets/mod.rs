@@ -45,6 +45,7 @@ impl Plugin for AssetsPlugin {
             .init_resource::<MonsterSpawnTableHandle>()
             .init_resource::<TileManifestHandle>()
             .init_resource::<ItemManifestHandle>()
+            .init_resource::<ItemSpawnTableHandle>()
             .init_resource::<PlayerAssetHandle>()
             .add_systems(
                 OnEnter(AppState::Loading),
@@ -54,6 +55,7 @@ impl Plugin for AssetsPlugin {
                     load_monster_spawn_table,
                     load_tile_manifest,
                     load_item_manifest,
+                    load_item_spawn_table,
                     load_player_asset,
                 ),
             )
@@ -79,6 +81,7 @@ impl Plugin for LoadingPlugin {
             RonAssetPlugin::<MonsterSpawnTable>::new(&["monster_spawns.ron"]),
             RonAssetPlugin::<TileManifest>::new(&["tiles.ron"]),
             RonAssetPlugin::<ItemManifest>::new(&["items.ron"]),
+            RonAssetPlugin::<ItemSpawnTable>::new(&["item_spawns.ron"]),
             RonAssetPlugin::<PlayerAsset>::new(&["player.ron"]),
         ))
         .add_systems(Startup, (camera::setup_camera, set_clear_color))
@@ -170,6 +173,22 @@ pub struct MonsterSpawnInfo {
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
 pub struct MonsterSpawnTable {
     pub spawns: Vec<MonsterSpawnInfo>,
+}
+
+#[derive(Asset, TypePath, Deserialize, Debug, Clone)]
+pub struct ItemSpawnInfo {
+    pub item: String,
+    pub min_floor: i32,
+    pub max_floor: i32,
+    #[serde(default = "default_weight")]
+    pub weight: i32,
+}
+
+fn default_weight() -> i32 { 1 }
+
+#[derive(Asset, TypePath, Deserialize, Debug, Clone)]
+pub struct ItemSpawnTable {
+    pub spawns: Vec<ItemSpawnInfo>,
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
@@ -265,6 +284,9 @@ pub struct TileManifestHandle(pub Handle<TileManifest>);
 pub struct ItemManifestHandle(pub Handle<ItemManifest>);
 
 #[derive(Resource, Default)]
+pub struct ItemSpawnTableHandle(pub Handle<ItemSpawnTable>);
+
+#[derive(Resource, Default)]
 pub struct PlayerAssetHandle(pub Handle<PlayerAsset>);
 
 fn load_monster_manifest(
@@ -287,6 +309,10 @@ fn load_tile_manifest(asset_server: Res<AssetServer>, mut handle: ResMut<TileMan
 
 fn load_item_manifest(asset_server: Res<AssetServer>, mut handle: ResMut<ItemManifestHandle>) {
     handle.0 = asset_server.load("items.ron");
+}
+
+fn load_item_spawn_table(asset_server: Res<AssetServer>, mut handle: ResMut<ItemSpawnTableHandle>) {
+    handle.0 = asset_server.load("item_spawns.ron");
 }
 
 fn load_player_asset(asset_server: Res<AssetServer>, mut handle: ResMut<PlayerAssetHandle>) {
@@ -453,6 +479,17 @@ fn load_item_sprites(
     }
 }
 
+// Groups the overflow resources so check_assets_loaded stays within Bevy's
+// 16-SystemParam limit.
+#[derive(bevy::ecs::system::SystemParam)]
+struct ExtraLoadingParams<'w> {
+    item_spawn_table_handle: Res<'w, ItemSpawnTableHandle>,
+    item_spawn_tables: Res<'w, Assets<ItemSpawnTable>>,
+    player_asset_handle: Res<'w, PlayerAssetHandle>,
+    player_assets: Res<'w, Assets<PlayerAsset>>,
+    next_state: ResMut<'w, NextState<AppState>>,
+}
+
 fn check_assets_loaded(
     asset_server: Res<AssetServer>,
     candle_spritesheet: Res<CandleSpritesheet>,
@@ -467,9 +504,7 @@ fn check_assets_loaded(
     item_manifest_handle: Res<ItemManifestHandle>,
     item_manifests: Res<Assets<ItemManifest>>,
     item_sprite_assets: Res<ItemSpriteAssets>,
-    player_asset_handle: Res<PlayerAssetHandle>,
-    player_assets: Res<Assets<PlayerAsset>>,
-    mut next_state: ResMut<NextState<AppState>>,
+    mut extra: ExtraLoadingParams,
 ) {
     let core_textures_loaded = asset_server.is_loaded_with_dependencies(&candle_spritesheet.texture);
 
@@ -496,7 +531,11 @@ fn check_assets_loaded(
         return;
     }
 
-    if player_assets.get(&player_asset_handle.0).is_none() {
+    if extra.item_spawn_tables.get(&extra.item_spawn_table_handle.0).is_none() {
+        return;
+    }
+
+    if extra.player_assets.get(&extra.player_asset_handle.0).is_none() {
         return;
     }
 
@@ -525,7 +564,7 @@ fn check_assets_loaded(
         }
     }
 
-    next_state.set(AppState::Menu);
+    extra.next_state.set(AppState::Menu);
 }
 
 fn set_clear_color(mut clear_color: ResMut<ClearColor>) {

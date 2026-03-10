@@ -25,7 +25,7 @@ pub fn spawn_monster(
     turn_manager: &mut ResMut<TurnManager>,
     monster_asset: &MonsterAsset,
     monster_sprite_assets: &Res<MonsterSpriteAssets>,
-) {
+) -> Entity {
     let tile_size = monster_asset.tile_size.unwrap_or(UVec2::new(32, 32));
     let scale_x = TILE_SIZE_X as f32 / tile_size.x as f32;
     let scale_y = TILE_SIZE_Y as f32 / tile_size.y as f32;
@@ -120,6 +120,7 @@ pub fn spawn_monster(
     }
 
     turn_manager.add_entity(monster_entity);
+    monster_entity
 }
 
 pub fn spawn_monster_by_name(
@@ -130,21 +131,23 @@ pub fn spawn_monster_by_name(
     monster_manifests: &Res<Assets<MonsterManifest>>,
     monster_manifest_handle: &Res<MonsterManifestHandle>,
     monster_sprite_assets: &Res<MonsterSpriteAssets>,
-) {
+) -> Option<Entity> {
     if let Some(manifest) = monster_manifests.get(&monster_manifest_handle.0) {
         if let Some(monster_asset) = manifest.monsters.get(monster_name) {
-            spawn_monster(
+            Some(spawn_monster(
                 commands,
                 spawn_point,
                 turn_manager,
                 monster_asset,
                 monster_sprite_assets,
-            );
+            ))
         } else {
             warn!("Monster '{}' not found in manifest.", monster_name);
+            None
         }
     } else {
         error!("Monster manifest not loaded.");
+        None
     }
 }
 
@@ -155,13 +158,13 @@ pub fn spawn_item(
     item_manifests: &Res<Assets<ItemManifest>>,
     item_manifest_handle: &Res<ItemManifestHandle>,
     item_sprite_assets: &Res<ItemSpriteAssets>,
-) {
+) -> Option<Entity> {
     let Some(manifest) = item_manifests.get(&item_manifest_handle.0) else {
-        return;
+        return None;
     };
     let Some(asset) = manifest.items.get(item_name) else {
         warn!("Item '{}' not found in manifest.", item_name);
-        return;
+        return None;
     };
 
     let sprite_path_parts: Vec<&str> = asset.sprite.split('#').collect();
@@ -218,4 +221,6 @@ pub fn spawn_item(
     if asset.is_victory {
         entity.insert(AmuletOfBevy);
     }
+
+    Some(entity.id())
 }

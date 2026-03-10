@@ -1,348 +1,363 @@
-use crate::game::AppState;
 use bevy::prelude::*;
-use bevy::ui::{
-    AlignItems, BackgroundColor, BorderColor, Interaction, JustifyContent, UiRect, Val,
-};
+
+use crate::game::AppState;
+use crate::map::dungeon::PendingGameLoad;
+use crate::save::{GameSaveData, SaveExists};
 
 pub struct MenuPlugin;
 
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<OnMainMenuScreen>()
-            .register_type::<OnGameOverScreen>()
-            .register_type::<OnVictoryScreen>()
-            // Essential UI components for reflection
-            .register_type::<ChildOf>()
-            .register_type::<Node>()
-            .register_type::<Visibility>()
-            .register_type::<BackgroundColor>()
-            .register_type::<BorderColor>()
-            .register_type::<Button>()
-            .register_type::<Text>()
-            .register_type::<TextFont>()
-            .register_type::<TextColor>()
-            .register_type::<Interaction>()
-            .add_systems(Startup, debug_type_registration)
-            .add_systems(OnEnter(AppState::Menu), menu_setup)
-            .add_systems(
-                Update,
-                (menu_action, dump_menu_scene).run_if(in_state(AppState::Menu)),
-            )
+        app.add_systems(OnEnter(AppState::Menu), menu_setup)
+            .add_systems(Update, menu_action.run_if(in_state(AppState::Menu)))
             .add_systems(OnExit(AppState::Menu), despawn_screen::<OnMainMenuScreen>)
             .add_systems(OnEnter(AppState::GameOver), game_over_setup)
-            .add_systems(
-                Update,
-                game_over_action.run_if(in_state(AppState::GameOver)),
-            )
-            .add_systems(
-                OnExit(AppState::GameOver),
-                despawn_screen::<OnGameOverScreen>,
-            )
+            .add_systems(Update, game_over_action.run_if(in_state(AppState::GameOver)))
+            .add_systems(OnExit(AppState::GameOver), despawn_screen::<OnGameOverScreen>)
             .add_systems(OnEnter(AppState::Victory), victory_setup)
-            .add_systems(
-                Update,
-                victory_action.run_if(in_state(AppState::Victory)),
-            )
-            .add_systems(
-                OnExit(AppState::Victory),
-                despawn_screen::<OnVictoryScreen>,
-            );
+            .add_systems(Update, victory_action.run_if(in_state(AppState::Victory)))
+            .add_systems(OnExit(AppState::Victory), despawn_screen::<OnVictoryScreen>);
     }
 }
 
-fn dump_menu_scene(world: &mut World) {
-    if !world
-        .resource::<ButtonInput<KeyCode>>()
-        .just_pressed(KeyCode::KeyS)
-    {
-        return;
-    }
+// ---- Marker components ----
 
-    info!("Dumping menu scene...");
-
-    let mut entities_to_extract = Vec::new();
-    let mut query = world.query_filtered::<Entity, Or<(With<Node>, With<OnMainMenuScreen>)>>();
-    for entity in query.iter(world) {
-        entities_to_extract.push(entity);
-    }
-
-    let mut builder = DynamicSceneBuilder::from_world(world);
-    // builder = builder
-    //     .deny_component::<ComputedNode>()
-    //     .deny_component::<ContentSize>()
-    //     .deny_component::<TextLayoutInfo>()
-    //     .deny_component::<TextNodeFlags>()
-    //     .deny_component::<InheritedVisibility>()
-    //     .deny_component::<ViewVisibility>()
-    //     .deny_component::<GlobalTransform>()
-    //     .deny_component::<UiGlobalTransform>()
-    //     // Optional: Deny interaction states so the menu loads in a "neutral" state
-    //     .deny_component::<Interaction>();
-    for entity in entities_to_extract {
-        builder = builder.extract_entity(entity);
-    }
-
-    let scene = builder.build();
-    let type_registry = world.resource::<AppTypeRegistry>().clone();
-    let registry = type_registry.read();
-
-    match scene.serialize(&registry) {
-        Ok(serialized) => {
-            let _ = std::fs::create_dir_all("assets/scenes");
-            if let Ok(_) = std::fs::write("assets/scenes/dumped_menu.scn.ron", serialized) {
-                info!("Successfully dumped menu to assets/scenes/dumped_menu.scn.ron");
-            }
-        }
-        Err(e) => {
-            error!("Failed to serialize menu scene: {:?}", e);
-        }
-    }
-}
-
-fn debug_type_registration(type_registry: Res<AppTypeRegistry>) {
-    let registry = type_registry.read();
-    let types_to_check = vec![
-        ("Node", std::any::type_name::<Node>()),
-        ("BackgroundColor", std::any::type_name::<BackgroundColor>()),
-        ("BorderColor", std::any::type_name::<BorderColor>()),
-        ("Button", std::any::type_name::<Button>()),
-        ("Text", std::any::type_name::<Text>()),
-        ("TextFont", std::any::type_name::<TextFont>()),
-        ("TextColor", std::any::type_name::<TextColor>()),
-        ("ChildOf", std::any::type_name::<ChildOf>()),
-        ("Visibility", std::any::type_name::<Visibility>()),
-        (
-            "OnMainMenuScreen",
-            std::any::type_name::<OnMainMenuScreen>(),
-        ),
-    ];
-
-    info!("--- COMPONENT REFLECTION PATHS ---");
-    for (label, type_name) in types_to_check {
-        if let Some(registration) = registry.get_with_type_path(type_name) {
-            info!("{}: {}", label, registration.type_info().type_path());
-        } else {
-            warn!("{}: NOT REGISTERED ({})", label, type_name);
-        }
-    }
-}
-
-// Tag component to mark entities added by the setup_menu system.
-#[derive(Component, Reflect, Default)]
-#[reflect(Component)]
+#[derive(Component)]
 pub struct OnMainMenuScreen;
 
-// Tag component to mark entities added by the game_over_setup system.
-#[derive(Component, Reflect, Default)]
-#[reflect(Component)]
+#[derive(Component)]
 pub struct OnGameOverScreen;
 
-// Tag component to mark entities added by the victory_setup system.
-#[derive(Component, Reflect, Default)]
-#[reflect(Component)]
+#[derive(Component)]
 pub struct OnVictoryScreen;
 
-fn menu_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+// ---- Button tags ----
+
+#[derive(Component)]
+enum MenuButton {
+    NewGame,
+    Continue,
+    Quit,
+    ReturnToMenu,
+}
+
+// ---- Styling constants ----
+
+const BTN_NORMAL: Color = Color::srgb(0.08, 0.08, 0.08);
+const BTN_HOVER: Color = Color::srgb(0.18, 0.18, 0.18);
+const BTN_PRESSED: Color = Color::srgb(0.05, 0.05, 0.05);
+const GOLD: Color = Color::srgb(1.0, 0.84, 0.0);
+const DIM: Color = Color::srgb(0.35, 0.35, 0.35);
+
+fn button_style(width: f32) -> Node {
+    Node {
+        width: Val::Px(width),
+        height: Val::Px(54.0),
+        border: UiRect::all(Val::Px(1.0)),
+        justify_content: JustifyContent::Center,
+        align_items: AlignItems::Center,
+        margin: UiRect::top(Val::Px(14.0)),
+        ..default()
+    }
+}
+
+fn spawn_button(
+    parent: &mut ChildSpawnerCommands,
+    font: Handle<Font>,
+    label: &str,
+    tag: MenuButton,
+    enabled: bool,
+) {
+    let text_color = if enabled { Color::WHITE } else { DIM };
+    let border_color = if enabled { Color::srgb(0.4, 0.4, 0.4) } else { DIM };
+
+    parent
+        .spawn((
+            Button,
+            button_style(260.0),
+            BackgroundColor(BTN_NORMAL),
+            BorderColor::all(border_color),
+            tag,
+        ))
+        .with_children(|btn| {
+            btn.spawn((
+                Text::new(label),
+                TextFont { font, font_size: 22.0, ..default() },
+                TextColor(text_color),
+            ));
+        });
+}
+
+// ---- Main menu ----
+
+fn menu_setup(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    save_exists: Res<SaveExists>,
+) {
+    let font = asset_server.load("fonts/Macondo-Regular.ttf");
+    let has_save = save_exists.0;
+
     commands
         .spawn((
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
                 ..default()
             },
-            BackgroundColor(Color::NONE),
+            BackgroundColor(Color::srgb(0.04, 0.04, 0.04)),
             OnMainMenuScreen,
         ))
-        .with_children(|parent| {
-            parent
-                .spawn((
-                    Button,
-                    Node {
-                        width: Val::Px(150.0),
-                        height: Val::Px(65.0),
-                        border: UiRect::all(Val::Px(5.0)),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
-                    BorderColor::all(Color::BLACK),
-                ))
-                .with_children(|parent| {
-                    parent.spawn((
-                        Text::new("Play"),
-                        TextFont {
-                            font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                            font_size: 40.0,
-                            ..default()
-                        },
-                        TextColor(Color::WHITE),
-                    ));
-                });
+        .with_children(|root| {
+            // Title
+            root.spawn((
+                Text::new("IRONVEIL"),
+                TextFont { font: font.clone(), font_size: 80.0, ..default() },
+                TextColor(GOLD),
+            ));
+
+            // Subtitle
+            root.spawn((
+                Text::new("A dungeon lies beneath. The amulet awaits."),
+                TextFont { font: font.clone(), font_size: 18.0, ..default() },
+                TextColor(Color::srgb(0.55, 0.55, 0.55)),
+                Node { margin: UiRect::top(Val::Px(8.0)), ..default() },
+            ));
+
+            // Spacer
+            root.spawn(Node { height: Val::Px(48.0), ..default() });
+
+            // Buttons
+            spawn_button(root, font.clone(), "New Game", MenuButton::NewGame, true);
+            spawn_button(root, font.clone(), "Continue", MenuButton::Continue, has_save);
+            spawn_button(root, font.clone(), "Quit", MenuButton::Quit, true);
+
+            // Version hint
+            root.spawn((
+                Text::new("[ Enter ] New Game"),
+                TextFont { font: font.clone(), font_size: 13.0, ..default() },
+                TextColor(Color::srgb(0.3, 0.3, 0.3)),
+                Node { margin: UiRect::top(Val::Px(40.0)), ..default() },
+            ));
         });
 }
 
 fn menu_action(
-    interaction_query: Query<&Interaction, (With<Button>, Changed<Interaction>)>,
+    mut interaction_query: Query<
+        (&Interaction, &MenuButton, &mut BackgroundColor),
+        (Changed<Interaction>, With<Button>),
+    >,
     mut next_state: ResMut<NextState<AppState>>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut pending_game_load: ResMut<PendingGameLoad>,
+    save_exists: Res<SaveExists>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut app_exit: MessageWriter<AppExit>,
 ) {
-    for interaction in &interaction_query {
-        if *interaction == Interaction::Pressed {
-            next_state.set(AppState::InGame);
-            return;
-        }
+    // Keyboard shortcut: Enter → new game
+    if keyboard.just_pressed(KeyCode::Enter) {
+        next_state.set(AppState::InGame);
+        return;
     }
 
-    if keyboard_input.just_pressed(KeyCode::Enter) {
-        next_state.set(AppState::InGame);
+    for (interaction, button, mut bg) in &mut interaction_query {
+        match *interaction {
+            Interaction::Hovered => *bg = BackgroundColor(BTN_HOVER),
+            Interaction::None => *bg = BackgroundColor(BTN_NORMAL),
+            Interaction::Pressed => {
+                *bg = BackgroundColor(BTN_PRESSED);
+                match button {
+                    MenuButton::NewGame => {
+                        pending_game_load.0 = None;
+                        next_state.set(AppState::InGame);
+                    }
+                    MenuButton::Continue => {
+                        if save_exists.0 {
+                            match load_save_file() {
+                                Some(data) => {
+                                    pending_game_load.0 = Some(Box::new(data));
+                                    next_state.set(AppState::InGame);
+                                }
+                                None => {
+                                    warn!("Save file found but failed to load.");
+                                }
+                            }
+                        }
+                    }
+                    MenuButton::Quit => {
+                        app_exit.write(AppExit::Success);
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 }
 
+fn load_save_file() -> Option<GameSaveData> {
+    let path = crate::save::save_path();
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| warn!("Could not read save file: {}", e))
+        .ok()?;
+    ron::from_str::<GameSaveData>(&text)
+        .map_err(|e| warn!("Could not parse save file: {}", e))
+        .ok()
+}
+
+// ---- Game Over ----
+
 fn game_over_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let font = asset_server.load("fonts/Macondo-Regular.ttf");
+
     commands
         .spawn((
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-                flex_direction: FlexDirection::Column,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.88)),
             OnGameOverScreen,
         ))
-        .with_children(|parent| {
-            parent.spawn((
-                Text::new("YOU DIED!"),
-                TextFont {
-                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                    font_size: 60.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(1.0, 0.0, 0.0)),
+        .with_children(|root| {
+            root.spawn((
+                Text::new("YOU DIED"),
+                TextFont { font: font.clone(), font_size: 72.0, ..default() },
+                TextColor(Color::srgb(0.85, 0.1, 0.1)),
+            ));
+            root.spawn((
+                Text::new("Your legend ends here."),
+                TextFont { font: font.clone(), font_size: 20.0, ..default() },
+                TextColor(Color::srgb(0.5, 0.5, 0.5)),
+                Node { margin: UiRect::top(Val::Px(12.0)), ..default() },
             ));
 
-            parent
-                .spawn((
-                    Button,
-                    Node {
-                        width: Val::Px(250.0),
-                        height: Val::Px(65.0),
-                        border: UiRect::all(Val::Px(5.0)),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        margin: UiRect::top(Val::Px(20.0)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
-                    BorderColor::all(Color::WHITE),
-                ))
-                .with_children(|parent| {
-                    parent.spawn((
-                        Text::new("Return to Menu"),
-                        TextFont::from_font_size(30.0),
-                        TextColor(Color::WHITE),
-                    ));
-                });
+            root.spawn(Node { height: Val::Px(40.0), ..default() });
+
+            root.spawn((
+                Button,
+                button_style(280.0),
+                BackgroundColor(BTN_NORMAL),
+                BorderColor::all(Color::srgb(0.4, 0.4, 0.4)),
+                MenuButton::ReturnToMenu,
+            ))
+            .with_children(|btn| {
+                btn.spawn((
+                    Text::new("Return to Menu"),
+                    TextFont { font: font.clone(), font_size: 22.0, ..default() },
+                    TextColor(Color::WHITE),
+                ));
+            });
         });
 }
 
 fn game_over_action(
-    interaction_query: Query<&Interaction, (With<Button>, Changed<Interaction>)>,
+    mut interaction_query: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<Button>),
+    >,
     mut next_state: ResMut<NextState<AppState>>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
 ) {
-    for interaction in &interaction_query {
-        if *interaction == Interaction::Pressed {
-            next_state.set(AppState::Menu);
-            return;
-        }
-    }
-
-    if keyboard_input.just_pressed(KeyCode::Enter) {
+    if keyboard.just_pressed(KeyCode::Enter) || keyboard.just_pressed(KeyCode::Escape) {
         next_state.set(AppState::Menu);
+        return;
+    }
+    for (interaction, mut bg) in &mut interaction_query {
+        match *interaction {
+            Interaction::Hovered => *bg = BackgroundColor(BTN_HOVER),
+            Interaction::None => *bg = BackgroundColor(BTN_NORMAL),
+            Interaction::Pressed => next_state.set(AppState::Menu),
+        }
     }
 }
 
+// ---- Victory ----
+
 fn victory_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let font = asset_server.load("fonts/Macondo-Regular.ttf");
+
     commands
         .spawn((
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-                flex_direction: FlexDirection::Column,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.88)),
             OnVictoryScreen,
         ))
-        .with_children(|parent| {
-            parent.spawn((
-                Text::new("VICTORY!"),
-                TextFont {
-                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                    font_size: 60.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(1.0, 0.84, 0.0)), // Gold
+        .with_children(|root| {
+            root.spawn((
+                Text::new("VICTORY"),
+                TextFont { font: font.clone(), font_size: 72.0, ..default() },
+                TextColor(GOLD),
             ));
-
-            parent.spawn((
-                Text::new("You have retrieved the Amulet of Bevy!"),
-                TextFont::from_font_size(30.0),
+            root.spawn((
+                Text::new("The Amulet of Bevy is yours."),
+                TextFont { font: font.clone(), font_size: 22.0, ..default() },
                 TextColor(Color::WHITE),
+                Node { margin: UiRect::top(Val::Px(12.0)), ..default() },
+            ));
+            root.spawn((
+                Text::new("Ironveil will remember your name."),
+                TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                TextColor(Color::srgb(0.6, 0.6, 0.6)),
+                Node { margin: UiRect::top(Val::Px(6.0)), ..default() },
             ));
 
-            parent
-                .spawn((
-                    Button,
-                    Node {
-                        width: Val::Px(250.0),
-                        height: Val::Px(65.0),
-                        border: UiRect::all(Val::Px(5.0)),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        margin: UiRect::top(Val::Px(40.0)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
-                    BorderColor::all(Color::WHITE),
-                ))
-                .with_children(|parent| {
-                    parent.spawn((
-                        Text::new("Return to Menu"),
-                        TextFont::from_font_size(30.0),
-                        TextColor(Color::WHITE),
-                    ));
-                });
+            root.spawn(Node { height: Val::Px(40.0), ..default() });
+
+            root.spawn((
+                Button,
+                button_style(280.0),
+                BackgroundColor(BTN_NORMAL),
+                BorderColor::all(Color::srgb(0.4, 0.4, 0.4)),
+                MenuButton::ReturnToMenu,
+            ))
+            .with_children(|btn| {
+                btn.spawn((
+                    Text::new("Return to Menu"),
+                    TextFont { font: font.clone(), font_size: 22.0, ..default() },
+                    TextColor(Color::WHITE),
+                ));
+            });
         });
 }
 
 fn victory_action(
-    interaction_query: Query<&Interaction, (With<Button>, Changed<Interaction>)>,
+    mut interaction_query: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<Button>),
+    >,
     mut next_state: ResMut<NextState<AppState>>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
 ) {
-    for interaction in &interaction_query {
-        if *interaction == Interaction::Pressed {
-            next_state.set(AppState::Menu);
-            return;
-        }
-    }
-
-    if keyboard_input.just_pressed(KeyCode::Enter) {
+    if keyboard.just_pressed(KeyCode::Enter) || keyboard.just_pressed(KeyCode::Escape) {
         next_state.set(AppState::Menu);
+        return;
+    }
+    for (interaction, mut bg) in &mut interaction_query {
+        match *interaction {
+            Interaction::Hovered => *bg = BackgroundColor(BTN_HOVER),
+            Interaction::None => *bg = BackgroundColor(BTN_NORMAL),
+            Interaction::Pressed => next_state.set(AppState::Menu),
+        }
     }
 }
 
-fn despawn_screen<T: Component>(to_despawn: Query<Entity, With<T>>, mut commands: Commands) {
-    for entity in &to_despawn {
+// ---- Helper ----
+
+fn despawn_screen<T: Component>(query: Query<Entity, With<T>>, mut commands: Commands) {
+    for entity in &query {
         commands.entity(entity).despawn();
     }
 }

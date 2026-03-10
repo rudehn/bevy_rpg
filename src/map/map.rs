@@ -25,15 +25,22 @@ pub const MAP_SIZE: UVec2 = UVec2 { x: 80, y: 60 };
 #[derive(Message, Debug, Clone, Copy)]
 pub struct RevealMapMessage;
 
+/// Set to true by spawn_dungeon when restoring a saved or cached floor so that
+/// previously-explored tiles are rendered as dim/explored instead of hidden.
+#[derive(Resource, Default)]
+pub struct NeedsExploredInit(pub bool);
+
 pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(Map::default()) // This will always be the active level
+        app.insert_resource(Map::default())
+            .init_resource::<NeedsExploredInit>()
             .add_message::<RevealMapMessage>()
             .add_systems(
                 Update,
                 (
+                    init_explored_tiles_system,
                     update_tile_visibility,
                     handle_reveal_map_system.run_if(on_message::<RevealMapMessage>),
                 ).run_if(in_state(AppState::InGame)),
@@ -64,8 +71,31 @@ pub fn handle_reveal_map_system(
     }
 }
 
+/// Initializes tile explored state from the Map resource after a save load or
+/// floor restore. Runs once (flag is cleared immediately after).
+pub fn init_explored_tiles_system(
+    mut needs_init: ResMut<NeedsExploredInit>,
+    map: Res<Map>,
+    mut tile_query: Query<(&Position, &mut TileExplored, &mut Sprite, &mut Visibility)>,
+) {
+    if !needs_init.0 {
+        return;
+    }
+    needs_init.0 = false;
+
+    for (pos, mut tile_explored, mut sprite, mut visibility) in tile_query.iter_mut() {
+        let idx = map.xy_idx(pos.x, pos.y);
+        if map.explored_tiles.get(idx).copied().unwrap_or(false) {
+            *tile_explored = TileExplored::Explored;
+            *visibility = Visibility::Visible;
+            sprite.color = Color::srgb(0.5, 0.5, 0.5);
+        }
+    }
+}
+
 pub fn update_tile_visibility(
     player_query: Query<&Viewshed, (With<Player>, Changed<Viewshed>)>,
+    mut map: ResMut<Map>,
     mut tile_render_query: Query<(
         &Position,
         &mut TileVisibility,
@@ -80,7 +110,7 @@ pub fn update_tile_visibility(
 
     let fov_tiles = &player_viewshed.visible_tiles;
 
-    // Update tile visibility and color
+    // Update tile visibility and color; also maintain map.explored_tiles
     for (tile_pos, mut tile_visibility, mut tile_explored, mut sprite, mut visibility) in
         tile_render_query.iter_mut()
     {
@@ -91,14 +121,19 @@ pub fn update_tile_visibility(
             *tile_explored = TileExplored::Explored;
             *visibility = Visibility::Visible;
             sprite.color = Color::WHITE;
+
+            if map.in_bounds(current_point) {
+                let idx = map.xy_idx(tile_pos.x, tile_pos.y);
+                map.explored_tiles[idx] = true;
+            }
         } else {
             *tile_visibility = TileVisibility::Hidden;
             if *tile_explored == TileExplored::Explored {
                 *visibility = Visibility::Visible;
-                sprite.color = Color::srgb(0.5, 0.5, 0.5); // Explored but not visible are dim
+                sprite.color = Color::srgb(0.5, 0.5, 0.5);
             } else {
                 *visibility = Visibility::Hidden;
-                sprite.color = Color::BLACK; // Unexplored and not visible are black
+                sprite.color = Color::BLACK;
             }
         }
     }
@@ -108,6 +143,8 @@ pub fn update_tile_visibility(
 pub struct Map {
     pub name: String,
     pub tiles: Vec<Tile>,
+    /// Mirrors `tiles` index-for-index: true once the player has seen that tile.
+    pub explored_tiles: Vec<bool>,
     pub width: i32,
     pub height: i32,
     pub depth: i32,
@@ -120,6 +157,7 @@ impl Map {
         Self {
             name: name.to_string(),
             tiles: vec![Tile { terrain: TerrainType::Wall, liquid: LiquidType::None }; map_tile_count],
+            explored_tiles: vec![false; map_tile_count],
             width,
             height,
             depth,

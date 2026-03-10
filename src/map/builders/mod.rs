@@ -4,36 +4,38 @@ use bracket_lib::{
 }; // Added Point
 
 use crate::{
-    assets::MonsterSpawnInfo,
+    assets::{ItemSpawnInfo, MonsterSpawnInfo},
     components::Position,
     map::{
         Map,
         builders::{
             candle_spawner::CandleSpawner,
+            diagonal_culler::DiagonalCuller,
             exit_points::DistantExit,
+            item_spawner::ItemSpawner,
+            lake_builder::LakeBuilder,
             monster_spawner::MonsterSpawner,
             start_point::{StartPointBuilder, XStart, YStart},
             unseen_culler::UnseenCuller,
-            diagonal_culler::DiagonalCuller,
-            lake_builder::LakeBuilder,
         },
         tile::LiquidType,
     },
 };
 
+pub mod algorithms;
+mod brogelike;
 mod bsp_dungeon;
 mod candle_spawner;
+mod choke_map;
 mod corridors;
+mod diagonal_culler;
 mod exit_points;
+pub mod item_spawner;
+mod lake_builder;
 pub mod monster_spawner;
 mod room_drawer;
-mod start_point; // Declare the new module
-mod unseen_culler; // Declare the new module
-mod brogelike;
-mod diagonal_culler;
-mod lake_builder;
-mod choke_map;
-pub mod algorithms; // Declare the new algorithms module
+mod start_point;
+mod unseen_culler;
 
 pub struct BuilderMap {
     // pub spawn_list: Vec<(usize, String)>,
@@ -84,7 +86,7 @@ impl BuilderChain {
                 // history: Vec::new(),
                 width,
                 height,
-                spawn_list: Vec::new(), // Initialize spawn_list
+                spawn_list: Vec::new(),      // Initialize spawn_list
                 item_spawn_list: Vec::new(), // Initialize item_spawn_list
             },
         }
@@ -161,6 +163,7 @@ pub fn floor_builder(
     width: i32,
     height: i32,
     spawn_table: &[MonsterSpawnInfo],
+    item_spawn_table: &[ItemSpawnInfo],
 ) -> BuilderChain {
     let mut map_name = "Floor ".to_owned() + &new_depth.to_string();
     if new_depth == 1 {
@@ -169,12 +172,15 @@ pub fn floor_builder(
     let mut builder = BuilderChain::new(new_depth, width, height, map_name);
 
     // MAP Generation
-    builder.start_with(brogelike::BrogueLikeBuilder::dungeon(new_depth, width, height));
+    builder.start_with(brogelike::BrogueLikeBuilder::dungeon(
+        new_depth, width, height,
+    ));
     builder.with(DiagonalCuller::new());
     builder.with(StartPointBuilder::new());
-    builder.with(LakeBuilder::new(LiquidType::Water));
-    builder.with(CandleSpawner::new()); // Add the CandleSpawner
+    // builder.with(LakeBuilder::new(LiquidType::Water));
+    builder.with(CandleSpawner::new());
     builder.with(MonsterSpawner::new(spawn_table));
+    builder.with(ItemSpawner::new(item_spawn_table));
     builder.with(UnseenCuller::new());
     builder.with(DistantExit::new());
 
@@ -189,8 +195,7 @@ pub fn level_builder(
     width: i32,
     height: i32,
     spawn_table: &[MonsterSpawnInfo],
+    item_spawn_table: &[ItemSpawnInfo],
 ) -> BuilderChain {
-    match new_depth {
-        _ => floor_builder(new_depth, width, height, spawn_table),
-    }
+    floor_builder(new_depth, width, height, spawn_table, item_spawn_table)
 }

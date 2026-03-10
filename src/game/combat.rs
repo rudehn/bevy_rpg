@@ -306,10 +306,11 @@ pub fn death_system(
     for (entity, health, name, is_player, is_monster) in query_dead.iter() {
         if health.current <= 0 {
             if is_player.is_some() {
-                // Player died
+                // Player died — permadeath: erase the save
                 eprintln!("Game Over! You died!");
                 log_writer.write(GameLogMessage("You have died!".to_string()));
-                next_state.set(AppState::GameOver); // Transition to GameOver state
+                crate::save::delete_save();
+                next_state.set(AppState::GameOver);
             } else if is_monster.is_some() {
                 // Monster died
                 info!("Monster {:?} died!", entity);

@@ -6,9 +6,9 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::assets::{
-    CandleSpritesheet, MonsterManifest, MonsterManifestHandle, MonsterSpawnTable,
-    MonsterSpawnTableHandle, MonsterSpriteAssets, TileManifest, TileManifestHandle,
-    TileSpriteAssets, ItemManifest, ItemManifestHandle, ItemSpriteAssets,
+    CandleSpritesheet, ItemManifest, ItemManifestHandle, ItemSpriteAssets, ItemSpawnTable,
+    ItemSpawnTableHandle, MonsterManifest, MonsterManifestHandle, MonsterSpawnTable,
+    MonsterSpawnTableHandle, MonsterSpriteAssets, TileManifest, TileManifestHandle, TileSpriteAssets,
 };
 use crate::components::{FloorEntityMarker, Monster, Name, Position, Item};
 use crate::game::{TurnManager, spawn_monster_by_name, spawn_item, turns::TurnMarker};
@@ -23,7 +23,7 @@ use crate::{
     AppState,
     map::{
         builders::level_builder,
-        map::{DungeonECSMap, MAP_SIZE},
+        map::{DungeonECSMap, MAP_SIZE, NeedsExploredInit},
         tile::{TileMarker, spawn_tile_entity},
     },
 };
@@ -49,6 +49,8 @@ pub struct EntityAssets<'w> {
     pub item_manifests: Res<'w, Assets<ItemManifest>>,
     pub item_manifest_handle: Res<'w, ItemManifestHandle>,
     pub item_sprite_assets: Res<'w, ItemSpriteAssets>,
+    pub item_spawn_tables: Res<'w, Assets<ItemSpawnTable>>,
+    pub item_spawn_table_handle: Res<'w, ItemSpawnTableHandle>,
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +100,18 @@ impl Default for Floor {
     }
 }
 
+/// Set by the menu when the player chooses "Continue". Consumed by spawn_dungeon.
+#[derive(Resource, Default)]
+pub struct PendingGameLoad(pub Option<Box<crate::save::GameSaveData>>);
+
+/// Set by spawn_dungeon during a load; consumed by apply_player_load_system.
+#[derive(Resource, Default)]
+pub struct PendingPlayerLoad(pub Option<crate::save::PlayerSaveData>);
+
+/// Set by spawn_dungeon after floor setup; triggers auto_save_system.
+#[derive(Resource, Default)]
+pub struct AutoSavePending(pub bool);
+
 #[derive(Resource)]
 pub struct PlayerSpawnPoint(pub Point);
 
@@ -111,6 +125,9 @@ impl Plugin for DungeonPlugin {
         app.init_resource::<Floor>()
             .init_resource::<FloorCache>()
             .init_resource::<PendingFloorRestore>()
+            .init_resource::<PendingGameLoad>()
+            .init_resource::<PendingPlayerLoad>()
+            .init_resource::<AutoSavePending>()
             .add_message::<SpawnDungeonMessage>()
             .add_message::<MapTransitionMessage>()
             .add_message::<AscendStairsMessage>()
@@ -381,6 +398,10 @@ pub fn spawn_dungeon(
     mut map: ResMut<Map>,
     mut turn_manager: ResMut<TurnManager>,
     mut pending_restore: ResMut<PendingFloorRestore>,
+    mut pending_game_load: ResMut<PendingGameLoad>,
+    mut pending_player_load: ResMut<PendingPlayerLoad>,
+    mut auto_save_pending: ResMut<AutoSavePending>,
+    mut needs_explored_init: ResMut<NeedsExploredInit>,
     assets: EntityAssets,
     tile_assets: TileAssets,
     mut log_writer: MessageWriter<GameLogMessage>,
@@ -389,7 +410,67 @@ pub fn spawn_dungeon(
 ) {
     let map_entity = commands.spawn((DungeonECSMap, RenderLayers::layer(1))).id();
 
-    let player_spawn: Point = if let Some(cached) = pending_restore.0.take() {
+    let player_spawn: Point = if let Some(save_data) = pending_game_load.0.take() {
+        // ---------------------------------------------------------------
+        // LOAD PATH: Restore full game state from disk
+        // ---------------------------------------------------------------
+        use crate::save::{SavedHp, save_data_to_map, SavedFloorCache};
+
+        // Restore map
+        *map = save_data_to_map(&save_data.map);
+        spawn_tiles_into_ecs(&mut commands, map_entity, &map, &tile_assets);
+
+        // Spawn monsters with saved HP override
+        for entry in &save_data.monsters {
+            let pt = Point::new(entry.x, entry.y);
+            if let Some(entity) = spawn_monster_by_name(
+                &mut commands,
+                &entry.name,
+                &pt,
+                &mut turn_manager,
+                &assets.monster_manifests,
+                &assets.monster_manifest_handle,
+                &assets.monster_sprite_assets,
+            ) {
+                commands.entity(entity).insert(SavedHp(entry.hp_current));
+            }
+        }
+
+        // Spawn floor items
+        for entry in &save_data.floor_items {
+            let pt = Point::new(entry.x, entry.y);
+            spawn_item(
+                &mut commands,
+                &entry.name,
+                &pt,
+                &assets.item_manifests,
+                &assets.item_manifest_handle,
+                &assets.item_sprite_assets,
+            );
+        }
+
+        // Spawn candles
+        for pos in &save_data.candles {
+            let pt = Point::new(pos[0], pos[1]);
+            spawn_candle(&mut commands, &assets.candle_spritesheet, &pt);
+        }
+
+        // Pass the floor cache save data to apply_player_load_system
+        let saved_floor_cache: std::collections::HashMap<u32, crate::save::CachedFloorSave> =
+            save_data.floor_cache.clone();
+        commands.insert_resource(SavedFloorCache(saved_floor_cache));
+
+        // Restore game log
+        // (done indirectly — apply_player_load_system handles player state,
+        //  GameLog is reset here from save)
+        // We pass the full save to PendingPlayerLoad so the game log is also restored
+        let player_spawn_pt = Point::new(save_data.player.x, save_data.player.y);
+
+        pending_player_load.0 = Some(save_data.player);
+        needs_explored_init.0 = true;
+
+        player_spawn_pt
+    } else if let Some(cached) = pending_restore.0.take() {
         // ---------------------------------------------------------------
         // Restore a previously visited floor
         // ---------------------------------------------------------------
@@ -424,6 +505,8 @@ pub fn spawn_dungeon(
             spawn_candle(&mut commands, &assets.candle_spritesheet, pt);
         }
 
+        needs_explored_init.0 = true;
+
         // Land the player on a walkable tile adjacent to the down stairs so
         // they don't immediately re-trigger the stair system.
         find_adjacent_floor(&map, cached.down_stairs_pos)
@@ -435,12 +518,16 @@ pub fn spawn_dungeon(
         let spawn_table = assets.monster_spawn_tables
             .get(&assets.monster_spawn_table_handle.0)
             .unwrap();
+        let item_spawn_table = assets.item_spawn_tables
+            .get(&assets.item_spawn_table_handle.0)
+            .unwrap();
 
         let mut builder = level_builder(
             floor.0 as i32,
             MAP_SIZE.x as i32,
             MAP_SIZE.y as i32,
             &spawn_table.spawns,
+            &item_spawn_table.spawns,
         );
         builder.build_map();
         *map = builder.build_data.map.clone();
@@ -493,4 +580,9 @@ pub fn spawn_dungeon(
     }
 
     log_writer.write(GameLogMessage(format!("Welcome to floor {}!", floor.0)));
+
+    // Trigger auto-save after the new floor is fully set up.
+    // (Skipped during load since apply_player_load_system hasn't run yet;
+    //  auto_save_system checks for the player entity so it will self-correct.)
+    auto_save_pending.0 = true;
 }

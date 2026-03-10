@@ -1,5 +1,6 @@
 use bevy::camera::visibility::RenderLayers;
 use bevy::ecs::component::Component;
+use serde::{Deserialize, Serialize};
 use bevy::prelude::{
     Commands, Entity, InheritedVisibility, Sprite, TextureAtlas, Transform, Vec3, ViewVisibility,
     Visibility,
@@ -13,7 +14,7 @@ use crate::map::map::GRID_SIZE;
 #[derive(Component)]
 pub struct TileMarker;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Component)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Component, Serialize, Deserialize)]
 pub enum TerrainType {
     #[default]
     Wall,
@@ -25,7 +26,7 @@ pub enum TerrainType {
     OpenDoor,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Component)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Component, Serialize, Deserialize)]
 pub enum LiquidType {
     #[default]
     None,
@@ -34,7 +35,7 @@ pub enum LiquidType {
     Lava,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Tile {
     pub terrain: TerrainType,
     pub liquid: LiquidType,

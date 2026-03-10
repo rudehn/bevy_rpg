@@ -10,6 +10,7 @@ use crate::{
         TurnManager,
         actions::SpeedStats,
         combat::{Damage, Health, HealthRegen},
+        items::Equipment,
         stats::{AttributeModifiers, Attributes, CombatStats, Level, Mana, RolledHp},
         level::{Experience, AvailableStatPoints},
     },
@@ -81,6 +82,7 @@ pub fn player_spawn_or_move_system(
                 new_grid_pos,
                 Viewshed::new(8), // Initial range; recalculated by stat_recalculation_system via PER
                 Inventory { items: Vec::new(), capacity: 20 },
+                Equipment::default(),
             ))
             .insert((
                 Health {

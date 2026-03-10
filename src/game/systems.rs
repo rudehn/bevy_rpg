@@ -1,20 +1,20 @@
 use bevy::ecs::change_detection::DetectChanges;
 use bevy::ecs::world::Ref;
-use bevy::prelude::{Or, Visibility};
+use bevy::prelude::{Or, Sprite, Visibility};
 use bevy::{
     ecs::{
-        query::{Changed, With},
+        query::{Changed, With, Without},
         system::{Query, Res},
     },
     transform::components::Transform,
 };
-use bracket_lib::prelude::{Point, field_of_view};
+use bracket_lib::prelude::{Algorithm2D, Point, field_of_view};
 
 use crate::map::map::GRID_SIZE;
 use crate::{
-    components::{Monster, Position, Viewshed},
+    components::{InInventory, Item, Monster, Position, Viewshed},
     map::Map,
-    player::Player, // Corrected import
+    player::Player,
 };
 
 pub fn fov_update_system(mut query: Query<(&mut Viewshed, Ref<Position>)>, map: Res<Map>) {
@@ -48,6 +48,38 @@ pub fn update_monster_visibility(
             *monster_vis = Visibility::Visible;
         } else {
             *monster_vis = Visibility::Hidden;
+        }
+    }
+}
+
+/// Updates floor item visibility to match the player's explored/visible state.
+/// - Unexplored tile: Hidden
+/// - Explored, not visible: Visible but dimmed (item "memory")
+/// - Currently visible: Full brightness
+pub fn update_item_visibility(
+    player_query: Query<&Viewshed, With<Player>>,
+    map: Res<Map>,
+    mut item_query: Query<(&Position, &mut Visibility, &mut Sprite), (With<Item>, Without<InInventory>)>,
+) {
+    let Ok(viewshed) = player_query.single() else {
+        return;
+    };
+
+    for (pos, mut vis, mut sprite) in item_query.iter_mut() {
+        if !map.in_bounds(Point::new(pos.x, pos.y)) {
+            continue;
+        }
+        let idx = map.xy_idx(pos.x, pos.y);
+        let pt = Point::new(pos.x, pos.y);
+
+        if viewshed.visible_tiles.contains(&pt) {
+            *vis = Visibility::Visible;
+            sprite.color = bevy::prelude::Color::WHITE;
+        } else if map.explored_tiles[idx] {
+            *vis = Visibility::Visible;
+            sprite.color = bevy::prelude::Color::srgb(0.5, 0.5, 0.5);
+        } else {
+            *vis = Visibility::Hidden;
         }
     }
 }

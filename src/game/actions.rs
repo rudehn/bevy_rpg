@@ -17,6 +17,9 @@ pub enum Action {
     Move { dir: Direction },
     MeleeAttack { target: Entity },
     PickUp,
+    EquipItem   { item: Entity },
+    UnequipItem { item: Entity },
+    DropItem    { item: Entity },
 }
 
 // --- Events ---
@@ -179,16 +182,8 @@ pub fn handle_movement(
             continue;
         }
 
-        // 3. Wall/Obstacle Check
-        if !is_walkable(target_tile) {
-            finish_writer.write(ActionFinishedEvent {
-                entity: intent.entity,
-                base_cost: BASE_ACTION_COST,
-            });
-            continue;
-        }
-
-        // 4. Occupant Check (Bump-to-Attack / Block)
+        // 3. Occupant Check (Bump-to-Attack / Block) — must happen before wall check
+        //    so that monsters standing on non-walkable tiles can still be attacked.
         let mut bump_target = None;
         for (e, other_pos, other_is_player, other_is_monster, other_has_collider) in
             actors_query.iter()
@@ -229,6 +224,15 @@ pub fn handle_movement(
                 continue;
             }
             // If neither hostile nor blocking collider, fall through to movement
+        }
+
+        // 4. Wall/Obstacle Check
+        if !is_walkable(target_tile) {
+            finish_writer.write(ActionFinishedEvent {
+                entity: intent.entity,
+                base_cost: BASE_ACTION_COST,
+            });
+            continue;
         }
 
         // 5. Apply Movement

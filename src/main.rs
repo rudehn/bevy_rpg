@@ -3,7 +3,8 @@ use bevy::prelude::*;
 use crate::assets::LoadingPlugin;
 use crate::game::{AppState, GamePlugin};
 use crate::menu::MenuPlugin;
-use crate::ui::UiPlugin; // Added UiPlugin import
+use crate::save::SavePlugin;
+use crate::ui::UiPlugin;
 
 mod assets;
 mod components;
@@ -12,7 +13,8 @@ mod game;
 mod map;
 mod menu;
 mod player;
-mod ui; // Added ui module declaration
+mod save;
+mod ui;
 
 fn main() {
     App::new()
@@ -23,7 +25,7 @@ fn main() {
                     watch_for_changes_override: Some(true),
                     ..default()
                 }),
-            (LoadingPlugin, GamePlugin, MenuPlugin, UiPlugin),
+            (LoadingPlugin, SavePlugin, GamePlugin, MenuPlugin, UiPlugin),
         ))
         .init_state::<AppState>()
         .run();

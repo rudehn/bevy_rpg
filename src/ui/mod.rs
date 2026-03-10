@@ -143,6 +143,28 @@ fn spawn_player_stats_ui(
                         PlayerHealthBar,
                     ));
                 });
+
+            // Push hotkeys to the bottom
+            parent.spawn(Node { flex_grow: 1.0, ..default() });
+
+            parent.spawn((
+                Text::new("[C] Character"),
+                TextFont {
+                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                    font_size: 14.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.55, 0.55, 0.55)),
+            ));
+            parent.spawn((
+                Text::new("[I] Inventory"),
+                TextFont {
+                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                    font_size: 14.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.55, 0.55, 0.55)),
+            ));
         });
 }
 

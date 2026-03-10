@@ -9,6 +9,11 @@ use crate::game::actions::{
     handle_pickup, handle_wait,
 };
 use crate::game::ai::MonsterAI;
+use crate::game::items::{
+    DropItemMessage, EquipItemMessage, UnequipItemMessage,
+    handle_drop_item, handle_equip_item, handle_unequip_item,
+};
+use crate::game::InGameState;
 use crate::player::{MovementTimer, Player};
 
 #[derive(Component)]
@@ -63,10 +68,12 @@ impl Plugin for TurnOrderPlugin {
                 Update,
                 (
                     select_next_actor.run_if(in_state(TurnState::NextTurn)),
-                    handle_player_input.run_if(in_state(TurnState::PlayerInput)),
+                    // Only accept movement input when no UI screen is open.
+                    handle_player_input.run_if(
+                        in_state(TurnState::PlayerInput).and(in_state(InGameState::Running))
+                    ),
                     (
                         // --- Brain Systems ---
-                        // These respond to the "MyTurn" component and emit Intents
                         player_ai_bridge,
                         monster_ai_dispatch,
                         marker_dispatch,
@@ -76,6 +83,9 @@ impl Plugin for TurnOrderPlugin {
                         handle_door_open,
                         handle_pickup,
                         handle_wait,
+                        handle_equip_item,
+                        handle_unequip_item,
+                        handle_drop_item,
                         // --- Cleanup ---
                         resolve_turn_end,
                         continue_turn_processing,
@@ -194,6 +204,9 @@ fn player_ai_bridge(
     mut melee_events: MessageWriter<MeleeIntent>,
     mut wait_events: MessageWriter<WaitIntent>,
     mut pickup_events: MessageWriter<PickUpIntent>,
+    mut equip_events: MessageWriter<EquipItemMessage>,
+    mut unequip_events: MessageWriter<UnequipItemMessage>,
+    mut drop_events: MessageWriter<DropItemMessage>,
     query: Query<Entity, (With<Player>, With<MyTurn>)>,
 ) {
     let Ok(player_entity) = query.single() else {
@@ -228,6 +241,15 @@ fn player_ai_bridge(
                 pickup_events.write(PickUpIntent {
                     entity: player_entity,
                 });
+            }
+            Action::EquipItem { item } => {
+                equip_events.write(EquipItemMessage { item_entity: item });
+            }
+            Action::UnequipItem { item } => {
+                unequip_events.write(UnequipItemMessage { item_entity: item });
+            }
+            Action::DropItem { item } => {
+                drop_events.write(DropItemMessage { item_entity: item });
             }
         }
     } else {

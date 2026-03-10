@@ -81,3 +81,8 @@ pub struct Inventory {
 /// Items with this component are invisible and excluded from floor-level queries.
 #[derive(Component, Debug, Default)]
 pub struct InInventory;
+
+/// Marker component for items that are currently equipped by the player.
+/// Equipped items remain in Inventory.items and the UI shows them with [E].
+#[derive(Component, Debug, Default)]
+pub struct Equipped;

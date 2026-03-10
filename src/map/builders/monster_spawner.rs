@@ -1,6 +1,6 @@
 use crate::{
     assets::MonsterSpawnInfo,
-    map::builders::{BuilderMap, MetaMapBuilder},
+    map::{builders::{BuilderMap, MetaMapBuilder}, map::Map, tile::is_walkable},
 };
 use bevy::prelude::*;
 use bracket_lib::prelude::{Point, RandomNumberGenerator, Rect};
@@ -38,31 +38,44 @@ impl MonsterSpawner {
         }
 
         if let Some(rooms) = &build_data.rooms {
+            let map = &build_data.map;
             for room in rooms.iter() {
                 if rng.roll_dice(1, 2) == 1 {
                     let spawn_index = rng.range(0, possible_spawns.len());
                     let monster_to_spawn = &possible_spawns[spawn_index];
 
-                    let (x, y) = self.get_random_room_point(room, &mut rng);
-                    build_data
-                        .spawn_list
-                        .push((Point::new(x, y), monster_to_spawn.monster.clone()));
+                    if let Some(pt) = self.get_walkable_room_point(room, map, &mut rng) {
+                        build_data
+                            .spawn_list
+                            .push((pt, monster_to_spawn.monster.clone()));
+                    }
                 }
             }
         }
     }
 
-    fn get_random_room_point(&self, room: &Rect, rng: &mut RandomNumberGenerator) -> (i32, i32) {
-        let x = if room.width() > 2 {
-            rng.roll_dice(1, room.width() - 2) + room.x1 + 1
-        } else {
-            room.x1 + 1
-        };
-        let y = if room.height() > 2 {
-            rng.roll_dice(1, room.height() - 2) + room.y1 + 1
-        } else {
-            room.y1 + 1
-        };
-        (x, y)
+    fn get_walkable_room_point(
+        &self,
+        room: &Rect,
+        map: &Map,
+        rng: &mut RandomNumberGenerator,
+    ) -> Option<Point> {
+        for _ in 0..20 {
+            let x = if room.width() > 2 {
+                rng.roll_dice(1, room.width() - 2) + room.x1 + 1
+            } else {
+                room.x1 + 1
+            };
+            let y = if room.height() > 2 {
+                rng.roll_dice(1, room.height() - 2) + room.y1 + 1
+            } else {
+                room.y1 + 1
+            };
+            let idx = map.xy_idx(x, y);
+            if is_walkable(map.tiles[idx]) {
+                return Some(Point::new(x, y));
+            }
+        }
+        None
     }
 }

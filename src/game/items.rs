@@ -1,14 +1,17 @@
 use bevy::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use crate::components::{FloorEntityMarker, InInventory, Inventory, Item, Name, Position};
+use crate::components::{Equipped, FloorEntityMarker, InInventory, Inventory, Name, Position};
+use crate::constants::BASE_ACTION_COST;
+use crate::game::actions::ActionFinishedEvent;
 use crate::game::AppState;
+use crate::game::stats::{AttributeModifiers, CombatStats};
 use crate::player::Player;
 use crate::ui::game_log::GameLogMessage;
 
 // --- Enums ---
 
-#[derive(Component, Debug, Clone, PartialEq, Eq, Reflect, Default, Deserialize)]
+#[derive(Component, Debug, Clone, PartialEq, Eq, Reflect, Default, Serialize, Deserialize)]
 pub enum ItemKind {
     #[default]
     Consumable,
@@ -33,7 +36,7 @@ impl std::fmt::Display for ItemKind {
     }
 }
 
-#[derive(Component, Debug, Clone, PartialEq, Eq, Reflect, Default, Deserialize)]
+#[derive(Component, Debug, Clone, PartialEq, Eq, Reflect, Default, Serialize, Deserialize)]
 pub enum ArmorSlot {
     #[default]
     Chest,
@@ -56,7 +59,7 @@ impl std::fmt::Display for ArmorSlot {
     }
 }
 
-#[derive(Component, Debug, Clone, PartialEq, Eq, Reflect, Default, Deserialize)]
+#[derive(Component, Debug, Clone, PartialEq, Eq, Reflect, Default, Serialize, Deserialize)]
 pub enum Rarity {
     #[default]
     Common,
@@ -92,7 +95,7 @@ impl std::fmt::Display for Rarity {
 
 /// All stat and mechanical properties of an item.
 /// Equipment effects are applied via AttributeModifiers when equipped (M3).
-#[derive(Component, Debug, Clone, Reflect, Default)]
+#[derive(Component, Debug, Clone, Reflect, Default, Serialize, Deserialize)]
 #[reflect(Component)]
 pub struct ItemProperties {
     pub kind: ItemKind,
@@ -124,6 +127,88 @@ impl ItemProperties {
     }
 }
 
+// --- Equipment Component ---
+
+/// Tracks which item entity occupies each equipment slot on an actor.
+/// Equipped items remain in Inventory.items; the Equipped marker is added to the item entity.
+#[derive(Component, Debug, Clone, Reflect, Default)]
+#[reflect(Component)]
+pub struct Equipment {
+    pub weapon:  Option<Entity>,
+    pub offhand: Option<Entity>,
+    pub helm:    Option<Entity>,
+    pub chest:   Option<Entity>,
+    pub gloves:  Option<Entity>,
+    pub boots:   Option<Entity>,
+    pub ring_l:  Option<Entity>,
+    pub ring_r:  Option<Entity>,
+    pub amulet:  Option<Entity>,
+}
+
+impl Equipment {
+    /// Determine the primary slot name for an item's properties. Returns `None` for
+    /// non-equippable items (Consumable, Spellbook) or Armor missing an armor_slot.
+    pub fn slot_for(props: &ItemProperties) -> Option<&'static str> {
+        match &props.kind {
+            ItemKind::Weapon    => Some("weapon"),
+            ItemKind::Amulet    => Some("amulet"),
+            ItemKind::Ring      => Some("ring_l"), // caller handles ring_l/ring_r logic
+            ItemKind::Armor     => props.armor_slot.as_ref().map(|s| match s {
+                ArmorSlot::Chest   => "chest",
+                ArmorSlot::Helm    => "helm",
+                ArmorSlot::Gloves  => "gloves",
+                ArmorSlot::Boots   => "boots",
+                ArmorSlot::OffHand => "offhand",
+            }),
+            _ => None,
+        }
+    }
+
+    pub fn get_entity(&self, slot: &str) -> Option<Entity> {
+        match slot {
+            "weapon"  => self.weapon,
+            "offhand" => self.offhand,
+            "helm"    => self.helm,
+            "chest"   => self.chest,
+            "gloves"  => self.gloves,
+            "boots"   => self.boots,
+            "ring_l"  => self.ring_l,
+            "ring_r"  => self.ring_r,
+            "amulet"  => self.amulet,
+            _         => None,
+        }
+    }
+
+    pub fn set_slot(&mut self, slot: &str, entity: Option<Entity>) {
+        match slot {
+            "weapon"  => self.weapon  = entity,
+            "offhand" => self.offhand = entity,
+            "helm"    => self.helm    = entity,
+            "chest"   => self.chest   = entity,
+            "gloves"  => self.gloves  = entity,
+            "boots"   => self.boots   = entity,
+            "ring_l"  => self.ring_l  = entity,
+            "ring_r"  => self.ring_r  = entity,
+            "amulet"  => self.amulet  = entity,
+            _         => {}
+        }
+    }
+
+    /// Returns the slot name currently holding `entity`, if any.
+    pub fn find_slot(&self, entity: Entity) -> Option<&'static str> {
+        if self.weapon  == Some(entity) { return Some("weapon");  }
+        if self.offhand == Some(entity) { return Some("offhand"); }
+        if self.helm    == Some(entity) { return Some("helm");    }
+        if self.chest   == Some(entity) { return Some("chest");   }
+        if self.gloves  == Some(entity) { return Some("gloves");  }
+        if self.boots   == Some(entity) { return Some("boots");   }
+        if self.ring_l  == Some(entity) { return Some("ring_l");  }
+        if self.ring_r  == Some(entity) { return Some("ring_r");  }
+        if self.amulet  == Some(entity) { return Some("amulet");  }
+        None
+    }
+}
+
 // --- Resources ---
 
 /// The currently selected slot index in the inventory UI (0-based).
@@ -138,29 +223,198 @@ pub struct DropItemMessage {
     pub item_entity: Entity,
 }
 
+/// Sent when the player wants to equip an item from inventory.
+#[derive(Message, Debug)]
+pub struct EquipItemMessage {
+    pub item_entity: Entity,
+}
+
+/// Sent when the player wants to unequip an item (returns it to inventory).
+#[derive(Message, Debug)]
+pub struct UnequipItemMessage {
+    pub item_entity: Entity,
+}
+
 // --- Systems ---
 
-/// Removes an item from the player's inventory and places it at the player's position.
-pub fn handle_drop_item(
-    mut commands: Commands,
-    mut messages: MessageReader<DropItemMessage>,
-    mut inv_query: Query<(&mut Inventory, &Position), With<Player>>,
-    item_query: Query<&Name, With<Item>>,
-    mut log_writer: MessageWriter<GameLogMessage>,
+/// Helper: reverses the stat/armor/damage effects of an equipped item.
+fn unapply_item_effects(
+    props: &ItemProperties,
+    attr_mods: &mut AttributeModifiers,
+    combat_stats: &mut CombatStats,
+    damage: &mut crate::game::combat::Damage,
 ) {
-    let Ok((mut inv, player_pos)) = inv_query.single_mut() else {
+    attr_mods.strength     -= props.str_bonus;
+    attr_mods.dexterity    -= props.dex_bonus;
+    attr_mods.constitution -= props.con_bonus;
+    attr_mods.agility      -= props.agi_bonus;
+    attr_mods.intelligence -= props.int_bonus;
+    attr_mods.perception   -= props.per_bonus;
+    combat_stats.armor     -= props.defense;
+    if props.kind == ItemKind::Weapon {
+        damage.0 = "1d4".to_string(); // Reset to unarmed
+    }
+}
+
+/// Helper: applies the stat/armor/damage effects of an equipped item.
+fn apply_item_effects(
+    props: &ItemProperties,
+    attr_mods: &mut AttributeModifiers,
+    combat_stats: &mut CombatStats,
+    damage: &mut crate::game::combat::Damage,
+) {
+    attr_mods.strength     += props.str_bonus;
+    attr_mods.dexterity    += props.dex_bonus;
+    attr_mods.constitution += props.con_bonus;
+    attr_mods.agility      += props.agi_bonus;
+    attr_mods.intelligence += props.int_bonus;
+    attr_mods.perception   += props.per_bonus;
+    combat_stats.armor     += props.defense;
+    if props.kind == ItemKind::Weapon {
+        if let Some(dmg) = &props.damage {
+            damage.0 = dmg.clone();
+        }
+    }
+}
+
+/// Equips an item from the player's inventory into the appropriate slot.
+/// If the slot is already occupied the old item is unequipped first (stays in inventory).
+pub fn handle_equip_item(
+    mut commands: Commands,
+    mut messages: MessageReader<EquipItemMessage>,
+    mut player_query: Query<
+        (Entity, &mut Equipment, &Inventory, &mut AttributeModifiers, &mut CombatStats, &mut crate::game::combat::Damage),
+        With<Player>,
+    >,
+    item_query: Query<(&ItemProperties, &Name)>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+    mut finish_writer: MessageWriter<ActionFinishedEvent>,
+) {
+    let Ok((player_entity, mut equipment, inventory, mut attr_mods, mut combat_stats, mut damage)) =
+        player_query.single_mut()
+    else {
         return;
     };
 
     for msg in messages.read() {
-        let Some(slot) = inv.items.iter().position(|&e| e == msg.item_entity) else {
+        // Item must be in inventory
+        if !inventory.items.contains(&msg.item_entity) {
+            continue;
+        }
+        let Ok((props, name)) = item_query.get(msg.item_entity) else {
             continue;
         };
-        inv.items.remove(slot);
+
+        // Determine target slot (rings fill ring_l first, then ring_r)
+        let slot = match Equipment::slot_for(props) {
+            Some("ring_l") => {
+                if equipment.ring_l.is_none() || equipment.ring_l == Some(msg.item_entity) {
+                    "ring_l"
+                } else if equipment.ring_r.is_none() {
+                    "ring_r"
+                } else {
+                    "ring_l" // Replace left ring
+                }
+            }
+            Some(s) => s,
+            None => continue, // Not equippable
+        };
+
+        // Already in this slot — skip
+        if equipment.get_entity(slot) == Some(msg.item_entity) {
+            continue;
+        }
+
+        // Unequip whatever is currently in that slot
+        if let Some(old_entity) = equipment.get_entity(slot) {
+            if let Ok((old_props, _)) = item_query.get(old_entity) {
+                unapply_item_effects(old_props, &mut attr_mods, &mut combat_stats, &mut damage);
+            }
+            commands.entity(old_entity).remove::<Equipped>();
+        }
+
+        // Equip the new item
+        equipment.set_slot(slot, Some(msg.item_entity));
+        commands.entity(msg.item_entity).insert(Equipped);
+        apply_item_effects(props, &mut attr_mods, &mut combat_stats, &mut damage);
+
+        log_writer.write(GameLogMessage(format!("You equip the {}.", name.0)));
+        finish_writer.write(ActionFinishedEvent { entity: player_entity, base_cost: BASE_ACTION_COST });
+    }
+}
+
+/// Unequips an item, keeping it in inventory.
+pub fn handle_unequip_item(
+    mut commands: Commands,
+    mut messages: MessageReader<UnequipItemMessage>,
+    mut player_query: Query<
+        (Entity, &mut Equipment, &mut AttributeModifiers, &mut CombatStats, &mut crate::game::combat::Damage),
+        With<Player>,
+    >,
+    item_query: Query<(&ItemProperties, &Name)>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+    mut finish_writer: MessageWriter<ActionFinishedEvent>,
+) {
+    let Ok((player_entity, mut equipment, mut attr_mods, mut combat_stats, mut damage)) =
+        player_query.single_mut()
+    else {
+        return;
+    };
+
+    for msg in messages.read() {
+        let Some(slot) = equipment.find_slot(msg.item_entity) else {
+            continue;
+        };
+        let Ok((props, name)) = item_query.get(msg.item_entity) else {
+            continue;
+        };
+
+        equipment.set_slot(slot, None);
+        commands.entity(msg.item_entity).remove::<Equipped>();
+        unapply_item_effects(props, &mut attr_mods, &mut combat_stats, &mut damage);
+
+        log_writer.write(GameLogMessage(format!("You unequip the {}.", name.0)));
+        finish_writer.write(ActionFinishedEvent { entity: player_entity, base_cost: BASE_ACTION_COST });
+    }
+}
+
+/// Removes an item from inventory and places it at the player's feet.
+/// Auto-unequips if the item is currently equipped.
+pub fn handle_drop_item(
+    mut commands: Commands,
+    mut messages: MessageReader<DropItemMessage>,
+    mut player_query: Query<
+        (Entity, &mut Equipment, &mut Inventory, &Position, &mut AttributeModifiers, &mut CombatStats, &mut crate::game::combat::Damage),
+        With<Player>,
+    >,
+    item_query: Query<(&Name, &ItemProperties)>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+    mut finish_writer: MessageWriter<ActionFinishedEvent>,
+) {
+    let Ok((player_entity, mut equipment, mut inv, player_pos, mut attr_mods, mut combat_stats, mut damage)) =
+        player_query.single_mut()
+    else {
+        return;
+    };
+
+    for msg in messages.read() {
+        // Auto-unequip if equipped
+        if let Some(slot) = equipment.find_slot(msg.item_entity) {
+            equipment.set_slot(slot, None);
+            commands.entity(msg.item_entity).remove::<Equipped>();
+            if let Ok((_, props)) = item_query.get(msg.item_entity) {
+                unapply_item_effects(props, &mut attr_mods, &mut combat_stats, &mut damage);
+            }
+        }
+
+        let Some(idx) = inv.items.iter().position(|&e| e == msg.item_entity) else {
+            continue;
+        };
+        inv.items.remove(idx);
 
         let item_name = item_query
             .get(msg.item_entity)
-            .map(|n| n.0.as_str())
+            .map(|(n, _)| n.0.as_str())
             .unwrap_or("item");
         log_writer.write(GameLogMessage(format!("You drop the {}.", item_name)));
 
@@ -170,6 +424,8 @@ pub fn handle_drop_item(
             .insert(Visibility::Inherited)
             .insert(FloorEntityMarker)
             .remove::<InInventory>();
+
+        finish_writer.write(ActionFinishedEvent { entity: player_entity, base_cost: BASE_ACTION_COST });
     }
 }
 
@@ -183,11 +439,12 @@ impl Plugin for ItemsPlugin {
             .register_type::<ArmorSlot>()
             .register_type::<Rarity>()
             .register_type::<ItemProperties>()
+            .register_type::<Equipment>()
             .init_resource::<SelectedInventorySlot>()
+            // Messages are registered here; the handler systems live in TurnOrderPlugin's
+            // Processing chain so they emit ActionFinishedEvent and cost a turn.
             .add_message::<DropItemMessage>()
-            .add_systems(
-                Update,
-                handle_drop_item.run_if(in_state(AppState::InGame)),
-            );
+            .add_message::<EquipItemMessage>()
+            .add_message::<UnequipItemMessage>();
     }
 }

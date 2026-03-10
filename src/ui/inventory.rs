@@ -1,7 +1,9 @@
 use bevy::prelude::*;
 
-use crate::components::{Inventory, Name};
-use crate::game::items::{DropItemMessage, ItemProperties, SelectedInventorySlot};
+use crate::components::{Equipped, Inventory, Name};
+use crate::game::actions::Action;
+use crate::game::items::{Equipment, ItemKind, ItemProperties, SelectedInventorySlot};
+use crate::game::turns::{TurnManager, TurnState};
 use crate::game::{AppState, InGameState};
 use crate::player::Player;
 
@@ -11,7 +13,12 @@ impl Plugin for InventoryPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            inventory_input_system.run_if(in_state(AppState::InGame)),
+            // Only toggle inventory when it's the player's turn and the game is running.
+            // This prevents opening the bag mid-NPC-turn and avoids double-input on close.
+            inventory_input_system.run_if(
+                in_state(AppState::InGame)
+                    .and(in_state(TurnState::PlayerInput).or(in_state(InGameState::Inventory))),
+            ),
         )
         .add_systems(
             OnEnter(InGameState::Inventory),
@@ -21,10 +28,7 @@ impl Plugin for InventoryPlugin {
             Update,
             update_inventory_ui.run_if(in_state(InGameState::Inventory)),
         )
-        .add_systems(
-            OnExit(InGameState::Inventory),
-            despawn_inventory_ui,
-        );
+        .add_systems(OnExit(InGameState::Inventory), despawn_inventory_ui);
     }
 }
 
@@ -80,7 +84,6 @@ fn spawn_inventory_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
             OnInventoryScreen,
         ))
         .with_children(|root| {
-            // Main panel
             root.spawn((
                 Node {
                     width: Val::Px(700.0),
@@ -94,7 +97,6 @@ fn spawn_inventory_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                 BorderColor::all(Color::WHITE),
             ))
             .with_children(|panel| {
-                // Header
                 panel.spawn((
                     Text::new("INVENTORY"),
                     TextFont { font: font.clone(), font_size: 28.0, ..default() },
@@ -103,7 +105,6 @@ fn spawn_inventory_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
 
                 panel.spawn(Node { height: Val::Px(10.0), ..default() });
 
-                // Two-column layout: item list + detail panel
                 panel
                     .spawn(Node {
                         flex_direction: FlexDirection::Row,
@@ -112,7 +113,6 @@ fn spawn_inventory_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                         ..default()
                     })
                     .with_children(|cols| {
-                        // Left: item list (20 slots)
                         cols.spawn(Node {
                             flex_direction: FlexDirection::Column,
                             width: Val::Px(320.0),
@@ -129,7 +129,6 @@ fn spawn_inventory_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                             }
                         });
 
-                        // Right: item detail panel
                         cols.spawn(Node {
                             flex_direction: FlexDirection::Column,
                             flex_grow: 1.0,
@@ -149,9 +148,8 @@ fn spawn_inventory_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
 
                 panel.spawn(Node { height: Val::Px(10.0), ..default() });
 
-                // Footer hints
                 panel.spawn((
-                    Text::new("↑/↓ Navigate  |  D - Drop  |  I/Esc - Close"),
+                    Text::new("↑/↓ Navigate  |  E - Equip/Unequip  |  D - Drop  |  I/Esc - Close"),
                     TextFont { font: font.clone(), font_size: 14.0, ..default() },
                     TextColor(Color::srgb(0.5, 0.5, 0.5)),
                 ));
@@ -159,22 +157,28 @@ fn spawn_inventory_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
         });
 }
 
+/// Handles inventory navigation and item actions.
+/// E and D both cost a turn: they set player_action_pending and transition to Processing.
 fn update_inventory_ui(
     keys: Res<ButtonInput<KeyCode>>,
     mut slot: ResMut<SelectedInventorySlot>,
-    mut drop_writer: MessageWriter<DropItemMessage>,
-    mut next_state: ResMut<NextState<InGameState>>,
-    inv_query: Query<&Inventory, With<Player>>,
-    item_query: Query<(&Name, &ItemProperties)>,
+    mut turn_manager: ResMut<TurnManager>,
+    mut next_ingame: ResMut<NextState<InGameState>>,
+    mut next_turn: ResMut<NextState<TurnState>>,
+    inv_query: Query<(&Inventory, &Equipment), With<Player>>,
+    item_query: Query<(&Name, &ItemProperties, Has<Equipped>)>,
     mut slot_texts: Query<(&mut Text, &mut TextColor, &InventorySlotText)>,
-    mut detail_text: Query<(&mut Text, &mut TextColor), (With<InventoryDetailText>, Without<InventorySlotText>)>,
+    mut detail_text: Query<
+        (&mut Text, &mut TextColor),
+        (With<InventoryDetailText>, Without<InventorySlotText>),
+    >,
 ) {
-    let Ok(inv) = inv_query.single() else {
+    let Ok((inv, _equipment)) = inv_query.single() else {
         return;
     };
     let item_count = inv.items.len();
 
-    // Navigation
+    // Navigation (no turn cost, stays in inventory)
     if keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyK) {
         if item_count > 0 && slot.0 > 0 {
             slot.0 -= 1;
@@ -186,14 +190,34 @@ fn update_inventory_ui(
         }
     }
 
-    // Drop
+    // Equip / Unequip — costs a turn
+    if keys.just_pressed(KeyCode::KeyE) {
+        if let Some(&item_entity) = inv.items.get(slot.0) {
+            if let Ok((_, props, is_equipped)) = item_query.get(item_entity) {
+                if Equipment::slot_for(props).is_some() {
+                    let action = if is_equipped {
+                        Action::UnequipItem { item: item_entity }
+                    } else {
+                        Action::EquipItem { item: item_entity }
+                    };
+                    turn_manager.player_action_pending = Some(action);
+                    next_ingame.set(InGameState::Running);
+                    next_turn.set(TurnState::Processing);
+                    return;
+                }
+            }
+        }
+    }
+
+    // Drop — costs a turn
     if keys.just_pressed(KeyCode::KeyD) {
         if let Some(&item_entity) = inv.items.get(slot.0) {
-            drop_writer.write(DropItemMessage { item_entity });
             if slot.0 > 0 && slot.0 >= item_count.saturating_sub(1) {
                 slot.0 -= 1;
             }
-            next_state.set(InGameState::Running);
+            turn_manager.player_action_pending = Some(Action::DropItem { item: item_entity });
+            next_ingame.set(InGameState::Running);
+            next_turn.set(TurnState::Processing);
             return;
         }
     }
@@ -202,8 +226,9 @@ fn update_inventory_ui(
     for (mut text, mut color, slot_marker) in &mut slot_texts {
         let i = slot_marker.0;
         if let Some(&item_entity) = inv.items.get(i) {
-            if let Ok((name, props)) = item_query.get(item_entity) {
-                text.0 = format!("{:2}. {}", i + 1, name.0);
+            if let Ok((name, props, is_equipped)) = item_query.get(item_entity) {
+                let equipped_tag = if is_equipped { " [E]" } else { "" };
+                text.0 = format!("{:2}. {}{}", i + 1, name.0, equipped_tag);
                 color.0 = props.rarity.color();
             }
         } else {
@@ -211,35 +236,33 @@ fn update_inventory_ui(
             color.0 = Color::srgb(0.3, 0.3, 0.3);
         }
 
-        // Highlight selected slot
         if i == slot.0 && i < item_count {
-            // Prefix with arrow
             let existing = text.0.clone();
             if !existing.starts_with('>') {
                 text.0 = format!("> {}", existing.trim_start_matches("> "));
             }
-        } else {
-            // Remove arrow if present
-            if text.0.starts_with("> ") {
-                text.0 = text.0[2..].to_string();
-            }
+        } else if text.0.starts_with("> ") {
+            text.0 = text.0[2..].to_string();
         }
     }
 
-    // Update detail panel for selected item
+    // Update detail panel
     if let Ok((mut text, mut color)) = detail_text.single_mut() {
         if let Some(&item_entity) = inv.items.get(slot.0) {
-            if let Ok((name, props)) = item_query.get(item_entity) {
+            if let Ok((name, props, is_equipped)) = item_query.get(item_entity) {
                 let kind_str = match &props.armor_slot {
-                    Some(slot) => format!("{} ({})", props.kind, slot),
+                    Some(s) => format!("{} ({})", props.kind, s),
                     None => props.kind.to_string(),
                 };
 
                 let mut lines = vec![
-                    format!("{}", name.0),
+                    name.0.clone(),
                     format!("{} — {}", kind_str, props.rarity),
                 ];
 
+                if is_equipped {
+                    lines.push("[ EQUIPPED ]".to_string());
+                }
                 if let Some(dmg) = &props.damage {
                     lines.push(format!("Damage: {}", dmg));
                 }
@@ -252,6 +275,11 @@ fn update_inventory_ui(
                 }
 
                 lines.push(String::new());
+                let is_equippable = Equipment::slot_for(props).is_some()
+                    || props.kind == ItemKind::Ring;
+                if is_equippable {
+                    lines.push(if is_equipped { "[E] Unequip" } else { "[E] Equip" }.to_string());
+                }
                 lines.push("[D] Drop item".to_string());
 
                 text.0 = lines.join("\n");
