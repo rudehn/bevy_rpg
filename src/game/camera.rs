@@ -1,6 +1,5 @@
 use bevy::camera::visibility::RenderLayers;
 use bevy::{camera::Viewport, prelude::*};
-use bevy_light_2d::light::{AmbientLight2d, Light2d};
 
 use crate::{components::Position, game::AppState, player::Player};
 
@@ -45,12 +44,6 @@ pub fn setup_camera(mut commands: Commands, windows: Query<&Window>) {
                 ..default()
             },
             Projection::Orthographic(projection),
-            Light2d {
-                ambient_light: AmbientLight2d {
-                    brightness: 0.3,
-                    ..default()
-                },
-            },
             MainCamera,
             RenderLayers::layer(1),
         ));
@@ -82,12 +75,6 @@ pub fn setup_camera(mut commands: Commands, windows: Query<&Window>) {
             ..default()
         },
         Projection::Orthographic(projection),
-        Light2d {
-            ambient_light: AmbientLight2d {
-                brightness: 0.3,
-                ..default()
-            },
-        },
         MainCamera,
         RenderLayers::layer(1),
     ));

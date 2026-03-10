@@ -1,38 +1,119 @@
-use bevy::{color::palettes::css::YELLOW, prelude::*};
 use bevy::camera::visibility::RenderLayers;
-use bevy_light_2d::prelude::*;
-use bracket_lib::prelude::Point;
+use bevy::prelude::*;
+use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::{
     assets::CandleSpritesheet,
-    components::{GameEntityMarker, Position, Viewshed, FloorEntityMarker},
+    components::{FloorEntityMarker, GameEntityMarker, Position, Viewshed},
     constants::Z_ITEM,
     game::AppState,
-    map::map::GRID_SIZE,
+    map::{Map, map::GRID_SIZE, tile::is_opaque},
     player::Player,
 };
 
-pub struct LightPlugin;
+// --- Resource ---
 
-impl Plugin for LightPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_plugins(Light2dPlugin)
-            // .add_systems(Update, update_light_intensity);
-            // .add_systems(Startup, , spawn_candles).chain()) // Removed spawn_candles
-            .add_systems(
-                Update,
-                (update_candle_visibility, animate_candles)
-                    .chain()
-                    .run_if(in_state(AppState::InGame)),
-            );
-    }
+/// Per-tile light intensity, parallel to `Map.tiles`.
+/// Values are in [0.0, 1.0]; 0.0 = no candle light, 1.0 = fully lit.
+/// Built once per floor load; queried every frame by `update_tile_visibility`.
+#[derive(Resource, Default)]
+pub struct LightMap {
+    pub values: Vec<f32>,
 }
+
+// --- Constants ---
+
+pub const CANDLE_RADIUS: f32 = 30.0;
+
+// --- Components ---
 
 #[derive(Component)]
 pub struct Candle;
 
 #[derive(Component, Deref, DerefMut)]
-pub struct AnimationTimer(pub Timer); // Inner field made public
+pub struct AnimationTimer(pub Timer);
+
+// --- Plugin ---
+
+pub struct LightPlugin;
+
+impl Plugin for LightPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<LightMap>().add_systems(
+            Update,
+            (
+                rebuild_light_map_system,
+                update_candle_visibility,
+                animate_candles,
+            )
+                .chain()
+                .run_if(in_state(AppState::InGame)),
+        );
+    }
+}
+
+// --- Systems ---
+
+/// Rebuilds the full-floor light map when:
+/// - New candles are spawned (floor load / save restore), OR
+/// - The Map resource changes (door opened, terrain updated)
+/// Skips if no candles are present yet to avoid rebuilding with empty data on floor-load frames.
+pub fn rebuild_light_map_system(
+    added_candles: Query<(), Added<Candle>>,
+    all_candles: Query<&Position, With<Candle>>,
+    map: Res<Map>,
+    mut light_map: ResMut<LightMap>,
+) {
+    let needs_rebuild = !added_candles.is_empty() || map.is_changed();
+    if !needs_rebuild || all_candles.is_empty() {
+        return;
+    }
+
+    let n = (map.width * map.height) as usize;
+    let mut values = vec![0.0f32; n];
+    let radius_i = CANDLE_RADIUS.ceil() as i32;
+
+    for pos in all_candles.iter() {
+        let (cx, cy) = (pos.x, pos.y);
+        for ty in (cy - radius_i)..=(cy + radius_i) {
+            for tx in (cx - radius_i)..=(cx + radius_i) {
+                if !map.in_bounds(Point::new(tx, ty)) {
+                    continue;
+                }
+                let dist = (((tx - cx).pow(2) + (ty - cy).pow(2)) as f32).sqrt();
+                if dist > CANDLE_RADIUS {
+                    continue;
+                }
+                if has_los(&map, cx, cy, tx, ty) {
+                    let idx = map.xy_idx(tx, ty);
+                    values[idx] = values[idx].max(1.0 - dist / CANDLE_RADIUS);
+                }
+            }
+        }
+    }
+
+    *light_map = LightMap { values };
+}
+
+/// Hides/shows the candle sprite based on whether it is in the player's FOV.
+pub fn update_candle_visibility(
+    player_query: Query<&Viewshed, With<Player>>,
+    mut candle_query: Query<(&Position, &mut Visibility), With<Candle>>,
+) {
+    let Ok(player_viewshed) = player_query.single() else {
+        return;
+    };
+    for (position, mut candle_vis) in &mut candle_query {
+        *candle_vis = if player_viewshed
+            .visible_tiles
+            .contains(&Point::new(position.x, position.y))
+        {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
 
 fn animate_candles(
     time: Res<Time>,
@@ -48,6 +129,8 @@ fn animate_candles(
     }
 }
 
+// --- Spawning ---
+
 pub fn spawn_candle(
     commands: &mut Commands,
     candle_spritesheet: &Res<CandleSpritesheet>,
@@ -55,17 +138,9 @@ pub fn spawn_candle(
 ) {
     commands.spawn((
         Candle,
-        GameEntityMarker, 
+        GameEntityMarker,
         FloorEntityMarker,
         Position { x: pt.x, y: pt.y },
-        PointLight2d {
-            radius: 200.0,
-            color: Color::Srgba(YELLOW),
-            intensity: 0.0, // Initially off
-            falloff: 4.0,
-            cast_shadows: false,
-            ..default()
-        },
         AnimationTimer(Timer::from_seconds(0.2, TimerMode::Repeating)),
         Sprite::from_atlas_image(
             candle_spritesheet.texture.clone(),
@@ -74,50 +149,39 @@ pub fn spawn_candle(
                 index: 0,
             },
         ),
-        Transform::from_xyz(
-            pt.x as f32 * GRID_SIZE.x,
-            pt.y as f32 * GRID_SIZE.y,
-            Z_ITEM, // Use Z_ITEM for candle sprite
-        ),
+        Transform::from_xyz(pt.x as f32 * GRID_SIZE.x, pt.y as f32 * GRID_SIZE.y, Z_ITEM),
         RenderLayers::layer(1),
     ));
 }
 
-fn update_light_intensity(
-    // Query for entities that have the PointLight2d component
-    mut query: Query<&mut PointLight2d>,
-    time: Res<Time>,
-) {
-    for mut light in &mut query {
-        // Update the intensity using a sine wave for a pulsating effect
-        // The intensity value can be any f32
-        light.intensity = (time.elapsed_secs().sin() * 2.0 + 3.0).max(0.0);
-    }
-}
+// --- LOS Helper ---
 
-pub fn update_candle_visibility(
-    // Query for the player's Viewshed, only when it changes
-    player_query: Query<&Viewshed, With<Player>>,
-    mut candle_query: Query<(&Position, &mut Visibility, &mut PointLight2d), With<Candle>>,
-) {
-    // Only run if the player's viewshed has changed
-    let Ok(player_viewshed) = player_query.single() else {
-        return; // No player or viewshed hasn't changed
-    };
-
-    for (position, mut candle_vis, mut light) in &mut candle_query {
-        let candle_grid_pos = Point::new(position.x, position.y);
-        let is_visible_to_player = player_viewshed.visible_tiles.contains(&candle_grid_pos);
-
-        // Update sprite visibility
-        *candle_vis = if is_visible_to_player {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
-
-        // Update light intensity
-        // If the candle is not visible to the player, turn its light off (dim to 0)
-        light.intensity = if is_visible_to_player { 1.0 } else { 0.0 };
+/// Bresenham line-of-sight from (x0,y0) to (x1,y1).
+/// Intermediate tiles that are opaque block LOS; the destination tile is never
+/// checked for opacity so that wall faces facing the candle still receive light.
+fn has_los(map: &Map, x0: i32, y0: i32, x1: i32, y1: i32) -> bool {
+    let (mut x, mut y) = (x0, y0);
+    let (dx, dy) = ((x1 - x0).abs(), (y1 - y0).abs());
+    let (sx, sy) = (if x0 < x1 { 1 } else { -1 }, if y0 < y1 { 1 } else { -1 });
+    let mut err = dx - dy;
+    loop {
+        if x == x1 && y == y1 {
+            return true;
+        }
+        // Skip the candle's own tile; check everything else
+        if !(x == x0 && y == y0) && map.in_bounds(Point::new(x, y)) {
+            if is_opaque(map.tiles[map.xy_idx(x, y)]) {
+                return false;
+            }
+        }
+        let e2 = 2 * err;
+        if e2 > -dy {
+            err -= dy;
+            x += sx;
+        }
+        if e2 < dx {
+            err += dx;
+            y += sy;
+        }
     }
 }

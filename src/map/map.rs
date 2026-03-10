@@ -4,7 +4,10 @@ use bracket_lib::prelude::{Algorithm2D, BaseMap, DistanceAlg, Point, SmallVec};
 use crate::{
     components::{Position, Viewshed},
     game::AppState,
-    map::tile::{TileExplored, Tile, TerrainType, LiquidType, TileVisibility, is_opaque, is_walkable},
+    map::{
+        light::LightMap,
+        tile::{TileExplored, Tile, TerrainType, LiquidType, TileVisibility, is_opaque, is_walkable},
+    },
     player::Player,
     ui::game_log::GameLogMessage,
 };
@@ -21,6 +24,10 @@ There are two map types.
 */
 pub const GRID_SIZE: Vec2 = Vec2 { x: 16.0, y: 16.0 };
 pub const MAP_SIZE: UVec2 = UVec2 { x: 80, y: 60 };
+
+/// Minimum brightness for tiles currently in the player's FOV but not near a candle.
+/// High enough that lighting enhances atmosphere rather than gating visibility.
+const AMBIENT: f32 = 0.55;
 
 #[derive(Message, Debug, Clone, Copy)]
 pub struct RevealMapMessage;
@@ -41,7 +48,8 @@ impl Plugin for MapPlugin {
                 Update,
                 (
                     init_explored_tiles_system,
-                    update_tile_visibility,
+                    update_tile_visibility
+                        .after(crate::map::light::rebuild_light_map_system),
                     handle_reveal_map_system.run_if(on_message::<RevealMapMessage>),
                 ).run_if(in_state(AppState::InGame)),
             );
@@ -96,6 +104,7 @@ pub fn init_explored_tiles_system(
 pub fn update_tile_visibility(
     player_query: Query<&Viewshed, (With<Player>, Changed<Viewshed>)>,
     mut map: ResMut<Map>,
+    light_map: Res<LightMap>,
     mut tile_render_query: Query<(
         &Position,
         &mut TileVisibility,
@@ -110,7 +119,6 @@ pub fn update_tile_visibility(
 
     let fov_tiles = &player_viewshed.visible_tiles;
 
-    // Update tile visibility and color; also maintain map.explored_tiles
     for (tile_pos, mut tile_visibility, mut tile_explored, mut sprite, mut visibility) in
         tile_render_query.iter_mut()
     {
@@ -120,17 +128,23 @@ pub fn update_tile_visibility(
             *tile_visibility = TileVisibility::Visible;
             *tile_explored = TileExplored::Explored;
             *visibility = Visibility::Visible;
-            sprite.color = Color::WHITE;
 
-            if map.in_bounds(current_point) {
+            let light = if map.in_bounds(current_point) {
                 let idx = map.xy_idx(tile_pos.x, tile_pos.y);
                 map.explored_tiles[idx] = true;
-            }
+                light_map.values.get(idx).copied().unwrap_or(0.0).max(AMBIENT)
+            } else {
+                AMBIENT
+            };
+
+            // Warm candlelight tint: srgb(1.0, 0.95, 0.8) at full brightness,
+            // srgb(0.2, 0.19, 0.16) at ambient minimum.
+            sprite.color = Color::srgb(light, light * 0.95, light * 0.8);
         } else {
             *tile_visibility = TileVisibility::Hidden;
             if *tile_explored == TileExplored::Explored {
                 *visibility = Visibility::Visible;
-                sprite.color = Color::srgb(0.5, 0.5, 0.5);
+                sprite.color = Color::srgb(0.5, 0.5, 0.5); // memory gray, no lighting
             } else {
                 *visibility = Visibility::Hidden;
                 sprite.color = Color::BLACK;
