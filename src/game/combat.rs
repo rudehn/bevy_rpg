@@ -325,6 +325,12 @@ pub fn death_system(
 
 // --- Plugin ---
 
+/// System set label for the damage resolution pipeline.
+/// Use `.after(CombatDamageSet)` to guarantee a system runs after damage is applied
+/// and `DeathEvent` messages have been written.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CombatDamageSet;
+
 pub struct CombatPlugin;
 
 impl Plugin for CombatPlugin {
@@ -340,6 +346,7 @@ impl Plugin for CombatPlugin {
             .register_type::<Health>()
             .register_type::<HealthRegen>()
             .register_type::<GodMode>()
+            .configure_sets(Update, CombatDamageSet.run_if(in_state(AppState::InGame)))
             .add_systems(
                 Update,
                 (
@@ -349,7 +356,8 @@ impl Plugin for CombatPlugin {
                         armor_reduction_system,
                         damage_application_system,
                     )
-                        .chain(),
+                        .chain()
+                        .in_set(CombatDamageSet),
                     regen_system,
                     death_system,
                     handle_heal_system,

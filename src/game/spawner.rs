@@ -12,7 +12,7 @@ use crate::{
         MonsterAI, TurnManager,
         actions::SpeedStats,
         combat::{Damage, Health, HealthRegen},
-        items::ItemProperties,
+        items::{ItemProperties, LootEntry, LootTable},
         level::ExperienceReward,
         stats::{AttributeModifiers, Attributes, CombatStats, Level, MonsterBaseHealth},
     },
@@ -117,6 +117,15 @@ pub fn spawn_monster(
             regen_rate,
             regen_accumulator: 0,
         });
+    }
+
+    if !monster_asset.loot_table.is_empty() {
+        let entries = monster_asset
+            .loot_table
+            .iter()
+            .map(|e| LootEntry { item: e.item.clone(), spawn_chance: e.spawn_chance })
+            .collect();
+        commands.entity(monster_entity).insert(LootTable { entries });
     }
 
     turn_manager.add_entity(monster_entity);

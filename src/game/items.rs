@@ -429,6 +429,20 @@ pub fn handle_drop_item(
     }
 }
 
+// --- Loot Table ---
+
+#[derive(Debug, Clone)]
+pub struct LootEntry {
+    pub item: String,
+    pub spawn_chance: f32,
+}
+
+/// Component placed on monster entities that defines what items they may drop on death.
+#[derive(Component, Debug, Clone, Default)]
+pub struct LootTable {
+    pub entries: Vec<LootEntry>,
+}
+
 // --- Plugin ---
 
 pub struct ItemsPlugin;

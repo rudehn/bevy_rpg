@@ -148,7 +148,7 @@ pub fn handle_movement(
         Has<Player>,
         Has<Monster>,
         Has<Collider>,
-    ), Without<TileMarker>>,
+    ), (Without<TileMarker>, Without<Item>)>,
     map: Res<Map>,
 ) {
     for intent in intents.read() {

@@ -41,11 +41,6 @@ impl ItemSpawner {
         if let Some(rooms) = &build_data.rooms {
             let map = &build_data.map;
             for room in rooms.iter() {
-                // ~40% chance a room contains an item
-                if rng.roll_dice(1, 10) > 4 {
-                    continue;
-                }
-
                 let roll = rng.range(0, total_weight);
                 let mut acc = 0;
                 let chosen = candidates.iter().find(|s| {
@@ -54,10 +49,14 @@ impl ItemSpawner {
                 });
 
                 if let Some(spawn_info) = chosen {
-                    if let Some(pt) = walkable_room_point(room, map, &mut rng) {
-                        build_data
-                            .item_spawn_list
-                            .push((pt, spawn_info.item.clone()));
+                    // Roll against this entry's spawn_chance
+                    let chance_roll = rng.range(0, 100);
+                    if (chance_roll as f32) < spawn_info.spawn_chance * 100.0 {
+                        if let Some(pt) = walkable_room_point(room, map, &mut rng) {
+                            build_data
+                                .item_spawn_list
+                                .push((pt, spawn_info.item.clone()));
+                        }
                     }
                 }
             }

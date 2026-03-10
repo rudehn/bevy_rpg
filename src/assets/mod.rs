@@ -130,6 +130,12 @@ pub struct PlayerAsset {
     pub damage: String,
 }
 
+#[derive(Deserialize, Debug, Clone)]
+pub struct MonsterLootEntry {
+    pub item: String,
+    pub spawn_chance: f32,
+}
+
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
 pub struct MonsterAsset {
     pub name: String,
@@ -156,6 +162,9 @@ pub struct MonsterAsset {
 
     #[serde(default, deserialize_with = "serde_helpers::deserialize_i32_as_option")]
     pub regen: Option<i32>,
+
+    #[serde(default)]
+    pub loot_table: Vec<MonsterLootEntry>,
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
@@ -182,9 +191,12 @@ pub struct ItemSpawnInfo {
     pub max_floor: i32,
     #[serde(default = "default_weight")]
     pub weight: i32,
+    #[serde(default = "default_spawn_chance")]
+    pub spawn_chance: f32,
 }
 
 fn default_weight() -> i32 { 1 }
+fn default_spawn_chance() -> f32 { 0.75 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
 pub struct ItemSpawnTable {

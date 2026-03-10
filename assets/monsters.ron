@@ -10,7 +10,10 @@
             strength: 8,
             dexterity: 12,
             constitution: 10,
-            agility: 10
+            agility: 10,
+            loot_table: [
+                (item: "Healing Potion", spawn_chance: 0.2),
+            ],
         ),
         "Rat": (
             name: "Rat",
@@ -22,7 +25,7 @@
             strength: 6,
             dexterity: 8,
             constitution: 8,
-            agility: 10
+            agility: 10,
         ),
         "Orc": (
             name: "Orc",
@@ -36,6 +39,10 @@
             constitution: 12,
             agility: 10,
             regen: 20,
+            loot_table: [
+                (item: "Iron Sword",    spawn_chance: 0.15),
+                (item: "Healing Potion", spawn_chance: 0.25),
+            ],
         ),
     }
 )
