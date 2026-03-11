@@ -24,6 +24,16 @@ use crate::{
     ui::game_log::GameLog,
 };
 use bevy::prelude::*;
+
+/// Captures end-of-run statistics for the death/victory screen.
+#[derive(Resource, Default, Clone)]
+pub struct RunSummary {
+    pub floor_reached: u32,
+    pub level: i32,
+    pub xp_earned: i32,
+    pub cause: String,
+    pub victory: bool,
+}
 pub mod abilities;
 pub mod actions;
 mod ai;
@@ -72,7 +82,8 @@ pub enum InGameState {
 pub struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.add_sub_state::<InGameState>()
+        app.init_resource::<RunSummary>()
+            .add_sub_state::<InGameState>()
             .add_plugins((
                 LightPlugin,
                 MapPlugin,

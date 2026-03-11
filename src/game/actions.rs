@@ -4,8 +4,8 @@ use bracket_lib::prelude::{Algorithm2D, Point};
 use crate::{
     components::{Collider, InInventory, Inventory, Monster, Name, Position, Viewshed, Item, AmuletOfBevy},
     constants::BASE_ACTION_COST,
-    game::{combat::AttackIntentMessage, items::ItemStack, AppState},
-    map::{Map, tile::{is_walkable, TerrainType, TileMarker}, map::DungeonECSMap},
+    game::{combat::AttackIntentMessage, items::ItemStack, level::Experience, stats::Level, AppState, RunSummary},
+    map::{Map, dungeon::Floor, tile::{is_walkable, TerrainType, TileMarker}, map::DungeonECSMap},
     player::Player,
     assets::{TileManifest, TileManifestHandle, TileSpriteAssets},
     ui::game_log::GameLogMessage,
@@ -94,7 +94,10 @@ pub fn handle_pickup(
     items_query: Query<(Entity, &Position, &Name, Has<AmuletOfBevy>, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     mut inv_query: Query<&mut Inventory, With<Player>>,
     inv_stacks_query: Query<(&Name, &ItemStack), With<InInventory>>,
+    player_stats_query: Query<(Option<&Experience>, Option<&Level>), With<Player>>,
     mut next_state: ResMut<NextState<AppState>>,
+    floor: Res<Floor>,
+    mut run_summary: ResMut<RunSummary>,
 ) {
     for intent in intents.read() {
         let Ok((actor_entity, actor_pos, is_player)) = actors_query.get(intent.entity) else {
@@ -109,6 +112,14 @@ pub fn handle_pickup(
 
             if is_player && is_amulet {
                 info!("Player picked up the Amulet of Bevy! VICTORY!");
+                let (exp, level) = player_stats_query.single().unwrap_or((None, None));
+                *run_summary = RunSummary {
+                    floor_reached: floor.0,
+                    level: level.map(|l| l.value).unwrap_or(1),
+                    xp_earned: exp.map(|e| e.current).unwrap_or(0),
+                    cause: String::new(),
+                    victory: true,
+                };
                 next_state.set(AppState::Victory);
                 commands.entity(item_entity).despawn();
                 picked_up = true;
@@ -117,44 +128,89 @@ pub fn handle_pickup(
 
             if is_player {
                 if let Ok(mut inv) = inv_query.single_mut() {
-                    // Try to merge into an existing stack if this item is stackable.
-                    if let Some(floor_stack) = item_stack {
-                        if floor_stack.max_stack > 1 {
-                            let merge_target = inv.items.iter().find_map(|&e| {
-                                if let Ok((inv_name, inv_stack)) = inv_stacks_query.get(e) {
-                                    if inv_name.0 == item_name.0 && inv_stack.count < inv_stack.max_stack {
-                                        return Some((e, inv_stack.count, inv_stack.max_stack));
-                                    }
-                                }
-                                None
-                            });
+                    let is_stackable = item_stack.map(|s| s.max_stack > 1).unwrap_or(false);
 
-                            if let Some((target_entity, current_count, max_stack)) = merge_target {
-                                let new_count = current_count + 1;
-                                commands.entity(target_entity).insert(ItemStack { count: new_count, max_stack });
+                    if is_stackable {
+                        let floor_count = item_stack.map(|s| s.count).unwrap_or(1);
+                        let max_stack = item_stack.map(|s| s.max_stack).unwrap_or(1);
+                        let mut remaining = floor_count;
+
+                        // Fill every existing inventory stack that has room.
+                        let merge_targets: Vec<(Entity, u32, u32)> = inv.items.iter()
+                            .filter_map(|&e| {
+                                inv_stacks_query.get(e).ok().and_then(|(inv_name, inv_stack)| {
+                                    if inv_name.0 == item_name.0 && inv_stack.count < inv_stack.max_stack {
+                                        Some((e, inv_stack.count, inv_stack.max_stack))
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .collect();
+
+                        let mut total_transferred = 0u32;
+                        for (target_entity, current_count, target_max) in merge_targets {
+                            if remaining == 0 { break; }
+                            let space = target_max - current_count;
+                            let transfer = remaining.min(space);
+                            remaining -= transfer;
+                            total_transferred += transfer;
+                            commands.entity(target_entity).insert(ItemStack {
+                                count: current_count + transfer,
+                                max_stack: target_max,
+                            });
+                        }
+
+                        // Spill remainder into a new inventory slot if space allows.
+                        let mut moved_to_inv = false;
+                        if remaining > 0 && inv.items.len() < inv.capacity {
+                            commands.entity(item_entity).insert(ItemStack { count: remaining, max_stack });
+                            inv.items.push(item_entity);
+                            commands.entity(item_entity)
+                                .insert(InInventory)
+                                .insert(Visibility::Hidden)
+                                .remove::<crate::components::FloorEntityMarker>();
+                            total_transferred += remaining;
+                            remaining = 0;
+                            moved_to_inv = true;
+                        }
+
+                        // Clean up: despawn or update the floor entity.
+                        if !moved_to_inv {
+                            if remaining == 0 {
                                 commands.entity(item_entity).despawn();
-                                log_writer.write(GameLogMessage(format!(
-                                    "You pick up the {}. (x{})", item_name.0, new_count
-                                )));
-                                picked_up = true;
-                                break;
+                            } else if total_transferred > 0 {
+                                // Partial pickup — update floor entity's remaining count.
+                                commands.entity(item_entity).insert(ItemStack { count: remaining, max_stack });
                             }
+                        }
+
+                        if total_transferred > 0 {
+                            log_writer.write(GameLogMessage(format!(
+                                "You pick up the {} (x{}).", item_name.0, total_transferred
+                            )));
+                            picked_up = true;
+                        } else {
+                            log_writer.write(GameLogMessage("Your inventory is full!".to_string()));
+                        }
+                    } else {
+                        // Non-stackable: add directly as a new inventory slot.
+                        if inv.items.len() < inv.capacity {
+                            inv.items.push(item_entity);
+                            commands
+                                .entity(item_entity)
+                                .insert(InInventory)
+                                .insert(Visibility::Hidden)
+                                .remove::<crate::components::FloorEntityMarker>();
+                            log_writer.write(GameLogMessage(format!("You pick up the {}.", item_name.0)));
+                            picked_up = true;
+                        } else {
+                            log_writer.write(GameLogMessage("Your inventory is full!".to_string()));
                         }
                     }
 
-                    // Normal pickup: add to inventory as new slot.
-                    if inv.items.len() < inv.capacity {
-                        inv.items.push(item_entity);
-                        commands
-                            .entity(item_entity)
-                            .insert(InInventory)
-                            .insert(Visibility::Hidden)
-                            .remove::<crate::components::FloorEntityMarker>();
-                        log_writer.write(GameLogMessage(format!("You pick up the {}.", item_name.0)));
-                        picked_up = true;
+                    if picked_up {
                         break;
-                    } else {
-                        log_writer.write(GameLogMessage("Your inventory is full!".to_string()));
                     }
                 }
             } else {

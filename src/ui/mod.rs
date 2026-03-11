@@ -7,7 +7,11 @@ use crate::game::{
     AppState,
     actions::SpeedStats,
     combat::{Damage, Health, HealthRegen},
+    level::Experience,
+    magic::{ActiveSpells, SpellCooldowns},
+    stats::{Level, Mana},
 };
+use crate::map::dungeon::Floor;
 use crate::player::Player;
 
 pub mod character_info;
@@ -62,6 +66,20 @@ pub struct MonsterTooltipMoveSpeed;
 /// Marker component for the text displaying the monster's action speed in the tooltip.
 #[derive(Component)]
 pub struct MonsterTooltipActionSpeed;
+
+#[derive(Component)]
+pub struct PlayerManaText;
+#[derive(Component)]
+pub struct PlayerManaBar;
+#[derive(Component)]
+pub struct FloorDepthText;
+#[derive(Component)]
+pub struct PlayerXpText;
+#[derive(Component)]
+pub struct PlayerXpBar;
+/// Marker for a spell slot label in the HUD. Contains 0-based slot index.
+#[derive(Component)]
+pub struct SpellSlotHudLabel(pub usize);
 
 // --- Systems ---
 
@@ -125,19 +143,18 @@ fn spawn_player_stats_ui(
                 .spawn((
                     Node {
                         width: Val::Percent(100.0),
-                        height: Val::Px(20.0),
+                        height: Val::Px(14.0),
                         border: UiRect::all(Val::Px(1.0)),
-                        margin: UiRect::top(Val::Px(5.0)),
+                        margin: UiRect::top(Val::Px(4.0)),
                         ..default()
                     },
                     BackgroundColor(Color::srgb(1.0, 0.0, 0.0)), // Red
                     BorderColor::all(Color::WHITE),
                 ))
                 .with_children(|parent| {
-                    // Health Bar (Foreground - actual health)
                     parent.spawn((
                         Node {
-                            width: Val::Percent(100.0), // Starts full
+                            width: Val::Percent(100.0),
                             height: Val::Percent(100.0),
                             ..default()
                         },
@@ -145,6 +162,121 @@ fn spawn_player_stats_ui(
                         PlayerHealthBar,
                     ));
                 });
+
+            // Mana Text
+            parent.spawn((
+                Text::new("Mana: ??/??"),
+                TextFont {
+                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                    font_size: 18.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.4, 0.6, 1.0)),
+                Node { margin: UiRect::top(Val::Px(8.0)), ..default() },
+                PlayerManaText,
+            ));
+
+            // Mana Bar
+            parent
+                .spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Px(14.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        margin: UiRect::top(Val::Px(4.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.1, 0.1, 0.3)),
+                    BorderColor::all(Color::WHITE),
+                ))
+                .with_children(|parent| {
+                    parent.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Percent(100.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.2, 0.4, 0.9)),
+                        PlayerManaBar,
+                    ));
+                });
+
+            // Floor depth
+            parent.spawn((
+                Text::new("Floor: 1"),
+                TextFont {
+                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                    font_size: 18.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.8, 0.7, 0.4)),
+                Node { margin: UiRect::top(Val::Px(10.0)), ..default() },
+                FloorDepthText,
+            ));
+
+            // XP text
+            parent.spawn((
+                Text::new("XP: 0 / 100"),
+                TextFont {
+                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.6, 0.9, 0.6)),
+                Node { margin: UiRect::top(Val::Px(8.0)), ..default() },
+                PlayerXpText,
+            ));
+
+            // XP Bar
+            parent
+                .spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Px(10.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        margin: UiRect::top(Val::Px(3.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.1, 0.2, 0.1)),
+                    BorderColor::all(Color::WHITE),
+                ))
+                .with_children(|parent| {
+                    parent.spawn((
+                        Node {
+                            width: Val::Percent(0.0),
+                            height: Val::Percent(100.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.3, 0.85, 0.3)),
+                        PlayerXpBar,
+                    ));
+                });
+
+            // Spell slots header
+            parent.spawn((
+                Text::new("— SPELLS —"),
+                TextFont {
+                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                    font_size: 13.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.4, 0.4, 0.55)),
+                Node { margin: UiRect::top(Val::Px(10.0)), ..default() },
+            ));
+
+            // Spell slots 1–6
+            for i in 0..6 {
+                parent.spawn((
+                    Text::new(format!("[{}] ---", i + 1)),
+                    TextFont {
+                        font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                        font_size: 13.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.4, 0.4, 0.4)),
+                    SpellSlotHudLabel(i),
+                ));
+            }
 
             // Push hotkeys to the bottom
             parent.spawn(Node { flex_grow: 1.0, ..default() });
@@ -208,6 +340,80 @@ fn update_player_stats_ui(
 
     if let Ok(mut health_bar_node) = health_bar_query.single_mut() {
         health_bar_node.width = Val::Percent(health_percentage * 100.0);
+    }
+}
+
+fn update_player_mana_ui(
+    player_query: Query<&Mana, (With<Player>, Changed<Mana>)>,
+    mut mana_text_query: Query<&mut Text, With<PlayerManaText>>,
+    mut mana_bar_query: Query<&mut Node, With<PlayerManaBar>>,
+) {
+    let Ok(mana) = player_query.single() else { return };
+    let pct = if mana.max > 0 { mana.current as f32 / mana.max as f32 } else { 0.0 };
+    if let Ok(mut text) = mana_text_query.single_mut() {
+        text.0 = format!("Mana: {}/{}", mana.current, mana.max);
+    }
+    if let Ok(mut node) = mana_bar_query.single_mut() {
+        node.width = Val::Percent(pct.clamp(0.0, 1.0) * 100.0);
+    }
+}
+
+fn update_floor_ui(
+    floor: Res<Floor>,
+    mut text_query: Query<&mut Text, With<FloorDepthText>>,
+) {
+    if !floor.is_changed() { return }
+    if let Ok(mut text) = text_query.single_mut() {
+        text.0 = format!("Floor: {}", floor.0);
+    }
+}
+
+fn update_xp_ui(
+    player_query: Query<(&Experience, &Level), (With<Player>, Changed<Experience>)>,
+    mut xp_text_query: Query<&mut Text, With<PlayerXpText>>,
+    mut xp_bar_query: Query<&mut Node, With<PlayerXpBar>>,
+) {
+    let Ok((exp, level)) = player_query.single() else { return };
+    let pct = if exp.next_level > 0 { exp.current as f32 / exp.next_level as f32 } else { 1.0 };
+    if let Ok(mut text) = xp_text_query.single_mut() {
+        text.0 = format!("Lv{}  XP: {}/{}", level.value, exp.current, exp.next_level);
+    }
+    if let Ok(mut node) = xp_bar_query.single_mut() {
+        node.width = Val::Percent(pct.clamp(0.0, 1.0) * 100.0);
+    }
+}
+
+fn update_spell_slots_ui(
+    player_query: Query<(&ActiveSpells, &Mana, Option<&SpellCooldowns>), With<Player>>,
+    spell_registry_handle: Res<crate::assets::SpellRegistryHandle>,
+    spell_registries: Res<Assets<crate::game::spells::SpellRegistry>>,
+    mut slot_labels: Query<(&mut Text, &mut TextColor, &SpellSlotHudLabel)>,
+) {
+    let Ok((active, mana, cooldowns)) = player_query.single() else { return };
+    let registry = spell_registries.get(&spell_registry_handle.0);
+
+    for (mut text, mut color, label) in &mut slot_labels {
+        let i = label.0;
+        if let Some(Some(spell_id)) = active.slots.get(i) {
+            let spell = registry.and_then(|r| r.spells.get(spell_id));
+            let name = spell.map(|s| s.name.as_str()).unwrap_or(spell_id.as_str());
+            let cost = spell.map(|s| s.mana_cost).unwrap_or(0);
+            let on_cd = cooldowns.map(|cd| !cd.is_ready(spell_id)).unwrap_or(false);
+
+            if on_cd {
+                text.0 = format!("[{}] {} (cd)", i + 1, name);
+                color.0 = Color::srgb(0.4, 0.4, 0.4);
+            } else if mana.current < cost {
+                text.0 = format!("[{}] {} ({}mp)", i + 1, name, cost);
+                color.0 = Color::srgb(0.35, 0.35, 0.6);
+            } else {
+                text.0 = format!("[{}] {} ({}mp)", i + 1, name, cost);
+                color.0 = Color::srgb(0.5, 0.75, 1.0);
+            }
+        } else {
+            text.0 = format!("[{}] ---", i + 1);
+            color.0 = Color::srgb(0.3, 0.3, 0.3);
+        }
     }
 }
 
@@ -503,6 +709,10 @@ impl Plugin for UiPlugin {
                 Update,
                 (
                     update_player_stats_ui,
+                    update_player_mana_ui,
+                    update_floor_ui,
+                    update_xp_ui,
+                    update_spell_slots_ui,
                     update_monster_tooltip_ui,
                     add_log_message_system,
                     update_game_log_ui,

@@ -2,10 +2,11 @@ use bevy::prelude::*;
 use bracket_lib::random::{RandomNumberGenerator, parse_dice_string};
 
 use crate::components::{Monster, Name, GodMode}; // Import Monster marker
-use crate::game::level::ExperienceReward;
-use crate::game::stats::CombatStats;
+use crate::game::level::{Experience, ExperienceReward};
+use crate::game::stats::{CombatStats, Level};
 use crate::game::turns::TurnEndEvent;
-use crate::game::{AppState, TurnManager};
+use crate::game::{AppState, RunSummary, TurnManager};
+use crate::map::dungeon::Floor;
 use crate::player::Player; // Import Player marker // Import AppState for game over
 use crate::ui::game_log::GameLogMessage;
 
@@ -310,17 +311,26 @@ pub fn handle_toggle_god_mode_system(
 /// System that checks for entities with Health <= 0 and handles death.
 pub fn death_system(
     mut commands: Commands,
-    query_dead: Query<(Entity, &Health, &Name, Option<&Player>, Option<&Monster>)>,
+    query_dead: Query<(Entity, &Health, &Name, Option<&Player>, Option<&Monster>, Option<&Experience>, Option<&Level>)>,
     mut next_state: ResMut<NextState<AppState>>,
     mut turn_manager: ResMut<TurnManager>,
     mut log_writer: MessageWriter<GameLogMessage>,
+    floor: Res<Floor>,
+    mut run_summary: ResMut<RunSummary>,
 ) {
-    for (entity, health, name, is_player, is_monster) in query_dead.iter() {
+    for (entity, health, name, is_player, is_monster, exp, level) in query_dead.iter() {
         if health.current <= 0 {
             if is_player.is_some() {
                 // Player died — permadeath: erase the save
                 eprintln!("Game Over! You died!");
                 log_writer.write(GameLogMessage("You have died!".to_string()));
+                *run_summary = RunSummary {
+                    floor_reached: floor.0,
+                    level: level.map(|l| l.value).unwrap_or(1),
+                    xp_earned: exp.map(|e| e.current).unwrap_or(0),
+                    cause: "Unknown".to_string(),
+                    victory: false,
+                };
                 crate::save::delete_save();
                 next_state.set(AppState::GameOver);
             } else if is_monster.is_some() {

@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::game::AppState;
+use crate::game::{AppState, RunSummary};
 use crate::map::dungeon::PendingGameLoad;
 use crate::save::{GameSaveData, SaveExists};
 
@@ -208,8 +208,15 @@ fn load_save_file() -> Option<GameSaveData> {
 
 // ---- Game Over ----
 
-fn game_over_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+fn game_over_setup(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    run_summary: Res<RunSummary>,
+) {
     let font = asset_server.load("fonts/Macondo-Regular.ttf");
+    let floor = run_summary.floor_reached;
+    let level = run_summary.level;
+    let xp = run_summary.xp_earned;
 
     commands
         .spawn((
@@ -221,7 +228,7 @@ fn game_over_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 justify_content: JustifyContent::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.88)),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.92)),
             OnGameOverScreen,
         ))
         .with_children(|root| {
@@ -234,10 +241,38 @@ fn game_over_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 Text::new("Your legend ends here."),
                 TextFont { font: font.clone(), font_size: 20.0, ..default() },
                 TextColor(Color::srgb(0.5, 0.5, 0.5)),
-                Node { margin: UiRect::top(Val::Px(12.0)), ..default() },
+                Node { margin: UiRect::top(Val::Px(10.0)), ..default() },
             ));
 
-            root.spawn(Node { height: Val::Px(40.0), ..default() });
+            // Stats panel
+            root.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
+                    padding: UiRect::all(Val::Px(20.0)),
+                    margin: UiRect::top(Val::Px(28.0)),
+                    ..default()
+                },
+                BorderColor::all(Color::srgb(0.35, 0.1, 0.1)),
+                BackgroundColor(Color::srgba(0.1, 0.0, 0.0, 0.6)),
+            ))
+            .with_children(|panel| {
+                for line in [
+                    format!("Floor reached:  {}", floor),
+                    format!("Level:          {}", level),
+                    format!("XP earned:      {}", xp),
+                ] {
+                    panel.spawn((
+                        Text::new(line),
+                        TextFont { font: font.clone(), font_size: 18.0, ..default() },
+                        TextColor(Color::srgb(0.75, 0.65, 0.65)),
+                        Node { margin: UiRect::vertical(Val::Px(3.0)), ..default() },
+                    ));
+                }
+            });
+
+            root.spawn(Node { height: Val::Px(32.0), ..default() });
 
             root.spawn((
                 Button,
@@ -253,6 +288,13 @@ fn game_over_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     TextColor(Color::WHITE),
                 ));
             });
+
+            root.spawn((
+                Text::new("[ Enter ] Return to Menu"),
+                TextFont { font: font.clone(), font_size: 13.0, ..default() },
+                TextColor(Color::srgb(0.3, 0.3, 0.3)),
+                Node { margin: UiRect::top(Val::Px(18.0)), ..default() },
+            ));
         });
 }
 
@@ -279,8 +321,15 @@ fn game_over_action(
 
 // ---- Victory ----
 
-fn victory_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+fn victory_setup(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    run_summary: Res<RunSummary>,
+) {
     let font = asset_server.load("fonts/Macondo-Regular.ttf");
+    let floor = run_summary.floor_reached;
+    let level = run_summary.level;
+    let xp = run_summary.xp_earned;
 
     commands
         .spawn((
@@ -292,7 +341,7 @@ fn victory_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 justify_content: JustifyContent::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.88)),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.92)),
             OnVictoryScreen,
         ))
         .with_children(|root| {
@@ -305,7 +354,7 @@ fn victory_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 Text::new("The Amulet of Bevy is yours."),
                 TextFont { font: font.clone(), font_size: 22.0, ..default() },
                 TextColor(Color::WHITE),
-                Node { margin: UiRect::top(Val::Px(12.0)), ..default() },
+                Node { margin: UiRect::top(Val::Px(10.0)), ..default() },
             ));
             root.spawn((
                 Text::new("Ironveil will remember your name."),
@@ -314,7 +363,35 @@ fn victory_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 Node { margin: UiRect::top(Val::Px(6.0)), ..default() },
             ));
 
-            root.spawn(Node { height: Val::Px(40.0), ..default() });
+            // Stats panel
+            root.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
+                    padding: UiRect::all(Val::Px(20.0)),
+                    margin: UiRect::top(Val::Px(28.0)),
+                    ..default()
+                },
+                BorderColor::all(Color::srgb(0.5, 0.4, 0.0)),
+                BackgroundColor(Color::srgba(0.08, 0.06, 0.0, 0.7)),
+            ))
+            .with_children(|panel| {
+                for line in [
+                    format!("Floor reached:  {}", floor),
+                    format!("Level:          {}", level),
+                    format!("XP earned:      {}", xp),
+                ] {
+                    panel.spawn((
+                        Text::new(line),
+                        TextFont { font: font.clone(), font_size: 18.0, ..default() },
+                        TextColor(Color::srgb(0.9, 0.82, 0.5)),
+                        Node { margin: UiRect::vertical(Val::Px(3.0)), ..default() },
+                    ));
+                }
+            });
+
+            root.spawn(Node { height: Val::Px(32.0), ..default() });
 
             root.spawn((
                 Button,
@@ -330,6 +407,13 @@ fn victory_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     TextColor(Color::WHITE),
                 ));
             });
+
+            root.spawn((
+                Text::new("[ Enter ] Return to Menu"),
+                TextFont { font: font.clone(), font_size: 13.0, ..default() },
+                TextColor(Color::srgb(0.3, 0.3, 0.3)),
+                Node { margin: UiRect::top(Val::Px(18.0)), ..default() },
+            ));
         });
 }
 
