@@ -11,22 +11,37 @@ use crate::{
     },
     map::Map,
     player::Player,
-    ui::game_log::GameLogMessage,
+    ui::game_log::{GameLog, GameLogMessage},
 };
 
 // --- Resources ---
 
-/// Tracks which spell slot triggered targeting and where the cursor is.
+/// What triggered the targeting mode.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TargetingMode {
+    /// Player is selecting a target for a spell slot.
+    Spell { slot: usize },
+    /// Player is selecting a target for a ranged weapon attack.
+    RangedAttack,
+}
+
+impl Default for TargetingMode {
+    fn default() -> Self {
+        TargetingMode::Spell { slot: 0 }
+    }
+}
+
+/// Tracks what triggered targeting and where the cursor currently is.
 #[derive(Resource)]
 pub struct TargetingContext {
-    pub slot: usize,
+    pub mode: TargetingMode,
     pub cursor: Position,
 }
 
 impl Default for TargetingContext {
     fn default() -> Self {
         Self {
-            slot: 0,
+            mode: TargetingMode::default(),
             cursor: Position { x: 0, y: 0 },
         }
     }
@@ -46,7 +61,7 @@ fn setup_targeting(
     ctx: Res<TargetingContext>,
     player_query: Query<(&Position, &Viewshed), With<Player>>,
     monsters: Query<&Position, With<Monster>>,
-    mut log_writer: MessageWriter<GameLogMessage>,
+    mut game_log: ResMut<GameLog>,
 ) {
     let Ok((player_pos, viewshed)) = player_query.single() else {
         return;
@@ -60,8 +75,8 @@ fn setup_targeting(
         .copied()
         .unwrap_or(*player_pos);
 
-    // Update the context cursor to the chosen initial position.
-    // We can't mutate ctx here (it's Res), so we spawn with the computed pos.
+    let _ = &ctx.mode; // ensure ctx is used
+
     commands.spawn((
         initial_pos,
         Transform::from_xyz(0.0, 0.0, 5.0),
@@ -76,14 +91,10 @@ fn setup_targeting(
         SpellCursor,
     ));
 
-    // Also sync the context so input system knows where cursor starts.
-    // We need ResMut for this — done via a separate one-shot approach below.
-    // The input system reads the SpellCursor Position directly.
-    let _ = ctx.slot; // ensure ctx is used
-
-    log_writer.write(GameLogMessage(
+    // Ephemeral prompt — stored in status_message, not in the permanent log.
+    game_log.status_message = Some(
         "Choose target: arrows to move, Enter to confirm, Esc to cancel.".to_string(),
-    ));
+    );
 }
 
 /// Syncs `TargetingContext.cursor` from the spawned `SpellCursor` entity's position.
@@ -97,14 +108,16 @@ fn sync_cursor_to_context(
     }
 }
 
-/// Despawns the targeting cursor when exiting Targeting state.
+/// Despawns the targeting cursor and clears the ephemeral status message.
 fn teardown_targeting(
     mut commands: Commands,
     cursor_query: Query<Entity, With<SpellCursor>>,
+    mut game_log: ResMut<GameLog>,
 ) {
     for entity in cursor_query.iter() {
         commands.entity(entity).despawn();
     }
+    game_log.status_message = None;
 }
 
 /// Handles input while in Targeting state.
@@ -112,7 +125,7 @@ fn handle_targeting_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut ctx: ResMut<TargetingContext>,
     mut cursor_query: Query<&mut Position, With<SpellCursor>>,
-    monsters: Query<(Entity, &Position), With<Monster>>,
+    monsters: Query<(Entity, &Position), (With<Monster>, Without<SpellCursor>)>,
     map: Res<Map>,
     mut turn_manager: ResMut<TurnManager>,
     mut next_turn_state: ResMut<NextState<TurnState>>,
@@ -159,10 +172,17 @@ fn handle_targeting_input(
             .map(|(e, _)| e);
 
         if let Some(entity) = found {
-            turn_manager.player_action_pending = Some(Action::CastSpell {
-                slot: ctx.slot,
-                target: Some(entity),
-            });
+            match ctx.mode {
+                TargetingMode::Spell { slot } => {
+                    turn_manager.player_action_pending = Some(Action::CastSpell {
+                        slot,
+                        target: Some(entity),
+                    });
+                }
+                TargetingMode::RangedAttack => {
+                    turn_manager.player_action_pending = Some(Action::RangedAttack { target: entity });
+                }
+            }
             next_turn_state.set(TurnState::Processing);
             next_ingame_state.set(InGameState::Running);
         } else {

@@ -115,6 +115,8 @@ pub struct ItemProperties {
     pub per_bonus: i32,
     /// One-shot effect applied when the item is consumed (Consumables only).
     pub effect: Option<Effect>,
+    /// Range for ranged weapons (> 1 = ranged; 0 or 1 = melee).
+    pub weapon_range: u32,
 }
 
 impl ItemProperties {

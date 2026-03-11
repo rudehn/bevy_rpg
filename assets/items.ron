@@ -2,7 +2,7 @@
     items: {
         "Amulet of Bevy": (
             name: "Amulet of Bevy",
-            sprite: "32rogues/items.png#2",
+            sprite: "sprites/items/amulets/urand_brooch_of_shielding_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
             is_victory: true,
@@ -11,7 +11,7 @@
         ),
         "Iron Sword": (
             name: "Iron Sword",
-            sprite: "32rogues/items.png#8",
+            sprite: "sprites/items/weapons/long_sword_1_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
             is_victory: false,
@@ -21,7 +21,7 @@
         ),
         "Steel Sword": (
             name: "Steel Sword",
-            sprite: "32rogues/items.png#9",
+            sprite: "sprites/items/weapons/long_sword_1_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
             is_victory: false,
@@ -32,7 +32,18 @@
         ),
         "Leather Armor": (
             name: "Leather Armor",
-            sprite: "32rogues/items.png#16",
+            sprite: "sprites/items/armor/torso/leather_armor_1.png#0",
+            tile_size: (32, 32),
+            grid_size: (8, 8),
+            is_victory: false,
+            item_kind: Armor,
+            armor_slot: Some(Chest),
+            defense: 1,
+            rarity: Common,
+        ),
+        "Studded Leather Armor": (
+            name: "Leather Armor",
+            sprite: "sprites/items/armor/torso/studded_leather_armor.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
             is_victory: false,
@@ -43,7 +54,7 @@
         ),
         "Healing Potion": (
             name: "Healing Potion",
-            sprite: "32rogues/items.png#32",
+            sprite: "sprites/items/potions/ruby_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
             is_victory: false,
@@ -53,7 +64,7 @@
         ),
         "Strength Potion": (
             name: "Strength Potion",
-            sprite: "32rogues/items.png#33",
+            sprite: "sprites/items/potions/sky_blue.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
             is_victory: false,
@@ -63,7 +74,7 @@
         ),
         "Ring of Perception": (
             name: "Ring of Perception",
-            sprite: "32rogues/items.png#48",
+            sprite: "sprites/items/rings/gold.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
             is_victory: false,
@@ -73,7 +84,7 @@
         ),
         "Tome of Magic Missile": (
             name: "Tome of Magic Missile",
-            sprite: "32rogues/items.png#40",
+            sprite: "sprites/items/books/book_gray.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
             is_victory: false,
@@ -83,13 +94,35 @@
         ),
         "Tome of Healing": (
             name: "Tome of Healing",
-            sprite: "32rogues/items.png#41",
+            sprite: "sprites/items/books/magenta_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
             is_victory: false,
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("heal_self")),
+        ),
+        "Short Bow": (
+            name: "Short Bow",
+            sprite: "sprites/items/weapons/shortbow_1.png#0",
+            tile_size: (32, 32),
+            grid_size: (8, 8),
+            is_victory: false,
+            item_kind: Weapon,
+            damage: Some("1d4"),
+            weapon_range: 8,
+            rarity: Common,
+        ),
+        "Long Bow": (
+            name: "Short Bow",
+            sprite: "sprites/items/weapons/longbow_1.png#0",
+            tile_size: (32, 32),
+            grid_size: (8, 8),
+            is_victory: false,
+            item_kind: Weapon,
+            damage: Some("1d6"),
+            weapon_range: 8,
+            rarity: Common,
         ),
     }
 )

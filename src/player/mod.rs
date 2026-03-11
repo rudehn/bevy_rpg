@@ -2,9 +2,11 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use bevy::time::Timer;
 
+use bracket_lib::prelude::Point;
+
 use crate::{
-    assets::{PlayerAsset, PlayerAssetHandle, TileSpriteAssets},
-    components::{Collider, GameEntityMarker, Inventory, Name, Position, Viewshed},
+    assets::{ItemManifest, ItemManifestHandle, ItemSpriteAssets, PlayerAsset, PlayerAssetHandle, TileSpriteAssets},
+    components::{Collider, FloorEntityMarker, GameEntityMarker, InInventory, Inventory, Name, Position, Viewshed},
     constants::Z_PLAYER,
     game::{
         TurnManager,
@@ -13,6 +15,7 @@ use crate::{
         combat::{Damage, Health, HealthRegen},
         items::Equipment,
         magic::{ActiveSpells, KnownSpells, SpellCooldowns},
+        spawn_item,
         stats::{AttributeModifiers, Attributes, CombatStats, Level, Mana, RolledHp},
         level::{Experience, AvailableStatPoints},
     },
@@ -48,6 +51,9 @@ pub fn player_spawn_or_move_system(
     player_asset_handle: Res<PlayerAssetHandle>,
     player_assets: Res<Assets<PlayerAsset>>,
     tile_sprite_assets: Res<TileSpriteAssets>,
+    item_manifest_handle: Res<ItemManifestHandle>,
+    item_manifests: Res<Assets<ItemManifest>>,
+    item_sprite_assets: Res<ItemSpriteAssets>,
     spawn_point: Res<PlayerSpawnPoint>,
     mut q_player: Query<(Entity, &mut Transform, &mut Position), With<Player>>,
     mut turn_manager: ResMut<TurnManager>,
@@ -75,6 +81,27 @@ pub fn player_spawn_or_move_system(
         let scale_x = GRID_SIZE.x / tile_size.x as f32;
         let scale_y = GRID_SIZE.y / tile_size.y as f32;
 
+        // Spawn starting Short Bow and collect its entity ID so we can pre-load the inventory.
+        let starting_items: Vec<Entity> = {
+            let mut items = Vec::new();
+            if let Some(bow_entity) = spawn_item(
+                &mut commands,
+                "Short Bow",
+                &Point::new(0, 0),
+                &item_manifests,
+                &item_manifest_handle,
+                &item_sprite_assets,
+            ) {
+                commands
+                    .entity(bow_entity)
+                    .insert(InInventory)
+                    .insert(Visibility::Hidden)
+                    .remove::<FloorEntityMarker>();
+                items.push(bow_entity);
+            }
+            items
+        };
+
         let player_entity = commands
             .spawn((
                 Player,
@@ -83,7 +110,7 @@ pub fn player_spawn_or_move_system(
                 Collider,
                 new_grid_pos,
                 Viewshed::new(8), // Initial range; recalculated by stat_recalculation_system via PER
-                Inventory { items: Vec::new(), capacity: 20 },
+                Inventory { items: starting_items, capacity: 20 },
                 Equipment::default(),
             ))
             .insert((

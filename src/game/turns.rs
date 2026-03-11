@@ -6,12 +6,14 @@ use crate::constants::BASE_ACTION_COST;
 use crate::game::AppState;
 use crate::game::actions::{
     Action, ActionFinishedEvent, Direction, MeleeIntent, MovementIntent, OpenDoorIntent,
-    PickUpIntent, SpeedStats, WaitIntent, handle_door_open, handle_melee, handle_movement,
-    handle_pickup, handle_wait,
+    PickUpIntent, RangedAttackIntent, SpeedStats, WaitIntent, handle_door_open, handle_melee,
+    handle_movement, handle_pickup, handle_wait,
 };
 use crate::game::ai::MonsterAI;
 use crate::game::effects::{UseItemMessage, handle_use_item};
 use crate::game::magic::{ActiveSpells, CastSpellMessage, handle_cast_spell};
+use crate::game::ranged::handle_ranged_attack;
+use crate::game::targeting::TargetingMode;
 use crate::game::items::{
     DropItemMessage, EquipItemMessage, UnequipItemMessage,
     handle_drop_item, handle_equip_item, handle_unequip_item,
@@ -66,6 +68,7 @@ impl Plugin for TurnOrderPlugin {
             .add_message::<WaitIntent>()
             .add_message::<PickUpIntent>()
             .add_message::<OpenDoorIntent>()
+            .add_message::<RangedAttackIntent>()
             .add_message::<UseItemMessage>()
             .add_message::<CastSpellMessage>()
             .add_message::<ActionFinishedEvent>()
@@ -87,6 +90,7 @@ impl Plugin for TurnOrderPlugin {
                         // --- Execution Systems ---
                         handle_movement,
                         handle_melee,
+                        handle_ranged_attack,
                         handle_door_open,
                         handle_pickup,
                         handle_wait,
@@ -218,6 +222,7 @@ fn player_ai_bridge(
     mut drop_events: MessageWriter<DropItemMessage>,
     mut use_item_events: MessageWriter<UseItemMessage>,
     mut cast_spell_events: MessageWriter<CastSpellMessage>,
+    mut ranged_events: MessageWriter<RangedAttackIntent>,
     query: Query<Entity, (With<Player>, With<MyTurn>)>,
 ) {
     let Ok(player_entity) = query.single() else {
@@ -274,6 +279,12 @@ fn player_ai_bridge(
                     caster: player_entity,
                     slot,
                     target: target_entity,
+                });
+            }
+            Action::RangedAttack { target } => {
+                ranged_events.write(RangedAttackIntent {
+                    attacker: player_entity,
+                    target,
                 });
             }
         }
@@ -425,6 +436,13 @@ fn handle_player_input(
         action = Some(Action::PickUp);
     }
 
+    // F — fire ranged weapon (enters targeting mode).
+    if keys.just_pressed(KeyCode::KeyF) {
+        targeting_context.mode = TargetingMode::RangedAttack;
+        next_ingame.set(InGameState::Targeting);
+        // Do NOT transition to Processing — wait for targeting to complete.
+    }
+
     // Spell slots 1–6 (just_pressed to avoid repeating casts).
     let spell_keys = [
         KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3,
@@ -441,7 +459,7 @@ fn handle_player_input(
             }).unwrap_or(false);
 
             if needs_targeting {
-                targeting_context.slot = i;
+                targeting_context.mode = TargetingMode::Spell { slot: i };
                 next_ingame.set(InGameState::Targeting);
                 // Do NOT transition to Processing — wait for targeting to complete.
             } else {

@@ -24,6 +24,8 @@ pub enum Action {
     /// Cast the spell assigned to the given slot (0-based, keys 1–6).
     /// `target`: None = self-target (Caster spells), Some(e) = pre-resolved entity target.
     CastSpell   { slot: usize, target: Option<Entity> },
+    /// Fire a ranged weapon at a pre-selected target entity.
+    RangedAttack { target: Entity },
 }
 
 // --- Events ---
@@ -54,6 +56,12 @@ pub struct PickUpIntent {
 pub struct OpenDoorIntent {
     pub entity: Entity,
     pub door_pos: Point,
+}
+
+#[derive(Message)]
+pub struct RangedAttackIntent {
+    pub attacker: Entity,
+    pub target: Entity,
 }
 
 #[derive(Component, Clone)]

@@ -16,6 +16,7 @@ use crate::{
         items::{ItemProperties, LootEntry, LootTable},
         level::ExperienceReward,
         magic::{ActiveSpells, KnownSpells, SpellCooldowns, MAX_SPELL_SLOTS},
+        ranged::RangedCapable,
         stats::{AttributeModifiers, Attributes, CombatStats, Level, Mana, MonsterBaseHealth},
     },
     map::map::GRID_SIZE,
@@ -140,6 +141,12 @@ pub fn spawn_monster(
         });
     }
 
+    if monster_asset.ranged_range > 0 {
+        commands
+            .entity(monster_entity)
+            .insert(RangedCapable { range: monster_asset.ranged_range });
+    }
+
     if !monster_asset.spells.is_empty() {
         let mut slots = vec![None; MAX_SPELL_SLOTS];
         for (i, spell_id) in monster_asset.spells.iter().enumerate() {
@@ -252,6 +259,7 @@ pub fn spawn_item(
         int_bonus: asset.int_bonus,
         per_bonus: asset.per_bonus,
         effect: asset.effect.clone(),
+        weapon_range: asset.weapon_range,
     });
 
     if asset.is_victory {

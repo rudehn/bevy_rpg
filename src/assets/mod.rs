@@ -176,6 +176,10 @@ pub struct MonsterAsset {
     /// Spell IDs (from spells.ron) pre-assigned to this monster's active slots.
     #[serde(default)]
     pub spells: Vec<String>,
+
+    /// Ranged attack range in tiles (0 = melee only).
+    #[serde(default)]
+    pub ranged_range: u32,
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
@@ -274,6 +278,9 @@ pub struct ItemAsset {
     pub per_bonus: i32,
     #[serde(default)]
     pub effect: Option<Effect>,
+    /// Range for ranged weapons (> 1 = ranged; 0 or 1 = melee/default).
+    #[serde(default)]
+    pub weapon_range: u32,
 }
 
 #[derive(Asset, TypePath, Deserialize, Resource, Debug, Clone)]

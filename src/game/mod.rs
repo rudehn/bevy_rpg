@@ -34,6 +34,7 @@ pub mod items;
 pub mod level;
 pub mod magic;
 pub mod particles;
+pub mod ranged;
 pub mod spawner;
 pub mod spells;
 pub mod stats;
@@ -87,10 +88,18 @@ impl Plugin for GamePlugin {
                 AbilitiesPlugin,
                 TargetingPlugin,
             ))
+            // Position→Transform sync and camera run whenever in-game, including Targeting state.
             .add_systems(
                 Update,
                 (
                     sync_entity_transforms,
+                    move_camera.after(sync_entity_transforms),
+                )
+                    .run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(
+                Update,
+                (
                     fov_update_system.after(sync_entity_transforms),
                     update_monster_visibility
                         .run_if(|query: Query<(), Changed<Position>>| !query.is_empty())
@@ -98,7 +107,6 @@ impl Plugin for GamePlugin {
                     update_item_visibility
                         .run_if(|query: Query<(), Changed<Viewshed>>| !query.is_empty())
                         .after(fov_update_system),
-                    move_camera.after(sync_entity_transforms),
                     loot_drop_system.after(CombatDamageSet),
                     death_system.after(loot_drop_system),
                 )

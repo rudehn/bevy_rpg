@@ -2,9 +2,10 @@ use crate::{
     assets::SpellRegistryHandle,
     components::{Position, Viewshed},
     game::{
-        actions::{Direction, MovementIntent, WaitIntent},
+        actions::{Direction, MovementIntent, RangedAttackIntent, WaitIntent},
         combat::{Health},
         magic::{ActiveSpells, CastSpellMessage, SpellCooldowns},
+        ranged::RangedCapable,
         spells::{SpellEffect, SpellRegistry},
         stats::{CombatStats, Mana},
     },
@@ -100,6 +101,26 @@ impl MonsterAI {
                     target,
                 });
                 return;
+            }
+        }
+
+        // --- STEP 2.6: RANGED ATTACK ---
+        // Only when hunting, player is visible, and the monster has a ranged capability.
+        if self.mode == MonsterAIMode::Hunting && is_player_visible {
+            if let Some(ranged_capable) = world.get::<RangedCapable>(entity) {
+                let range = ranged_capable.range;
+                let dist = bracket_lib::prelude::DistanceAlg::Pythagoras
+                    .distance2d(monster_pos, player_point);
+                // Use ranged attack if player is in range but NOT adjacent (prefer melee if right next to them).
+                if dist > 1.5 && dist <= range as f32 {
+                    if let Some(p_entity) = player_entity {
+                        world.write_message(RangedAttackIntent {
+                            attacker: entity,
+                            target: p_entity,
+                        });
+                        return;
+                    }
+                }
             }
         }
 

@@ -7,6 +7,10 @@ pub struct GameLogMessage(pub String);
 #[derive(Resource, Default)]
 pub struct GameLog {
     pub entries: Vec<String>,
+    /// Temporary prompt shown during targeting and other transient states.
+    /// Displayed in the log panel but NOT stored in `entries`.
+    /// Set this when entering a transient state; clear it on exit.
+    pub status_message: Option<String>,
 }
 
 #[derive(Component)]
@@ -84,20 +88,20 @@ pub fn spawn_game_log_ui(
 }
 
 pub fn update_game_log_ui(game_log: Res<GameLog>, mut q_text: Query<&mut Text, With<GameLogText>>) {
+    if !game_log.is_changed() {
+        return;
+    }
     if let Ok(mut text) = q_text.single_mut() {
         let max_lines = 5;
         let entries_len = game_log.entries.len();
+        let start = entries_len.saturating_sub(max_lines);
+        let mut lines: Vec<String> = game_log.entries[start..].to_vec();
 
-        let start = if entries_len > max_lines {
-            entries_len - max_lines
-        } else {
-            0
-        };
+        if let Some(status) = &game_log.status_message {
+            lines.push(format!("> {}", status));
+        }
 
-        let end = entries_len;
-
-        let displayed_messages: Vec<String> = game_log.entries[start..end].to_vec();
-        text.0 = displayed_messages.join("\n");
+        text.0 = lines.join("\n");
     }
 }
 
