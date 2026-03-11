@@ -3,7 +3,8 @@ use bevy::prelude::*;
 use crate::components::{Equipped, Inventory, Name};
 use crate::game::actions::Action;
 use crate::game::items::{Equipment, ItemKind, ItemProperties, ItemStack, SelectedInventorySlot};
-use crate::game::turns::{TurnManager, TurnState};
+use crate::game::actions::PendingPlayerAction;
+use crate::game::turns::TurnState;
 use crate::game::{AppState, InGameState};
 use crate::player::Player;
 
@@ -158,11 +159,11 @@ fn spawn_inventory_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
 }
 
 /// Handles inventory navigation and item actions.
-/// E and D both cost a turn: they set player_action_pending and transition to Processing.
+/// E and D both cost a turn: they set PendingPlayerAction and transition to Processing.
 fn update_inventory_ui(
     keys: Res<ButtonInput<KeyCode>>,
     mut slot: ResMut<SelectedInventorySlot>,
-    mut turn_manager: ResMut<TurnManager>,
+    mut pending: ResMut<PendingPlayerAction>,
     mut next_ingame: ResMut<NextState<InGameState>>,
     mut next_turn: ResMut<NextState<TurnState>>,
     inv_query: Query<(&Inventory, &Equipment), With<Player>>,
@@ -200,7 +201,7 @@ fn update_inventory_ui(
                     } else {
                         Action::EquipItem { item: item_entity }
                     };
-                    turn_manager.player_action_pending = Some(action);
+                    pending.0 = Some(action);
                     next_ingame.set(InGameState::Running);
                     next_turn.set(TurnState::Processing);
                     return;
@@ -215,7 +216,7 @@ fn update_inventory_ui(
             if slot.0 > 0 && slot.0 >= item_count.saturating_sub(1) {
                 slot.0 -= 1;
             }
-            turn_manager.player_action_pending = Some(Action::DropItem { item: item_entity });
+            pending.0 = Some(Action::DropItem { item: item_entity });
             next_ingame.set(InGameState::Running);
             next_turn.set(TurnState::Processing);
             return;
@@ -230,8 +231,7 @@ fn update_inventory_ui(
                     if slot.0 > 0 && slot.0 >= item_count.saturating_sub(1) {
                         slot.0 -= 1;
                     }
-                    turn_manager.player_action_pending =
-                        Some(Action::UseItem { item: item_entity });
+                    pending.0 = Some(Action::UseItem { item: item_entity });
                     next_ingame.set(InGameState::Running);
                     next_turn.set(TurnState::Processing);
                     return;

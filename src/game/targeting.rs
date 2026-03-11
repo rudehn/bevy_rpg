@@ -6,7 +6,8 @@ use crate::{
     components::{GameEntityMarker, Monster, Position, Viewshed},
     game::{
         actions::Action,
-        turns::{TurnManager, TurnState},
+        actions::PendingPlayerAction,
+        turns::TurnState,
         InGameState,
     },
     map::Map,
@@ -127,7 +128,7 @@ fn handle_targeting_input(
     mut cursor_query: Query<&mut Position, With<SpellCursor>>,
     monsters: Query<(Entity, &Position), (With<Monster>, Without<SpellCursor>)>,
     map: Res<Map>,
-    mut turn_manager: ResMut<TurnManager>,
+    mut pending: ResMut<PendingPlayerAction>,
     mut next_turn_state: ResMut<NextState<TurnState>>,
     mut next_ingame_state: ResMut<NextState<InGameState>>,
     mut log_writer: MessageWriter<GameLogMessage>,
@@ -174,13 +175,10 @@ fn handle_targeting_input(
         if let Some(entity) = found {
             match ctx.mode {
                 TargetingMode::Spell { slot } => {
-                    turn_manager.player_action_pending = Some(Action::CastSpell {
-                        slot,
-                        target: Some(entity),
-                    });
+                    pending.0 = Some(Action::CastSpell { slot, target: Some(entity) });
                 }
                 TargetingMode::RangedAttack => {
-                    turn_manager.player_action_pending = Some(Action::RangedAttack { target: entity });
+                    pending.0 = Some(Action::RangedAttack { target: entity });
                 }
             }
             next_turn_state.set(TurnState::Processing);

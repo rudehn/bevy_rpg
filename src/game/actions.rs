@@ -4,7 +4,16 @@ use bracket_lib::prelude::{Algorithm2D, Point};
 use crate::{
     components::{Collider, InInventory, Inventory, Monster, Name, Position, Viewshed, Item, AmuletOfBevy},
     constants::BASE_ACTION_COST,
-    game::{combat::AttackIntentMessage, items::ItemStack, level::Experience, stats::Level, AppState, RunSummary},
+    game::{
+        combat::AttackIntentMessage,
+        effects::UseItemMessage,
+        items::{DropItemMessage, EquipItemMessage, ItemStack, UnequipItemMessage},
+        level::Experience,
+        magic::CastSpellMessage,
+        stats::Level,
+        turns::MyTurn,
+        AppState, RunSummary,
+    },
     map::{Map, dungeon::Floor, tile::{is_walkable, TerrainType, TileMarker}, map::DungeonECSMap},
     player::Player,
     assets::{TileManifest, TileManifestHandle, TileSpriteAssets},
@@ -91,7 +100,59 @@ pub struct FreeActionEvent {
     pub entity: Entity,
 }
 
+/// Holds the player's queued action for the current turn.
+/// Written by `handle_player_input` and consumed by `dispatch_player_action`.
+/// Lives separately from `TurnManager` so the turn scheduler has no knowledge of action types.
+#[derive(Resource, Default)]
+pub struct PendingPlayerAction(pub Option<Action>);
+
 // --- Systems ---
+
+/// Converts the pending player action into the appropriate intent message.
+/// Runs at the start of the Processing chain before any execution systems.
+pub fn dispatch_player_action(
+    mut commands: Commands,
+    mut pending: ResMut<PendingPlayerAction>,
+    mut move_events: MessageWriter<MovementIntent>,
+    mut melee_events: MessageWriter<MeleeIntent>,
+    mut wait_events: MessageWriter<WaitIntent>,
+    mut pickup_events: MessageWriter<PickUpIntent>,
+    mut equip_events: MessageWriter<EquipItemMessage>,
+    mut unequip_events: MessageWriter<UnequipItemMessage>,
+    mut drop_events: MessageWriter<DropItemMessage>,
+    mut use_item_events: MessageWriter<UseItemMessage>,
+    mut cast_spell_events: MessageWriter<CastSpellMessage>,
+    mut ranged_events: MessageWriter<RangedAttackIntent>,
+    query: Query<Entity, (With<Player>, With<MyTurn>)>,
+) {
+    let Ok(player_entity) = query.single() else {
+        return;
+    };
+
+    if let Some(action) = pending.0.take() {
+        match action {
+            Action::Wait => { wait_events.write(WaitIntent { entity: player_entity }); }
+            Action::Move { dir } => { move_events.write(MovementIntent { entity: player_entity, dir }); }
+            Action::MeleeAttack { target } => { melee_events.write(MeleeIntent { attacker: player_entity, target }); }
+            Action::PickUp => { pickup_events.write(PickUpIntent { entity: player_entity }); }
+            Action::EquipItem { item } => { equip_events.write(EquipItemMessage { item_entity: item }); }
+            Action::UnequipItem { item } => { unequip_events.write(UnequipItemMessage { item_entity: item }); }
+            Action::DropItem { item } => { drop_events.write(DropItemMessage { item_entity: item }); }
+            Action::UseItem { item } => { use_item_events.write(UseItemMessage { item_entity: item }); }
+            Action::CastSpell { slot, target } => {
+                let target_entity = target.unwrap_or(player_entity);
+                cast_spell_events.write(CastSpellMessage { caster: player_entity, slot, target: target_entity });
+            }
+            Action::RangedAttack { target } => {
+                ranged_events.write(RangedAttackIntent { attacker: player_entity, target });
+            }
+        }
+    } else {
+        // No action pending — implicit wait to prevent turn stall.
+        wait_events.write(WaitIntent { entity: player_entity });
+    }
+    commands.entity(player_entity).remove::<MyTurn>();
+}
 
 pub fn handle_pickup(
     mut commands: Commands,

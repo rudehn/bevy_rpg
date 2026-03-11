@@ -6,18 +6,16 @@ use crate::constants::BASE_ACTION_COST;
 use crate::game::AppState;
 use crate::game::actions::{
     Action, ActionFinishedEvent, Direction, FreeActionEvent, MeleeIntent, MovementIntent,
-    OpenDoorIntent, PickUpIntent, RangedAttackIntent, SpeedStats, WaitIntent,
+    OpenDoorIntent, PendingPlayerAction, PickUpIntent, RangedAttackIntent, SpeedStats, WaitIntent,
+    dispatch_player_action,
     handle_door_open, handle_melee, handle_movement, handle_pickup, handle_wait,
 };
 use crate::game::ai::MonsterAI;
-use crate::game::effects::{UseItemMessage, handle_use_item};
-use crate::game::magic::{ActiveSpells, CastSpellMessage, handle_cast_spell};
+use crate::game::effects::handle_use_item;
+use crate::game::magic::{ActiveSpells, handle_cast_spell};
 use crate::game::ranged::handle_ranged_attack;
 use crate::game::targeting::TargetingMode;
-use crate::game::items::{
-    DropItemMessage, EquipItemMessage, UnequipItemMessage,
-    handle_drop_item, handle_equip_item, handle_unequip_item,
-};
+use crate::game::items::{handle_drop_item, handle_equip_item, handle_unequip_item};
 use crate::game::spells::{SpellRegistry, SpellTarget};
 use crate::game::targeting::TargetingContext;
 use crate::game::InGameState;
@@ -39,7 +37,6 @@ pub struct MyTurn;
 pub struct TurnManager {
     // Stores (Entity, Scheduled Time). We will keep this sorted.
     pub turn_queue: Vec<(Entity, u32)>,
-    pub player_action_pending: Option<Action>,
     pub current_time: u32, // The global clock
 }
 
@@ -63,14 +60,15 @@ pub struct TurnOrderPlugin;
 impl Plugin for TurnOrderPlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<TurnState>()
+            .init_resource::<PendingPlayerAction>()
+            // Intent messages used by the Processing chain's handler systems.
             .add_message::<MovementIntent>()
             .add_message::<MeleeIntent>()
             .add_message::<WaitIntent>()
             .add_message::<PickUpIntent>()
             .add_message::<OpenDoorIntent>()
             .add_message::<RangedAttackIntent>()
-            .add_message::<UseItemMessage>()
-            .add_message::<CastSpellMessage>()
+            // Turn-lifecycle messages.
             .add_message::<ActionFinishedEvent>()
             .add_message::<FreeActionEvent>()
             .add_message::<TurnEndEvent>()
@@ -85,7 +83,7 @@ impl Plugin for TurnOrderPlugin {
                     ),
                     (
                         // --- Brain Systems ---
-                        player_ai_bridge,
+                        dispatch_player_action,
                         monster_ai_dispatch,
                         marker_dispatch,
                         // --- Execution Systems ---
@@ -211,95 +209,6 @@ fn turn_queue_len(tm: &TurnManager) -> usize {
     tm.turn_queue.len()
 }
 
-/// BRIDGE: Converts Player Input Resource into Action Intents
-fn player_ai_bridge(
-    mut commands: Commands,
-    mut turn_manager: ResMut<TurnManager>,
-    mut move_events: MessageWriter<MovementIntent>,
-    mut melee_events: MessageWriter<MeleeIntent>,
-    mut wait_events: MessageWriter<WaitIntent>,
-    mut pickup_events: MessageWriter<PickUpIntent>,
-    mut equip_events: MessageWriter<EquipItemMessage>,
-    mut unequip_events: MessageWriter<UnequipItemMessage>,
-    mut drop_events: MessageWriter<DropItemMessage>,
-    mut use_item_events: MessageWriter<UseItemMessage>,
-    mut cast_spell_events: MessageWriter<CastSpellMessage>,
-    mut ranged_events: MessageWriter<RangedAttackIntent>,
-    query: Query<Entity, (With<Player>, With<MyTurn>)>,
-) {
-    let Ok(player_entity) = query.single() else {
-        return;
-    };
-
-    // Note: Player was already removed from queue in select_next_actor or continue_turn_processing
-    // because they are acting NOW.
-
-    // We only act if there's a pending action from the input system
-    if let Some(action) = turn_manager.player_action_pending.take() {
-        match action {
-            Action::Wait => {
-                wait_events.write(WaitIntent {
-                    entity: player_entity,
-                });
-            }
-
-            Action::Move { dir } => {
-                move_events.write(MovementIntent {
-                    entity: player_entity,
-                    dir,
-                });
-            }
-            Action::MeleeAttack { target } => {
-                melee_events.write(MeleeIntent {
-                    attacker: player_entity,
-                    target,
-                });
-            }
-            Action::PickUp => {
-                pickup_events.write(PickUpIntent {
-                    entity: player_entity,
-                });
-            }
-            Action::EquipItem { item } => {
-                equip_events.write(EquipItemMessage { item_entity: item });
-            }
-            Action::UnequipItem { item } => {
-                unequip_events.write(UnequipItemMessage { item_entity: item });
-            }
-            Action::DropItem { item } => {
-                drop_events.write(DropItemMessage { item_entity: item });
-            }
-            Action::UseItem { item } => {
-                use_item_events.write(UseItemMessage { item_entity: item });
-            }
-            Action::CastSpell { slot, target } => {
-                let target_entity = match target {
-                    None => player_entity,   // self-cast
-                    Some(e) => e,            // pre-resolved target from targeting system
-                };
-                cast_spell_events.write(CastSpellMessage {
-                    caster: player_entity,
-                    slot,
-                    target: target_entity,
-                });
-            }
-            Action::RangedAttack { target } => {
-                ranged_events.write(RangedAttackIntent {
-                    attacker: player_entity,
-                    target,
-                });
-            }
-        }
-    } else {
-        // If no action was pending, the player implicitly waits.
-        // This ensures ActionFinishedEvent is always sent,
-        // preventing the turn manager from stalling.
-        wait_events.write(WaitIntent {
-            entity: player_entity,
-        });
-    }
-    commands.entity(player_entity).remove::<MyTurn>();
-}
 
 /// BRIDGE: Triggers Monster AI
 fn monster_ai_dispatch(world: &mut World) {
@@ -354,18 +263,16 @@ fn resolve_turn_end(
     mut turn_manager: ResMut<TurnManager>,
     stats_query: Query<&SpeedStats>,
 ) {
+    let current_time = turn_manager.current_time;
+    let mut any = false;
     for event in events.read() {
-        let entity = event.entity;
-        // 1. Get the entity's multipliers, defaulting to 1.0 (100%)
-        let stats = stats_query.get(entity).cloned().unwrap_or_default();
-
-        // 3. Calculate final cost and their next act time
-        let final_cost = (event.base_cost as f32 * stats.delay).round() as u32;
-        let next_act_time = turn_manager.current_time + final_cost;
-
-        // 4. Put them back in the queue and sort it
-        turn_manager.turn_queue.push((entity, next_act_time));
-        turn_manager.turn_queue.sort_by_key(|&(_, time)| time);
+        let stats = stats_query.get(event.entity).cloned().unwrap_or_default();
+        let cost = (event.base_cost as f32 * stats.delay).round() as u32;
+        turn_manager.turn_queue.push((event.entity, current_time + cost));
+        any = true;
+    }
+    if any {
+        turn_manager.turn_queue.sort_by_key(|&(_, t)| t);
     }
 }
 
@@ -377,9 +284,7 @@ fn continue_turn_processing(
 ) {
     // Check if we can immediately trigger another batch of NPCs who are ready "now"
     let mut npc_added = false;
-
-    // Sort just in case
-    turn_manager.turn_queue.sort_by_key(|&(_, time)| time);
+    // Queue is already sorted by resolve_turn_end; no redundant sort needed.
 
     while !turn_manager.turn_queue.is_empty() {
         let (next_entity, next_time) = turn_manager.turn_queue[0];
@@ -422,7 +327,7 @@ fn handle_player_input(
     time: Res<Time>,
     mut timer: ResMut<MovementTimer>,
     keys: Res<ButtonInput<KeyCode>>,
-    mut turn_manager: ResMut<TurnManager>,
+    mut pending: ResMut<PendingPlayerAction>,
     mut next_turn_state: ResMut<NextState<TurnState>>,
     mut next_ingame: ResMut<NextState<InGameState>>,
     mut targeting_context: ResMut<TargetingContext>,
@@ -430,28 +335,27 @@ fn handle_player_input(
     spell_registries: Res<Assets<SpellRegistry>>,
     player_active_spells: Query<&ActiveSpells, With<Player>>,
 ) {
+    let mut action = None;
+
+    // --- Held/repeated: movement (timer-gated so it auto-repeats while held) ---
     timer.0.tick(time.delta());
-    if !timer.0.is_finished() {
-        return;
+    if timer.0.is_finished() {
+        if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
+            action = Some(Action::Move { dir: Direction::N });
+        } else if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
+            action = Some(Action::Move { dir: Direction::W });
+        } else if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
+            action = Some(Action::Move { dir: Direction::S });
+        } else if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
+            action = Some(Action::Move { dir: Direction::E });
+        }
     }
 
-    let mut action = None;
-    if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
-        action = Some(Action::Move { dir: Direction::N });
-    }
-    if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
-        action = Some(Action::Move { dir: Direction::W });
-    }
-    if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
-        action = Some(Action::Move { dir: Direction::S });
-    }
-    if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
-        action = Some(Action::Move { dir: Direction::E });
-    }
-    if keys.pressed(KeyCode::Space) {
+    // --- One-shot actions (just_pressed — never missed even on quick taps) ---
+    if keys.just_pressed(KeyCode::Space) {
         action = Some(Action::Wait);
     }
-    if keys.pressed(KeyCode::KeyG) {
+    if keys.just_pressed(KeyCode::KeyG) {
         action = Some(Action::PickUp);
     }
 
@@ -462,14 +366,13 @@ fn handle_player_input(
         // Do NOT transition to Processing — wait for targeting to complete.
     }
 
-    // Spell slots 1–6 (just_pressed to avoid repeating casts).
+    // Spell slots 1–6.
     let spell_keys = [
         KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3,
         KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6,
     ];
     for (i, &key) in spell_keys.iter().enumerate() {
         if keys.just_pressed(key) {
-            // Determine whether this spell needs targeting or is self-cast.
             let needs_targeting = player_active_spells.single().ok().and_then(|active| {
                 let spell_id = active.slots.get(i)?.as_deref()?;
                 let registry = spell_registries.get(&spell_registry_handle.0)?;
@@ -480,7 +383,6 @@ fn handle_player_input(
             if needs_targeting {
                 targeting_context.mode = TargetingMode::Spell { slot: i };
                 next_ingame.set(InGameState::Targeting);
-                // Do NOT transition to Processing — wait for targeting to complete.
             } else {
                 action = Some(Action::CastSpell { slot: i, target: None });
             }
@@ -489,7 +391,7 @@ fn handle_player_input(
     }
 
     if let Some(act) = action {
-        turn_manager.player_action_pending = Some(act);
+        pending.0 = Some(act);
         next_turn_state.set(TurnState::Processing);
     }
 }
