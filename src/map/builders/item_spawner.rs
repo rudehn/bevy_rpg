@@ -53,9 +53,14 @@ impl ItemSpawner {
                     let chance_roll = rng.range(0, 100);
                     if (chance_roll as f32) < spawn_info.spawn_chance * 100.0 {
                         if let Some(pt) = walkable_room_point(room, map, &mut rng) {
+                            let count = if spawn_info.max_count > 1 {
+                                rng.range(spawn_info.min_count, spawn_info.max_count + 1)
+                            } else {
+                                1
+                            };
                             build_data
                                 .item_spawn_list
-                                .push((pt, spawn_info.item.clone()));
+                                .push((pt, spawn_info.item.clone(), count));
                         }
                     }
                 }

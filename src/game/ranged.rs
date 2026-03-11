@@ -2,13 +2,14 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{DistanceAlg, Point};
 
 use crate::{
-    components::{Name, Position, Viewshed},
+    components::{InInventory, Inventory, Name, Position, Viewshed},
     constants::BASE_ACTION_COST,
     game::{
         actions::{ActionFinishedEvent, RangedAttackIntent},
         combat::AttackIntentMessage,
-        items::{Equipment, ItemProperties},
+        items::{Equipment, ItemProperties, ItemStack},
     },
+    player::Player,
     ui::game_log::GameLogMessage,
 };
 
@@ -27,6 +28,7 @@ pub struct RangedCapable {
 /// On success emits `AttackIntentMessage` into the normal combat pipeline.
 /// On failure logs the reason and still emits `ActionFinishedEvent` so the turn advances.
 pub fn handle_ranged_attack(
+    mut commands: Commands,
     mut intents: MessageReader<RangedAttackIntent>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut attack_writer: MessageWriter<AttackIntentMessage>,
@@ -37,12 +39,15 @@ pub fn handle_ranged_attack(
         Option<&RangedCapable>,
         Option<&Equipment>,
         Option<&Name>,
+        Has<Player>,
     )>,
     target_query: Query<(&Position, Option<&Name>)>,
     item_props_query: Query<&ItemProperties>,
+    mut player_inv_query: Query<&mut Inventory, With<Player>>,
+    arrow_query: Query<(&Name, &ItemStack), With<InInventory>>,
 ) {
     for intent in intents.read() {
-        let Ok((attacker_pos, viewshed, ranged_capable, equipment, attacker_name)) =
+        let Ok((attacker_pos, viewshed, ranged_capable, equipment, attacker_name, is_player)) =
             attacker_query.get(intent.attacker)
         else {
             finish_writer.write(ActionFinishedEvent {
@@ -96,6 +101,35 @@ pub fn handle_ranged_attack(
                 base_cost: BASE_ACTION_COST,
             });
             continue;
+        }
+
+        // Player must have at least one arrow to fire.
+        if is_player {
+            let Ok(mut inv) = player_inv_query.single_mut() else {
+                finish_writer.write(ActionFinishedEvent { entity: intent.attacker, base_cost: BASE_ACTION_COST });
+                continue;
+            };
+
+            let arrow = inv.items.iter().find_map(|&e| {
+                arrow_query.get(e).ok().and_then(|(name, stack)| {
+                    if name.0 == "Arrow" { Some((e, stack.count, stack.max_stack)) } else { None }
+                })
+            });
+
+            let Some((arrow_entity, arrow_count, arrow_max)) = arrow else {
+                log_writer.write(GameLogMessage("You have no arrows!".to_string()));
+                finish_writer.write(ActionFinishedEvent { entity: intent.attacker, base_cost: BASE_ACTION_COST });
+                continue;
+            };
+
+            // Consume one arrow from the stack.
+            if arrow_count > 1 {
+                commands.entity(arrow_entity).insert(ItemStack { count: arrow_count - 1, max_stack: arrow_max });
+            } else {
+                // Last arrow: remove from inventory and despawn.
+                inv.items.retain(|&e| e != arrow_entity);
+                commands.entity(arrow_entity).despawn();
+            }
         }
 
         // Log the shot.

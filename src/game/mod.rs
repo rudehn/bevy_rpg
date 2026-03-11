@@ -141,16 +141,31 @@ fn loot_drop_system(
         for entry in &loot_table.entries {
             let roll = game_rng.0.range(0, 100);
             if (roll as f32) < entry.spawn_chance * 100.0 {
-                spawn_item(
+                let count = if entry.count_max > 1 {
+                    game_rng.0.range(entry.count_min, entry.count_max + 1)
+                } else {
+                    1
+                };
+                if let Some(entity) = spawn_item(
                     &mut commands,
                     &entry.item,
                     &spawn_point,
                     &item_manifests,
                     &item_manifest_handle,
                     &item_sprite_assets,
-                );
+                ) {
+                    if count > 1 {
+                        let max_stack = item_manifests
+                            .get(&item_manifest_handle.0)
+                            .and_then(|m| m.items.get(entry.item.as_str()))
+                            .map(|a| a.max_stack)
+                            .unwrap_or(1);
+                        commands.entity(entity).insert(crate::game::items::ItemStack { count, max_stack });
+                    }
+                }
+                let count_str = if count > 1 { format!(" (x{})", count) } else { String::new() };
                 log_writer.write(GameLogMessage(format!(
-                    "{} dropped a {}.", name.0, entry.item
+                    "{} dropped a {}{}.", name.0, entry.item, count_str
                 )));
             }
         }

@@ -139,6 +139,12 @@ pub struct PlayerAsset {
 pub struct MonsterLootEntry {
     pub item: String,
     pub spawn_chance: f32,
+    /// Minimum number dropped (for stackable loot like arrows).
+    #[serde(default = "default_count_one")]
+    pub count_min: u32,
+    /// Maximum number dropped.
+    #[serde(default = "default_count_one")]
+    pub count_max: u32,
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
@@ -208,10 +214,17 @@ pub struct ItemSpawnInfo {
     pub weight: i32,
     #[serde(default = "default_spawn_chance")]
     pub spawn_chance: f32,
+    /// Minimum number of items to spawn in a single batch (e.g., arrows).
+    #[serde(default = "default_count_one")]
+    pub min_count: u32,
+    /// Maximum number of items to spawn in a single batch.
+    #[serde(default = "default_count_one")]
+    pub max_count: u32,
 }
 
 fn default_weight() -> i32 { 1 }
 fn default_spawn_chance() -> f32 { 0.75 }
+fn default_count_one() -> u32 { 1 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
 pub struct ItemSpawnTable {
@@ -281,7 +294,12 @@ pub struct ItemAsset {
     /// Range for ranged weapons (> 1 = ranged; 0 or 1 = melee/default).
     #[serde(default)]
     pub weapon_range: u32,
+    /// Maximum number of items that can share one inventory slot (1 = not stackable).
+    #[serde(default = "default_max_stack")]
+    pub max_stack: u32,
 }
+
+fn default_max_stack() -> u32 { 1 }
 
 #[derive(Asset, TypePath, Deserialize, Resource, Debug, Clone)]
 pub struct ItemManifest {

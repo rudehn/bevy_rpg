@@ -11,7 +11,7 @@ use crate::assets::{
     MonsterSpawnTableHandle, MonsterSpriteAssets, TileManifest, TileManifestHandle, TileSpriteAssets,
 };
 use crate::components::{FloorEntityMarker, Monster, Name, Position, Item};
-use crate::game::{TurnManager, spawn_monster_by_name, spawn_item, turns::TurnMarker};
+use crate::game::{TurnManager, spawn_monster_by_name, spawn_item, items::ItemStack, turns::TurnMarker};
 use crate::map::Map;
 use crate::map::builders::BuilderMap;
 use crate::map::light::{Candle, spawn_candle};
@@ -62,8 +62,8 @@ pub struct CachedFloor {
     pub map: Map,
     /// Alive monsters: their last-known grid position and manifest name.
     pub monster_list: Vec<(Point, String)>,
-    /// Surrounding items: their position and name.
-    pub item_list: Vec<(Point, String)>,
+    /// Surrounding items: their position, name, and stack count.
+    pub item_list: Vec<(Point, String, u32)>,
     pub candle_spawn_points: Vec<Point>,
     /// Position of the DownStairs on this floor; player lands adjacent to it
     /// when returning from below.
@@ -190,7 +190,7 @@ fn find_adjacent_floor(map: &Map, target: Point) -> Option<Point> {
 fn snapshot_floor(
     map: &Map,
     monster_query: &Query<(&Position, &Name), With<Monster>>,
-    item_query: &Query<(&Position, &Name), With<Item>>,
+    item_query: &Query<(&Position, &Name, Option<&ItemStack>), With<Item>>,
     candle_query: &Query<&Position, With<Candle>>,
 ) -> CachedFloor {
     let monster_list = monster_query
@@ -200,7 +200,10 @@ fn snapshot_floor(
 
     let item_list = item_query
         .iter()
-        .map(|(pos, name)| (pos.to_point(), name.0.clone()))
+        .map(|(pos, name, stack)| {
+            let count = stack.map(|s| s.count).unwrap_or(1);
+            (pos.to_point(), name.0.clone(), count)
+        })
         .collect();
 
     let candle_spawn_points = candle_query
@@ -273,7 +276,7 @@ fn map_transition_system(
     q_tiles: Query<Entity, With<TileMarker>>,
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
     q_monsters: Query<(&Position, &Name), With<Monster>>,
-    q_items: Query<(&Position, &Name), With<Item>>,
+    q_items: Query<(&Position, &Name, Option<&ItemStack>), With<Item>>,
     q_candles: Query<&Position, With<Candle>>,
     mut turn_manager: ResMut<TurnManager>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
@@ -301,7 +304,7 @@ fn ascend_stairs_system(
     q_tiles: Query<Entity, With<TileMarker>>,
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
     q_monsters: Query<(&Position, &Name), With<Monster>>,
-    q_items: Query<(&Position, &Name), With<Item>>,
+    q_items: Query<(&Position, &Name, Option<&ItemStack>), With<Item>>,
     q_candles: Query<&Position, With<Candle>>,
     mut turn_manager: ResMut<TurnManager>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
@@ -380,15 +383,24 @@ fn spawn_dungeon_entities(
         );
     }
 
-    for (pt, name) in build_data.item_spawn_list.iter() {
-        spawn_item(
+    for (pt, name, count) in build_data.item_spawn_list.iter() {
+        if let Some(entity) = spawn_item(
             commands,
             name.as_str(),
             pt,
             &assets.item_manifests,
             &assets.item_manifest_handle,
             &assets.item_sprite_assets,
-        );
+        ) {
+            if *count > 1 {
+                let max_stack = assets.item_manifests
+                    .get(&assets.item_manifest_handle.0)
+                    .and_then(|m| m.items.get(name.as_str()))
+                    .map(|a| a.max_stack)
+                    .unwrap_or(1);
+                commands.entity(entity).insert(crate::game::items::ItemStack { count: *count, max_stack });
+            }
+        }
     }
 }
 
@@ -439,14 +451,23 @@ pub fn spawn_dungeon(
         // Spawn floor items
         for entry in &save_data.floor_items {
             let pt = Point::new(entry.x, entry.y);
-            spawn_item(
+            if let Some(entity) = spawn_item(
                 &mut commands,
                 &entry.name,
                 &pt,
                 &assets.item_manifests,
                 &assets.item_manifest_handle,
                 &assets.item_sprite_assets,
-            );
+            ) {
+                if entry.count > 1 {
+                    let max_stack = assets.item_manifests
+                        .get(&assets.item_manifest_handle.0)
+                        .and_then(|m| m.items.get(entry.name.as_str()))
+                        .map(|a| a.max_stack)
+                        .unwrap_or(1);
+                    commands.entity(entity).insert(ItemStack { count: entry.count, max_stack });
+                }
+            }
         }
 
         // Spawn candles
@@ -490,15 +511,24 @@ pub fn spawn_dungeon(
             );
         }
 
-        for (pt, name) in &cached.item_list {
-            spawn_item(
+        for (pt, name, count) in &cached.item_list {
+            if let Some(entity) = spawn_item(
                 &mut commands,
                 name.as_str(),
                 pt,
                 &assets.item_manifests,
                 &assets.item_manifest_handle,
                 &assets.item_sprite_assets,
-            );
+            ) {
+                if *count > 1 {
+                    let max_stack = assets.item_manifests
+                        .get(&assets.item_manifest_handle.0)
+                        .and_then(|m| m.items.get(name.as_str()))
+                        .map(|a| a.max_stack)
+                        .unwrap_or(1);
+                    commands.entity(entity).insert(ItemStack { count: *count, max_stack });
+                }
+            }
         }
 
         for pt in &cached.candle_spawn_points {

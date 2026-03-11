@@ -10,7 +10,7 @@ use crate::{
     game::{
         AppState,
         combat::{Damage, Health},
-        items::{Equipment, ItemProperties},
+        items::{Equipment, ItemProperties, ItemStack},
         level::{AvailableStatPoints, Experience},
         spawner::spawn_item,
         stats::{AttributeModifiers, Attributes, Level, Mana},
@@ -154,7 +154,14 @@ pub struct InventoryItemSave {
     pub name: String,
     pub properties: ItemProperties,
     pub equipped_slot: Option<String>,
+    #[serde(default = "default_stack_count")]
+    pub count: u32,
+    #[serde(default = "default_stack_max")]
+    pub max_stack: u32,
 }
+
+fn default_stack_count() -> u32 { 1 }
+fn default_stack_max() -> u32 { 1 }
 
 #[derive(Serialize, Deserialize)]
 pub struct MonsterEntry {
@@ -169,13 +176,15 @@ pub struct ItemEntry {
     pub x: i32,
     pub y: i32,
     pub name: String,
+    #[serde(default = "default_stack_count")]
+    pub count: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CachedFloorSave {
     pub map: MapSaveData,
     pub monster_list: Vec<([i32; 2], String)>,
-    pub item_list: Vec<([i32; 2], String)>,
+    pub item_list: Vec<([i32; 2], String, u32)>,
     pub candle_spawn_points: Vec<[i32; 2]>,
     pub down_stairs_pos: [i32; 2],
 }
@@ -215,7 +224,7 @@ pub fn cached_floor_to_save(cached: &CachedFloor) -> CachedFloorSave {
         item_list: cached
             .item_list
             .iter()
-            .map(|(pt, name)| ([pt.x, pt.y], name.clone()))
+            .map(|(pt, name, count)| ([pt.x, pt.y], name.clone(), *count))
             .collect(),
         candle_spawn_points: cached
             .candle_spawn_points
@@ -237,7 +246,7 @@ pub fn save_to_cached_floor(data: &CachedFloorSave) -> CachedFloor {
         item_list: data
             .item_list
             .iter()
-            .map(|(pos, name)| (Point::new(pos[0], pos[1]), name.clone()))
+            .map(|(pos, name, count)| (Point::new(pos[0], pos[1]), name.clone(), *count))
             .collect(),
         candle_spawn_points: data
             .candle_spawn_points
@@ -275,9 +284,9 @@ pub fn auto_save_system(
         ),
         With<Player>,
     >,
-    inv_item_query: Query<(&Name, &ItemProperties, Has<Equipped>), With<InInventory>>,
+    inv_item_query: Query<(&Name, &ItemProperties, Has<Equipped>, Option<&ItemStack>), With<InInventory>>,
     monster_query: Query<(&Position, &Name, &Health), With<Monster>>,
-    floor_item_query: Query<(&Position, &Name), (With<Item>, Without<InInventory>)>,
+    floor_item_query: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     candle_query: Query<&Position, With<Candle>>,
 ) {
     auto_save_pending.0 = false;
@@ -294,7 +303,7 @@ pub fn auto_save_system(
         .items
         .iter()
         .filter_map(|&item_entity| {
-            let Ok((name, props, is_equipped)) = inv_item_query.get(item_entity) else {
+            let Ok((name, props, is_equipped, stack)) = inv_item_query.get(item_entity) else {
                 return None;
             };
             let equipped_slot = if is_equipped {
@@ -302,10 +311,13 @@ pub fn auto_save_system(
             } else {
                 None
             };
+            let (count, max_stack) = stack.map(|s| (s.count, s.max_stack)).unwrap_or((1, 1));
             Some(InventoryItemSave {
                 name: name.0.clone(),
                 properties: props.clone(),
                 equipped_slot,
+                count,
+                max_stack,
             })
         })
         .collect();
@@ -324,7 +336,12 @@ pub fn auto_save_system(
     // Floor items (not in inventory)
     let floor_items: Vec<ItemEntry> = floor_item_query
         .iter()
-        .map(|(pos, name)| ItemEntry { x: pos.x, y: pos.y, name: name.0.clone() })
+        .map(|(pos, name, stack)| ItemEntry {
+            x: pos.x,
+            y: pos.y,
+            name: name.0.clone(),
+            count: stack.map(|s| s.count).unwrap_or(1),
+        })
         .collect();
 
     // Candles
@@ -494,6 +511,7 @@ pub fn apply_player_load_system(
         commands
             .entity(item_entity)
             .insert(item_save.properties.clone())
+            .insert(ItemStack { count: item_save.count, max_stack: item_save.max_stack })
             .insert(InInventory)
             .insert(Visibility::Hidden)
             .remove::<FloorEntityMarker>();

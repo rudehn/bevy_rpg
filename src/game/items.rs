@@ -1,8 +1,9 @@
+use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::components::{Equipped, FloorEntityMarker, InInventory, Inventory, Name, Position};
-use crate::constants::BASE_ACTION_COST;
+use crate::components::{Equipped, FloorEntityMarker, GameEntityMarker, InInventory, Inventory, Item, Name, Position};
+use crate::constants::{BASE_ACTION_COST, Z_ITEM};
 use crate::game::actions::ActionFinishedEvent;
 use crate::game::effects::Effect;
 use crate::game::AppState;
@@ -93,6 +94,21 @@ impl std::fmt::Display for Rarity {
 }
 
 // --- Components ---
+
+/// Tracks how many of this item are in this stack slot.
+/// max_stack == 1 means the item is not stackable.
+#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
+#[reflect(Component)]
+pub struct ItemStack {
+    pub count: u32,
+    pub max_stack: u32,
+}
+
+impl Default for ItemStack {
+    fn default() -> Self {
+        Self { count: 1, max_stack: 1 }
+    }
+}
 
 /// All stat and mechanical properties of an item.
 /// Equipment effects are applied via AttributeModifiers when equipped (M3).
@@ -384,6 +400,7 @@ pub fn handle_unequip_item(
 }
 
 /// Removes an item from inventory and places it at the player's feet.
+/// For stackable items with count > 1, splits off one item to the floor.
 /// Auto-unequips if the item is currently equipped.
 pub fn handle_drop_item(
     mut commands: Commands,
@@ -392,7 +409,7 @@ pub fn handle_drop_item(
         (Entity, &mut Equipment, &mut Inventory, &Position, &mut AttributeModifiers, &mut CombatStats, &mut crate::game::combat::Damage),
         With<Player>,
     >,
-    item_query: Query<(&Name, &ItemProperties)>,
+    item_query: Query<(&Name, &ItemProperties, Option<&ItemStack>, &Sprite, &Transform)>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
 ) {
@@ -407,7 +424,7 @@ pub fn handle_drop_item(
         if let Some(slot) = equipment.find_slot(msg.item_entity) {
             equipment.set_slot(slot, None);
             commands.entity(msg.item_entity).remove::<Equipped>();
-            if let Ok((_, props)) = item_query.get(msg.item_entity) {
+            if let Ok((_, props, _, _, _)) = item_query.get(msg.item_entity) {
                 unapply_item_effects(props, &mut attr_mods, &mut combat_stats, &mut damage);
             }
         }
@@ -415,14 +432,54 @@ pub fn handle_drop_item(
         let Some(idx) = inv.items.iter().position(|&e| e == msg.item_entity) else {
             continue;
         };
+
+        let Ok((item_name, item_props, item_stack, item_sprite, item_transform)) =
+            item_query.get(msg.item_entity)
+        else {
+            continue;
+        };
+
+        log_writer.write(GameLogMessage(format!("You drop the {}.", item_name.0)));
+
+        // For stackable items with count > 1, split off one item to the floor.
+        if let Some(stack) = item_stack {
+            if stack.count > 1 {
+                let new_count = stack.count - 1;
+                let max_stack = stack.max_stack;
+
+                // Decrement the inventory stack.
+                commands.entity(msg.item_entity).insert(ItemStack { count: new_count, max_stack });
+
+                // Spawn a new single-item floor entity by cloning the key components.
+                let drop_pos = Position { x: player_pos.x, y: player_pos.y };
+                commands.spawn((
+                    Item,
+                    Name(item_name.0.clone()),
+                    GameEntityMarker,
+                    FloorEntityMarker,
+                    drop_pos,
+                    item_props.clone(),
+                    ItemStack { count: 1, max_stack },
+                    item_sprite.clone(),
+                    Transform {
+                        translation: Vec3::new(
+                            player_pos.x as f32 * crate::map::map::GRID_SIZE.x,
+                            player_pos.y as f32 * crate::map::map::GRID_SIZE.y,
+                            Z_ITEM,
+                        ),
+                        scale: item_transform.scale,
+                        ..Default::default()
+                    },
+                    RenderLayers::layer(1),
+                ));
+
+                finish_writer.write(ActionFinishedEvent { entity: player_entity, base_cost: BASE_ACTION_COST });
+                continue;
+            }
+        }
+
+        // Single item (or non-stackable): move the entity itself to the floor.
         inv.items.remove(idx);
-
-        let item_name = item_query
-            .get(msg.item_entity)
-            .map(|(n, _)| n.0.as_str())
-            .unwrap_or("item");
-        log_writer.write(GameLogMessage(format!("You drop the {}.", item_name)));
-
         commands
             .entity(msg.item_entity)
             .insert(Position { x: player_pos.x, y: player_pos.y })
@@ -440,6 +497,8 @@ pub fn handle_drop_item(
 pub struct LootEntry {
     pub item: String,
     pub spawn_chance: f32,
+    pub count_min: u32,
+    pub count_max: u32,
 }
 
 /// Component placed on monster entities that defines what items they may drop on death.
@@ -459,6 +518,7 @@ impl Plugin for ItemsPlugin {
             .register_type::<Rarity>()
             .register_type::<Effect>()
             .register_type::<ItemProperties>()
+            .register_type::<ItemStack>()
             .register_type::<Equipment>()
             .init_resource::<SelectedInventorySlot>()
             // Messages are registered here; the handler systems live in TurnOrderPlugin's

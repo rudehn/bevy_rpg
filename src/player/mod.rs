@@ -81,8 +81,9 @@ pub fn player_spawn_or_move_system(
         let scale_x = GRID_SIZE.x / tile_size.x as f32;
         let scale_y = GRID_SIZE.y / tile_size.y as f32;
 
-        // Spawn starting Short Bow and collect its entity ID so we can pre-load the inventory.
+        // Spawn starting Short Bow + Arrows and collect entity IDs for the inventory.
         let starting_items: Vec<Entity> = {
+            use crate::game::items::ItemStack;
             let mut items = Vec::new();
             if let Some(bow_entity) = spawn_item(
                 &mut commands,
@@ -98,6 +99,22 @@ pub fn player_spawn_or_move_system(
                     .insert(Visibility::Hidden)
                     .remove::<FloorEntityMarker>();
                 items.push(bow_entity);
+            }
+            if let Some(arrow_entity) = spawn_item(
+                &mut commands,
+                "Arrow",
+                &Point::new(0, 0),
+                &item_manifests,
+                &item_manifest_handle,
+                &item_sprite_assets,
+            ) {
+                commands
+                    .entity(arrow_entity)
+                    .insert(ItemStack { count: 20, max_stack: 30 })
+                    .insert(InInventory)
+                    .insert(Visibility::Hidden)
+                    .remove::<FloorEntityMarker>();
+                items.push(arrow_entity);
             }
             items
         };

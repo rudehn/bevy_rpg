@@ -61,6 +61,7 @@
             item_kind: Consumable,
             rarity: Common,
             effect: Some(HealHp(15)),
+            max_stack: 5,
         ),
         "Strength Potion": (
             name: "Strength Potion",
@@ -71,6 +72,7 @@
             item_kind: Consumable,
             rarity: Uncommon,
             effect: Some(GainStr(2)),
+            max_stack: 3,
         ),
         "Ring of Perception": (
             name: "Ring of Perception",
@@ -101,6 +103,16 @@
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("heal_self")),
+        ),
+        "Arrow": (
+            name: "Arrow",
+            sprite: "sprites/items/weapons/arrow.png#0",
+            tile_size: (32, 32),
+            grid_size: (1, 1),
+            is_victory: false,
+            item_kind: Consumable,
+            rarity: Common,
+            max_stack: 30,
         ),
         "Short Bow": (
             name: "Short Bow",

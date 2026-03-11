@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::components::{Equipped, Inventory, Name};
 use crate::game::actions::Action;
-use crate::game::items::{Equipment, ItemKind, ItemProperties, SelectedInventorySlot};
+use crate::game::items::{Equipment, ItemKind, ItemProperties, ItemStack, SelectedInventorySlot};
 use crate::game::turns::{TurnManager, TurnState};
 use crate::game::{AppState, InGameState};
 use crate::player::Player;
@@ -166,7 +166,7 @@ fn update_inventory_ui(
     mut next_ingame: ResMut<NextState<InGameState>>,
     mut next_turn: ResMut<NextState<TurnState>>,
     inv_query: Query<(&Inventory, &Equipment), With<Player>>,
-    item_query: Query<(&Name, &ItemProperties, Has<Equipped>)>,
+    item_query: Query<(&Name, &ItemProperties, Has<Equipped>, Option<&ItemStack>)>,
     mut slot_texts: Query<(&mut Text, &mut TextColor, &InventorySlotText)>,
     mut detail_text: Query<
         (&mut Text, &mut TextColor),
@@ -193,7 +193,7 @@ fn update_inventory_ui(
     // Equip / Unequip — costs a turn
     if keys.just_pressed(KeyCode::KeyE) {
         if let Some(&item_entity) = inv.items.get(slot.0) {
-            if let Ok((_, props, is_equipped)) = item_query.get(item_entity) {
+            if let Ok((_, props, is_equipped, _)) = item_query.get(item_entity) {
                 if Equipment::slot_for(props).is_some() {
                     let action = if is_equipped {
                         Action::UnequipItem { item: item_entity }
@@ -225,7 +225,7 @@ fn update_inventory_ui(
     // Use / consume — costs a turn (consumables only)
     if keys.just_pressed(KeyCode::KeyU) {
         if let Some(&item_entity) = inv.items.get(slot.0) {
-            if let Ok((_, props, _)) = item_query.get(item_entity) {
+            if let Ok((_, props, _, _)) = item_query.get(item_entity) {
                 if props.kind == ItemKind::Consumable || props.kind == ItemKind::Spellbook {
                     if slot.0 > 0 && slot.0 >= item_count.saturating_sub(1) {
                         slot.0 -= 1;
@@ -244,9 +244,13 @@ fn update_inventory_ui(
     for (mut text, mut color, slot_marker) in &mut slot_texts {
         let i = slot_marker.0;
         if let Some(&item_entity) = inv.items.get(i) {
-            if let Ok((name, props, is_equipped)) = item_query.get(item_entity) {
+            if let Ok((name, props, is_equipped, stack)) = item_query.get(item_entity) {
                 let equipped_tag = if is_equipped { " [E]" } else { "" };
-                text.0 = format!("{:2}. {}{}", i + 1, name.0, equipped_tag);
+                let stack_tag = match stack {
+                    Some(s) if s.count > 1 => format!(" (x{})", s.count),
+                    _ => String::new(),
+                };
+                text.0 = format!("{:2}. {}{}{}", i + 1, name.0, stack_tag, equipped_tag);
                 color.0 = props.rarity.color();
             }
         } else {
@@ -267,7 +271,7 @@ fn update_inventory_ui(
     // Update detail panel
     if let Ok((mut text, mut color)) = detail_text.single_mut() {
         if let Some(&item_entity) = inv.items.get(slot.0) {
-            if let Ok((name, props, is_equipped)) = item_query.get(item_entity) {
+            if let Ok((name, props, is_equipped, stack)) = item_query.get(item_entity) {
                 let kind_str = match &props.armor_slot {
                     Some(s) => format!("{} ({})", props.kind, s),
                     None => props.kind.to_string(),
@@ -277,6 +281,12 @@ fn update_inventory_ui(
                     name.0.clone(),
                     format!("{} — {}", kind_str, props.rarity),
                 ];
+
+                if let Some(s) = stack {
+                    if s.max_stack > 1 {
+                        lines.push(format!("Quantity: {}/{}", s.count, s.max_stack));
+                    }
+                }
 
                 if is_equipped {
                     lines.push("[ EQUIPPED ]".to_string());

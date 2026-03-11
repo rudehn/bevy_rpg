@@ -70,7 +70,7 @@ impl DistantExit {
         let stairs_pos = build_data.map.index_to_point2d(stairs_idx);
         
         if build_data.map.depth == 10 {
-            build_data.item_spawn_list.push((stairs_pos, "Amulet of Bevy".to_string()));
+            build_data.item_spawn_list.push((stairs_pos, "Amulet of Bevy".to_string(), 1));
         } else {
             build_data.map.set_tile(stairs_pos, TerrainType::DownStairs);
         }

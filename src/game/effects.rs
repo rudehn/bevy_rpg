@@ -8,7 +8,7 @@ use crate::{
     game::{
         actions::ActionFinishedEvent,
         combat::Health,
-        items::ItemProperties,
+        items::{ItemProperties, ItemStack},
         magic::{ActiveSpells, KnownSpells},
         spells::SpellRegistry,
         stats::AttributeModifiers,
@@ -56,7 +56,7 @@ pub fn handle_use_item(
         ),
         With<Player>,
     >,
-    item_query: Query<(&Name, &ItemProperties)>,
+    item_query: Query<(&Name, &ItemProperties, Option<&ItemStack>)>,
     spell_registry_handle: Res<SpellRegistryHandle>,
     spell_registries: Res<Assets<SpellRegistry>>,
     mut log_writer: MessageWriter<GameLogMessage>,
@@ -74,11 +74,12 @@ pub fn handle_use_item(
         }
 
         // Clone what we need before releasing the item_query borrow.
-        let (effect, item_name) = {
-            let Ok((name, props)) = item_query.get(msg.item_entity) else {
+        let (effect, item_name, stack_info) = {
+            let Ok((name, props, stack)) = item_query.get(msg.item_entity) else {
                 continue;
             };
-            (props.effect.clone(), name.0.clone())
+            let stack_info = stack.map(|s| (s.count, s.max_stack));
+            (props.effect.clone(), name.0.clone(), stack_info)
         };
 
         let Some(effect) = effect else {
@@ -152,7 +153,17 @@ pub fn handle_use_item(
             }
         }
 
-        // Consume the item: remove from inventory and despawn.
+        // Consume one from the stack; only remove/despawn when count reaches 0.
+        if let Some((count, max_stack)) = stack_info {
+            if count > 1 {
+                commands.entity(msg.item_entity).insert(ItemStack { count: count - 1, max_stack });
+                finish_writer.write(ActionFinishedEvent {
+                    entity: player_entity,
+                    base_cost: BASE_ACTION_COST,
+                });
+                continue;
+            }
+        }
         inv.items.retain(|&e| e != msg.item_entity);
         commands.entity(msg.item_entity).despawn();
 

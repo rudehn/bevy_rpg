@@ -13,7 +13,7 @@ use crate::{
         abilities::{Faction, FactionKind},
         actions::SpeedStats,
         combat::{Damage, Health, HealthRegen},
-        items::{ItemProperties, LootEntry, LootTable},
+        items::{ItemProperties, ItemStack, LootEntry, LootTable},
         level::ExperienceReward,
         magic::{ActiveSpells, KnownSpells, SpellCooldowns, MAX_SPELL_SLOTS},
         ranged::RangedCapable,
@@ -127,7 +127,12 @@ pub fn spawn_monster(
         let entries = monster_asset
             .loot_table
             .iter()
-            .map(|e| LootEntry { item: e.item.clone(), spawn_chance: e.spawn_chance })
+            .map(|e| LootEntry {
+                item: e.item.clone(),
+                spawn_chance: e.spawn_chance,
+                count_min: e.count_min,
+                count_max: e.count_max,
+            })
             .collect();
         commands.entity(monster_entity).insert(LootTable { entries });
     }
@@ -261,6 +266,8 @@ pub fn spawn_item(
         effect: asset.effect.clone(),
         weapon_range: asset.weapon_range,
     });
+
+    entity.insert(ItemStack { count: 1, max_stack: asset.max_stack });
 
     if asset.is_victory {
         entity.insert(AmuletOfBevy);

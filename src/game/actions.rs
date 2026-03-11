@@ -4,7 +4,7 @@ use bracket_lib::prelude::{Algorithm2D, Point};
 use crate::{
     components::{Collider, InInventory, Inventory, Monster, Name, Position, Viewshed, Item, AmuletOfBevy},
     constants::BASE_ACTION_COST,
-    game::{combat::AttackIntentMessage, AppState},
+    game::{combat::AttackIntentMessage, items::ItemStack, AppState},
     map::{Map, tile::{is_walkable, TerrainType, TileMarker}, map::DungeonECSMap},
     player::Player,
     assets::{TileManifest, TileManifestHandle, TileSpriteAssets},
@@ -91,8 +91,9 @@ pub fn handle_pickup(
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
     actors_query: Query<(Entity, &Position, Has<Player>)>,
-    items_query: Query<(Entity, &Position, &Name, Has<AmuletOfBevy>), (With<Item>, Without<InInventory>)>,
+    items_query: Query<(Entity, &Position, &Name, Has<AmuletOfBevy>, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     mut inv_query: Query<&mut Inventory, With<Player>>,
+    inv_stacks_query: Query<(&Name, &ItemStack), With<InInventory>>,
     mut next_state: ResMut<NextState<AppState>>,
 ) {
     for intent in intents.read() {
@@ -101,7 +102,7 @@ pub fn handle_pickup(
         };
 
         let mut picked_up = false;
-        for (item_entity, item_pos, item_name, is_amulet) in items_query.iter() {
+        for (item_entity, item_pos, item_name, is_amulet, item_stack) in items_query.iter() {
             if actor_pos != item_pos {
                 continue;
             }
@@ -116,6 +117,32 @@ pub fn handle_pickup(
 
             if is_player {
                 if let Ok(mut inv) = inv_query.single_mut() {
+                    // Try to merge into an existing stack if this item is stackable.
+                    if let Some(floor_stack) = item_stack {
+                        if floor_stack.max_stack > 1 {
+                            let merge_target = inv.items.iter().find_map(|&e| {
+                                if let Ok((inv_name, inv_stack)) = inv_stacks_query.get(e) {
+                                    if inv_name.0 == item_name.0 && inv_stack.count < inv_stack.max_stack {
+                                        return Some((e, inv_stack.count, inv_stack.max_stack));
+                                    }
+                                }
+                                None
+                            });
+
+                            if let Some((target_entity, current_count, max_stack)) = merge_target {
+                                let new_count = current_count + 1;
+                                commands.entity(target_entity).insert(ItemStack { count: new_count, max_stack });
+                                commands.entity(item_entity).despawn();
+                                log_writer.write(GameLogMessage(format!(
+                                    "You pick up the {}. (x{})", item_name.0, new_count
+                                )));
+                                picked_up = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    // Normal pickup: add to inventory as new slot.
                     if inv.items.len() < inv.capacity {
                         inv.items.push(item_entity);
                         commands

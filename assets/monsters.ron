@@ -75,6 +75,7 @@
             ranged_range: 8,
             loot_table: [
                 (item: "Short Bow", spawn_chance: 0.15),
+                (item: "Arrow", spawn_chance: 0.80, count_min: 3, count_max: 8),
             ],
         ),
         "Bone Archer": (
@@ -89,6 +90,9 @@
             constitution: 8,
             agility: 9,
             ranged_range: 10,
+            loot_table: [
+                (item: "Arrow", spawn_chance: 0.85, count_min: 5, count_max: 12),
+            ],
         ),
     }
 )
