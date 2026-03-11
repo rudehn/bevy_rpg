@@ -83,6 +83,14 @@ pub struct ActionFinishedEvent {
     pub base_cost: u32,
 }
 
+/// Emitted when a player action is invalid (e.g. moving into a wall, firing with no bow).
+/// Re-queues the entity at the same game time so no turn is consumed, then returns
+/// immediately to `PlayerInput` state.  Must NOT be emitted for monsters (infinite loop).
+#[derive(Message)]
+pub struct FreeActionEvent {
+    pub entity: Entity,
+}
+
 // --- Systems ---
 
 pub fn handle_pickup(
@@ -237,6 +245,7 @@ pub fn handle_movement(
     mut melee_writer: MessageWriter<MeleeIntent>,
     mut open_door_writer: MessageWriter<OpenDoorIntent>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
+    mut free_writer: MessageWriter<FreeActionEvent>,
     mut actors_query: Query<(
         Entity,
         &mut Position,
@@ -247,7 +256,7 @@ pub fn handle_movement(
     map: Res<Map>,
 ) {
     for intent in intents.read() {
-        let Ok((_, pos, _, _, _)) = actors_query.get(intent.entity) else {
+        let Ok((_, pos, is_player, _, _)) = actors_query.get(intent.entity) else {
             finish_writer.write(ActionFinishedEvent {
                 entity: intent.entity,
                 base_cost: BASE_ACTION_COST,
@@ -259,10 +268,11 @@ pub fn handle_movement(
 
         // 1. Bounds check
         if !map.in_bounds(target_pt) {
-            finish_writer.write(ActionFinishedEvent {
-                entity: intent.entity,
-                base_cost: BASE_ACTION_COST,
-            });
+            if is_player {
+                free_writer.write(FreeActionEvent { entity: intent.entity });
+            } else {
+                finish_writer.write(ActionFinishedEvent { entity: intent.entity, base_cost: BASE_ACTION_COST });
+            }
             continue;
         }
 
@@ -311,11 +321,12 @@ pub fn handle_movement(
                 });
                 continue;
             } else if target_has_collider {
-                // Blocked by friendly/neutral with a Collider
-                finish_writer.write(ActionFinishedEvent {
-                    entity: intent.entity,
-                    base_cost: BASE_ACTION_COST,
-                });
+                // Blocked by friendly/neutral with a Collider — free for player, costs turn for monster
+                if actor_is_player {
+                    free_writer.write(FreeActionEvent { entity: intent.entity });
+                } else {
+                    finish_writer.write(ActionFinishedEvent { entity: intent.entity, base_cost: BASE_ACTION_COST });
+                }
                 continue;
             }
             // If neither hostile nor blocking collider, fall through to movement
@@ -323,10 +334,15 @@ pub fn handle_movement(
 
         // 4. Wall/Obstacle Check
         if !is_walkable(target_tile) {
-            finish_writer.write(ActionFinishedEvent {
-                entity: intent.entity,
-                base_cost: BASE_ACTION_COST,
-            });
+            let actor_is_player = actors_query
+                .get(intent.entity)
+                .map(|(_, _, p, _, _)| p)
+                .unwrap_or(false);
+            if actor_is_player {
+                free_writer.write(FreeActionEvent { entity: intent.entity });
+            } else {
+                finish_writer.write(ActionFinishedEvent { entity: intent.entity, base_cost: BASE_ACTION_COST });
+            }
             continue;
         }
 

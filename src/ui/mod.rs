@@ -398,11 +398,14 @@ fn update_spell_slots_ui(
             let spell = registry.and_then(|r| r.spells.get(spell_id));
             let name = spell.map(|s| s.name.as_str()).unwrap_or(spell_id.as_str());
             let cost = spell.map(|s| s.mana_cost).unwrap_or(0);
-            let on_cd = cooldowns.map(|cd| !cd.is_ready(spell_id)).unwrap_or(false);
+            let cd_remaining = cooldowns
+                .and_then(|cd| cd.cooldowns.get(spell_id).copied())
+                .unwrap_or(0);
+            let on_cd = cd_remaining > 0;
 
             if on_cd {
-                text.0 = format!("[{}] {} (cd)", i + 1, name);
-                color.0 = Color::srgb(0.4, 0.4, 0.4);
+                text.0 = format!("[{}] {} ({}t)", i + 1, name, cd_remaining);
+                color.0 = Color::srgb(0.5, 0.35, 0.35);
             } else if mana.current < cost {
                 text.0 = format!("[{}] {} ({}mp)", i + 1, name, cost);
                 color.0 = Color::srgb(0.35, 0.35, 0.6);

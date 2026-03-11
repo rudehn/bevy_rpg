@@ -51,3 +51,6 @@ Lakes
 
 
 Get all assets for monsters/player/items
+
+Spell slots not working?
+Spell screen, mana cost says 5/50 mp

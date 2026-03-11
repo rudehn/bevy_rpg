@@ -5,7 +5,7 @@ use crate::{
     components::{InInventory, Inventory, Name, Position, Viewshed},
     constants::BASE_ACTION_COST,
     game::{
-        actions::{ActionFinishedEvent, RangedAttackIntent},
+        actions::{ActionFinishedEvent, FreeActionEvent, RangedAttackIntent},
         combat::AttackIntentMessage,
         items::{Equipment, ItemProperties, ItemStack},
     },
@@ -31,6 +31,7 @@ pub fn handle_ranged_attack(
     mut commands: Commands,
     mut intents: MessageReader<RangedAttackIntent>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
+    mut free_writer: MessageWriter<FreeActionEvent>,
     mut attack_writer: MessageWriter<AttackIntentMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
     attacker_query: Query<(
@@ -58,10 +59,11 @@ pub fn handle_ranged_attack(
         };
 
         let Ok((target_pos, target_name)) = target_query.get(intent.target) else {
-            finish_writer.write(ActionFinishedEvent {
-                entity: intent.attacker,
-                base_cost: BASE_ACTION_COST,
-            });
+            if is_player {
+                free_writer.write(FreeActionEvent { entity: intent.attacker });
+            } else {
+                finish_writer.write(ActionFinishedEvent { entity: intent.attacker, base_cost: BASE_ACTION_COST });
+            }
             continue;
         };
 
@@ -72,22 +74,35 @@ pub fn handle_ranged_attack(
             log_writer.write(GameLogMessage(
                 "No clear line of sight to target.".to_string(),
             ));
-            finish_writer.write(ActionFinishedEvent {
-                entity: intent.attacker,
-                base_cost: BASE_ACTION_COST,
-            });
+            if is_player {
+                free_writer.write(FreeActionEvent { entity: intent.attacker });
+            } else {
+                finish_writer.write(ActionFinishedEvent { entity: intent.attacker, base_cost: BASE_ACTION_COST });
+            }
             continue;
         }
 
         // 2. Range check — monster uses RangedCapable, player uses equipped weapon.
+        //    If the player has no ranged weapon equipped, treat as invalid (free action).
         let range = if let Some(rc) = ranged_capable {
             rc.range
         } else if let Some(eq) = equipment {
-            eq.weapon
+            let weapon_range = eq.weapon
                 .and_then(|w| item_props_query.get(w).ok())
                 .map(|p| p.weapon_range)
-                .unwrap_or(1)
+                .unwrap_or(0);
+            if is_player && weapon_range == 0 {
+                log_writer.write(GameLogMessage("You have no ranged weapon equipped.".to_string()));
+                free_writer.write(FreeActionEvent { entity: intent.attacker });
+                continue;
+            }
+            weapon_range
         } else {
+            if is_player {
+                log_writer.write(GameLogMessage("You have no ranged weapon equipped.".to_string()));
+                free_writer.write(FreeActionEvent { entity: intent.attacker });
+                continue;
+            }
             1
         };
 
@@ -96,17 +111,18 @@ pub fn handle_ranged_attack(
         if dist > range as f32 {
             let who = attacker_name.map(|n| n.0.as_str()).unwrap_or("Target");
             log_writer.write(GameLogMessage(format!("{} is out of range.", who)));
-            finish_writer.write(ActionFinishedEvent {
-                entity: intent.attacker,
-                base_cost: BASE_ACTION_COST,
-            });
+            if is_player {
+                free_writer.write(FreeActionEvent { entity: intent.attacker });
+            } else {
+                finish_writer.write(ActionFinishedEvent { entity: intent.attacker, base_cost: BASE_ACTION_COST });
+            }
             continue;
         }
 
         // Player must have at least one arrow to fire.
         if is_player {
             let Ok(mut inv) = player_inv_query.single_mut() else {
-                finish_writer.write(ActionFinishedEvent { entity: intent.attacker, base_cost: BASE_ACTION_COST });
+                free_writer.write(FreeActionEvent { entity: intent.attacker });
                 continue;
             };
 
@@ -118,7 +134,7 @@ pub fn handle_ranged_attack(
 
             let Some((arrow_entity, arrow_count, arrow_max)) = arrow else {
                 log_writer.write(GameLogMessage("You have no arrows!".to_string()));
-                finish_writer.write(ActionFinishedEvent { entity: intent.attacker, base_cost: BASE_ACTION_COST });
+                free_writer.write(FreeActionEvent { entity: intent.attacker });
                 continue;
             };
 

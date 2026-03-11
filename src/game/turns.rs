@@ -5,9 +5,9 @@ use crate::components::GameEntityMarker;
 use crate::constants::BASE_ACTION_COST;
 use crate::game::AppState;
 use crate::game::actions::{
-    Action, ActionFinishedEvent, Direction, MeleeIntent, MovementIntent, OpenDoorIntent,
-    PickUpIntent, RangedAttackIntent, SpeedStats, WaitIntent, handle_door_open, handle_melee,
-    handle_movement, handle_pickup, handle_wait,
+    Action, ActionFinishedEvent, Direction, FreeActionEvent, MeleeIntent, MovementIntent,
+    OpenDoorIntent, PickUpIntent, RangedAttackIntent, SpeedStats, WaitIntent,
+    handle_door_open, handle_melee, handle_movement, handle_pickup, handle_wait,
 };
 use crate::game::ai::MonsterAI;
 use crate::game::effects::{UseItemMessage, handle_use_item};
@@ -72,6 +72,7 @@ impl Plugin for TurnOrderPlugin {
             .add_message::<UseItemMessage>()
             .add_message::<CastSpellMessage>()
             .add_message::<ActionFinishedEvent>()
+            .add_message::<FreeActionEvent>()
             .add_message::<TurnEndEvent>()
             .add_systems(OnEnter(AppState::InGame), (setup_turn_order, start_turns))
             .add_systems(
@@ -100,6 +101,7 @@ impl Plugin for TurnOrderPlugin {
                         handle_use_item,
                         handle_cast_spell,
                         // --- Cleanup ---
+                        resolve_free_actions,
                         resolve_turn_end,
                         continue_turn_processing,
                     )
@@ -327,6 +329,23 @@ fn marker_dispatch(
         });
         turn_end_writer.write(TurnEndEvent);
         commands.entity(entity).remove::<MyTurn>();
+    }
+}
+
+/// Handles `FreeActionEvent` — re-queues the entity at the *same* current time so
+/// the turn is not consumed, then immediately returns to `PlayerInput` state.
+/// Only ever emitted for the player; monsters always emit `ActionFinishedEvent`.
+fn resolve_free_actions(
+    mut events: MessageReader<FreeActionEvent>,
+    mut turn_manager: ResMut<TurnManager>,
+    mut next_state: ResMut<NextState<TurnState>>,
+) {
+    for event in events.read() {
+        // Re-insert at current_time — no time penalty.
+        let current_time = turn_manager.current_time;
+        turn_manager.turn_queue.push((event.entity, current_time));
+        turn_manager.turn_queue.sort_by_key(|&(_, t)| t);
+        next_state.set(TurnState::PlayerInput);
     }
 }
 
