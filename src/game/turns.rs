@@ -11,7 +11,7 @@ use crate::game::actions::{
     handle_door_open, handle_melee, handle_movement, handle_pickup, handle_wait,
 };
 use crate::game::ai::MonsterAI;
-use crate::game::effects::handle_use_item;
+use crate::game::effects::{UseItemMessage, handle_use_item};
 use crate::game::magic::{ActiveSpells, handle_cast_spell};
 use crate::game::ranged::handle_ranged_attack;
 use crate::game::targeting::TargetingMode;
@@ -68,6 +68,7 @@ impl Plugin for TurnOrderPlugin {
             .add_message::<PickUpIntent>()
             .add_message::<OpenDoorIntent>()
             .add_message::<RangedAttackIntent>()
+            .add_message::<UseItemMessage>()
             // Turn-lifecycle messages.
             .add_message::<ActionFinishedEvent>()
             .add_message::<FreeActionEvent>()
