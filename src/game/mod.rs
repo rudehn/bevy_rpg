@@ -1,3 +1,5 @@
+use crate::game::abilities::AbilitiesPlugin;
+use crate::game::targeting::TargetingPlugin;
 use crate::{
     assets::{ItemManifest, ItemManifestHandle, ItemSpriteAssets},
     components::{GameEntityMarker, Name, Position, Viewshed},
@@ -7,6 +9,7 @@ use crate::{
         combat::{CombatDamageSet, CombatPlugin, DeathEvent, GameRng, death_system},
         items::{ItemsPlugin, LootTable},
         level::LevelPlugin,
+        magic::MagicPlugin,
         particles::ParticlesPlugin,
         stats::StatsPlugin,
         systems::{fov_update_system, sync_entity_transforms, update_monster_visibility, update_item_visibility},
@@ -21,6 +24,7 @@ use crate::{
     ui::game_log::GameLog,
 };
 use bevy::prelude::*;
+pub mod abilities;
 pub mod actions;
 mod ai;
 pub mod camera;
@@ -28,10 +32,13 @@ pub mod combat;
 pub mod effects;
 pub mod items;
 pub mod level;
+pub mod magic;
 pub mod particles;
 pub mod spawner;
+pub mod spells;
 pub mod stats;
 mod systems;
+pub mod targeting;
 pub mod turns;
 pub use ai::*;
 pub use spawner::*;
@@ -57,6 +64,8 @@ pub enum InGameState {
     Running,
     CharacterInfo,
     Inventory,
+    Spells,
+    Targeting,
 }
 
 pub struct GamePlugin;
@@ -73,7 +82,10 @@ impl Plugin for GamePlugin {
                 StatsPlugin,
                 LevelPlugin,
                 ItemsPlugin,
+                MagicPlugin,
                 ParticlesPlugin,
+                AbilitiesPlugin,
+                TargetingPlugin,
             ))
             .add_systems(
                 Update,

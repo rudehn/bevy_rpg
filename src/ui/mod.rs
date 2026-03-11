@@ -14,10 +14,12 @@ pub mod character_info;
 pub mod cheat_menu;
 pub mod game_log;
 pub mod inventory;
+pub mod spells;
 
 use character_info::CharacterInfoPlugin;
 use cheat_menu::CheatMenuPlugin;
 use inventory::InventoryPlugin;
+use spells::SpellsPlugin;
 use game_log::{
     GameLog, GameLogMessage, GameLogSettings, add_log_message_system, game_log_input_system,
     spawn_game_log_ui, update_game_log_ui,
@@ -158,6 +160,15 @@ fn spawn_player_stats_ui(
             ));
             parent.spawn((
                 Text::new("[I] Inventory"),
+                TextFont {
+                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                    font_size: 14.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.55, 0.55, 0.55)),
+            ));
+            parent.spawn((
+                Text::new("[S] Spells"),
                 TextFont {
                     font: asset_server.load("fonts/Macondo-Regular.ttf"),
                     font_size: 14.0,
@@ -479,7 +490,7 @@ impl Plugin for UiPlugin {
         app.init_resource::<GameLog>()
             .init_resource::<GameLogSettings>()
             .add_message::<GameLogMessage>()
-            .add_plugins((CharacterInfoPlugin, CheatMenuPlugin, InventoryPlugin))
+            .add_plugins((CharacterInfoPlugin, CheatMenuPlugin, InventoryPlugin, SpellsPlugin))
             .add_systems(
                 OnEnter(AppState::InGame),
                 (

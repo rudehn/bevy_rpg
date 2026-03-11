@@ -71,5 +71,25 @@
             rarity: Uncommon,
             per_bonus: 2,
         ),
+        "Tome of Magic Missile": (
+            name: "Tome of Magic Missile",
+            sprite: "32rogues/items.png#40",
+            tile_size: (32, 32),
+            grid_size: (8, 8),
+            is_victory: false,
+            item_kind: Spellbook,
+            rarity: Uncommon,
+            effect: Some(LearnSpell("magic_missile")),
+        ),
+        "Tome of Healing": (
+            name: "Tome of Healing",
+            sprite: "32rogues/items.png#41",
+            tile_size: (32, 32),
+            grid_size: (8, 8),
+            is_victory: false,
+            item_kind: Spellbook,
+            rarity: Uncommon,
+            effect: Some(LearnSpell("heal_self")),
+        ),
     }
 )

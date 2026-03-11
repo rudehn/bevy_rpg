@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use crate::game::effects::Effect;
 use crate::game::items::{ArmorSlot, ItemKind, Rarity};
+use crate::game::spells::SpellRegistry;
 
 use crate::{
     constants::{TILE_SIZE_X, TILE_SIZE_Y},
@@ -48,6 +49,7 @@ impl Plugin for AssetsPlugin {
             .init_resource::<ItemManifestHandle>()
             .init_resource::<ItemSpawnTableHandle>()
             .init_resource::<PlayerAssetHandle>()
+            .init_resource::<SpellRegistryHandle>()
             .add_systems(
                 OnEnter(AppState::Loading),
                 (
@@ -58,6 +60,7 @@ impl Plugin for AssetsPlugin {
                     load_item_manifest,
                     load_item_spawn_table,
                     load_player_asset,
+                    load_spell_registry,
                 ),
             )
             .add_systems(
@@ -84,6 +87,7 @@ impl Plugin for LoadingPlugin {
             RonAssetPlugin::<ItemManifest>::new(&["items.ron"]),
             RonAssetPlugin::<ItemSpawnTable>::new(&["item_spawns.ron"]),
             RonAssetPlugin::<PlayerAsset>::new(&["player.ron"]),
+            RonAssetPlugin::<SpellRegistry>::new(&["spells.ron"]),
         ))
         .add_systems(Startup, (camera::setup_camera, set_clear_color))
         .init_resource::<MonsterSpriteAssets>()
@@ -159,6 +163,8 @@ pub struct MonsterAsset {
     pub dexterity: i32,
     pub constitution: i32,
     pub agility: i32,
+    #[serde(default)]
+    pub intelligence: i32,
     pub damage: String,
 
     #[serde(default, deserialize_with = "serde_helpers::deserialize_i32_as_option")]
@@ -166,6 +172,10 @@ pub struct MonsterAsset {
 
     #[serde(default)]
     pub loot_table: Vec<MonsterLootEntry>,
+
+    /// Spell IDs (from spells.ron) pre-assigned to this monster's active slots.
+    #[serde(default)]
+    pub spells: Vec<String>,
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
@@ -304,6 +314,9 @@ pub struct ItemSpawnTableHandle(pub Handle<ItemSpawnTable>);
 #[derive(Resource, Default)]
 pub struct PlayerAssetHandle(pub Handle<PlayerAsset>);
 
+#[derive(Resource, Default)]
+pub struct SpellRegistryHandle(pub Handle<SpellRegistry>);
+
 fn load_monster_manifest(
     asset_server: Res<AssetServer>,
     mut monster_manifest_handle: ResMut<MonsterManifestHandle>,
@@ -332,6 +345,10 @@ fn load_item_spawn_table(asset_server: Res<AssetServer>, mut handle: ResMut<Item
 
 fn load_player_asset(asset_server: Res<AssetServer>, mut handle: ResMut<PlayerAssetHandle>) {
     handle.0 = asset_server.load("player.ron");
+}
+
+fn load_spell_registry(asset_server: Res<AssetServer>, mut handle: ResMut<SpellRegistryHandle>) {
+    handle.0 = asset_server.load("spells.ron");
 }
 
 fn load_monster_sprites(
@@ -502,6 +519,8 @@ struct ExtraLoadingParams<'w> {
     item_spawn_tables: Res<'w, Assets<ItemSpawnTable>>,
     player_asset_handle: Res<'w, PlayerAssetHandle>,
     player_assets: Res<'w, Assets<PlayerAsset>>,
+    spell_registry_handle: Res<'w, SpellRegistryHandle>,
+    spell_registries: Res<'w, Assets<SpellRegistry>>,
     next_state: ResMut<'w, NextState<AppState>>,
 }
 
@@ -551,6 +570,10 @@ fn check_assets_loaded(
     }
 
     if extra.player_assets.get(&extra.player_asset_handle.0).is_none() {
+        return;
+    }
+
+    if extra.spell_registries.get(&extra.spell_registry_handle.0).is_none() {
         return;
     }
 

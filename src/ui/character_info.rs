@@ -12,7 +12,6 @@ pub struct CharacterInfoPlugin;
 impl Plugin for CharacterInfoPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<StatDraft>()
-            .add_systems(OnEnter(AppState::InGame), spawn_hotkey_bar)
             .add_systems(
                 Update,
                 character_info_input_system.run_if(in_state(AppState::InGame)),
@@ -51,8 +50,12 @@ pub struct StatDraft {
 
 impl StatDraft {
     pub fn total_points(&self) -> u32 {
-        (self.strength + self.dexterity + self.constitution + self.agility
-            + self.intelligence + self.perception) as u32
+        (self.strength
+            + self.dexterity
+            + self.constitution
+            + self.agility
+            + self.intelligence
+            + self.perception) as u32
     }
 }
 
@@ -91,36 +94,6 @@ pub struct StatMinusButton(pub crate::game::stats::Attributes);
 #[derive(Component)]
 pub struct StatConfirmButton;
 
-fn spawn_hotkey_bar(mut commands: Commands, asset_server: Res<AssetServer>) {
-    commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                width: Val::Percent(100.0),
-                height: Val::Px(30.0),
-                bottom: Val::Px(150.0), // Above the game log
-                left: Val::Px(0.0),
-                padding: UiRect::left(Val::Px(10.0)),
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
-            HotkeyBar,
-            GameEntityMarker,
-        ))
-        .with_children(|parent| {
-            parent.spawn((
-                Text::new("(C)haracter Info"),
-                TextFont {
-                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                    font_size: 16.0,
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-            ));
-        });
-}
-
 fn character_info_input_system(
     keys: Res<ButtonInput<KeyCode>>,
     state: Res<State<InGameState>>,
@@ -130,7 +103,7 @@ fn character_info_input_system(
         match state.get() {
             InGameState::Running => next_state.set(InGameState::CharacterInfo),
             InGameState::CharacterInfo => next_state.set(InGameState::Running),
-            InGameState::Inventory => {} // C does nothing while inventory is open
+            InGameState::Inventory | InGameState::Spells | InGameState::Targeting => {} // C does nothing while another screen is open
         }
     }
 
@@ -413,12 +386,30 @@ fn spawn_attribute_row(
                 },
                 TextColor(Color::WHITE),
                 AttrText(match label {
-                    "Strength" => Attributes { strength: 1, ..default() },
-                    "Dexterity" => Attributes { dexterity: 1, ..default() },
-                    "Constitution" => Attributes { constitution: 1, ..default() },
-                    "Agility" => Attributes { agility: 1, ..default() },
-                    "Intelligence" => Attributes { intelligence: 1, ..default() },
-                    "Perception" => Attributes { perception: 1, ..default() },
+                    "Strength" => Attributes {
+                        strength: 1,
+                        ..default()
+                    },
+                    "Dexterity" => Attributes {
+                        dexterity: 1,
+                        ..default()
+                    },
+                    "Constitution" => Attributes {
+                        constitution: 1,
+                        ..default()
+                    },
+                    "Agility" => Attributes {
+                        agility: 1,
+                        ..default()
+                    },
+                    "Intelligence" => Attributes {
+                        intelligence: 1,
+                        ..default()
+                    },
+                    "Perception" => Attributes {
+                        perception: 1,
+                        ..default()
+                    },
                     _ => default(),
                 }),
             ));
@@ -442,12 +433,30 @@ fn spawn_attribute_row(
                 BackgroundColor(Color::srgb(0.5, 0.2, 0.2)),
                 minus,
                 StatMinusButton(match label {
-                    "Strength" => Attributes { strength: 1, ..default() },
-                    "Dexterity" => Attributes { dexterity: 1, ..default() },
-                    "Constitution" => Attributes { constitution: 1, ..default() },
-                    "Agility" => Attributes { agility: 1, ..default() },
-                    "Intelligence" => Attributes { intelligence: 1, ..default() },
-                    "Perception" => Attributes { perception: 1, ..default() },
+                    "Strength" => Attributes {
+                        strength: 1,
+                        ..default()
+                    },
+                    "Dexterity" => Attributes {
+                        dexterity: 1,
+                        ..default()
+                    },
+                    "Constitution" => Attributes {
+                        constitution: 1,
+                        ..default()
+                    },
+                    "Agility" => Attributes {
+                        agility: 1,
+                        ..default()
+                    },
+                    "Intelligence" => Attributes {
+                        intelligence: 1,
+                        ..default()
+                    },
+                    "Perception" => Attributes {
+                        perception: 1,
+                        ..default()
+                    },
                     _ => default(),
                 }),
             ))
@@ -634,7 +643,9 @@ fn update_character_info_ui(
         ),
     >,
 ) {
-    let Ok((player_attrs, points, damage, level, rolled_hp, mana, combat_stats)) = player_query.single() else {
+    let Ok((player_attrs, points, damage, level, rolled_hp, mana, combat_stats)) =
+        player_query.single()
+    else {
         return;
     };
 
@@ -690,17 +701,35 @@ fn update_character_info_ui(
 
     for (mut text, attr_marker) in &mut attr_texts {
         if attr_marker.0.strength > 0 {
-            text.0 = format!("Strength:     {} (+{})", player_attrs.strength, draft.strength);
+            text.0 = format!(
+                "Strength:     {} (+{})",
+                player_attrs.strength, draft.strength
+            );
         } else if attr_marker.0.dexterity > 0 {
-            text.0 = format!("Dexterity:    {} (+{})", player_attrs.dexterity, draft.dexterity);
+            text.0 = format!(
+                "Dexterity:    {} (+{})",
+                player_attrs.dexterity, draft.dexterity
+            );
         } else if attr_marker.0.constitution > 0 {
-            text.0 = format!("Constitution: {} (+{})", player_attrs.constitution, draft.constitution);
+            text.0 = format!(
+                "Constitution: {} (+{})",
+                player_attrs.constitution, draft.constitution
+            );
         } else if attr_marker.0.agility > 0 {
-            text.0 = format!("Agility:      {} (+{})", player_attrs.agility, draft.agility);
+            text.0 = format!(
+                "Agility:      {} (+{})",
+                player_attrs.agility, draft.agility
+            );
         } else if attr_marker.0.intelligence > 0 {
-            text.0 = format!("Intelligence: {} (+{})", player_attrs.intelligence, draft.intelligence);
+            text.0 = format!(
+                "Intelligence: {} (+{})",
+                player_attrs.intelligence, draft.intelligence
+            );
         } else if attr_marker.0.perception > 0 {
-            text.0 = format!("Perception:   {} (+{})", player_attrs.perception, draft.perception);
+            text.0 = format!(
+                "Perception:   {} (+{})",
+                player_attrs.perception, draft.perception
+            );
         }
     }
 
@@ -726,7 +755,8 @@ fn update_character_info_ui(
         text.0 = format!(
             "Max HP:       {}\nMana:         {}/{}\nDamage:       {} + {}\nDefense:      {}\nHit Chance:   {}\nDodge Chance: {}\nAction Delay: {:.2}x\nVision Range: {} tiles",
             max_hp,
-            mana.current, max_mana,
+            mana.current,
+            max_mana,
             damage.0,
             str_bonus,
             combat_stats.armor,

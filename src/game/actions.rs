@@ -21,6 +21,9 @@ pub enum Action {
     UnequipItem { item: Entity },
     DropItem    { item: Entity },
     UseItem     { item: Entity },
+    /// Cast the spell assigned to the given slot (0-based, keys 1–6).
+    /// `target`: None = self-target (Caster spells), Some(e) = pre-resolved entity target.
+    CastSpell   { slot: usize, target: Option<Entity> },
 }
 
 // --- Events ---

@@ -10,11 +10,13 @@ use crate::{
     constants::{TILE_SIZE_X, TILE_SIZE_Y, Z_MONSTER, Z_ITEM},
     game::{
         MonsterAI, TurnManager,
+        abilities::{Faction, FactionKind},
         actions::SpeedStats,
         combat::{Damage, Health, HealthRegen},
         items::{ItemProperties, LootEntry, LootTable},
         level::ExperienceReward,
-        stats::{AttributeModifiers, Attributes, CombatStats, Level, MonsterBaseHealth},
+        magic::{ActiveSpells, KnownSpells, SpellCooldowns, MAX_SPELL_SLOTS},
+        stats::{AttributeModifiers, Attributes, CombatStats, Level, Mana, MonsterBaseHealth},
     },
     map::map::GRID_SIZE,
 };
@@ -74,6 +76,7 @@ pub fn spawn_monster(
             new_grid_pos,
             new_pos,
             Viewshed::new(8), // Initial range; recalculated by stat_recalculation_system via PER
+            Faction(FactionKind::Monster),
         ))
         .insert((
             Health {
@@ -87,8 +90,8 @@ pub fn spawn_monster(
                 dexterity: monster_asset.dexterity,
                 constitution: monster_asset.constitution,
                 agility: monster_asset.agility,
+                intelligence: monster_asset.intelligence,
                 perception: monster_asset.perception,
-                ..Default::default()
             },
             AttributeModifiers::default(),
             Level {
@@ -126,6 +129,29 @@ pub fn spawn_monster(
             .map(|e| LootEntry { item: e.item.clone(), spawn_chance: e.spawn_chance })
             .collect();
         commands.entity(monster_entity).insert(LootTable { entries });
+    }
+
+    // Caster monsters: add mana pool and spell components.
+    if !monster_asset.spells.is_empty() || monster_asset.intelligence > 0 {
+        let mana_max = monster_asset.intelligence * 5;
+        commands.entity(monster_entity).insert(Mana {
+            current: mana_max,
+            max: mana_max,
+        });
+    }
+
+    if !monster_asset.spells.is_empty() {
+        let mut slots = vec![None; MAX_SPELL_SLOTS];
+        for (i, spell_id) in monster_asset.spells.iter().enumerate() {
+            if i < MAX_SPELL_SLOTS {
+                slots[i] = Some(spell_id.clone());
+            }
+        }
+        commands.entity(monster_entity).insert((
+            KnownSpells { spells: monster_asset.spells.clone() },
+            ActiveSpells { slots },
+            SpellCooldowns::default(),
+        ));
     }
 
     turn_manager.add_entity(monster_entity);

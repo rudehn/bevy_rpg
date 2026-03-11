@@ -2,12 +2,15 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    assets::SpellRegistryHandle,
     components::{Inventory, Name},
     constants::BASE_ACTION_COST,
     game::{
         actions::ActionFinishedEvent,
         combat::Health,
         items::ItemProperties,
+        magic::{ActiveSpells, KnownSpells},
+        spells::SpellRegistry,
         stats::AttributeModifiers,
     },
     player::Player,
@@ -23,6 +26,8 @@ pub enum Effect {
     HealHp(i32),
     /// Permanently add N to the user's strength modifier.
     GainStr(i32),
+    /// Teach the player a new spell (spellbook). Value is the spell ID from spells.ron.
+    LearnSpell(String),
 }
 
 // --- Messages ---
@@ -41,14 +46,25 @@ pub fn handle_use_item(
     mut commands: Commands,
     mut messages: MessageReader<UseItemMessage>,
     mut player_query: Query<
-        (Entity, &mut Inventory, &mut Health, &mut AttributeModifiers),
+        (
+            Entity,
+            &mut Inventory,
+            &mut Health,
+            &mut AttributeModifiers,
+            &mut KnownSpells,
+            &mut ActiveSpells,
+        ),
         With<Player>,
     >,
     item_query: Query<(&Name, &ItemProperties)>,
+    spell_registry_handle: Res<SpellRegistryHandle>,
+    spell_registries: Res<Assets<SpellRegistry>>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
 ) {
-    let Ok((player_entity, mut inv, mut health, mut attr_mods)) = player_query.single_mut() else {
+    let Ok((player_entity, mut inv, mut health, mut attr_mods, mut known_spells, mut active_spells)) =
+        player_query.single_mut()
+    else {
         return;
     };
 
@@ -93,6 +109,46 @@ pub fn handle_use_item(
                     "You drink the {}. You feel stronger!",
                     item_name
                 )));
+            }
+            Effect::LearnSpell(spell_id) => {
+                // Look up display name from registry; fall back to the ID.
+                let spell_name = spell_registries
+                    .get(&spell_registry_handle.0)
+                    .and_then(|r| r.spells.get(&spell_id))
+                    .map(|s| s.name.clone())
+                    .unwrap_or_else(|| spell_id.clone());
+
+                if known_spells.spells.contains(&spell_id) {
+                    log_writer.write(GameLogMessage(format!(
+                        "You already know {}.",
+                        spell_name
+                    )));
+                } else {
+                    // Auto-slot into first empty slot if one exists.
+                    let auto_slotted = active_spells
+                        .slots
+                        .iter_mut()
+                        .find(|s| s.is_none())
+                        .map(|slot| {
+                            *slot = Some(spell_id.clone());
+                            true
+                        })
+                        .unwrap_or(false);
+
+                    known_spells.spells.push(spell_id.clone());
+
+                    if auto_slotted {
+                        log_writer.write(GameLogMessage(format!(
+                            "You learn {} and it is slotted automatically.",
+                            spell_name
+                        )));
+                    } else {
+                        log_writer.write(GameLogMessage(format!(
+                            "You learn {}. Open [S] Spells to assign it to a slot.",
+                            spell_name
+                        )));
+                    }
+                }
             }
         }
 

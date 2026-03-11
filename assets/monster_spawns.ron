@@ -15,5 +15,10 @@
       min_floor: 3,
       max_floor: 100,
     ),
+    (
+      monster: "Lich Apprentice",
+      min_floor: 4,
+      max_floor: 100,
+    ),
   ]
 )

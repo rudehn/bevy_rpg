@@ -8,9 +8,11 @@ use crate::{
     constants::Z_PLAYER,
     game::{
         TurnManager,
+        abilities::{Faction, FactionKind},
         actions::SpeedStats,
         combat::{Damage, Health, HealthRegen},
         items::Equipment,
+        magic::{ActiveSpells, KnownSpells, SpellCooldowns},
         stats::{AttributeModifiers, Attributes, CombatStats, Level, Mana, RolledHp},
         level::{Experience, AvailableStatPoints},
     },
@@ -117,6 +119,12 @@ pub fn player_spawn_or_move_system(
                     current: player_asset.intelligence * 5,
                     max: player_asset.intelligence * 5,
                 },
+            ))
+            .insert((
+                KnownSpells::default(),
+                ActiveSpells::new(),
+                SpellCooldowns::default(),
+                Faction(FactionKind::Player),
             ))
             .insert((
                 Sprite::from_atlas_image(

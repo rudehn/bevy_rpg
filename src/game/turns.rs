@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+use crate::assets::SpellRegistryHandle;
 use crate::components::GameEntityMarker;
 use crate::constants::BASE_ACTION_COST;
 use crate::game::AppState;
@@ -10,10 +11,13 @@ use crate::game::actions::{
 };
 use crate::game::ai::MonsterAI;
 use crate::game::effects::{UseItemMessage, handle_use_item};
+use crate::game::magic::{ActiveSpells, CastSpellMessage, handle_cast_spell};
 use crate::game::items::{
     DropItemMessage, EquipItemMessage, UnequipItemMessage,
     handle_drop_item, handle_equip_item, handle_unequip_item,
 };
+use crate::game::spells::{SpellRegistry, SpellTarget};
+use crate::game::targeting::TargetingContext;
 use crate::game::InGameState;
 use crate::player::{MovementTimer, Player};
 
@@ -63,6 +67,7 @@ impl Plugin for TurnOrderPlugin {
             .add_message::<PickUpIntent>()
             .add_message::<OpenDoorIntent>()
             .add_message::<UseItemMessage>()
+            .add_message::<CastSpellMessage>()
             .add_message::<ActionFinishedEvent>()
             .add_message::<TurnEndEvent>()
             .add_systems(OnEnter(AppState::InGame), (setup_turn_order, start_turns))
@@ -89,6 +94,7 @@ impl Plugin for TurnOrderPlugin {
                         handle_unequip_item,
                         handle_drop_item,
                         handle_use_item,
+                        handle_cast_spell,
                         // --- Cleanup ---
                         resolve_turn_end,
                         continue_turn_processing,
@@ -211,6 +217,7 @@ fn player_ai_bridge(
     mut unequip_events: MessageWriter<UnequipItemMessage>,
     mut drop_events: MessageWriter<DropItemMessage>,
     mut use_item_events: MessageWriter<UseItemMessage>,
+    mut cast_spell_events: MessageWriter<CastSpellMessage>,
     query: Query<Entity, (With<Player>, With<MyTurn>)>,
 ) {
     let Ok(player_entity) = query.single() else {
@@ -257,6 +264,17 @@ fn player_ai_bridge(
             }
             Action::UseItem { item } => {
                 use_item_events.write(UseItemMessage { item_entity: item });
+            }
+            Action::CastSpell { slot, target } => {
+                let target_entity = match target {
+                    None => player_entity,   // self-cast
+                    Some(e) => e,            // pre-resolved target from targeting system
+                };
+                cast_spell_events.write(CastSpellMessage {
+                    caster: player_entity,
+                    slot,
+                    target: target_entity,
+                });
             }
         }
     } else {
@@ -375,7 +393,12 @@ fn handle_player_input(
     mut timer: ResMut<MovementTimer>,
     keys: Res<ButtonInput<KeyCode>>,
     mut turn_manager: ResMut<TurnManager>,
-    mut next_state: ResMut<NextState<TurnState>>,
+    mut next_turn_state: ResMut<NextState<TurnState>>,
+    mut next_ingame: ResMut<NextState<InGameState>>,
+    mut targeting_context: ResMut<TargetingContext>,
+    spell_registry_handle: Res<SpellRegistryHandle>,
+    spell_registries: Res<Assets<SpellRegistry>>,
+    player_active_spells: Query<&ActiveSpells, With<Player>>,
 ) {
     timer.0.tick(time.delta());
     if !timer.0.is_finished() {
@@ -402,8 +425,34 @@ fn handle_player_input(
         action = Some(Action::PickUp);
     }
 
+    // Spell slots 1–6 (just_pressed to avoid repeating casts).
+    let spell_keys = [
+        KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3,
+        KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6,
+    ];
+    for (i, &key) in spell_keys.iter().enumerate() {
+        if keys.just_pressed(key) {
+            // Determine whether this spell needs targeting or is self-cast.
+            let needs_targeting = player_active_spells.single().ok().and_then(|active| {
+                let spell_id = active.slots.get(i)?.as_deref()?;
+                let registry = spell_registries.get(&spell_registry_handle.0)?;
+                let spell = registry.spells.get(spell_id)?;
+                Some(spell.target == SpellTarget::NearestEnemy)
+            }).unwrap_or(false);
+
+            if needs_targeting {
+                targeting_context.slot = i;
+                next_ingame.set(InGameState::Targeting);
+                // Do NOT transition to Processing — wait for targeting to complete.
+            } else {
+                action = Some(Action::CastSpell { slot: i, target: None });
+            }
+            break;
+        }
+    }
+
     if let Some(act) = action {
         turn_manager.player_action_pending = Some(act);
-        next_state.set(TurnState::Processing);
+        next_turn_state.set(TurnState::Processing);
     }
 }

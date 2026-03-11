@@ -44,5 +44,22 @@
                 (item: "Healing Potion", spawn_chance: 0.25),
             ],
         ),
+        "Lich Apprentice": (
+            name: "Lich Apprentice",
+            perception: 12,
+            sprite: "sprites/monsters/goblin.png#0",
+            damage: "1d4",
+            level: 3,
+            base_hp: 8,
+            strength: 8,
+            dexterity: 10,
+            constitution: 8,
+            agility: 8,
+            intelligence: 14,
+            spells: ["magic_missile", "heal_self"],
+            loot_table: [
+                (item: "Tome of Magic Missile", spawn_chance: 0.30),
+            ],
+        ),
     }
 )

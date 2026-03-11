@@ -12,6 +12,10 @@
         (item: "Leather Armor",      min_floor: 1,  max_floor: 6,  weight: 3, spawn_chance: 0.70),
 
         // Accessories
-        (item: "Ring of Perception", min_floor: 3,  max_floor: 10, weight: 1, spawn_chance: 0.40),
+        (item: "Ring of Perception",      min_floor: 3,  max_floor: 10, weight: 1, spawn_chance: 0.40),
+
+        // Spellbooks
+        (item: "Tome of Magic Missile",   min_floor: 1,  max_floor: 10, weight: 2, spawn_chance: 0.50),
+        (item: "Tome of Healing",         min_floor: 2,  max_floor: 10, weight: 2, spawn_chance: 0.50),
     ]
 )

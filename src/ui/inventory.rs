@@ -54,7 +54,7 @@ fn inventory_input_system(
         match state.get() {
             InGameState::Running => next_state.set(InGameState::Inventory),
             InGameState::Inventory => next_state.set(InGameState::Running),
-            InGameState::CharacterInfo => {}
+            InGameState::CharacterInfo | InGameState::Spells | InGameState::Targeting => {}
         }
     }
     if keys.just_pressed(KeyCode::Escape) && *state.get() == InGameState::Inventory {
@@ -226,7 +226,7 @@ fn update_inventory_ui(
     if keys.just_pressed(KeyCode::KeyU) {
         if let Some(&item_entity) = inv.items.get(slot.0) {
             if let Ok((_, props, _)) = item_query.get(item_entity) {
-                if props.kind == ItemKind::Consumable {
+                if props.kind == ItemKind::Consumable || props.kind == ItemKind::Spellbook {
                     if slot.0 > 0 && slot.0 >= item_count.saturating_sub(1) {
                         slot.0 -= 1;
                     }
@@ -298,7 +298,7 @@ fn update_inventory_ui(
                 if is_equippable {
                     lines.push(if is_equipped { "[E] Unequip" } else { "[E] Equip" }.to_string());
                 }
-                if props.kind == ItemKind::Consumable {
+                if props.kind == ItemKind::Consumable || props.kind == ItemKind::Spellbook {
                     lines.push("[U] Use item".to_string());
                 }
                 lines.push("[D] Drop item".to_string());
