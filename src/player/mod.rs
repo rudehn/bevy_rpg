@@ -5,8 +5,14 @@ use bevy::time::Timer;
 use bracket_lib::prelude::Point;
 
 use crate::{
-    assets::{ItemManifest, ItemManifestHandle, ItemSpriteAssets, PlayerAsset, PlayerAssetHandle, TileSpriteAssets},
-    components::{Collider, FloorEntityMarker, GameEntityMarker, InInventory, Inventory, Name, Position, Viewshed},
+    assets::{
+        ItemManifest, ItemManifestHandle, ItemSpriteAssets, PlayerAsset, PlayerAssetHandle,
+        TileSpriteAssets,
+    },
+    components::{
+        Collider, FloorEntityMarker, GameEntityMarker, InInventory, Inventory, Name, Position,
+        Viewshed,
+    },
     constants::Z_PLAYER,
     game::{
         TurnManager,
@@ -14,13 +20,13 @@ use crate::{
         actions::SpeedStats,
         combat::{Damage, Health, HealthRegen},
         items::Equipment,
+        level::{AvailableStatPoints, Experience},
         magic::{ActiveSpells, KnownSpells, SpellCooldowns},
         spawn_item,
         stats::{AttributeModifiers, Attributes, CombatStats, Level, Mana, RolledHp},
-        level::{Experience, AvailableStatPoints},
     },
-    map::map::GRID_SIZE,
     map::dungeon::{PlayerSpawnPoint, SpawnDungeonMessage, SpawnDungeonSet},
+    map::map::GRID_SIZE,
 };
 
 pub struct PlayerPlugin;
@@ -31,7 +37,7 @@ pub struct MovementTimer(pub Timer);
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(MovementTimer(Timer::from_seconds(
-            0.1,
+            0.025,
             TimerMode::Repeating,
         )))
         .add_systems(
@@ -58,8 +64,10 @@ pub fn player_spawn_or_move_system(
     mut q_player: Query<(Entity, &mut Transform, &mut Position), With<Player>>,
     mut turn_manager: ResMut<TurnManager>,
 ) {
-    let player_asset = player_assets.get(&player_asset_handle.0).expect("Player asset not loaded");
-    
+    let player_asset = player_assets
+        .get(&player_asset_handle.0)
+        .expect("Player asset not loaded");
+
     let new_grid_pos = Position {
         x: spawn_point.0.x,
         y: spawn_point.0.y,
@@ -72,8 +80,16 @@ pub fn player_spawn_or_move_system(
         let texture_path = sprite_path_parts[0];
         let index = sprite_path_parts[1].parse::<usize>().unwrap_or_default();
 
-        let texture_handle = tile_sprite_assets.handles.get(texture_path).unwrap().clone();
-        let layout_handle = tile_sprite_assets.layouts.get(texture_path).unwrap().clone();
+        let texture_handle = tile_sprite_assets
+            .handles
+            .get(texture_path)
+            .unwrap()
+            .clone();
+        let layout_handle = tile_sprite_assets
+            .layouts
+            .get(texture_path)
+            .unwrap()
+            .clone();
 
         // Determine scale to fit one game map tile (GRID_SIZE)
         // Default to 32x32 for new assets
@@ -110,7 +126,10 @@ pub fn player_spawn_or_move_system(
             ) {
                 commands
                     .entity(arrow_entity)
-                    .insert(ItemStack { count: 20, max_stack: 30 })
+                    .insert(ItemStack {
+                        count: 20,
+                        max_stack: 30,
+                    })
                     .insert(InInventory)
                     .insert(Visibility::Hidden)
                     .remove::<FloorEntityMarker>();
@@ -127,7 +146,10 @@ pub fn player_spawn_or_move_system(
                 Collider,
                 new_grid_pos,
                 Viewshed::new(8), // Initial range; recalculated by stat_recalculation_system via PER
-                Inventory { items: starting_items, capacity: 20 },
+                Inventory {
+                    items: starting_items,
+                    capacity: 20,
+                },
                 Equipment::default(),
             ))
             .insert((
@@ -149,7 +171,9 @@ pub fn player_spawn_or_move_system(
                     perception: player_asset.perception,
                 },
                 AttributeModifiers::default(),
-                Level { value: player_asset.level },
+                Level {
+                    value: player_asset.level,
+                },
                 CombatStats::default(),
                 SpeedStats::default(),
                 Experience {
