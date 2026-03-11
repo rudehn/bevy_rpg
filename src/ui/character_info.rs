@@ -599,6 +599,7 @@ fn update_character_info_ui(
             &Level,
             &RolledHp,
             &Mana,
+            &CombatStats,
         ),
         With<Player>,
     >,
@@ -633,7 +634,7 @@ fn update_character_info_ui(
         ),
     >,
 ) {
-    let Ok((player_attrs, points, damage, level, rolled_hp, mana)) = player_query.single() else {
+    let Ok((player_attrs, points, damage, level, rolled_hp, mana, combat_stats)) = player_query.single() else {
         return;
     };
 
@@ -723,11 +724,12 @@ fn update_character_info_ui(
         let vision_range = (8 + per_bonus).max(2);
 
         text.0 = format!(
-            "Max HP:       {}\nMana:         {}/{}\nDamage:       {} + {}\nHit Chance:   {}\nDodge Chance: {}\nAction Delay: {:.2}x\nVision Range: {} tiles",
+            "Max HP:       {}\nMana:         {}/{}\nDamage:       {} + {}\nDefense:      {}\nHit Chance:   {}\nDodge Chance: {}\nAction Delay: {:.2}x\nVision Range: {} tiles",
             max_hp,
             mana.current, max_mana,
             damage.0,
             str_bonus,
+            combat_stats.armor,
             10 + str_bonus,
             5 + dex_bonus,
             action_delay,

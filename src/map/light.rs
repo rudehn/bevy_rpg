@@ -7,7 +7,7 @@ use crate::{
     components::{FloorEntityMarker, GameEntityMarker, Position, Viewshed},
     constants::Z_ITEM,
     game::AppState,
-    map::{Map, map::GRID_SIZE, tile::is_opaque},
+    map::{Map, map::GRID_SIZE, tile::{is_opaque, TerrainType}},
     player::Player,
 };
 
@@ -75,6 +75,10 @@ pub fn rebuild_light_map_system(
 
     for pos in all_candles.iter() {
         let (cx, cy) = (pos.x, pos.y);
+        // Candles sit on wall tiles. Trace LOS from the adjacent floor tile so
+        // the ray doesn't immediately clip neighbouring wall tiles along the
+        // same wall row, which would darken the room corners.
+        let (lx, ly) = floor_neighbor(&map, cx, cy).unwrap_or((cx, cy));
         for ty in (cy - radius_i)..=(cy + radius_i) {
             for tx in (cx - radius_i)..=(cx + radius_i) {
                 if !map.in_bounds(Point::new(tx, ty)) {
@@ -84,7 +88,7 @@ pub fn rebuild_light_map_system(
                 if dist > CANDLE_RADIUS {
                     continue;
                 }
-                if has_los(&map, cx, cy, tx, ty) {
+                if has_los(&map, lx, ly, tx, ty) {
                     let idx = map.xy_idx(tx, ty);
                     values[idx] = values[idx].max(1.0 - dist / CANDLE_RADIUS);
                 }
@@ -154,7 +158,21 @@ pub fn spawn_candle(
     ));
 }
 
-// --- LOS Helper ---
+// --- LOS Helpers ---
+
+/// Returns the first 4-directional floor-tile neighbour of a wall tile, or
+/// `None` if there are none.  Used so LOS rays start from inside the room
+/// rather than from the wall tile itself, preventing adjacent wall tiles from
+/// casting spurious shadows on nearby floor corners.
+fn floor_neighbor(map: &Map, x: i32, y: i32) -> Option<(i32, i32)> {
+    for (nx, ny) in [(x, y + 1), (x, y - 1), (x + 1, y), (x - 1, y)] {
+        let pt = Point::new(nx, ny);
+        if map.in_bounds(pt) && map.tiles[map.xy_idx(nx, ny)].terrain == TerrainType::Floor {
+            return Some((nx, ny));
+        }
+    }
+    None
+}
 
 /// Bresenham line-of-sight from (x0,y0) to (x1,y1).
 /// Intermediate tiles that are opaque block LOS; the destination tile is never

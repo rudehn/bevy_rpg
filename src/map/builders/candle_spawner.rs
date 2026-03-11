@@ -70,9 +70,12 @@ fn count_floor_tiles(room: &Rect, build_data: &BuilderMap) -> i32 {
     count
 }
 
-/// Collects all wall tiles within the room's bounding box (plus one-tile border)
-/// that are directly adjacent (4-directional) to a floor tile.
-/// This correctly handles non-rectangular rooms: circular, cavern, cross, etc.
+/// Collects wall tiles on the **interior** perimeter of a room — walls that
+/// face into this room's floor area exclusively.
+///
+/// A wall tile is rejected if any of its 4-directional floor neighbours lies
+/// outside the room's bounding box; that indicates it borders a corridor or
+/// another room and would cast light into multiple spaces.
 fn wall_tiles_adjacent_to_floor(room: &Rect, build_data: &BuilderMap) -> Vec<Point> {
     let map = &build_data.map;
     let mut walls = Vec::new();
@@ -94,18 +97,27 @@ fn wall_tiles_adjacent_to_floor(room: &Rect, build_data: &BuilderMap) -> Vec<Poi
                 continue;
             }
 
-            // Must have at least one floor neighbor (4-directional).
-            let adjacent_to_floor = [(x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)]
+            let floor_neighbors: Vec<(i32, i32)> = [(x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)]
                 .iter()
-                .any(|&(nx, ny)| {
+                .filter(|&&(nx, ny)| {
                     let npt = Point::new(nx, ny);
-                    map.in_bounds(npt) && {
-                        let nidx = map.xy_idx(nx, ny);
-                        map.tiles[nidx].terrain == TerrainType::Floor
-                    }
-                });
+                    map.in_bounds(npt)
+                        && map.tiles[map.xy_idx(nx, ny)].terrain == TerrainType::Floor
+                })
+                .copied()
+                .collect();
 
-            if adjacent_to_floor {
+            if floor_neighbors.is_empty() {
+                continue;
+            }
+
+            // Reject walls whose floor neighbours lie outside this room.
+            // Those border corridors or other rooms and must not receive candles.
+            let all_inside = floor_neighbors.iter().all(|&(nx, ny)| {
+                nx >= room.x1 && nx <= room.x2 && ny >= room.y1 && ny <= room.y2
+            });
+
+            if all_inside {
                 walls.push(pt);
             }
         }
