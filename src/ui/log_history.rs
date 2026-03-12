@@ -9,6 +9,7 @@ pub struct LogHistoryPlugin;
 impl Plugin for LogHistoryPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LogScrollOffset>()
+            .insert_resource(LogScrollTimer(Timer::from_seconds(0.05, TimerMode::Repeating)))
             .add_systems(
                 Update,
                 log_history_input.run_if(
@@ -31,6 +32,10 @@ const VISIBLE_LINES: usize = 30;
 #[derive(Resource, Default)]
 pub struct LogScrollOffset(pub usize);
 
+/// Repeat timer for held scroll keys.
+#[derive(Resource)]
+struct LogScrollTimer(Timer);
+
 #[derive(Component)]
 struct OnLogHistoryScreen;
 
@@ -41,12 +46,15 @@ struct LogHistoryText;
 struct LogHistoryScrollLabel;
 
 fn log_history_input(
+    time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     state: Res<State<InGameState>>,
     mut next_state: ResMut<NextState<InGameState>>,
     mut offset: ResMut<LogScrollOffset>,
+    mut scroll_timer: ResMut<LogScrollTimer>,
     game_log: Res<GameLog>,
 ) {
+    // Toggle open/close.
     if keys.just_pressed(KeyCode::KeyL) {
         match state.get() {
             InGameState::Running => {
@@ -71,17 +79,42 @@ fn log_history_input(
     let count = game_log.entries.len();
     let max_offset = count.saturating_sub(VISIBLE_LINES);
 
-    if keys.just_pressed(KeyCode::KeyW) || keys.just_pressed(KeyCode::ArrowUp) {
-        offset.0 = (offset.0 + 1).min(max_offset);
-    }
-    if keys.just_pressed(KeyCode::KeyS) || keys.just_pressed(KeyCode::ArrowDown) {
-        offset.0 = offset.0.saturating_sub(1);
-    }
-    if keys.just_pressed(KeyCode::PageUp) {
+    // Jump keys — instant, no timer.
+    if keys.just_pressed(KeyCode::PageUp) || keys.just_pressed(KeyCode::Period) {
         offset.0 = max_offset;
+        return;
     }
-    if keys.just_pressed(KeyCode::PageDown) {
+    if keys.just_pressed(KeyCode::PageDown) || keys.just_pressed(KeyCode::Slash) {
         offset.0 = 0;
+        return;
+    }
+
+    // Held scroll — fire immediately on first press, then repeat on timer.
+    let scroll_up = keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp);
+    let scroll_down = keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown);
+
+    if scroll_up || scroll_down {
+        let just_started = keys.just_pressed(KeyCode::KeyW)
+            || keys.just_pressed(KeyCode::ArrowUp)
+            || keys.just_pressed(KeyCode::KeyS)
+            || keys.just_pressed(KeyCode::ArrowDown);
+
+        if just_started {
+            scroll_timer.0.reset();
+        }
+
+        scroll_timer.0.tick(time.delta());
+
+        if just_started || scroll_timer.0.just_finished() {
+            if scroll_up {
+                offset.0 = (offset.0 + 1).min(max_offset);
+            } else {
+                offset.0 = offset.0.saturating_sub(1);
+            }
+        }
+    } else {
+        // No scroll key held — keep timer reset so next press fires immediately.
+        scroll_timer.0.reset();
     }
 }
 
@@ -137,7 +170,7 @@ fn spawn_log_history_ui(mut commands: Commands, asset_server: Res<AssetServer>) 
 
             // Footer hint
             root.spawn((
-                Text::new("W/↑ Scroll up  |  S/↓ Scroll down  |  PgUp Jump to top  |  PgDn Jump to bottom  |  L / Esc  Close"),
+                Text::new("W/↑ Scroll up  |  S/↓ Scroll down  |  . Top  |  / Bottom  |  PgUp/PgDn Jump  |  L / Esc  Close"),
                 TextFont { font: font.clone(), font_size: 13.0, ..default() },
                 TextColor(Color::srgb(0.4, 0.4, 0.4)),
             ));
