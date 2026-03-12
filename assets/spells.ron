@@ -1,0 +1,26 @@
+(
+    spells: {
+        "magic_missile": (
+            name: "Magic Missile",
+            mana_cost: 5,
+            cooldown: 4,
+            description: "Strikes the nearest visible enemy for 1d4+INT damage.",
+            target: NearestEnemy,
+            range: 8,
+            effects: [
+                Damage(dice: "1d4", int_scaling: true),
+            ],
+        ),
+        "heal_self": (
+            name: "Heal Self",
+            mana_cost: 8,
+            cooldown: 8,
+            description: "Restores 1d6+INT hit points to yourself.",
+            target: Caster,
+            range: 0,
+            effects: [
+                HealCaster(dice: "1d6", int_scaling: true),
+            ],
+        ),
+    }
+)

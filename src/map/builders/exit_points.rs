@@ -1,0 +1,80 @@
+use bracket_lib::prelude::{Algorithm2D, DijkstraMap, Point};
+
+use crate::map::{
+    builders::{BuilderMap, MetaMapBuilder},
+    tile::TerrainType,
+};
+
+#[derive(Clone)]
+pub struct DistantExit {}
+
+impl MetaMapBuilder for DistantExit {
+    fn build_map(&mut self, build_data: &mut BuilderMap) {
+        self.build(build_data);
+    }
+}
+
+impl DistantExit {
+    #[allow(dead_code)]
+    pub fn new() -> Box<DistantExit> {
+        Box::new(DistantExit {})
+    }
+
+    fn build(&mut self, build_data: &mut BuilderMap) {
+        let starting_pos = build_data.starting_position.as_ref().unwrap().clone();
+        let start_idx = build_data
+            .map
+            .point2d_to_index(Point::new(starting_pos.x, starting_pos.y));
+        let map_starts: Vec<usize> = vec![start_idx];
+
+        // 1. Temporarily swap doors for floors so pathfinding can pass through them
+        let original_tiles = build_data.map.tiles.clone();
+        for tile in build_data.map.tiles.iter_mut() {
+            if tile.terrain == TerrainType::Door {
+                tile.terrain = TerrainType::Floor;
+            }
+        }
+
+        // 2. Compute the Dijkstra map
+        let dijkstra_map = DijkstraMap::new(
+            build_data.map.width() as usize,
+            build_data.map.height() as usize,
+            &map_starts,
+            &build_data.map,
+            3000.0,
+        );
+
+        // 3. Restore the original tiles (putting the doors back)
+        build_data.map.tiles = original_tiles;
+
+        let mut exit_tile = (0, 0.0f32);
+        for y in 0..build_data.map.height() {
+            for x in 0..build_data.map.width() {
+                let pt = Point::new(x, y);
+                let idx = build_data.map.point2d_to_index(pt);
+                if build_data.map.get_tile(pt).map(|t| t.terrain) == Some(TerrainType::Floor) {
+                    let distance_to_start = dijkstra_map.map[idx];
+                    if distance_to_start != std::f32::MAX {
+                        // If it is further away than our current exit candidate, move the exit
+                        if distance_to_start > exit_tile.1 {
+                            exit_tile.0 = idx;
+                            exit_tile.1 = distance_to_start;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Place a staircase or the Amulet
+        let stairs_idx = exit_tile.0;
+        let stairs_pos = build_data.map.index_to_point2d(stairs_idx);
+        
+        if build_data.map.depth == 10 {
+            build_data.item_spawn_list.push((stairs_pos, "Amulet of Bevy".to_string(), 1));
+        } else {
+            build_data.map.set_tile(stairs_pos, TerrainType::DownStairs);
+        }
+        
+        build_data.take_snapshot();
+    }
+}

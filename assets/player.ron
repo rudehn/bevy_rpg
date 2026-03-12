@@ -1,0 +1,13 @@
+(
+    name: "You",
+    perception: 10,
+    sprite: "sprites/hero.png#0",
+    level: 1,
+    base_hp: 10,
+    strength: 10,
+    dexterity: 10,
+    constitution: 10,
+    agility: 10,
+    intelligence: 10,
+    damage: "1d6",
+)

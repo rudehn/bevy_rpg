@@ -1,0 +1,24 @@
+(
+    spawns: [
+        // Consumables — common across all floors
+        (item: "Healing Potion",     min_floor: 1,  max_floor: 10, weight: 5, spawn_chance: 0.80),
+        (item: "Strength Potion",    min_floor: 2,  max_floor: 10, weight: 2, spawn_chance: 0.60),
+        (item: "Arrow",              min_floor: 1,  max_floor: 10, weight: 4, spawn_chance: 0.75, min_count: 5, max_count: 12),
+
+        // Weapons — early tiers fade out as depth increases
+        (item: "Iron Sword",         min_floor: 1,  max_floor: 5,  weight: 3, spawn_chance: 0.70),
+        (item: "Steel Sword",        min_floor: 3,  max_floor: 10, weight: 2, spawn_chance: 0.65),
+        (item: "Short Bow",          min_floor: 1,  max_floor: 5,  weight: 2, spawn_chance: 0.50),
+        (item: "Long Bow",           min_floor: 3,  max_floor: 10, weight: 2, spawn_chance: 0.50),
+        
+        // Armor
+        (item: "Leather Armor",      min_floor: 1,  max_floor: 6,  weight: 3, spawn_chance: 0.70),
+
+        // Accessories
+        (item: "Ring of Perception",      min_floor: 3,  max_floor: 10, weight: 1, spawn_chance: 0.40),
+
+        // Spellbooks
+        (item: "Tome of Magic Missile",   min_floor: 1,  max_floor: 10, weight: 2, spawn_chance: 0.50),
+        (item: "Tome of Healing",         min_floor: 2,  max_floor: 10, weight: 2, spawn_chance: 0.50),
+    ]
+)

@@ -1,0 +1,34 @@
+(
+  spawns: [
+    (
+      monster: "Goblin",
+      min_floor: 1,
+      max_floor: 5,
+    ),
+    (
+      monster: "Rat",
+      min_floor: 1,
+      max_floor: 3,
+    ),
+    (
+      monster: "Orc",
+      min_floor: 3,
+      max_floor: 100,
+    ),
+    (
+      monster: "Lich Apprentice",
+      min_floor: 4,
+      max_floor: 100,
+    ),
+    (
+      monster: "Goblin Archer",
+      min_floor: 1,
+      max_floor: 7,
+    ),
+    (
+      monster: "Bone Archer",
+      min_floor: 5,
+      max_floor: 100,
+    ),
+  ]
+)
