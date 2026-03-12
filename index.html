@@ -9,5 +9,10 @@
       canvas { display: block; }
     </style>
   </head>
-  <body></body>
+  <body>
+    <!-- Tell Trunk to compile and inject the Rust/WASM binary here -->
+    <link data-trunk rel="rust" data-wasm-opt="z"/>
+    <!-- Copy the assets directory into dist/ so Bevy can load sprites/RON -->
+    <link data-trunk rel="copy-dir" href="assets"/>
+  </body>
 </html>
