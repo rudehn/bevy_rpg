@@ -8,8 +8,10 @@
       body { margin: 0; background: #000; }
       canvas { display: block; }
     </style>
-  <link rel="modulepreload" href="/bevy_rpg/bevy_rpg-b2dd32e6bf9da7d.js" crossorigin="anonymous" integrity="sha384-QsDCGIbPjdzpvnXfgu6h6vHUMeQ9SOTS0ljVpHfRQ2ruBvRfZqcjn0biEuKjqKyu"><link rel="preload" href="/bevy_rpg/bevy_rpg-b2dd32e6bf9da7d_bg.wasm" crossorigin="anonymous" integrity="sha384-tt09rakJtYbQGaDiOdgD8CHt+2B2aBZv1qJhNDGYqOIhflCeMwXLcqebplS3sv/E" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="/bevy_rpg/bevy_rpg-b2dd32e6bf9da7d.js" crossorigin="anonymous" integrity="sha384-QsDCGIbPjdzpvnXfgu6h6vHUMeQ9SOTS0ljVpHfRQ2ruBvRfZqcjn0biEuKjqKyu"><link rel="preload" href="/bevy_rpg/bevy_rpg-b2dd32e6bf9da7d_bg.wasm" crossorigin="anonymous" integrity="sha384-GdkC9DZyQgcjq/TghF/dD+onKx81dq2PHlcatnvuiI39bwveX4Q2zHqyizwyaKhq" as="fetch" type="application/wasm"></head>
   <body>
+    <!-- Tell Trunk to compile and inject the Rust/WASM binary here -->
+    
 <script type="module">
 import init, * as bindings from '/bevy_rpg/bevy_rpg-b2dd32e6bf9da7d.js';
 const wasm = await init({ module_or_path: '/bevy_rpg/bevy_rpg-b2dd32e6bf9da7d_bg.wasm' });
@@ -20,5 +22,8 @@ window.wasmBindings = bindings;
 
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
-</script></body>
+</script>
+    <!-- Copy the assets directory into dist/ so Bevy can load sprites/RON -->
+    
+  </body>
 </html>
