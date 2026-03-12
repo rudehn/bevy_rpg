@@ -12,3 +12,13 @@ bevy_common_assets = { version = "0.14.0", features = ["ron"] }
 serde = { version = "1.0", features = ["derive"] }
 bevy_save = "0.17.0"
 ron = "0.10"
+
+# WASM: localStorage access for save/load
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["Window", "Storage"] }
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1

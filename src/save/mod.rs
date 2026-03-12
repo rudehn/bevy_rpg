@@ -1,4 +1,6 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
 
 use bevy::prelude::*;
 use bracket_lib::prelude::Point;
@@ -25,23 +27,88 @@ use crate::{
     ui::game_log::GameLog,
 };
 
-// ---- Save file path ----
+// ---- Platform-agnostic save I/O ----
+//
+// Native: read/write a RON file at saves/ironveil_save.ron
+// WASM:   read/write the browser's localStorage under key "ironveil_save"
 
+const WASM_SAVE_KEY: &str = "ironveil_save";
+
+#[cfg(not(target_arch = "wasm32"))]
 pub const SAVE_FILE: &str = "ironveil_save.ron";
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn save_path() -> PathBuf {
     let dir = PathBuf::from("saves");
     let _ = std::fs::create_dir_all(&dir);
     dir.join(SAVE_FILE)
 }
 
+/// Write serialized save data. Returns `true` on success.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn write_save_data(data: &str) -> bool {
+    match std::fs::write(save_path(), data) {
+        Ok(()) => true,
+        Err(e) => { error!("Failed to write save file: {}", e); false }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn write_save_data(data: &str) -> bool {
+    let Some(storage) = web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+    else {
+        error!("localStorage unavailable");
+        return false;
+    };
+    storage.set_item(WASM_SAVE_KEY, data).is_ok()
+}
+
+/// Read serialized save data, if any exists.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn read_save_data() -> Option<String> {
+    std::fs::read_to_string(save_path())
+        .map_err(|e| warn!("Could not read save file: {}", e))
+        .ok()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn read_save_data() -> Option<String> {
+    web_sys::window()?
+        .local_storage().ok()??
+        .get_item(WASM_SAVE_KEY).ok()?
+}
+
+/// Returns `true` if a save exists.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn save_data_exists() -> bool {
+    save_path().exists()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn save_data_exists() -> bool {
+    read_save_data().is_some()
+}
+
 pub fn delete_save() {
-    let path = save_path();
-    if path.exists() {
-        if let Err(e) = std::fs::remove_file(&path) {
-            warn!("Failed to delete save file: {}", e);
-        } else {
-            info!("Save file deleted (permadeath).");
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let path = save_path();
+        if path.exists() {
+            if let Err(e) = std::fs::remove_file(&path) {
+                warn!("Failed to delete save file: {}", e);
+            } else {
+                info!("Save file deleted (permadeath).");
+            }
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(storage) = web_sys::window()
+            .and_then(|w| w.local_storage().ok().flatten())
+        {
+            let _ = storage.remove_item(WASM_SAVE_KEY);
+            info!("Save deleted from localStorage (permadeath).");
         }
     }
 }
@@ -94,7 +161,7 @@ impl Plugin for SavePlugin {
 }
 
 fn check_save_exists(mut save_exists: ResMut<SaveExists>) {
-    save_exists.0 = save_path().exists();
+    save_exists.0 = save_data_exists();
 }
 
 // ---- Serializable data types ----
@@ -391,13 +458,12 @@ pub fn auto_save_system(
     };
 
     match ron::ser::to_string_pretty(&save_data, ron::ser::PrettyConfig::default()) {
-        Ok(serialized) => match std::fs::write(save_path(), serialized) {
-            Ok(()) => {
-                info!("Game saved to {:?}", save_path());
+        Ok(serialized) => {
+            if write_save_data(&serialized) {
+                info!("Game saved.");
                 save_exists.0 = true;
             }
-            Err(e) => error!("Failed to write save file: {}", e),
-        },
+        }
         Err(e) => error!("Failed to serialize save data: {}", e),
     }
 }

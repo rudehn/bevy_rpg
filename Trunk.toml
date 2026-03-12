@@ -1,0 +1,3 @@
+[build]
+# Must match the GitHub Pages subdirectory path (repo name)
+public_url = "/bevy_rpg/"

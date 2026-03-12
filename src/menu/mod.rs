@@ -197,10 +197,8 @@ fn menu_action(
 }
 
 fn load_save_file() -> Option<GameSaveData> {
-    let path = crate::save::save_path();
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| warn!("Could not read save file: {}", e))
-        .ok()?;
+    let text = crate::save::read_save_data()
+        .or_else(|| { warn!("No save data found."); None })?;
     ron::from_str::<GameSaveData>(&text)
         .map_err(|e| warn!("Could not parse save file: {}", e))
         .ok()
