@@ -19,12 +19,14 @@ pub mod cheat_menu;
 pub mod game_log;
 pub mod inventory;
 pub mod log_history;
+pub mod nearby;
 pub mod spells;
 
 use character_info::CharacterInfoPlugin;
 use cheat_menu::CheatMenuPlugin;
 use inventory::InventoryPlugin;
 use log_history::LogHistoryPlugin;
+use nearby::{NearbyListRoot, NearbyPlugin};
 use spells::SpellsPlugin;
 use game_log::{
     GameLog, GameLogMessage, GameLogSettings, add_log_message_system, game_log_input_system,
@@ -279,6 +281,17 @@ fn spawn_player_stats_ui(
                     SpellSlotHudLabel(i),
                 ));
             }
+
+            // Nearby entities container — populated each turn by NearbyPlugin
+            parent.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::FlexStart,
+                    ..default()
+                },
+                NearbyListRoot,
+            ));
 
             // Push hotkeys to the bottom
             parent.spawn(Node { flex_grow: 1.0, ..default() });
@@ -701,7 +714,7 @@ impl Plugin for UiPlugin {
         app.init_resource::<GameLog>()
             .init_resource::<GameLogSettings>()
             .add_message::<GameLogMessage>()
-            .add_plugins((CharacterInfoPlugin, CheatMenuPlugin, InventoryPlugin, LogHistoryPlugin, SpellsPlugin))
+            .add_plugins((CharacterInfoPlugin, CheatMenuPlugin, InventoryPlugin, LogHistoryPlugin, NearbyPlugin, SpellsPlugin))
             .add_systems(
                 OnEnter(AppState::InGame),
                 (

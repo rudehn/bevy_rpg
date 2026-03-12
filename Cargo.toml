@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = { version = "0.17.0", features = ["file_watcher"] }
+# file_watcher (hot-reload) is excluded: it is a native-only feature that
+# breaks WASM builds. Re-enable locally by editing this line if you need
+# asset hot-reload during development: features = ["file_watcher"]
+bevy = { version = "0.17.0" }
 bracket-lib = { git = "https://github.com/rudehn/bracket-lib" }
 petgraph = "0.8.3"
 rand = "0.9.2"
@@ -13,7 +16,6 @@ serde = { version = "1.0", features = ["derive"] }
 bevy_save = "0.17.0"
 ron = "0.10"
 
-# WASM: localStorage access for save/load
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = ["Window", "Storage"] }
 

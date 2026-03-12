@@ -7,7 +7,7 @@ Deploy IRONVEIL as a browser-playable game via GitHub Pages, auto-built on every
 ## Live URL
 
 ```
-https://YOUR_USERNAME.github.io/bevy_rpg/
+https://rudehn.github.io/bevy_rpg/
 ```
 
 Update `YOUR_USERNAME` once the repo is public and GitHub Pages is enabled.
