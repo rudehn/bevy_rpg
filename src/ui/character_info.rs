@@ -103,7 +103,7 @@ fn character_info_input_system(
         match state.get() {
             InGameState::Running => next_state.set(InGameState::CharacterInfo),
             InGameState::CharacterInfo => next_state.set(InGameState::Running),
-            InGameState::Inventory | InGameState::Spells | InGameState::Targeting => {} // C does nothing while another screen is open
+            _ => {} // C does nothing while another screen is open
         }
     }
 

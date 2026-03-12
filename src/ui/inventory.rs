@@ -55,7 +55,7 @@ fn inventory_input_system(
         match state.get() {
             InGameState::Running => next_state.set(InGameState::Inventory),
             InGameState::Inventory => next_state.set(InGameState::Running),
-            InGameState::CharacterInfo | InGameState::Spells | InGameState::Targeting => {}
+            _ => {}
         }
     }
     if keys.just_pressed(KeyCode::Escape) && *state.get() == InGameState::Inventory {

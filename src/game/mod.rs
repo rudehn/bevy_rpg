@@ -77,6 +77,7 @@ pub enum InGameState {
     Inventory,
     Spells,
     Targeting,
+    LogHistory,
 }
 
 pub struct GamePlugin;
