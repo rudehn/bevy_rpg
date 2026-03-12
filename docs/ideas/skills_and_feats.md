@@ -1,0 +1,1 @@
+Some way to add active/passive abilities
