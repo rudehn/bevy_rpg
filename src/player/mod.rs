@@ -73,7 +73,11 @@ pub fn player_spawn_or_move_system(
         y: spawn_point.0.y,
     };
 
-    if let Ok((_player_entity, mut _player_tf, mut player_pos)) = q_player.single_mut() {
+    if let Ok((_player_entity, mut player_tf, mut player_pos)) = q_player.single_mut() {
+        // Update Transform immediately so move_camera snaps this frame without
+        // waiting for sync_entity_transforms, which may run before this system.
+        player_tf.translation.x = spawn_point.0.x as f32 * GRID_SIZE.x;
+        player_tf.translation.y = spawn_point.0.y as f32 * GRID_SIZE.y;
         *player_pos = new_grid_pos;
     } else {
         let sprite_path_parts: Vec<&str> = player_asset.sprite.split('#').collect();

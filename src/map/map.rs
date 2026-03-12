@@ -49,7 +49,12 @@ impl Plugin for MapPlugin {
                 (
                     init_explored_tiles_system,
                     update_tile_visibility
-                        .after(crate::map::light::rebuild_light_map_system),
+                        .after(crate::map::light::rebuild_light_map_system)
+                        // Skip during floor transitions: stale old-floor tile entities
+                        // would be processed with new-floor FOV, marking wrong tiles explored.
+                        // init_explored_tiles_system clears this flag once new tiles are ready.
+                        .run_if(|init: Res<NeedsExploredInit>| !init.0)
+                        .after(init_explored_tiles_system),
                     handle_reveal_map_system.run_if(on_message::<RevealMapMessage>),
                 ).run_if(in_state(AppState::InGame)),
             );
@@ -87,6 +92,11 @@ pub fn init_explored_tiles_system(
     mut tile_query: Query<(&Position, &mut TileExplored, &mut Sprite, &mut Visibility)>,
 ) {
     if !needs_init.0 {
+        return;
+    }
+    // New tile entities are spawned via deferred commands — if none exist yet,
+    // wait until next frame when the command queue has been flushed.
+    if tile_query.is_empty() {
         return;
     }
     needs_init.0 = false;

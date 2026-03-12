@@ -112,6 +112,7 @@ pub fn spawn_monster(
                     layout: layout_handle,
                 },
             ),
+            Visibility::Hidden,
             RenderLayers::layer(1),
         ))
         .id();
@@ -248,6 +249,7 @@ pub fn spawn_item(
             scale: Vec3::new(scale_x, scale_y, 1.0),
             ..Default::default()
         },
+        Visibility::Hidden,
         RenderLayers::layer(1),
     ));
 

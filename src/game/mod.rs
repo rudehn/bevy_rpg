@@ -20,7 +20,7 @@ use crate::{
         light::LightPlugin,
         map::MapPlugin,
     },
-    player::PlayerPlugin,
+    player::{PlayerPlugin, player_spawn_or_move_system},
     ui::game_log::GameLog,
 };
 use bevy::prelude::*;
@@ -101,11 +101,15 @@ impl Plugin for GamePlugin {
                 TargetingPlugin,
             ))
             // Position→Transform sync and camera run whenever in-game, including Targeting state.
+            // move_camera runs after player_spawn_or_move_system so the camera snaps to the new
+            // floor position in the same frame the player is teleported (floor transitions).
             .add_systems(
                 Update,
                 (
                     sync_entity_transforms,
-                    move_camera.after(sync_entity_transforms),
+                    move_camera
+                        .after(sync_entity_transforms)
+                        .after(player_spawn_or_move_system),
                 )
                     .run_if(in_state(AppState::InGame)),
             )

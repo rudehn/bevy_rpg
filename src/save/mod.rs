@@ -254,6 +254,8 @@ pub struct CachedFloorSave {
     pub item_list: Vec<([i32; 2], String, u32)>,
     pub candle_spawn_points: Vec<[i32; 2]>,
     pub down_stairs_pos: [i32; 2],
+    #[serde(default)]
+    pub up_stairs_pos: [i32; 2],
 }
 
 // ---- Conversion helpers ----
@@ -299,6 +301,7 @@ pub fn cached_floor_to_save(cached: &CachedFloor) -> CachedFloorSave {
             .map(|pt| [pt.x, pt.y])
             .collect(),
         down_stairs_pos: [cached.down_stairs_pos.x, cached.down_stairs_pos.y],
+        up_stairs_pos: [cached.up_stairs_pos.x, cached.up_stairs_pos.y],
     }
 }
 
@@ -321,6 +324,7 @@ pub fn save_to_cached_floor(data: &CachedFloorSave) -> CachedFloor {
             .map(|pos| Point::new(pos[0], pos[1]))
             .collect(),
         down_stairs_pos: Point::new(data.down_stairs_pos[0], data.down_stairs_pos[1]),
+        up_stairs_pos: Point::new(data.up_stairs_pos[0], data.up_stairs_pos[1]),
     }
 }
 

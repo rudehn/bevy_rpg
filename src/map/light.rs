@@ -154,6 +154,7 @@ pub fn spawn_candle(
             },
         ),
         Transform::from_xyz(pt.x as f32 * GRID_SIZE.x, pt.y as f32 * GRID_SIZE.y, Z_ITEM),
+        Visibility::Hidden,
         RenderLayers::layer(1),
     ));
 }

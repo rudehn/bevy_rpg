@@ -10,7 +10,7 @@ use crate::assets::{
     ItemSpawnTableHandle, MonsterManifest, MonsterManifestHandle, MonsterSpawnTable,
     MonsterSpawnTableHandle, MonsterSpriteAssets, TileManifest, TileManifestHandle, TileSpriteAssets,
 };
-use crate::components::{FloorEntityMarker, Monster, Name, Position, Item};
+use crate::components::{FloorEntityMarker, InInventory, Monster, Name, Position, Item};
 use crate::game::{TurnManager, spawn_monster_by_name, spawn_item, items::ItemStack, turns::TurnMarker};
 use crate::map::Map;
 use crate::map::builders::BuilderMap;
@@ -66,17 +66,25 @@ pub struct CachedFloor {
     pub item_list: Vec<(Point, String, u32)>,
     pub candle_spawn_points: Vec<Point>,
     /// Position of the DownStairs on this floor; player lands adjacent to it
-    /// when returning from below.
+    /// when returning from below (ascending).
     pub down_stairs_pos: Point,
+    /// Position of the UpStairs on this floor; player lands adjacent to it
+    /// when returning from above (descending).
+    pub up_stairs_pos: Point,
 }
 
 #[derive(Resource, Default)]
 pub struct FloorCache(pub HashMap<u32, CachedFloor>);
 
-/// Set by the ascend system before it triggers SpawnDungeonMessage so that
+/// Set by the stair systems before triggering SpawnDungeonMessage so that
 /// spawn_dungeon can restore rather than regenerate.
 #[derive(Resource, Default)]
-pub struct PendingFloorRestore(pub Option<CachedFloor>);
+pub struct PendingFloorRestore {
+    pub floor: Option<CachedFloor>,
+    /// True when ascending (player came up from below); false when descending
+    /// back to a previously visited floor. Determines which stairs to land near.
+    pub ascending: bool,
+}
 
 // ---------------------------------------------------------------------------
 // Messages / resources
@@ -172,25 +180,47 @@ fn find_down_stairs(map: &Map) -> Option<Point> {
     })
 }
 
-/// Returns the first orthogonally adjacent walkable tile to `target`, or
-/// `None` if no such tile exists.
+fn find_up_stairs(map: &Map) -> Option<Point> {
+    map.tiles.iter().enumerate().find_map(|(idx, tile)| {
+        if tile.terrain == TerrainType::UpStairs {
+            let (x, y) = map.idx_xy(idx);
+            Some(Point::new(x, y))
+        } else {
+            None
+        }
+    })
+}
+
+/// Returns the first orthogonally adjacent walkable, non-stair tile to `target`.
+/// Stair tiles are excluded so the player doesn't immediately re-trigger a
+/// floor transition upon being placed there.
 fn find_adjacent_floor(map: &Map, target: Point) -> Option<Point> {
+    use TerrainType::{DownStairs, UpStairs};
     for (dx, dy) in [(0i32, 1i32), (1, 0), (0, -1), (-1, 0)] {
         let pt = Point::new(target.x + dx, target.y + dy);
         if let Some(tile) = map.get_tile(pt) {
-            if is_walkable(tile) {
+            if is_walkable(tile) && tile.terrain != DownStairs && tile.terrain != UpStairs {
                 return Some(pt);
             }
         }
     }
-    None
+    // Fallback: search the whole map for any plain floor tile.
+    map.tiles.iter().enumerate().find_map(|(idx, tile)| {
+        use TerrainType::{DownStairs, UpStairs};
+        if is_walkable(*tile) && tile.terrain != DownStairs && tile.terrain != UpStairs {
+            let (x, y) = map.idx_xy(idx);
+            Some(Point::new(x, y))
+        } else {
+            None
+        }
+    })
 }
 
 /// Snapshot the current floor's surviving entities into a `CachedFloor`.
 fn snapshot_floor(
     map: &Map,
     monster_query: &Query<(&Position, &Name), With<Monster>>,
-    item_query: &Query<(&Position, &Name, Option<&ItemStack>), With<Item>>,
+    item_query: &Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     candle_query: &Query<&Position, With<Candle>>,
 ) -> CachedFloor {
     let monster_list = monster_query
@@ -212,6 +242,7 @@ fn snapshot_floor(
         .collect();
 
     let down_stairs_pos = find_down_stairs(map).unwrap_or(Point::new(0, 0));
+    let up_stairs_pos = find_up_stairs(map).unwrap_or(Point::new(0, 0));
 
     CachedFloor {
         map: map.clone(),
@@ -219,6 +250,7 @@ fn snapshot_floor(
         item_list,
         candle_spawn_points,
         down_stairs_pos,
+        up_stairs_pos,
     }
 }
 
@@ -272,11 +304,12 @@ fn map_transition_system(
     mut floor: ResMut<Floor>,
     map: Res<Map>,
     mut floor_cache: ResMut<FloorCache>,
+    mut pending_restore: ResMut<PendingFloorRestore>,
     q_map_markers: Query<Entity, With<DungeonECSMap>>,
     q_tiles: Query<Entity, With<TileMarker>>,
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
     q_monsters: Query<(&Position, &Name), With<Monster>>,
-    q_items: Query<(&Position, &Name, Option<&ItemStack>), With<Item>>,
+    q_items: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     q_candles: Query<&Position, With<Candle>>,
     mut turn_manager: ResMut<TurnManager>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
@@ -291,6 +324,11 @@ fn map_transition_system(
 
     floor.0 += 1;
     log_writer.write(GameLogMessage(format!("Descending to floor {}", floor.0)));
+
+    // If the destination floor was previously visited, restore it instead of generating fresh.
+    pending_restore.floor = floor_cache.0.remove(&floor.0);
+    pending_restore.ascending = false;
+
     message_writer.write(SpawnDungeonMessage);
 }
 
@@ -304,7 +342,7 @@ fn ascend_stairs_system(
     q_tiles: Query<Entity, With<TileMarker>>,
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
     q_monsters: Query<(&Position, &Name), With<Monster>>,
-    q_items: Query<(&Position, &Name, Option<&ItemStack>), With<Item>>,
+    q_items: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     q_candles: Query<&Position, With<Candle>>,
     mut turn_manager: ResMut<TurnManager>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
@@ -325,7 +363,8 @@ fn ascend_stairs_system(
     log_writer.write(GameLogMessage(format!("Ascending to floor {}", floor.0)));
 
     // Pull the cached floor so spawn_dungeon restores it instead of regenerating.
-    pending_restore.0 = floor_cache.0.remove(&floor.0);
+    pending_restore.floor = floor_cache.0.remove(&floor.0);
+    pending_restore.ascending = true;
 
     message_writer.write(SpawnDungeonMessage);
 }
@@ -491,10 +530,11 @@ pub fn spawn_dungeon(
         needs_explored_init.0 = true;
 
         player_spawn_pt
-    } else if let Some(cached) = pending_restore.0.take() {
+    } else if let Some(cached) = pending_restore.floor.take() {
         // ---------------------------------------------------------------
         // Restore a previously visited floor
         // ---------------------------------------------------------------
+        let ascending = pending_restore.ascending;
         *map = cached.map;
 
         spawn_tiles_into_ecs(&mut commands, map_entity, &map, &tile_assets);
@@ -537,10 +577,16 @@ pub fn spawn_dungeon(
 
         needs_explored_init.0 = true;
 
-        // Land the player on a walkable tile adjacent to the down stairs so
-        // they don't immediately re-trigger the stair system.
-        find_adjacent_floor(&map, cached.down_stairs_pos)
-            .unwrap_or(cached.down_stairs_pos)
+        // Land the player adjacent to the stairs they arrived through so they
+        // don't immediately re-trigger the stair system.
+        // Ascending (came up from below) → land near down stairs.
+        // Descending (came down from above) → land near up stairs.
+        let target_stairs = if ascending {
+            cached.down_stairs_pos
+        } else {
+            cached.up_stairs_pos
+        };
+        find_adjacent_floor(&map, target_stairs).unwrap_or(target_stairs)
     } else {
         // ---------------------------------------------------------------
         // Generate a fresh floor
