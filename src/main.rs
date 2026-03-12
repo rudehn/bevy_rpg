@@ -1,3 +1,4 @@
+use bevy::asset::AssetMetaCheck;
 use bevy::prelude::*;
 
 use crate::assets::LoadingPlugin;
@@ -22,7 +23,7 @@ fn main() {
             DefaultPlugins
                 .set(ImagePlugin::default_nearest())
                 .set(AssetPlugin {
-                    watch_for_changes_override: Some(true),
+                    meta_check: AssetMetaCheck::Never,
                     ..default()
                 }),
             (LoadingPlugin, SavePlugin, GamePlugin, MenuPlugin, UiPlugin),
