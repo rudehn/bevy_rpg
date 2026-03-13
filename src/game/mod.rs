@@ -12,7 +12,7 @@ use crate::{
         magic::MagicPlugin,
         particles::ParticlesPlugin,
         stats::StatsPlugin,
-        systems::{fov_update_system, sync_entity_transforms, update_monster_visibility, update_item_visibility},
+        systems::{fov_update_system, sync_entity_transforms, update_monster_visibility, update_item_visibility, update_status_visuals},
         turns::TurnOrderPlugin,
     },
     map::{
@@ -110,6 +110,7 @@ impl Plugin for GamePlugin {
                     move_camera
                         .after(sync_entity_transforms)
                         .after(player_spawn_or_move_system),
+                    update_status_visuals,
                 )
                     .run_if(in_state(AppState::InGame)),
             )

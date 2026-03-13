@@ -1,34 +1,42 @@
 (
   spawns: [
-    (
-      monster: "Goblin",
-      min_floor: 1,
-      max_floor: 5,
-    ),
-    (
-      monster: "Rat",
-      min_floor: 1,
-      max_floor: 3,
-    ),
-    (
-      monster: "Orc",
-      min_floor: 3,
-      max_floor: 100,
-    ),
-    (
-      monster: "Lich Apprentice",
-      min_floor: 4,
-      max_floor: 100,
-    ),
-    (
-      monster: "Goblin Archer",
-      min_floor: 1,
-      max_floor: 7,
-    ),
-    (
-      monster: "Bone Archer",
-      min_floor: 5,
-      max_floor: 100,
-    ),
+    // --- Vermin ---
+    (monster: "Rat",           min_floor: 1,  max_floor: 5),
+    (monster: "Giant Bat",     min_floor: 2,  max_floor: 8),
+    (monster: "Giant Spider",  min_floor: 3,  max_floor: 8),
+    (monster: "Plague Rat",    min_floor: 5,  max_floor: 10),
+
+    // --- Goblinoid ---
+    (monster: "Goblin",          min_floor: 1,  max_floor: 6),
+    (monster: "Goblin Archer",   min_floor: 2,  max_floor: 8),
+    (monster: "Goblin Shaman",   min_floor: 3,  max_floor: 10),
+    (monster: "Goblin Warchief", min_floor: 5,  max_floor: 10),
+
+    // --- Undead ---
+    (monster: "Skeleton",        min_floor: 5,  max_floor: 14),
+    (monster: "Bone Archer",     min_floor: 6,  max_floor: 14),
+    (monster: "Zombie",          min_floor: 5,  max_floor: 14),
+    (monster: "Wraith",          min_floor: 8,  max_floor: 18),
+    (monster: "Lich Apprentice", min_floor: 7,  max_floor: 16),
+
+    // --- Orcish ---
+    (monster: "Orc",             min_floor: 8,  max_floor: 14),
+    (monster: "Orc Berserker",   min_floor: 10, max_floor: 16),
+    (monster: "Orc Shaman",      min_floor: 10, max_floor: 16),
+    (monster: "Orc Warlord",     min_floor: 12, max_floor: 18),
+
+    // --- Demonic ---
+    (monster: "Imp",             min_floor: 12, max_floor: 20),
+    (monster: "Hell Hound",      min_floor: 14, max_floor: 22),
+    (monster: "Shadow Fiend",    min_floor: 16, max_floor: 22),
+
+    // --- Giant ---
+    (monster: "Ogre",            min_floor: 14, max_floor: 22),
+    (monster: "Ogre Mage",       min_floor: 16, max_floor: 24),
+    (monster: "Troll",           min_floor: 14, max_floor: 22),
+
+    // --- Dark ---
+    (monster: "Vampire",         min_floor: 18, max_floor: 26),
+    (monster: "Dark Knight",     min_floor: 20, max_floor: 26),
   ]
 )

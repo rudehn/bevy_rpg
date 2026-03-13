@@ -1,15 +1,115 @@
 use bevy::prelude::*;
 use bracket_lib::random::{RandomNumberGenerator, parse_dice_string};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::components::{Monster, Name, GodMode};
 use crate::game::level::{Experience, ExperienceReward};
-use crate::game::magic::SpiritShielded;
+use crate::game::magic::{Enraged, SpiritShielded};
 use crate::game::stats::{CombatStats, Level, Mana};
 use crate::game::turns::TurnEndEvent;
 use crate::game::{AppState, RunSummary, TurnManager};
 use crate::map::dungeon::Floor;
-use crate::player::Player; // Import Player marker // Import AppState for game over
+use crate::player::Player;
 use crate::ui::game_log::GameLogMessage;
+
+// --- Damage Types & Resistances ---
+
+/// The elemental/physical type of damage dealt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum DamageType {
+    #[default]
+    Physical,
+    Fire,
+    Ice,
+    Lightning,
+    Necrotic,
+    Poison,
+}
+
+impl DamageType {
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "fire" => DamageType::Fire,
+            "ice" => DamageType::Ice,
+            "lightning" => DamageType::Lightning,
+            "necrotic" => DamageType::Necrotic,
+            "poison" => DamageType::Poison,
+            _ => DamageType::Physical,
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            DamageType::Physical => "physical",
+            DamageType::Fire => "fire",
+            DamageType::Ice => "ice",
+            DamageType::Lightning => "lightning",
+            DamageType::Necrotic => "necrotic",
+            DamageType::Poison => "poison",
+        }
+    }
+}
+
+/// How much an entity resists a particular damage type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ResistanceLevel {
+    /// Takes 150% damage.
+    Weak,
+    /// Takes normal damage.
+    Normal,
+    /// Takes 50% damage (min 1).
+    Resistant,
+    /// Takes 0 damage.
+    Immune,
+    /// Heals instead of taking damage.
+    Absorb,
+}
+
+impl ResistanceLevel {
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "weak" => ResistanceLevel::Weak,
+            "resistant" => ResistanceLevel::Resistant,
+            "immune" => ResistanceLevel::Immune,
+            "absorb" => ResistanceLevel::Absorb,
+            _ => ResistanceLevel::Normal,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ResistanceLevel::Weak => "weak",
+            ResistanceLevel::Normal => "normal",
+            ResistanceLevel::Resistant => "resistant",
+            ResistanceLevel::Immune => "immune",
+            ResistanceLevel::Absorb => "absorb",
+        }
+    }
+}
+
+/// Per-entity resistance map. Missing entries default to Normal.
+#[derive(Component, Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Resistances(pub HashMap<DamageType, ResistanceLevel>);
+
+impl Resistances {
+    pub fn get(&self, damage_type: &DamageType) -> ResistanceLevel {
+        self.0.get(damage_type).copied().unwrap_or(ResistanceLevel::Normal)
+    }
+}
+
+/// Tags an entity's melee damage with a specific type.
+#[derive(Component, Debug, Clone)]
+pub struct DamageTypeTag(pub DamageType);
+
+/// Where the damage originated from (melee, spell, poison tick, etc.).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DamageSource {
+    Melee,
+    Spell,
+    Poison,
+    Environment,
+}
 
 // --- Components ---
 
@@ -42,6 +142,8 @@ pub struct Damage(pub String);
 pub struct AttackIntentMessage {
     pub attacker: Entity,
     pub target: Entity,
+    pub damage_type: DamageType,
+    pub source: DamageSource,
 }
 
 /// Message sent after a successful hit to trigger damage rolling.
@@ -49,6 +151,8 @@ pub struct AttackIntentMessage {
 pub struct DamageRollMessage {
     pub attacker: Entity,
     pub target: Entity,
+    pub damage_type: DamageType,
+    pub source: DamageSource,
 }
 
 /// Message sent after damage is rolled to apply armor reduction.
@@ -57,6 +161,8 @@ pub struct DamageReductionMessage {
     pub attacker: Entity,
     pub target: Entity,
     pub raw_damage: i32,
+    pub damage_type: DamageType,
+    pub source: DamageSource,
 }
 
 /// Message sent after armor reduction to finally apply damage to health.
@@ -65,6 +171,8 @@ pub struct ApplyDamageMessage {
     pub attacker: Entity,
     pub target: Entity,
     pub final_damage: i32,
+    pub damage_type: DamageType,
+    pub source: DamageSource,
 }
 
 /// Message sent to heal an entity.
@@ -79,6 +187,13 @@ pub struct HealMessage {
 pub struct MissMessage {
     pub attacker: Entity,
     pub target: Entity,
+}
+
+/// Message emitted after a successful melee hit to trigger on-hit effects.
+#[derive(Message, Debug)]
+pub struct OnHitTriggerMessage {
+    pub attacker: Entity,
+    pub defender: Entity,
 }
 
 /// Message sent to toggle GodMode on an entity.
@@ -162,6 +277,8 @@ fn hit_check_system(
             roll_writer.write(DamageRollMessage {
                 attacker: intent.attacker,
                 target: intent.target,
+                damage_type: intent.damage_type,
+                source: intent.source,
             });
         } else {
             let verb = if is_player { "miss" } else { "misses" };
@@ -178,54 +295,111 @@ fn hit_check_system(
 }
 
 /// 2. Damage Calculation: Roll attacker damage dice and add damage bonus.
+/// Enraged attackers deal 150% damage.
 fn damage_roll_system(
     mut roll_messages: MessageReader<DamageRollMessage>,
     mut reduction_writer: MessageWriter<DamageReductionMessage>,
     mut game_rng: ResMut<GameRng>,
-    query: Query<(&Damage, &CombatStats)>,
+    query: Query<(&Damage, &CombatStats, Has<Enraged>)>,
 ) {
     for message in roll_messages.read() {
-        let Ok((damage_dice, attacker_stats)) = query.get(message.attacker) else {
+        let Ok((damage_dice, attacker_stats, is_enraged)) = query.get(message.attacker) else {
             continue;
         };
 
         let rolled_damage = roll_dice(&damage_dice.0, &mut game_rng.0);
-        let raw_damage = rolled_damage + attacker_stats.damage_bonus;
+        let mut raw_damage = rolled_damage + attacker_stats.damage_bonus;
+
+        // Enraged: +50% damage
+        if is_enraged {
+            raw_damage = raw_damage * 3 / 2;
+        }
 
         reduction_writer.write(DamageReductionMessage {
             attacker: message.attacker,
             target: message.target,
             raw_damage,
+            damage_type: message.damage_type,
+            source: message.source,
         });
     }
 }
 
-/// 3. Armor Reduction: Subtract target armor from raw damage (min 1).
+/// 3. Armor Reduction + Resistance: Subtract armor, then apply resistance multiplier.
 fn armor_reduction_system(
     mut reduction_messages: MessageReader<DamageReductionMessage>,
     mut apply_writer: MessageWriter<ApplyDamageMessage>,
-    query: Query<&CombatStats>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+    query: Query<(&CombatStats, Option<&Resistances>, &Name)>,
 ) {
     for message in reduction_messages.read() {
-        let Ok(target_stats) = query.get(message.target) else {
+        let Ok((target_stats, resistances, target_name)) = query.get(message.target) else {
             continue;
         };
 
-        let final_damage = (message.raw_damage - target_stats.armor).max(1);
+        // Armor reduction (physical mitigation)
+        let after_armor = (message.raw_damage - target_stats.armor).max(1);
+
+        // Resistance multiplier
+        let resistance = resistances
+            .map(|r| r.get(&message.damage_type))
+            .unwrap_or(ResistanceLevel::Normal);
+
+        let final_damage = match resistance {
+            ResistanceLevel::Weak => {
+                log_writer.write(GameLogMessage(format!(
+                    "{} is weak to {}!",
+                    target_name.0,
+                    message.damage_type.name()
+                )));
+                (after_armor * 3 / 2).max(1)
+            }
+            ResistanceLevel::Normal => after_armor,
+            ResistanceLevel::Resistant => {
+                log_writer.write(GameLogMessage(format!(
+                    "{} resists the {} damage.",
+                    target_name.0,
+                    message.damage_type.name()
+                )));
+                (after_armor / 2).max(1)
+            }
+            ResistanceLevel::Immune => {
+                log_writer.write(GameLogMessage(format!(
+                    "{} is immune to {} damage!",
+                    target_name.0,
+                    message.damage_type.name()
+                )));
+                0
+            }
+            ResistanceLevel::Absorb => {
+                // Negative damage signals healing in damage_application_system
+                log_writer.write(GameLogMessage(format!(
+                    "{} absorbs the {}! (+{} HP)",
+                    target_name.0,
+                    message.damage_type.name(),
+                    after_armor
+                )));
+                -after_armor
+            }
+        };
 
         apply_writer.write(ApplyDamageMessage {
             attacker: message.attacker,
             target: message.target,
             final_damage,
+            damage_type: message.damage_type,
+            source: message.source,
         });
     }
 }
 
 /// 4. Damage Application: Update health and log the result.
 /// Spirit Shield: if the target has `SpiritShielded`, damage is absorbed by mana first.
+/// Absorb resistance: negative final_damage means heal instead.
 fn damage_application_system(
     mut apply_messages: MessageReader<ApplyDamageMessage>,
     mut death_writer: MessageWriter<DeathEvent>,
+    mut on_hit_writer: MessageWriter<OnHitTriggerMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut query_health: Query<(
         &mut Health,
@@ -243,6 +417,18 @@ fn damage_application_system(
         else {
             continue;
         };
+
+        // Absorb resistance: heal instead of damage
+        if message.final_damage < 0 {
+            let heal = (-message.final_damage).min(target_health.max - target_health.current);
+            target_health.current += heal;
+            continue;
+        }
+
+        // Immune: 0 damage = skip entirely
+        if message.final_damage == 0 {
+            continue;
+        }
 
         if has_god_mode {
             info!("{} is in GodMode, ignoring damage!", target_name.0);
@@ -279,6 +465,14 @@ fn damage_application_system(
             "{} {} {} for {} damage.",
             attacker_name.0, verb, target_name.0, message.final_damage
         )));
+
+        // Trigger on-hit effects for melee attacks that dealt damage
+        if message.source == DamageSource::Melee && remaining_damage > 0 {
+            on_hit_writer.write(OnHitTriggerMessage {
+                attacker: message.attacker,
+                defender: message.target,
+            });
+        }
 
         if target_health.current <= 0 {
             death_writer.write(DeathEvent {
@@ -394,6 +588,7 @@ impl Plugin for CombatPlugin {
             .add_message::<HealMessage>()
             .add_message::<MissMessage>()
             .add_message::<ToggleGodModeMessage>()
+            .add_message::<OnHitTriggerMessage>()
             .add_message::<DeathEvent>()
             .register_type::<Health>()
             .register_type::<HealthRegen>()

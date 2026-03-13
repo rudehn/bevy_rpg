@@ -46,6 +46,29 @@ impl MonsterAI {
     pub fn execute(&mut self, entity: Entity, world: &mut World) {
         let mut rng = rng();
 
+        // --- STUN CHECK: stunned entities skip their turn ---
+        if world.get::<crate::game::magic::Stunned>(entity).is_some() {
+            let name = world
+                .get::<crate::components::Name>(entity)
+                .map(|n| n.0.clone())
+                .unwrap_or_else(|| "Something".to_string());
+            world.write_message(crate::ui::game_log::GameLogMessage(format!(
+                "{} is stunned and cannot act!", name
+            )));
+            // Floating "★" particle above the stunned entity
+            if let Some(pos) = world.get::<Position>(entity) {
+                let world_pos = bevy::math::Vec2::new(pos.x as f32 * 16.0, pos.y as f32 * 16.0 + 8.0);
+                world.write_message(crate::game::particles::ParticleRequest::FloatingText {
+                    world_pos,
+                    text: "\u{2605}".to_string(), // ★
+                    color: bevy::prelude::Color::srgba(1.0, 1.0, 0.3, 1.0),
+                    font_size: 5.0,
+                });
+            }
+            world.write_message(WaitIntent { entity });
+            return;
+        }
+
         // --- STEP 1: READ-ONLY DATA EXTRACTION ---
         let (monster_pos, monster_viewshed, player_point, player_entity) = {
             let m_pos = world.get::<Position>(entity).map(|p| p.to_point());
@@ -88,6 +111,50 @@ impl MonsterAI {
             MonsterAIMode::Wandering => {
                 if is_player_visible {
                     self.mode = MonsterAIMode::Hunting;
+                }
+            }
+        }
+
+        // --- STEP 2.4: COWARDLY FLEE ---
+        // Cowardly monsters flee when below 50% HP.
+        if world.get::<crate::game::abilities::Cowardly>(entity).is_some() {
+            let health = world.get::<Health>(entity);
+            if let Some(health) = health {
+                if health.current < health.max / 2 {
+                    // Greedy flee: pick adjacent walkable tile furthest from player
+                    let map = world.resource::<Map>();
+                    let mut best_dir: Option<Direction> = None;
+                    let mut best_dist: f32 = -1.0;
+
+                    for dir in Direction::ALL {
+                        let target_pos = monster_pos + dir.offset();
+                        if map.in_bounds(target_pos)
+                            && is_walkable(map.tiles[map.xy_idx(target_pos.x, target_pos.y)])
+                        {
+                            let dist = DistanceAlg::Pythagoras.distance2d(target_pos, player_point);
+                            if dist > best_dist {
+                                best_dist = dist;
+                                best_dir = Some(dir);
+                            }
+                        }
+                    }
+
+                    if let Some(dir) = best_dir {
+                        let current_dist = DistanceAlg::Pythagoras.distance2d(monster_pos, player_point);
+                        // Only flee if the best tile is actually further away
+                        if best_dist > current_dist {
+                            let name = world
+                                .get::<crate::components::Name>(entity)
+                                .map(|n| n.0.clone())
+                                .unwrap_or_else(|| "Something".to_string());
+                            world.write_message(crate::ui::game_log::GameLogMessage(format!(
+                                "{} squeaks in fear and flees!", name
+                            )));
+                            world.write_message(MovementIntent { entity, dir });
+                            return;
+                        }
+                    }
+                    // Cornered: fall through to normal attack logic
                 }
             }
         }
@@ -511,6 +578,11 @@ fn choose_spell(
                 }
                 SpellEffect::Teleport { .. } => {
                     // Monsters generally shouldn't teleport — score 0
+                }
+                SpellEffect::ApplyEnrage { .. } => {
+                    // High value self-buff: +50% damage is very strong
+                    raw += 20;
+                    target = target.or(Some(resolved_entity));
                 }
             }
         }

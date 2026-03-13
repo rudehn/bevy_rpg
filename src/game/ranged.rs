@@ -6,7 +6,7 @@ use crate::{
     constants::BASE_ACTION_COST,
     game::{
         actions::{ActionFinishedEvent, FreeActionEvent, RangedAttackIntent},
-        combat::AttackIntentMessage,
+        combat::{AttackIntentMessage, DamageType, DamageSource},
         items::{Equipment, ItemProperties, ItemStack},
     },
     player::Player,
@@ -154,9 +154,12 @@ pub fn handle_ranged_attack(
         log_writer.write(GameLogMessage(format!("{} fires at {}!", attacker_str, target_str)));
 
         // Valid shot — hand off to the normal attack pipeline.
+        // Ranged attacks are always physical for now.
         attack_writer.write(AttackIntentMessage {
             attacker: intent.attacker,
             target: intent.target,
+            damage_type: DamageType::Physical,
+            source: DamageSource::Melee, // Ranged uses same pipeline as melee
         });
         finish_writer.write(ActionFinishedEvent {
             entity: intent.attacker,

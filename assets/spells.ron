@@ -14,6 +14,7 @@
             effects: [
                 Damage(dice: "1d4", int_scaling: false),
             ],
+            damage_type: Lightning,
         ),
         "magic_missile": (
             name: "Magic Missile",
@@ -25,6 +26,7 @@
             effects: [
                 Damage(dice: "1d4", int_scaling: true),
             ],
+            damage_type: Physical,
         ),
         "fire_dart": (
             name: "Fire Dart",
@@ -36,6 +38,7 @@
             effects: [
                 Damage(dice: "1d8", int_scaling: false),
             ],
+            damage_type: Fire,
         ),
         "ice_shard": (
             name: "Ice Shard",
@@ -47,6 +50,7 @@
             effects: [
                 Damage(dice: "2d4", int_scaling: true),
             ],
+            damage_type: Ice,
         ),
         "poison_bolt": (
             name: "Poison Bolt",
@@ -59,6 +63,7 @@
                 Damage(dice: "1d4", int_scaling: false),
                 ApplyPoison(damage_per_turn: 2, duration: 4),
             ],
+            damage_type: Poison,
         ),
         "vampiric_strike": (
             name: "Vampiric Strike",
@@ -71,6 +76,7 @@
                 Damage(dice: "2d4", int_scaling: false),
                 Heal(dice: "1d4", int_scaling: false),
             ],
+            damage_type: Necrotic,
         ),
         "shadow_bolt": (
             name: "Shadow Bolt",
@@ -82,6 +88,7 @@
             effects: [
                 Damage(dice: "2d8", int_scaling: true),
             ],
+            damage_type: Necrotic,
         ),
         "lightning_bolt": (
             name: "Lightning Bolt",
@@ -93,6 +100,7 @@
             effects: [
                 Damage(dice: "3d6", int_scaling: true),
             ],
+            damage_type: Lightning,
         ),
         "fireball": (
             name: "Fireball",
@@ -104,6 +112,7 @@
             effects: [
                 AoeDamage(dice: "2d6", radius: 1, int_scaling: false),
             ],
+            damage_type: Fire,
         ),
         "chain_lightning": (
             name: "Chain Lightning",
@@ -115,6 +124,7 @@
             effects: [
                 ChainDamage(dice: "2d6", max_jumps: 2, jump_range: 2, int_scaling: true),
             ],
+            damage_type: Lightning,
         ),
         "death_coil": (
             name: "Death Coil",
@@ -126,6 +136,7 @@
             effects: [
                 Damage(dice: "4d6", int_scaling: true),
             ],
+            damage_type: Necrotic,
         ),
         "meteor": (
             name: "Meteor",
@@ -137,6 +148,7 @@
             effects: [
                 AoeDamage(dice: "3d8", radius: 1, int_scaling: false),
             ],
+            damage_type: Fire,
         ),
 
         // ==============
@@ -207,11 +219,11 @@
             name: "Enrage",
             mana_cost: 8,
             cooldown: 10,
-            description: "Boosts STR by 4 for 6 turns.",
+            description: "Enter a fury! +50% damage for 6 turns.",
             target: Castor,
             range: 0,
             effects: [
-                Buff(attribute: "strength", amount: 4, duration: 6),
+                ApplyEnrage(duration: 6),
             ],
         ),
         "fortify": (

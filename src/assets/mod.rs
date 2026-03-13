@@ -186,6 +186,26 @@ pub struct MonsterAsset {
     /// Ranged attack range in tiles (0 = melee only).
     #[serde(default)]
     pub ranged_range: u32,
+
+    /// Melee damage type (e.g. "physical", "fire", "poison"). Default: "physical".
+    #[serde(default)]
+    pub damage_type: String,
+
+    /// Resistance map, e.g. {"poison": "immune", "fire": "weak"}.
+    #[serde(default)]
+    pub resistances: HashMap<String, String>,
+
+    /// Base armor value (flat damage reduction). Default: 0.
+    #[serde(default)]
+    pub base_armor: i32,
+
+    /// Whether this monster flees when below 50% HP.
+    #[serde(default)]
+    pub is_cowardly: bool,
+
+    /// On-hit effects applied when this monster lands melee damage.
+    #[serde(default)]
+    pub on_hit_effects: Vec<crate::game::abilities::OnHitEffect>,
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]

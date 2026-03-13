@@ -130,6 +130,7 @@ fn select_next_actor(
     mut turn_manager: ResMut<TurnManager>,
     query_player: Query<Entity, With<Player>>,
     query_all: Query<Entity>,
+    query_stunned: Query<&crate::game::magic::Stunned>,
     mut next_state: ResMut<NextState<TurnState>>,
 ) {
     if turn_manager.turn_queue.is_empty() {
@@ -175,8 +176,36 @@ fn select_next_actor(
                     if let Ok(mut ec) = world.get_entity_mut(entity) {
                         ec.insert(MyTurn);
                     }
+
+                    // Stun check: if player is stunned, skip their input turn
+                    if world.get::<crate::game::magic::Stunned>(entity).is_some() {
+                        let name = world
+                            .get::<crate::components::Name>(entity)
+                            .map(|n| n.0.clone())
+                            .unwrap_or_else(|| "You".to_string());
+                        world.write_message(crate::ui::game_log::GameLogMessage(
+                            format!("{} is stunned and cannot act!", name)
+                        ));
+                        // Floating "★" particle above the stunned player
+                        if let Some(pos) = world.get::<crate::components::Position>(entity) {
+                            let world_pos = bevy::math::Vec2::new(pos.x as f32 * 16.0, pos.y as f32 * 16.0 + 8.0);
+                            world.write_message(crate::game::particles::ParticleRequest::FloatingText {
+                                world_pos,
+                                text: "\u{2605}".to_string(),
+                                color: bevy::prelude::Color::srgba(1.0, 1.0, 0.3, 1.0),
+                                font_size: 5.0,
+                            });
+                        }
+                        // Auto-emit wait intent so the turn advances
+                        world.write_message(WaitIntent { entity });
+                    }
                 });
-                next_state.set(TurnState::PlayerInput);
+                // Check if player is stunned: if so, go straight to Processing instead
+                if query_stunned.get(entity).is_ok() {
+                    next_state.set(TurnState::Processing);
+                } else {
+                    next_state.set(TurnState::PlayerInput);
+                }
                 return;
             }
         } else {

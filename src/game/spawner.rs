@@ -10,9 +10,9 @@ use crate::{
     constants::{TILE_SIZE_X, TILE_SIZE_Y, Z_MONSTER, Z_ITEM},
     game::{
         MonsterAI, TurnManager,
-        abilities::{Faction, FactionKind},
+        abilities::{BaseArmor, Cowardly, Faction, FactionKind, OnHitEffects},
         actions::SpeedStats,
-        combat::{Damage, Health, HealthRegen},
+        combat::{Damage, DamageType, DamageTypeTag, Health, HealthRegen, Resistances, ResistanceLevel},
         items::{ItemProperties, ItemStack, LootEntry, LootTable},
         level::ExperienceReward,
         magic::{ActiveSpells, KnownSpells, ManaRegen, SpellCooldowns, MAX_SPELL_SLOTS},
@@ -168,6 +168,36 @@ pub fn spawn_monster(
             ActiveSpells { slots },
             SpellCooldowns::default(),
         ));
+    }
+
+    // Damage type tag (for melee attacks)
+    let dmg_type = DamageType::from_str(&monster_asset.damage_type);
+    if dmg_type != DamageType::Physical {
+        commands.entity(monster_entity).insert(DamageTypeTag(dmg_type));
+    }
+
+    // Resistances
+    if !monster_asset.resistances.is_empty() {
+        let mut map = std::collections::HashMap::new();
+        for (dt_str, rl_str) in &monster_asset.resistances {
+            map.insert(DamageType::from_str(dt_str), ResistanceLevel::from_str(rl_str));
+        }
+        commands.entity(monster_entity).insert(Resistances(map));
+    }
+
+    // Base armor
+    if monster_asset.base_armor > 0 {
+        commands.entity(monster_entity).insert(BaseArmor(monster_asset.base_armor));
+    }
+
+    // Cowardly flee behavior
+    if monster_asset.is_cowardly {
+        commands.entity(monster_entity).insert(Cowardly);
+    }
+
+    // On-hit effects
+    if !monster_asset.on_hit_effects.is_empty() {
+        commands.entity(monster_entity).insert(OnHitEffects(monster_asset.on_hit_effects.clone()));
     }
 
     turn_manager.add_entity(monster_entity);

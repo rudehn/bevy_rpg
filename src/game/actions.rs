@@ -5,7 +5,7 @@ use crate::{
     components::{Collider, InInventory, Inventory, Monster, Name, Position, Viewshed, Item, AmuletOfBevy},
     constants::BASE_ACTION_COST,
     game::{
-        combat::AttackIntentMessage,
+        combat::{AttackIntentMessage, DamageType, DamageTypeTag, DamageSource},
         effects::UseItemMessage,
         items::{DropItemMessage, EquipItemMessage, ItemStack, UnequipItemMessage},
         level::Experience,
@@ -424,11 +424,20 @@ pub fn handle_melee(
     mut intents: MessageReader<MeleeIntent>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut attack_writer: MessageWriter<AttackIntentMessage>,
+    damage_type_query: Query<Option<&DamageTypeTag>>,
 ) {
     for intent in intents.read() {
+        let damage_type = damage_type_query
+            .get(intent.attacker)
+            .ok()
+            .flatten()
+            .map(|t| t.0)
+            .unwrap_or(DamageType::Physical);
         attack_writer.write(AttackIntentMessage {
             attacker: intent.attacker,
             target: intent.target,
+            damage_type,
+            source: DamageSource::Melee,
         });
         finish_writer.write(ActionFinishedEvent {
             entity: intent.attacker,

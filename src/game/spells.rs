@@ -2,6 +2,8 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::game::combat::DamageType;
+
 // --- Spell Effect Types ---
 
 /// How a spell selects its target.
@@ -45,6 +47,8 @@ pub enum SpellEffect {
     SpiritShield { duration: u32 },
     /// Move caster to a tile. range=0 → random, range>0 → controlled.
     Teleport { range: i32 },
+    /// Apply +50% damage multiplier for N turns.
+    ApplyEnrage { duration: u32 },
 }
 
 // --- Spell Data ---
@@ -61,6 +65,9 @@ pub struct SpellData {
     /// Maximum tile range of the spell (0 means self/unlimited for Caster spells).
     pub range: u32,
     pub effects: Vec<SpellEffect>,
+    /// The damage type for this spell's damage effects. Defaults to Physical.
+    #[serde(default)]
+    pub damage_type: DamageType,
 }
 
 // --- Registry Asset ---

@@ -8,7 +8,7 @@ use crate::{
     constants::BASE_ACTION_COST,
     game::{
         actions::ActionFinishedEvent,
-        combat::{ApplyDamageMessage, GameRng, HealMessage},
+        combat::{ApplyDamageMessage, DamageSource, DamageType, GameRng, HealMessage},
         spells::{SpellEffect, SpellRegistry, roll_dice_expr},
         stats::{AttributeModifiers, CombatStats, Mana},
         turns::TurnEndEvent,
@@ -134,6 +134,20 @@ pub struct SpiritShielded {
     pub turns_remaining: u32,
 }
 
+/// +50% damage multiplier for N turns. Applied by "enrage" spell.
+#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
+#[reflect(Component)]
+pub struct Enraged {
+    pub turns_remaining: u32,
+}
+
+/// Stunned: entity skips its turn.
+#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
+#[reflect(Component)]
+pub struct Stunned {
+    pub turns_remaining: u32,
+}
+
 // =====================================================================
 // Messages
 // =====================================================================
@@ -252,6 +266,8 @@ pub fn handle_cast_spell(
             caster_label, spell.name
         )));
 
+        let spell_damage_type = spell.damage_type;
+
         // Apply each effect.
         for effect in &spell.effects {
             match effect {
@@ -263,6 +279,8 @@ pub fn handle_cast_spell(
                         attacker: caster_entity,
                         target: target_entity,
                         final_damage: damage,
+                        damage_type: spell_damage_type,
+                        source: DamageSource::Spell,
                     });
                 }
                 SpellEffect::Heal { dice, int_scaling } => {
@@ -292,6 +310,8 @@ pub fn handle_cast_spell(
                                     attacker: caster_entity,
                                     target: ent,
                                     final_damage: damage,
+                                    damage_type: spell_damage_type,
+                                    source: DamageSource::Spell,
                                 });
                                 hit_count += 1;
                             }
@@ -342,6 +362,8 @@ pub fn handle_cast_spell(
                         attacker: caster_entity,
                         target: target_entity,
                         final_damage: primary_damage,
+                        damage_type: spell_damage_type,
+                        source: DamageSource::Spell,
                     });
 
                     // Chain jumps
@@ -375,6 +397,8 @@ pub fn handle_cast_spell(
                                 attacker: caster_entity,
                                 target: next_ent,
                                 final_damage: jump_damage,
+                                damage_type: spell_damage_type,
+                                source: DamageSource::Spell,
                             });
                             last_pos = positions
                                 .get(next_ent)
@@ -522,6 +546,17 @@ pub fn handle_cast_spell(
                             caster_label, tx, ty
                         )));
                     }
+                }
+                SpellEffect::ApplyEnrage { duration } => {
+                    commands
+                        .entity(target_entity)
+                        .insert(Enraged {
+                            turns_remaining: *duration,
+                        });
+                    log_writer.write(GameLogMessage(format!(
+                        "{} enters a fury! (+50% damage for {} turns)",
+                        caster_label, duration
+                    )));
                 }
             }
         }
@@ -716,6 +751,8 @@ pub fn process_poison_system(
                 attacker: entity, // self-inflicted for death tracking
                 target: entity,
                 final_damage: poison.damage_per_turn,
+                damage_type: DamageType::Poison,
+                source: DamageSource::Poison,
             });
             poison.turns_remaining = poison.turns_remaining.saturating_sub(1);
             if poison.turns_remaining == 0 {
@@ -753,6 +790,54 @@ pub fn tick_spirit_shield_system(
     }
 }
 
+/// Tick enrage duration: decrement, remove when expired.
+pub fn tick_enraged_system(
+    mut turn_end: MessageReader<TurnEndEvent>,
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut Enraged)>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+    names: Query<&Name>,
+) {
+    for _ in turn_end.read() {
+        for (entity, mut enraged) in query.iter_mut() {
+            enraged.turns_remaining = enraged.turns_remaining.saturating_sub(1);
+            if enraged.turns_remaining == 0 {
+                commands.entity(entity).remove::<Enraged>();
+                if let Ok(name) = names.get(entity) {
+                    log_writer.write(GameLogMessage(format!(
+                        "{}'s fury subsides.",
+                        name.0
+                    )));
+                }
+            }
+        }
+    }
+}
+
+/// Tick stun duration: decrement, remove when expired.
+pub fn tick_stunned_system(
+    mut turn_end: MessageReader<TurnEndEvent>,
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut Stunned)>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+    names: Query<&Name>,
+) {
+    for _ in turn_end.read() {
+        for (entity, mut stunned) in query.iter_mut() {
+            stunned.turns_remaining = stunned.turns_remaining.saturating_sub(1);
+            if stunned.turns_remaining == 0 {
+                commands.entity(entity).remove::<Stunned>();
+                if let Ok(name) = names.get(entity) {
+                    log_writer.write(GameLogMessage(format!(
+                        "{} is no longer stunned.",
+                        name.0
+                    )));
+                }
+            }
+        }
+    }
+}
+
 // =====================================================================
 // Plugin
 // =====================================================================
@@ -769,6 +854,8 @@ impl Plugin for MagicPlugin {
             .register_type::<Slowed>()
             .register_type::<Poisoned>()
             .register_type::<SpiritShielded>()
+            .register_type::<Enraged>()
+            .register_type::<Stunned>()
             .add_message::<CastSpellMessage>()
             .add_systems(
                 Update,
@@ -779,6 +866,8 @@ impl Plugin for MagicPlugin {
                     tick_speed_effects_system,
                     process_poison_system,
                     tick_spirit_shield_system,
+                    tick_enraged_system,
+                    tick_stunned_system,
                     apply_speed_effects_system,
                 )
                     .run_if(in_state(AppState::InGame)),

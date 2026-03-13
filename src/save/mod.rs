@@ -15,8 +15,8 @@ use crate::{
         items::{Equipment, ItemProperties, ItemStack},
         level::{AvailableStatPoints, Experience},
         magic::{
-            ActiveSpells, Hasted, KnownSpells, ManaRegen, Poisoned, Slowed,
-            SpellCooldowns, SpiritShielded, TimedModifiers,
+            ActiveSpells, Enraged, Hasted, KnownSpells, ManaRegen, Poisoned, Slowed,
+            SpellCooldowns, SpiritShielded, Stunned, TimedModifiers,
         },
         spawner::spawn_item,
         stats::{AttributeModifiers, Attributes, Level, Mana},
@@ -235,6 +235,10 @@ pub struct PlayerSaveData {
     pub poisoned: Option<Poisoned>,
     #[serde(default)]
     pub spirit_shielded: Option<SpiritShielded>,
+    #[serde(default)]
+    pub stunned: Option<Stunned>,
+    #[serde(default)]
+    pub enraged: Option<Enraged>,
     pub inventory: Vec<InventoryItemSave>,
 }
 
@@ -388,6 +392,8 @@ pub fn auto_save_system(
             Option<&Slowed>,
             Option<&Poisoned>,
             Option<&SpiritShielded>,
+            Option<&Stunned>,
+            Option<&Enraged>,
         ),
         With<Player>,
     >,
@@ -452,8 +458,8 @@ pub fn auto_save_system(
         .collect();
 
     // Magic state
-    let (known_spells, active_spells, mana_regen, spell_cooldowns, timed_modifiers, hasted, slowed, poisoned, spirit_shielded) =
-        if let Ok((ks, as_, mr, sc, tm, h, sl, p, ss)) = player_magic_query.single() {
+    let (known_spells, active_spells, mana_regen, spell_cooldowns, timed_modifiers, hasted, slowed, poisoned, spirit_shielded, stunned, enraged) =
+        if let Ok((ks, as_, mr, sc, tm, h, sl, p, ss, st, en)) = player_magic_query.single() {
             (
                 ks.clone(),
                 as_.clone(),
@@ -464,6 +470,8 @@ pub fn auto_save_system(
                 sl.cloned(),
                 p.cloned(),
                 ss.cloned(),
+                st.cloned(),
+                en.cloned(),
             )
         } else {
             (
@@ -472,7 +480,7 @@ pub fn auto_save_system(
                 ManaRegen::default(),
                 SpellCooldowns::default(),
                 TimedModifiers::default(),
-                None, None, None, None,
+                None, None, None, None, None, None,
             )
         };
 
@@ -523,6 +531,8 @@ pub fn auto_save_system(
             slowed,
             poisoned,
             spirit_shielded,
+            stunned,
+            enraged,
             inventory: inv_saves,
         },
         monsters,
@@ -651,6 +661,12 @@ pub fn apply_player_load_system(
         }
         if let Some(ref ss) = player_data.spirit_shielded {
             commands.entity(player_entity).insert(ss.clone());
+        }
+        if let Some(ref st) = player_data.stunned {
+            commands.entity(player_entity).insert(st.clone());
+        }
+        if let Some(ref en) = player_data.enraged {
+            commands.entity(player_entity).insert(en.clone());
         }
     }
 

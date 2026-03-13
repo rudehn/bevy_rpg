@@ -1,5 +1,6 @@
 use crate::components::{Monster, Viewshed};
 use crate::game::AppState;
+use crate::game::abilities::BaseArmor;
 use crate::game::actions::SpeedStats;
 use crate::game::combat::{Health, HealthRegen};
 use crate::player::Player;
@@ -88,6 +89,7 @@ pub fn stat_recalculation_system(
             Option<&RolledHp>,
             Option<&Player>,
             Option<&Monster>,
+            Option<&BaseArmor>,
         ),
         Or<(
             Changed<Attributes>,
@@ -109,6 +111,7 @@ pub fn stat_recalculation_system(
         rolled_hp,
         is_player,
         is_monster,
+        base_armor,
     ) in query.iter_mut()
     {
         // 1. Calculate Effective Scores
@@ -149,6 +152,8 @@ pub fn stat_recalculation_system(
         stats.damage_bonus = stats.strength_bonus;
         stats.hit_chance = 10 + stats.strength_bonus;
         stats.dodge_chance = 5 + stats.dexterity_bonus;
+        // Base armor from monster definition (TimedModifiers "armor" adds on top via recalc_attribute_modifiers)
+        stats.armor = base_armor.map(|a| a.0).unwrap_or(0);
 
         // 5. Update Mana (max = INT × 5)
         if let Some(mut m) = mana {
