@@ -374,18 +374,30 @@ fn handle_player_input(
     ];
     for (i, &key) in spell_keys.iter().enumerate() {
         if keys.just_pressed(key) {
-            let needs_targeting = player_active_spells.single().ok().and_then(|active| {
+            let spell_target = player_active_spells.single().ok().and_then(|active| {
                 let spell_id = active.slots.get(i)?.as_deref()?;
                 let registry = spell_registries.get(&spell_registry_handle.0)?;
                 let spell = registry.spells.get(spell_id)?;
-                Some(spell.target == SpellTarget::Enemy)
-            }).unwrap_or(false);
+                Some(spell.target.clone())
+            });
 
-            if needs_targeting {
-                targeting_context.mode = TargetingMode::Spell { slot: i };
-                next_ingame.set(InGameState::Targeting);
-            } else {
-                action = Some(Action::CastSpell { slot: i, target: None });
+            match spell_target {
+                Some(SpellTarget::Enemy) => {
+                    targeting_context.mode = TargetingMode::Spell { slot: i };
+                    next_ingame.set(InGameState::Targeting);
+                }
+                Some(SpellTarget::Ally) => {
+                    targeting_context.mode = TargetingMode::SpellAlly { slot: i, include_self: false };
+                    next_ingame.set(InGameState::Targeting);
+                }
+                Some(SpellTarget::AllyOrSelf) => {
+                    targeting_context.mode = TargetingMode::SpellAlly { slot: i, include_self: true };
+                    next_ingame.set(InGameState::Targeting);
+                }
+                _ => {
+                    // Castor or unknown — no targeting needed
+                    action = Some(Action::CastSpell { slot: i, target: None });
+                }
             }
             break;
         }

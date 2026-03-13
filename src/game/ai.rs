@@ -1,12 +1,13 @@
 use crate::{
     assets::SpellRegistryHandle,
-    components::{Monster, Position, Viewshed},
+    components::{Position, Viewshed},
     game::{
+        abilities::{Faction, FactionKind},
         actions::{Direction, MovementIntent, RangedAttackIntent, WaitIntent},
         combat::Health,
         magic::{ActiveSpells, CastSpellMessage, Hasted, Poisoned, Slowed, SpellCooldowns},
         ranged::RangedCapable,
-        spells::{SpellEffect, SpellRegistry},
+        spells::{SpellEffect, SpellRegistry, SpellTarget},
         stats::{CombatStats, Mana},
     },
     map::{Map, tile::is_walkable},
@@ -179,20 +180,36 @@ impl MonsterAI {
     }
 }
 
+/// Information about a nearby entity, gathered once before spell scoring.
+struct NearbyEntity {
+    entity: Entity,
+    pos: Point,
+    faction: FactionKind,
+    hp_current: i32,
+    hp_max: i32,
+    mana_current: i32,
+    has_poison: bool,
+    has_slow: bool,
+    has_haste: bool,
+}
+
 /// Evaluates all ready spells for `caster` and returns `(slot_index, target_entity)` for
 /// the best one, or `None` if no spell is worth casting.
 ///
-/// The target entity is fully resolved here — the spell handler receives it as-is.
+/// Fully faction-aware: determines friend/foe based on `Faction` component, not
+/// hardcoded Player/Monster markers. This allows AI-vs-AI and player-allied AI in the future.
 ///
 /// Score normalization prevents nova-ing:
 ///   effective_score = raw_score / (sqrt(mana_cost) * ln(cooldown + 1))
 fn choose_spell(
     caster: Entity,
     caster_pos: Point,
-    player_entity: Option<Entity>,
+    _player_entity: Option<Entity>,
     world: &mut World,
 ) -> Option<(usize, Entity)> {
-    // --- Gather all data upfront to avoid borrow issues ---
+    // --- Gather caster data upfront ---
+    let caster_faction = world.get::<Faction>(caster)?.0.clone();
+
     let (active_slots, cooldowns, mana_current, caster_hp, caster_max_hp, int_bonus) = {
         let active = world.get::<ActiveSpells>(caster)?;
         let cooldowns = world.get::<SpellCooldowns>(caster).cloned().unwrap_or_default();
@@ -205,46 +222,50 @@ fn choose_spell(
         (active.slots.clone(), cooldowns, mana, hp.0, hp.1, int_bonus)
     };
 
-    let player_pos = player_entity
-        .and_then(|e| world.get::<Position>(e))
-        .map(|p| p.to_point());
-
-    let player_hp = player_entity
-        .and_then(|e| world.get::<Health>(e))
-        .map(|h| h.current)
-        .unwrap_or(30);
-
-    let player_mana = player_entity
-        .and_then(|e| world.get::<Mana>(e))
-        .map(|m| m.current)
-        .unwrap_or(0);
-
     let caster_has_haste = world.get::<Hasted>(caster).is_some();
-    let _caster_has_slow = world.get::<Slowed>(caster).is_some();
-    let player_has_poison = player_entity
-        .map(|e| world.get::<Poisoned>(e).is_some())
-        .unwrap_or(false);
-    let player_has_slow = player_entity
-        .map(|e| world.get::<Slowed>(e).is_some())
-        .unwrap_or(false);
-
     let hp_pct = caster_hp as f32 / caster_max_hp.max(1) as f32;
 
-    // Collect nearby entity positions for AoE scoring.
-    // (entity, position, is_enemy)
-    let nearby_entities: Vec<(Entity, Point, bool)> = {
+    // Collect all nearby entities with faction info for targeting decisions.
+    let nearby: Vec<NearbyEntity> = {
         let mut result = Vec::new();
-        let mut query = world.query::<(Entity, &Position, Option<&Player>, Option<&Monster>)>();
-        for (ent, pos, is_player, is_monster) in query.iter(world) {
+        let mut query = world.query::<(Entity, &Position, &Faction, &Health, Option<&Mana>, Option<&Poisoned>, Option<&Slowed>, Option<&Hasted>)>();
+        for (ent, pos, faction, health, mana, poisoned, slowed, hasted) in query.iter(world) {
             if ent == caster {
                 continue;
             }
-            let is_enemy = is_player.is_some(); // From monster's perspective, player = enemy
-            let _ = is_monster; // Allies are other monsters
-            result.push((ent, pos.to_point(), is_enemy));
+            result.push(NearbyEntity {
+                entity: ent,
+                pos: pos.to_point(),
+                faction: faction.0.clone(),
+                hp_current: health.current,
+                hp_max: health.max,
+                mana_current: mana.map(|m| m.current).unwrap_or(0),
+                has_poison: poisoned.is_some(),
+                has_slow: slowed.is_some(),
+                has_haste: hasted.is_some(),
+            });
         }
         result
     };
+
+    // Partition nearby entities by relationship to caster.
+    let enemies: Vec<&NearbyEntity> = nearby.iter().filter(|n| caster_faction.is_hostile_to(&n.faction)).collect();
+    let allies: Vec<&NearbyEntity> = nearby.iter().filter(|n| caster_faction.is_allied_to(&n.faction)).collect();
+
+    // Find the best enemy target (nearest visible enemy for single-target offensive spells).
+    let nearest_enemy = enemies.iter()
+        .min_by_key(|e| {
+            let dx = e.pos.x - caster_pos.x;
+            let dy = e.pos.y - caster_pos.y;
+            dx * dx + dy * dy
+        })
+        .copied();
+
+    // Find the most-wounded ally for heal/buff spells.
+    let most_wounded_ally = allies.iter()
+        .filter(|a| a.hp_current < a.hp_max)
+        .max_by_key(|a| a.hp_max - a.hp_current)
+        .copied();
 
     let registry_handle = world.resource::<SpellRegistryHandle>().0.clone();
     let registry = {
@@ -272,13 +293,61 @@ fn choose_spell(
             continue;
         }
 
-        // Range check helper (used by multiple effect types).
-        let player_in_range = if spell.range > 0 {
-            player_pos
-                .map(|ppos| DistanceAlg::Pythagoras.distance2d(caster_pos, ppos) <= spell.range as f32)
-                .unwrap_or(false)
-        } else {
-            true
+        // Resolve the primary target based on SpellTarget and available entities.
+        let primary_target: Option<&NearbyEntity> = match spell.target {
+            SpellTarget::Enemy => nearest_enemy,
+            SpellTarget::Castor => None, // Self-targeted, handled below
+            SpellTarget::Ally => most_wounded_ally,
+            SpellTarget::AllyOrSelf => {
+                // Choose most-wounded ally, or self if caster is more hurt
+                let caster_missing = caster_max_hp - caster_hp;
+                let ally_missing = most_wounded_ally.map(|a| a.hp_max - a.hp_current).unwrap_or(0);
+                if caster_missing > ally_missing {
+                    None // Will resolve to caster below
+                } else {
+                    most_wounded_ally
+                }
+            }
+        };
+
+        // For enemy-targeted spells, check range to the resolved enemy target.
+        let target_in_range = match spell.target {
+            SpellTarget::Enemy => {
+                if spell.range > 0 {
+                    primary_target
+                        .map(|t| DistanceAlg::Pythagoras.distance2d(caster_pos, t.pos) <= spell.range as f32)
+                        .unwrap_or(false)
+                } else {
+                    primary_target.is_some()
+                }
+            }
+            SpellTarget::Ally => {
+                if spell.range > 0 {
+                    primary_target
+                        .map(|t| DistanceAlg::Pythagoras.distance2d(caster_pos, t.pos) <= spell.range as f32)
+                        .unwrap_or(false)
+                } else {
+                    primary_target.is_some()
+                }
+            }
+            SpellTarget::AllyOrSelf | SpellTarget::Castor => true, // Always in range of self
+        };
+
+        if !target_in_range {
+            continue;
+        }
+
+        // Resolve to entity ID.
+        let resolved_entity: Option<Entity> = match spell.target {
+            SpellTarget::Castor => Some(caster),
+            SpellTarget::AllyOrSelf => {
+                primary_target.map(|t| t.entity).or(Some(caster))
+            }
+            _ => primary_target.map(|t| t.entity),
+        };
+
+        let Some(resolved_entity) = resolved_entity else {
+            continue; // No valid target available
         };
 
         // Score each effect and accumulate.
@@ -288,65 +357,71 @@ fn choose_spell(
         for effect in &spell.effects {
             match effect {
                 SpellEffect::Damage { dice, int_scaling } => {
-                    if !player_in_range {
-                        continue;
+                    if let Some(enemy) = primary_target.filter(|e| caster_faction.is_hostile_to(&e.faction)) {
+                        let avg = avg_dice(dice);
+                        let bonus = if *int_scaling { int_bonus } else { 0 };
+                        let damage = (avg + bonus).max(1).min(enemy.hp_current);
+                        raw += damage;
+                        target = target.or(Some(enemy.entity));
                     }
-                    let avg = avg_dice(dice);
-                    let bonus = if *int_scaling { int_bonus } else { 0 };
-                    let damage = (avg + bonus).max(1).min(player_hp);
-                    raw += damage;
-                    target = target.or(player_entity);
                 }
                 SpellEffect::Heal { dice, int_scaling } => {
                     let avg = avg_dice(dice);
                     let bonus = if *int_scaling { int_bonus } else { 0 };
                     let heal = (avg + bonus).max(1);
-                    let missing_hp = caster_max_hp - caster_hp;
-                    let score = if missing_hp <= 0 {
-                        0
+
+                    // Score depends on who we're healing
+                    let (missing_hp, heal_target) = if resolved_entity == caster {
+                        (caster_max_hp - caster_hp, caster)
+                    } else if let Some(ally) = primary_target {
+                        (ally.hp_max - ally.hp_current, ally.entity)
                     } else {
-                        heal.min(missing_hp) * 2
+                        continue;
                     };
-                    raw += score;
-                    target = target.or(Some(caster));
+
+                    if missing_hp <= 0 {
+                        continue;
+                    }
+                    raw += heal.min(missing_hp) * 2;
+                    target = target.or(Some(heal_target));
                 }
                 SpellEffect::AoeDamage {
                     dice,
                     radius,
                     int_scaling,
                 } => {
-                    if !player_in_range {
-                        continue;
-                    }
-                    // Score based on exact enemy/ally count around target (player) position.
-                    if let Some(ppos) = player_pos {
+                    // AoE centered on the resolved enemy target's position.
+                    if let Some(enemy) = primary_target.filter(|e| caster_faction.is_hostile_to(&e.faction)) {
+                        let center = enemy.pos;
                         let avg = avg_dice(dice);
                         let bonus = if *int_scaling { int_bonus } else { 0 };
                         let single_damage = (avg + bonus).max(1);
 
-                        let mut enemy_count = 1i32; // The player themselves
+                        let mut enemy_count = 1i32; // The target enemy itself
                         let mut ally_count = 0i32;
-                        for (_, npos, is_enemy) in &nearby_entities {
-                            let dist = (npos.x - ppos.x).abs() + (npos.y - ppos.y).abs();
+                        for n in &nearby {
+                            if n.entity == enemy.entity {
+                                continue;
+                            }
+                            let dist = (n.pos.x - center.x).abs() + (n.pos.y - center.y).abs();
                             if dist <= *radius {
-                                if *is_enemy {
+                                if caster_faction.is_hostile_to(&n.faction) {
                                     enemy_count += 1;
                                 } else {
                                     ally_count += 1;
                                 }
                             }
                         }
-                        // Also check if caster is in the blast
-                        let caster_dist =
-                            (caster_pos.x - ppos.x).abs() + (caster_pos.y - ppos.y).abs();
+                        // Check if caster is in the blast
+                        let caster_dist = (caster_pos.x - center.x).abs() + (caster_pos.y - center.y).abs();
                         if caster_dist <= *radius {
-                            ally_count += 1; // Don't fireball yourself
+                            ally_count += 1;
                         }
 
                         let score = single_damage * enemy_count - single_damage * ally_count;
                         if score > 0 {
                             raw += score;
-                            target = target.or(player_entity);
+                            target = target.or(Some(enemy.entity));
                         }
                     }
                 }
@@ -356,90 +431,85 @@ fn choose_spell(
                     int_scaling,
                     ..
                 } => {
-                    if !player_in_range {
-                        continue;
-                    }
-                    let avg = avg_dice(dice);
-                    let bonus = if *int_scaling { int_bonus } else { 0 };
-                    let primary_damage = (avg + bonus).max(1).min(player_hp);
-                    // Assume jump damage averages 1d6 = 3.5 per jump.
-                    // Count nearby enemies that could be hit by jumps.
-                    let jump_damage = 4; // ~1d6 average
-                    let mut jump_targets = 0i32;
-                    if let Some(ppos) = player_pos {
-                        for (_, npos, is_enemy) in &nearby_entities {
-                            if *is_enemy {
-                                let dist = (npos.x - ppos.x).abs() + (npos.y - ppos.y).abs();
+                    if let Some(enemy) = primary_target.filter(|e| caster_faction.is_hostile_to(&e.faction)) {
+                        let avg = avg_dice(dice);
+                        let bonus = if *int_scaling { int_bonus } else { 0 };
+                        let primary_damage = (avg + bonus).max(1).min(enemy.hp_current);
+                        let jump_damage = 4; // ~1d6 average
+                        let mut jump_targets = 0i32;
+                        for n in &nearby {
+                            if n.entity == enemy.entity { continue; }
+                            if caster_faction.is_hostile_to(&n.faction) {
+                                let dist = (n.pos.x - enemy.pos.x).abs() + (n.pos.y - enemy.pos.y).abs();
                                 if dist <= 3 {
-                                    // within reasonable jump range
                                     jump_targets += 1;
                                 }
                             }
                         }
+                        let actual_jumps = jump_targets.min(*max_jumps);
+                        raw += primary_damage + (jump_damage + bonus.max(0)) * actual_jumps;
+                        target = target.or(Some(enemy.entity));
                     }
-                    let actual_jumps = jump_targets.min(*max_jumps);
-                    raw += primary_damage + (jump_damage + bonus.max(0)) * actual_jumps;
-                    target = target.or(player_entity);
                 }
                 SpellEffect::Buff {
                     amount, duration, ..
                 } => {
                     let score = *amount * (*duration as i32) / 4;
                     raw += score;
-                    target = target.or(Some(caster));
+                    target = target.or(Some(resolved_entity));
                 }
                 SpellEffect::Debuff {
                     amount, duration, ..
                 } => {
-                    if !player_in_range {
-                        continue;
+                    if let Some(enemy) = primary_target.filter(|e| caster_faction.is_hostile_to(&e.faction)) {
+                        let score = *amount * (*duration as i32) / 4;
+                        raw += score;
+                        target = target.or(Some(enemy.entity));
                     }
-                    let score = *amount * (*duration as i32) / 4;
-                    raw += score;
-                    target = target.or(player_entity);
                 }
                 SpellEffect::ApplyPoison {
                     damage_per_turn,
                     duration,
                 } => {
-                    if !player_in_range || player_has_poison {
-                        continue;
+                    if let Some(enemy) = primary_target.filter(|e| caster_faction.is_hostile_to(&e.faction)) {
+                        if enemy.has_poison { continue; }
+                        raw += damage_per_turn * (*duration as i32);
+                        target = target.or(Some(enemy.entity));
                     }
-                    raw += damage_per_turn * (*duration as i32);
-                    target = target.or(player_entity);
                 }
                 SpellEffect::ApplyHaste { .. } => {
-                    if caster_has_haste {
-                        continue; // Already hasted, don't waste it
+                    // Self-haste or ally-haste
+                    if resolved_entity == caster {
+                        if caster_has_haste { continue; }
+                    } else if let Some(t) = primary_target {
+                        if t.has_haste { continue; }
                     }
-                    raw += 15; // High fixed value — speed is very powerful
-                    target = target.or(Some(caster));
+                    raw += 15;
+                    target = target.or(Some(resolved_entity));
                 }
                 SpellEffect::ApplySlow { .. } => {
-                    if !player_in_range || player_has_slow {
-                        continue;
+                    if let Some(enemy) = primary_target.filter(|e| caster_faction.is_hostile_to(&e.faction)) {
+                        if enemy.has_slow { continue; }
+                        raw += 12;
+                        target = target.or(Some(enemy.entity));
                     }
-                    raw += 12;
-                    target = target.or(player_entity);
                 }
                 SpellEffect::DrainMana { amount, int_scaling } => {
-                    if !player_in_range || player_mana <= 0 {
-                        continue;
+                    if let Some(enemy) = primary_target.filter(|e| caster_faction.is_hostile_to(&e.faction)) {
+                        if enemy.mana_current <= 0 { continue; }
+                        let bonus = if *int_scaling { int_bonus } else { 0 };
+                        let drain = (*amount + bonus).max(0).min(enemy.mana_current);
+                        raw += drain;
+                        target = target.or(Some(enemy.entity));
                     }
-                    let bonus = if *int_scaling { int_bonus } else { 0 };
-                    let drain = (*amount + bonus).max(0).min(player_mana);
-                    raw += drain;
-                    target = target.or(player_entity);
                 }
                 SpellEffect::SpiritShield { .. } => {
-                    // More valuable when hurt
                     let score = if hp_pct < 0.5 { 10 } else { 3 };
                     raw += score;
                     target = target.or(Some(caster));
                 }
                 SpellEffect::Teleport { .. } => {
-                    // Monsters generally shouldn't teleport
-                    // Score 0 — skip
+                    // Monsters generally shouldn't teleport — score 0
                 }
             }
         }

@@ -5,8 +5,10 @@ use bracket_lib::prelude::{Algorithm2D, Point};
 use crate::{
     components::{GameEntityMarker, Monster, Position, Viewshed},
     game::{
+        abilities::Faction,
         actions::Action,
         actions::PendingPlayerAction,
+        combat::Health,
         turns::TurnState,
         InGameState,
     },
@@ -20,8 +22,11 @@ use crate::{
 /// What triggered the targeting mode.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TargetingMode {
-    /// Player is selecting a target for a spell slot.
+    /// Player is selecting an enemy target for a spell slot.
     Spell { slot: usize },
+    /// Player is selecting an allied target for a spell slot.
+    /// `include_self`: if true, the player can also target themselves (AllyOrSelf).
+    SpellAlly { slot: usize, include_self: bool },
     /// Player is selecting a target for a ranged weapon attack.
     RangedAttack,
 }
@@ -60,29 +65,55 @@ pub struct SpellCursor;
 fn setup_targeting(
     mut commands: Commands,
     ctx: Res<TargetingContext>,
-    player_query: Query<(&Position, &Viewshed), With<Player>>,
+    player_query: Query<(&Position, &Viewshed, &Faction), With<Player>>,
     monsters: Query<&Position, With<Monster>>,
+    allies_query: Query<(&Position, &Faction, &Health), Without<Player>>,
     mut game_log: ResMut<GameLog>,
 ) {
-    let Ok((player_pos, viewshed)) = player_query.single() else {
+    let Ok((player_pos, viewshed, player_faction)) = player_query.single() else {
         return;
     };
 
-    // Find the nearest visible monster as the initial cursor position.
-    let initial_pos = monsters
-        .iter()
-        .filter(|mpos| viewshed.visible_tiles.contains(&Point::new(mpos.x, mpos.y)))
-        .min_by_key(|mpos| (mpos.x - player_pos.x).pow(2) + (mpos.y - player_pos.y).pow(2))
-        .copied()
-        .unwrap_or(*player_pos);
+    let initial_pos = match &ctx.mode {
+        TargetingMode::SpellAlly { include_self, .. } => {
+            // Snap to the most-wounded visible ally, or self.
+            let best_ally = allies_query
+                .iter()
+                .filter(|(pos, faction, health)| {
+                    faction.0.is_allied_to(&player_faction.0)
+                        && health.current < health.max
+                        && viewshed.visible_tiles.contains(&Point::new(pos.x, pos.y))
+                })
+                .max_by_key(|(_, _, health)| health.max - health.current)
+                .map(|(pos, _, _)| *pos);
 
-    let _ = &ctx.mode; // ensure ctx is used
+            if *include_self && best_ally.is_none() {
+                *player_pos
+            } else {
+                best_ally.unwrap_or(*player_pos)
+            }
+        }
+        _ => {
+            // Enemy targeting: snap to nearest visible monster.
+            monsters
+                .iter()
+                .filter(|mpos| viewshed.visible_tiles.contains(&Point::new(mpos.x, mpos.y)))
+                .min_by_key(|mpos| (mpos.x - player_pos.x).pow(2) + (mpos.y - player_pos.y).pow(2))
+                .copied()
+                .unwrap_or(*player_pos)
+        }
+    };
+
+    let cursor_color = match &ctx.mode {
+        TargetingMode::SpellAlly { .. } => Color::srgba(0.2, 1.0, 0.2, 0.4), // Green for ally
+        _ => Color::srgba(1.0, 1.0, 0.0, 0.4), // Yellow for enemy/ranged
+    };
 
     commands.spawn((
         initial_pos,
         Transform::from_xyz(0.0, 0.0, 5.0),
         Sprite {
-            color: Color::srgba(1.0, 1.0, 0.0, 0.4),
+            color: cursor_color,
             custom_size: Some(Vec2::splat(16.0)),
             ..default()
         },
@@ -92,10 +123,11 @@ fn setup_targeting(
         SpellCursor,
     ));
 
-    // Ephemeral prompt — stored in status_message, not in the permanent log.
-    game_log.status_message = Some(
-        "Choose target: arrows to move, Enter to confirm, Esc to cancel.".to_string(),
-    );
+    let prompt = match &ctx.mode {
+        TargetingMode::SpellAlly { .. } => "Choose ally: arrows to move, Enter to confirm, Esc to cancel.",
+        _ => "Choose target: arrows to move, Enter to confirm, Esc to cancel.",
+    };
+    game_log.status_message = Some(prompt.to_string());
 }
 
 /// Syncs `TargetingContext.cursor` from the spawned `SpellCursor` entity's position.
@@ -127,6 +159,8 @@ fn handle_targeting_input(
     mut ctx: ResMut<TargetingContext>,
     mut cursor_query: Query<&mut Position, With<SpellCursor>>,
     monsters: Query<(Entity, &Position), (With<Monster>, Without<SpellCursor>)>,
+    faction_entities: Query<(Entity, &Position, &Faction), Without<SpellCursor>>,
+    player_query: Query<(Entity, &Position, &Faction), With<Player>>,
     map: Res<Map>,
     mut pending: ResMut<PendingPlayerAction>,
     mut next_turn_state: ResMut<NextState<TurnState>>,
@@ -167,24 +201,70 @@ fn handle_targeting_input(
     // Confirm targeting.
     if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
         let target_pos = *cursor_pos;
-        let found = monsters
-            .iter()
-            .find(|(_, mpos)| mpos.x == target_pos.x && mpos.y == target_pos.y)
-            .map(|(e, _)| e);
 
-        if let Some(entity) = found {
-            match ctx.mode {
-                TargetingMode::Spell { slot } => {
-                    pending.0 = Some(Action::CastSpell { slot, target: Some(entity) });
-                }
-                TargetingMode::RangedAttack => {
-                    pending.0 = Some(Action::RangedAttack { target: entity });
+        match &ctx.mode {
+            TargetingMode::Spell { slot } => {
+                // Enemy targeting: find a monster at cursor.
+                let found = monsters
+                    .iter()
+                    .find(|(_, mpos)| mpos.x == target_pos.x && mpos.y == target_pos.y)
+                    .map(|(e, _)| e);
+
+                if let Some(entity) = found {
+                    pending.0 = Some(Action::CastSpell { slot: *slot, target: Some(entity) });
+                    next_turn_state.set(TurnState::Processing);
+                    next_ingame_state.set(InGameState::Running);
+                } else {
+                    log_writer.write(GameLogMessage("No valid target at cursor.".to_string()));
                 }
             }
-            next_turn_state.set(TurnState::Processing);
-            next_ingame_state.set(InGameState::Running);
-        } else {
-            log_writer.write(GameLogMessage("No valid target at cursor.".to_string()));
+            TargetingMode::SpellAlly { slot, include_self } => {
+                // Ally targeting: find an allied entity at cursor (or self).
+                let player_faction = player_query.single().ok().map(|(_, _, f)| f.0.clone());
+
+                let found = if let Some(pf) = &player_faction {
+                    // Check if player is targeting themselves
+                    let self_target = player_query.single().ok().and_then(|(e, pos, _)| {
+                        if *include_self && pos.x == target_pos.x && pos.y == target_pos.y {
+                            Some(e)
+                        } else {
+                            None
+                        }
+                    });
+
+                    self_target.or_else(|| {
+                        faction_entities.iter()
+                            .find(|(_, pos, faction)| {
+                                pos.x == target_pos.x && pos.y == target_pos.y && pf.is_allied_to(&faction.0)
+                            })
+                            .map(|(e, _, _)| e)
+                    })
+                } else {
+                    None
+                };
+
+                if let Some(entity) = found {
+                    pending.0 = Some(Action::CastSpell { slot: *slot, target: Some(entity) });
+                    next_turn_state.set(TurnState::Processing);
+                    next_ingame_state.set(InGameState::Running);
+                } else {
+                    log_writer.write(GameLogMessage("No valid ally at cursor.".to_string()));
+                }
+            }
+            TargetingMode::RangedAttack => {
+                let found = monsters
+                    .iter()
+                    .find(|(_, mpos)| mpos.x == target_pos.x && mpos.y == target_pos.y)
+                    .map(|(e, _)| e);
+
+                if let Some(entity) = found {
+                    pending.0 = Some(Action::RangedAttack { target: entity });
+                    next_turn_state.set(TurnState::Processing);
+                    next_ingame_state.set(InGameState::Running);
+                } else {
+                    log_writer.write(GameLogMessage("No valid target at cursor.".to_string()));
+                }
+            }
         }
         return;
     }
