@@ -1,10 +1,10 @@
 use crate::{
     assets::SpellRegistryHandle,
-    components::{Position, Viewshed},
+    components::{Monster, Position, Viewshed},
     game::{
         actions::{Direction, MovementIntent, RangedAttackIntent, WaitIntent},
-        combat::{Health},
-        magic::{ActiveSpells, CastSpellMessage, SpellCooldowns},
+        combat::Health,
+        magic::{ActiveSpells, CastSpellMessage, Hasted, Poisoned, Slowed, SpellCooldowns},
         ranged::RangedCapable,
         spells::{SpellEffect, SpellRegistry},
         stats::{CombatStats, Mana},
@@ -182,9 +182,7 @@ impl MonsterAI {
 /// Evaluates all ready spells for `caster` and returns `(slot_index, target_entity)` for
 /// the best one, or `None` if no spell is worth casting.
 ///
-/// The target entity is fully resolved here:
-///   - `Damage` effects → `player_entity`
-///   - `Heal` effects   → `caster` itself (for Castor target spells)
+/// The target entity is fully resolved here — the spell handler receives it as-is.
 ///
 /// Score normalization prevents nova-ing:
 ///   effective_score = raw_score / (sqrt(mana_cost) * ln(cooldown + 1))
@@ -194,7 +192,7 @@ fn choose_spell(
     player_entity: Option<Entity>,
     world: &mut World,
 ) -> Option<(usize, Entity)> {
-    // Extract what we need in a scope to drop borrows.
+    // --- Gather all data upfront to avoid borrow issues ---
     let (active_slots, cooldowns, mana_current, caster_hp, caster_max_hp, int_bonus) = {
         let active = world.get::<ActiveSpells>(caster)?;
         let cooldowns = world.get::<SpellCooldowns>(caster).cloned().unwrap_or_default();
@@ -216,12 +214,46 @@ fn choose_spell(
         .map(|h| h.current)
         .unwrap_or(30);
 
+    let player_mana = player_entity
+        .and_then(|e| world.get::<Mana>(e))
+        .map(|m| m.current)
+        .unwrap_or(0);
+
+    let caster_has_haste = world.get::<Hasted>(caster).is_some();
+    let _caster_has_slow = world.get::<Slowed>(caster).is_some();
+    let player_has_poison = player_entity
+        .map(|e| world.get::<Poisoned>(e).is_some())
+        .unwrap_or(false);
+    let player_has_slow = player_entity
+        .map(|e| world.get::<Slowed>(e).is_some())
+        .unwrap_or(false);
+
+    let hp_pct = caster_hp as f32 / caster_max_hp.max(1) as f32;
+
+    // Collect nearby entity positions for AoE scoring.
+    // (entity, position, is_enemy)
+    let nearby_entities: Vec<(Entity, Point, bool)> = {
+        let mut result = Vec::new();
+        let mut query = world.query::<(Entity, &Position, Option<&Player>, Option<&Monster>)>();
+        for (ent, pos, is_player, is_monster) in query.iter(world) {
+            if ent == caster {
+                continue;
+            }
+            let is_enemy = is_player.is_some(); // From monster's perspective, player = enemy
+            let _ = is_monster; // Allies are other monsters
+            result.push((ent, pos.to_point(), is_enemy));
+        }
+        result
+    };
+
     let registry_handle = world.resource::<SpellRegistryHandle>().0.clone();
     let registry = {
         let assets = world.resource::<Assets<SpellRegistry>>();
         assets.get(&registry_handle).cloned()
     };
-    let Some(registry) = registry else { return None };
+    let Some(registry) = registry else {
+        return None;
+    };
 
     let mut best_score: f32 = 0.0;
     let mut best_slot: Option<usize> = None;
@@ -229,62 +261,194 @@ fn choose_spell(
 
     for (slot_idx, slot) in active_slots.iter().enumerate() {
         let Some(spell_id) = slot else { continue };
-        let Some(spell) = registry.spells.get(spell_id) else { continue };
+        let Some(spell) = registry.spells.get(spell_id) else {
+            continue;
+        };
 
-        if !cooldowns.is_ready(spell_id) { continue }
-        if mana_current < spell.mana_cost { continue }
+        if !cooldowns.is_ready(spell_id) {
+            continue;
+        }
+        if mana_current < spell.mana_cost {
+            continue;
+        }
 
-        // Score the spell and determine its target entity.
-        let (raw, target): (i32, Option<Entity>) = spell.effects.iter().fold(
-            (0, None),
-            |(acc_score, acc_target), effect| match effect {
+        // Range check helper (used by multiple effect types).
+        let player_in_range = if spell.range > 0 {
+            player_pos
+                .map(|ppos| DistanceAlg::Pythagoras.distance2d(caster_pos, ppos) <= spell.range as f32)
+                .unwrap_or(false)
+        } else {
+            true
+        };
+
+        // Score each effect and accumulate.
+        let mut raw: i32 = 0;
+        let mut target: Option<Entity> = None;
+
+        for effect in &spell.effects {
+            match effect {
                 SpellEffect::Damage { dice, int_scaling } => {
-                    // Range check: skip if player is out of range (range 0 means unlimited).
-                    if spell.range > 0 {
-                        if let Some(ppos) = player_pos {
-                            let dist_sq = DistanceAlg::Pythagoras.distance2d(caster_pos, ppos);
-                            if dist_sq > spell.range as f32 {
-                                return (acc_score, acc_target);
-                            }
-                        } else {
-                            return (acc_score, acc_target);
-                        }
+                    if !player_in_range {
+                        continue;
                     }
                     let avg = avg_dice(dice);
                     let bonus = if *int_scaling { int_bonus } else { 0 };
                     let damage = (avg + bonus).max(1).min(player_hp);
-                    // Damage hits the player (enemy of the monster).
-                    (acc_score + damage, acc_target.or(player_entity))
+                    raw += damage;
+                    target = target.or(player_entity);
                 }
                 SpellEffect::Heal { dice, int_scaling } => {
                     let avg = avg_dice(dice);
                     let bonus = if *int_scaling { int_bonus } else { 0 };
                     let heal = (avg + bonus).max(1);
                     let missing_hp = caster_max_hp - caster_hp;
-                    let score = if missing_hp <= 0 { 0 } else { heal.min(missing_hp) * 2 };
-                    // For now, heal spells target the caster itself.
-                    // Ally/AllyOrSelf targeting will be added in Phase 11.
-                    (acc_score + score, acc_target.or(Some(caster)))
+                    let score = if missing_hp <= 0 {
+                        0
+                    } else {
+                        heal.min(missing_hp) * 2
+                    };
+                    raw += score;
+                    target = target.or(Some(caster));
                 }
-                // Stub: new effect types not yet scored by AI.
-                SpellEffect::AoeDamage { .. }
-                | SpellEffect::ChainDamage { .. }
-                | SpellEffect::Buff { .. }
-                | SpellEffect::Debuff { .. }
-                | SpellEffect::ApplyPoison { .. }
-                | SpellEffect::ApplyHaste { .. }
-                | SpellEffect::ApplySlow { .. }
-                | SpellEffect::DrainMana { .. }
-                | SpellEffect::SpiritShield { .. }
-                | SpellEffect::Teleport { .. } => {
-                    (acc_score, acc_target)
+                SpellEffect::AoeDamage {
+                    dice,
+                    radius,
+                    int_scaling,
+                } => {
+                    if !player_in_range {
+                        continue;
+                    }
+                    // Score based on exact enemy/ally count around target (player) position.
+                    if let Some(ppos) = player_pos {
+                        let avg = avg_dice(dice);
+                        let bonus = if *int_scaling { int_bonus } else { 0 };
+                        let single_damage = (avg + bonus).max(1);
+
+                        let mut enemy_count = 1i32; // The player themselves
+                        let mut ally_count = 0i32;
+                        for (_, npos, is_enemy) in &nearby_entities {
+                            let dist = (npos.x - ppos.x).abs() + (npos.y - ppos.y).abs();
+                            if dist <= *radius {
+                                if *is_enemy {
+                                    enemy_count += 1;
+                                } else {
+                                    ally_count += 1;
+                                }
+                            }
+                        }
+                        // Also check if caster is in the blast
+                        let caster_dist =
+                            (caster_pos.x - ppos.x).abs() + (caster_pos.y - ppos.y).abs();
+                        if caster_dist <= *radius {
+                            ally_count += 1; // Don't fireball yourself
+                        }
+
+                        let score = single_damage * enemy_count - single_damage * ally_count;
+                        if score > 0 {
+                            raw += score;
+                            target = target.or(player_entity);
+                        }
+                    }
                 }
-            },
-        );
+                SpellEffect::ChainDamage {
+                    dice,
+                    max_jumps,
+                    int_scaling,
+                    ..
+                } => {
+                    if !player_in_range {
+                        continue;
+                    }
+                    let avg = avg_dice(dice);
+                    let bonus = if *int_scaling { int_bonus } else { 0 };
+                    let primary_damage = (avg + bonus).max(1).min(player_hp);
+                    // Assume jump damage averages 1d6 = 3.5 per jump.
+                    // Count nearby enemies that could be hit by jumps.
+                    let jump_damage = 4; // ~1d6 average
+                    let mut jump_targets = 0i32;
+                    if let Some(ppos) = player_pos {
+                        for (_, npos, is_enemy) in &nearby_entities {
+                            if *is_enemy {
+                                let dist = (npos.x - ppos.x).abs() + (npos.y - ppos.y).abs();
+                                if dist <= 3 {
+                                    // within reasonable jump range
+                                    jump_targets += 1;
+                                }
+                            }
+                        }
+                    }
+                    let actual_jumps = jump_targets.min(*max_jumps);
+                    raw += primary_damage + (jump_damage + bonus.max(0)) * actual_jumps;
+                    target = target.or(player_entity);
+                }
+                SpellEffect::Buff {
+                    amount, duration, ..
+                } => {
+                    let score = *amount * (*duration as i32) / 4;
+                    raw += score;
+                    target = target.or(Some(caster));
+                }
+                SpellEffect::Debuff {
+                    amount, duration, ..
+                } => {
+                    if !player_in_range {
+                        continue;
+                    }
+                    let score = *amount * (*duration as i32) / 4;
+                    raw += score;
+                    target = target.or(player_entity);
+                }
+                SpellEffect::ApplyPoison {
+                    damage_per_turn,
+                    duration,
+                } => {
+                    if !player_in_range || player_has_poison {
+                        continue;
+                    }
+                    raw += damage_per_turn * (*duration as i32);
+                    target = target.or(player_entity);
+                }
+                SpellEffect::ApplyHaste { .. } => {
+                    if caster_has_haste {
+                        continue; // Already hasted, don't waste it
+                    }
+                    raw += 15; // High fixed value — speed is very powerful
+                    target = target.or(Some(caster));
+                }
+                SpellEffect::ApplySlow { .. } => {
+                    if !player_in_range || player_has_slow {
+                        continue;
+                    }
+                    raw += 12;
+                    target = target.or(player_entity);
+                }
+                SpellEffect::DrainMana { amount, int_scaling } => {
+                    if !player_in_range || player_mana <= 0 {
+                        continue;
+                    }
+                    let bonus = if *int_scaling { int_bonus } else { 0 };
+                    let drain = (*amount + bonus).max(0).min(player_mana);
+                    raw += drain;
+                    target = target.or(player_entity);
+                }
+                SpellEffect::SpiritShield { .. } => {
+                    // More valuable when hurt
+                    let score = if hp_pct < 0.5 { 10 } else { 3 };
+                    raw += score;
+                    target = target.or(Some(caster));
+                }
+                SpellEffect::Teleport { .. } => {
+                    // Monsters generally shouldn't teleport
+                    // Score 0 — skip
+                }
+            }
+        }
 
         // Both raw score and a resolved target are required.
         let Some(target) = target else { continue };
-        if raw <= 0 { continue }
+        if raw <= 0 {
+            continue;
+        }
 
         let mana_weight = (spell.mana_cost as f32).sqrt().max(1.0);
         let cd_weight = ((spell.cooldown as f32) + 1.0).ln().max(1.0);
