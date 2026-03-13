@@ -2,20 +2,34 @@
 
 ## Overview
 
-Magic in this game is not a class feature — any hero can learn and use spells. Spells are found as **spellbooks** in the dungeon, learned by reading them, and equipped into a limited number of **active spell slots**. Casting costs **mana**, which regenerates slowly over time.
+Magic in this game is not a class feature — any hero can learn and use spells. Spells are found as **spellbooks** in the dungeon, learned by reading them, and equipped into a limited number of **active spell slots**. Casting costs **mana**, which regenerates very slowly over time.
 
 A pure melee hero can ignore magic entirely. A hybrid can carry 2-3 utility spells. A dedicated caster builds INT, fills all slots, and relies heavily on their spell arsenal.
+
+---
 
 ## Mana
 
 | Property | Value |
 |----------|-------|
-| Max Mana | `INT × 5` (e.g., INT 8 = 40 mana) |
-| Regen Rate | 1 mana per 5 turns (passive) |
-| Staff bonus | +2 mana regen per turn when a staff is equipped |
+| Max Mana | `INT × 5` (e.g., INT 10 = 50, INT 14 = 70, INT 20 = 100) |
+| Base Regen | 1 mana per 5 turns (passive, always active) |
+| Staff bonus | Future: reduces turns_between_regen (e.g., from 5 to 4) |
 | Mana Potion | Restore 15 mana (instant) |
 
-Mana does **not** regenerate in combat — only on non-combat turns. (May revisit: slow regen in combat could work too.)
+**Mana is scarce by design.** In a typical 10-turn encounter, you regenerate only ~2 mana. Your mana pool IS your budget — conservation across encounters is critical.
+
+**Mana budget per encounter** (10-turn fight):
+- INT 10: 50 pool + 2 regen = **52 total**
+- INT 14: 70 pool + 2 regen = **72 total**
+- INT 20: 100 pool + 2 regen = **102 total**
+
+**Future enhancement hooks**:
+- Boss traits: "Mana Font" reduces regen interval to 3 turns
+- Equipment: "Staff of Focus" reduces regen interval by 1
+- Arcane Surge spell: temporarily reduces regen interval by 2
+
+---
 
 ## Spell Slots
 
@@ -30,81 +44,155 @@ Spell slots are unlocked as the player levels up:
 | 11 | 5 |
 | 14 | 6 |
 
-The player can equip any known spell into any slot. Swapping spells is done from the inventory screen and takes no turn (between-combat management only — no mid-combat swapping).
+The player can equip any known spell into any slot. Swapping spells is done from the inventory screen and takes no turn.
+
+---
 
 ## Acquiring Spells
 
-1. Find a **spellbook** (Tome / Grimoire) in the dungeon as loot
-2. **Read** the spellbook from inventory
+1. Find a **spellbook** (Tome) in the dungeon as loot
+2. **Use** the spellbook from inventory
 3. The spell is permanently added to the player's **known spells list**
-4. Open the spell management screen and drag the spell into an active slot
+4. Open the spell management screen and slot the spell into an active slot
 
-Known spells are never lost — they persist through item changes and floor transitions. Only the active slots limit what can be cast at once.
+Known spells are never lost. Only the active slots limit what can be cast at once.
 
-## Spell Power
+---
 
-Spell power governs damage and effect magnitude:
-```
-spell_power = INT + (equipped focus orb bonus)
-damage = spell_base_damage + (spell_power × spell_scaling)
-```
+## Spell Targeting
+
+| Target Type | Description | UI |
+|-------------|-------------|-----|
+| `Castor` | Affects the caster only | No targeting; instant cast |
+| `Enemy` | Targets a visible enemy | Cursor targeting |
+| `Ally` | Most-wounded visible ally (not self) | Cursor targeting (filter to friendlies) |
+| `AllyOrSelf` | Most-wounded ally or self | Cursor targeting (friendlies + self) |
+
+`Ally` and `AllyOrSelf` apply to both heal and buff spells.
+
+---
+
+## Spell Effects
+
+| Effect | Description |
+|--------|-------------|
+| `Damage` | Deal dice damage to target; optionally scaled by INT bonus |
+| `Heal` | Restore HP to target (whoever SpellTarget resolved to); optionally INT-scaled |
+| `AoeDamage` | Damage all entities in radius around target tile |
+| `ChainDamage` | Hit primary target, then jump to nearby enemies |
+| `Buff` | Temporarily boost target's stat via AttributeModifiers |
+| `Debuff` | Temporarily reduce target's stat |
+| `ApplyPoison` | Apply damage-over-time status |
+| `ApplyHaste` | +50% speed (delay × 0.5) for N turns |
+| `ApplySlow` | -50% speed (delay × 1.5) for N turns |
+| `DrainMana` | Remove mana from target, add to caster |
+| `SpiritShield` | Damage taken from mana instead of HP for N turns |
+| `Teleport` | Move caster; range=0 → random, range=N → controlled |
+
+### INT Scaling Policy
+- **Scales with INT (reward investment):** magic_missile, ice_shard, shadow_bolt, lightning_bolt, chain_lightning, death_coil, heal_self, heal_ally, cure_wounds, greater_heal, mana_drain
+- **Fixed effect (reward smart usage):** spark, fire_dart, poison_bolt, vampiric_strike, fireball, meteor, minor_heal, all buffs, all debuffs, haste, slow, blink, teleport, spirit_shield
+
+---
 
 ## Spell List
 
-### Damage Spells
+### Attack Spells (Target: Enemy)
 
-| Spell | Mana Cost | Effect | Scaling |
-|-------|-----------|--------|---------|
-| Magic Missile | 5 | Deal 1d6 + spell_power force damage to one target | 0.5× INT |
-| Fireball | 12 | 3d6 fire damage in 3-tile radius. Hits allies. | 0.8× INT |
-| Freeze | 8 | 1d8 cold damage + stun target for 2 turns | 0.6× INT |
-| Lightning Bolt | 10 | 2d6 lightning damage, chains to adjacent enemies (1 chain) | 0.7× INT |
-| Soul Drain | 14 | 2d8 necrotic damage, heal for 50% of damage dealt | 0.6× INT |
-| Smite | 8 | 1d10 radiant damage, +50% vs undead and demons | 0.5× INT |
+| Spell | Tier | Mana | CD | Effects | INT Scale | Avg @INT14 | Eff (dmg/mana) | Notes |
+|-------|------|------|----|---------|-----------|------------|----------------|-------|
+| `spark` | 1 | 3 | 0 | Damage 1d4 | No | 2.5 | 0.83 | Cantrip; no cooldown, spammable |
+| `magic_missile` | 1 | 5 | 4 | Damage 1d4 | Yes | 6.5 | 1.30 | Workhorse; grows with INT |
+| `fire_dart` | 1 | 8 | 3 | Damage 1d8 | No | 4.5 | 0.56 | Higher burst; fire themed |
+| `ice_shard` | 2 | 10 | 4 | Damage 2d4 | Yes | 9.0 | 0.90 | Upgrade from magic_missile |
+| `poison_bolt` | 2 | 12 | 6 | Damage 1d4 + Poison(2/t, 4t) | No | 10.5 total | 0.88 | DoT; damage over 5 turns |
+| `vampiric_strike` | 2 | 12 | 4 | Damage 2d4 + Heal 1d4 | No | 5.0 + 2.5 heal | 0.42 + sustain | Life steal |
+| `shadow_bolt` | 3 | 18 | 5 | Damage 2d8 | Yes | 13.0 | 0.72 | Necrotic themed |
+| `lightning_bolt` | 3 | 20 | 6 | Damage 3d6 | Yes | 14.5 | 0.73 | Big single-target nuke |
+| `fireball` | 3 | 22 | 8 | AoeDamage 2d6, radius 1 (3×3) | No | 7.0 × N targets | 0.32+ | Destroys wooden doors/items; AoE |
+| `chain_lightning` | 3 | 25 | 8 | ChainDamage 2d6 + 2 jumps(1d6), 2 tiles | Yes | 11.0 + 7.0 splash | 0.72 | Jumps between enemies |
+| `death_coil` | 4 | 30 | 8 | Damage 4d6 | Yes | 18.0 | 0.60 | Highest single-target |
+| `meteor` | 4 | 35 | 10 | AoeDamage 3d8, radius 1 (3×3) | No | 13.5 × N | 0.39+ | Ultimate AoE |
 
-### Utility Spells
+### Healing Spells
 
-| Spell | Mana Cost | Effect | Duration |
-|-------|-----------|--------|----------|
-| Blink | 8 | Teleport to any visible tile within 8 tiles | Instant |
-| Detect Enemies | 6 | Reveal all enemy positions on current floor | 10 turns |
-| Slow | 10 | Target enemy moves at 50% speed | 8 turns |
-| Confusion | 12 | Target enemy wanders randomly | 6 turns |
-| Phase Door | 15 | Pass through one wall tile (teleport to other side) | Instant |
+| Spell | Tier | Target | Mana | CD | Effects | INT Scale | Avg @INT14 | Eff (heal/mana) | Notes |
+|-------|------|--------|------|----|---------|-----------|------------|-----------------|-------|
+| `minor_heal` | 1 | Castor | 4 | 2 | Heal 1d4 | No | 2.5 | 0.63 | Emergency patch; cheap |
+| `heal_self` | 1 | Castor | 8 | 8 | Heal 1d6 | Yes | 7.5 | 0.94 | Sustained self-heal |
+| `heal_ally` | 2 | Ally | 12 | 5 | Heal 2d4 | Yes | 9.0 | 0.75 | Shaman support spell |
+| `cure_wounds` | 2 | AllyOrSelf | 15 | 6 | Heal 2d6 | Yes | 11.0 | 0.73 | Flexible; whoever needs it most |
+| `greater_heal` | 3 | AllyOrSelf | 25 | 8 | Heal 3d8 | Yes | 17.5 | 0.70 | Big emergency heal |
 
 ### Buff Spells
 
-| Spell | Mana Cost | Effect | Duration |
-|-------|-----------|--------|----------|
-| Mage Armor | 10 | +4 DEF (stacks with equipment) | 15 turns |
-| Haste | 12 | -25% turn delay | 10 turns |
-| Healing Word | 8 | Restore 2d6 + spell_power HP | Instant |
-| Mana Surge | 6 | Next spell cast costs 0 mana | 1 spell |
-| Invisibility | 12 | Enemies lose detection for 12 turns | 12 turns |
+| Spell | Tier | Target | Mana | CD | Effect | Duration | Stat-Turns/Mana | Notes |
+|-------|------|--------|------|----|--------|----------|-----------------|-------|
+| `enrage` | 1 | Castor | 8 | 10 | Buff STR +4 | 6 turns | 3.0 | Damage boost; short burst |
+| `fortify` | 1 | Castor | 8 | 12 | Buff CON +3 | 10 turns | 3.75 | Effective +30 max HP at lvl 10 |
+| `haste` | 2 | Castor | 10 | 12 | ApplyHaste (+50% speed) | 8 turns | — | Massive tactical value |
+| `haste_ally` | 2 | Ally | 12 | 10 | ApplyHaste (+50% speed) | 8 turns | — | Buff an ally with double speed |
+| `iron_skin` | 2 | Castor | 12 | 15 | Buff Armor +3 | 10 turns | 2.5 | -3 damage per hit |
+| `battle_hymn` | 2 | AllyOrSelf | 15 | 15 | Buff STR +2, AGI +2 | 8 turns | 2.13 | Squad buff; support role |
+| `arcane_surge` | 3 | Castor | 20 | 20 | Buff INT +6 | 8 turns | 2.4 | Amplifies all INT-scaling spells |
+| `spirit_shield` | 3 | Castor | 20 | 25 | SpiritShield | 10 turns | — | Damage taken from mana, not HP |
 
-### Summon Spells
+### Debuff Spells (Target: Enemy)
 
-| Spell | Mana Cost | Effect | Duration |
-|-------|-----------|--------|----------|
-| Summon Familiar | 15 | Summon a spirit familiar that attacks nearby foes | 20 turns |
-| Animate Bone | 18 | Raise a fallen skeleton as a temporary ally | 15 turns |
-| Call Lightning | 20 | Summon a storm that strikes a random enemy each turn | 8 turns |
+| Spell | Tier | Mana | CD | Effect | Duration | Stat-Turns/Mana | Notes |
+|-------|------|------|----|--------|----------|-----------------|-------|
+| `weaken` | 1 | 8 | 10 | Debuff STR -3 | 8 turns | 3.0 | Reduces enemy damage |
+| `slow` | 2 | 10 | 10 | ApplySlow (-50% speed) | 8 turns | — | Trivializes fast enemies |
+| `curse` | 3 | 18 | 15 | Debuff STR -2, DEX -2, CON -2 | 10 turns | 3.33 | Multi-stat debuff |
+| `mana_drain` | 3 | 10 | 8 | DrainMana 15 | — (instant) | 1.5-1.9 net+ | Disrupts casters; INT-scaled |
 
-## Spellbook Availability by Floor
+### Utility Spells (Target: Castor)
 
-| Spell Tier | First Available |
-|------------|----------------|
-| Tier 1 (low cost, simple) | Floor 1+ |
-| Tier 2 (medium cost, utility) | Floor 3+ |
-| Tier 3 (high cost, powerful) | Floor 6+ |
-| Tier 4 (very high cost, game-changing) | Floor 8+ |
+| Spell | Tier | Mana | CD | Effect | Notes |
+|-------|------|------|----|--------|-------|
+| `blink` | 2 | 8 | 6 | Teleport range=3 | Controlled short-range teleport |
+| `teleport` | 3 | 15 | 20 | Teleport range=0 | Random destination; escape button |
+
+---
+
+## Spellbook Availability by Zone
+
+| Zone | Floors | Available Spellbooks |
+|------|--------|---------------------|
+| 1 | 1-5 | spark, magic_missile, minor_heal, fire_dart |
+| 2 | 6-10 | ice_shard, poison_bolt, vampiric_strike, heal_self, heal_ally, enrage, fortify, weaken, haste, blink |
+| 3 | 11-16 | shadow_bolt, lightning_bolt, fireball, chain_lightning, cure_wounds, haste_ally, iron_skin, battle_hymn, slow |
+| 4 | 17-21 | death_coil, greater_heal, arcane_surge, spirit_shield, curse, mana_drain, teleport |
+| 5 | 22-26 | meteor |
 
 Spellbooks are uncommon loot — expect to find 0-2 per floor on average.
 
+---
+
+## Monster Caster Assignments
+
+| Monster | INT | Spells | Role |
+|---------|-----|--------|------|
+| Goblin Shaman | 14 | magic_missile, heal_ally | Squad healer |
+| Orc Shaman | 16 | ice_shard, fire_dart, heal_self | Aggressive caster |
+| Lich Apprentice | 14 | magic_missile, heal_self | Conservative |
+| Ogre Mage | 18 | lightning_bolt, fire_dart, vampiric_strike | Heavy hitter + sustain |
+| Imp | 12 | fire_dart, spark | Glass cannon; spams cheap fire |
+| Vampire | 14 | vampiric_strike, heal_self | Life-steal + sustain |
+| Shadow Fiend | 14 | shadow_bolt, mana_drain | Disrupts player casting |
+| Lich | 20 | lightning_bolt, death_coil, vampiric_strike | Boss-tier caster |
+| Goblin Warchief | 10 | enrage | Self-buff before combat |
+| Orc Warlord | 10 | battle_hymn | Squad buff |
+
+---
+
 ## Design Notes
 
-- **Mana scarcity is the primary constraint.** Players shouldn't be able to nova every fight.
+- **Mana scarcity is the primary constraint.** At 1 per 5 turns regen, players must conserve mana across encounters.
 - **Spell slots create meaningful choices.** A player must decide which 3 (or 6 at endgame) spells define their run.
-- **Staff builds are a supported archetype.** Staff + high INT + mana regen ring = sustainable caster.
 - **No spell leveling** — spells don't level up. Power comes from INT stat growth and finding better spells.
 - **Friendly fire on Fireball** is intentional. Positional play should matter.
+- **INT scaling rewards investment.** Signature spells (magic_missile, lightning_bolt, death_coil) grow meaningfully with INT. Utility spells have fixed effects to reward smart usage regardless of build.
+- **Haste/Slow are speed multipliers, not stat buffs.** +50%/-50% speed is applied AFTER normal AGI-based delay calculation. These are game-changing effects with appropriately high costs.
+- **Spirit Shield** creates a mana-as-HP dynamic — extremely powerful but drains your casting resources.
+- **Vampiric Strike works with existing multi-effect system.** Damage hits the enemy; Heal heals the caster. No special code needed.
