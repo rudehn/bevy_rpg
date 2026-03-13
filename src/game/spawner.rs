@@ -15,7 +15,7 @@ use crate::{
         combat::{Damage, Health, HealthRegen},
         items::{ItemProperties, ItemStack, LootEntry, LootTable},
         level::ExperienceReward,
-        magic::{ActiveSpells, KnownSpells, SpellCooldowns, MAX_SPELL_SLOTS},
+        magic::{ActiveSpells, KnownSpells, ManaRegen, SpellCooldowns, MAX_SPELL_SLOTS},
         ranged::RangedCapable,
         stats::{AttributeModifiers, Attributes, CombatStats, Level, Mana, MonsterBaseHealth},
     },
@@ -138,13 +138,16 @@ pub fn spawn_monster(
         commands.entity(monster_entity).insert(LootTable { entries });
     }
 
-    // Caster monsters: add mana pool and spell components.
+    // Caster monsters: add mana pool and regen components.
     if !monster_asset.spells.is_empty() || monster_asset.intelligence > 0 {
         let mana_max = monster_asset.intelligence * 5;
-        commands.entity(monster_entity).insert(Mana {
-            current: mana_max,
-            max: mana_max,
-        });
+        commands.entity(monster_entity).insert((
+            Mana {
+                current: mana_max,
+                max: mana_max,
+            },
+            ManaRegen::default(),
+        ));
     }
 
     if monster_asset.ranged_range > 0 {

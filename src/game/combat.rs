@@ -1,9 +1,10 @@
 use bevy::prelude::*;
 use bracket_lib::random::{RandomNumberGenerator, parse_dice_string};
 
-use crate::components::{Monster, Name, GodMode}; // Import Monster marker
+use crate::components::{Monster, Name, GodMode};
 use crate::game::level::{Experience, ExperienceReward};
-use crate::game::stats::{CombatStats, Level};
+use crate::game::magic::SpiritShielded;
+use crate::game::stats::{CombatStats, Level, Mana};
 use crate::game::turns::TurnEndEvent;
 use crate::game::{AppState, RunSummary, TurnManager};
 use crate::map::dungeon::Floor;
@@ -221,15 +222,24 @@ fn armor_reduction_system(
 }
 
 /// 4. Damage Application: Update health and log the result.
+/// Spirit Shield: if the target has `SpiritShielded`, damage is absorbed by mana first.
 fn damage_application_system(
     mut apply_messages: MessageReader<ApplyDamageMessage>,
     mut death_writer: MessageWriter<DeathEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
-    mut query_health: Query<(&mut Health, &Name, Option<&ExperienceReward>, Has<GodMode>)>,
+    mut query_health: Query<(
+        &mut Health,
+        &Name,
+        Option<&ExperienceReward>,
+        Has<GodMode>,
+        Has<SpiritShielded>,
+    )>,
+    mut mana_query: Query<&mut Mana>,
     query_names: Query<(&Name, Has<Player>)>,
 ) {
     for message in apply_messages.read() {
-        let Ok((mut target_health, target_name, xp_reward, has_god_mode)) = query_health.get_mut(message.target)
+        let Ok((mut target_health, target_name, xp_reward, has_god_mode, has_spirit_shield)) =
+            query_health.get_mut(message.target)
         else {
             continue;
         };
@@ -243,7 +253,26 @@ fn damage_application_system(
             continue;
         };
 
-        target_health.current -= message.final_damage;
+        let mut remaining_damage = message.final_damage;
+
+        // Spirit Shield: absorb damage from mana first
+        if has_spirit_shield {
+            if let Ok(mut mana) = mana_query.get_mut(message.target) {
+                let absorbed = remaining_damage.min(mana.current);
+                mana.current -= absorbed;
+                remaining_damage -= absorbed;
+                if absorbed > 0 {
+                    log_writer.write(GameLogMessage(format!(
+                        "{}'s spirit shield absorbs {} damage! (Mana: {}/{})",
+                        target_name.0, absorbed, mana.current, mana.max
+                    )));
+                }
+            }
+        }
+
+        if remaining_damage > 0 {
+            target_health.current -= remaining_damage;
+        }
 
         let verb = if is_player { "hit" } else { "hits" };
         log_writer.write(GameLogMessage(format!(

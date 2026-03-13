@@ -8,9 +8,13 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SpellTarget {
     /// Affects only the caster.
-    Caster,
-    /// Strikes the nearest visible enemy.
-    NearestEnemy,
+    Castor,
+    /// Targets a visible enemy.
+    Enemy,
+    /// Targets the most-wounded visible ally (not self).
+    Ally,
+    /// Targets the most-wounded visible ally or self.
+    AllyOrSelf,
 }
 
 /// A single effect applied when the spell resolves.
@@ -18,8 +22,29 @@ pub enum SpellTarget {
 pub enum SpellEffect {
     /// Deal damage to the target. `dice` is "NdM" format; optionally scaled by INT bonus.
     Damage { dice: String, int_scaling: bool },
-    /// Restore HP to the caster. `dice` is "NdM" format; optionally scaled by INT bonus.
-    HealCaster { dice: String, int_scaling: bool },
+    /// Restore HP to the resolved target. `dice` is "NdM" format; optionally scaled by INT bonus.
+    /// Target is determined by SpellTarget (Castor = self-heal, Ally = ally heal, etc.)
+    Heal { dice: String, int_scaling: bool },
+    /// Damage all entities within `radius` Manhattan distance of the target tile.
+    AoeDamage { dice: String, radius: i32, int_scaling: bool },
+    /// Hit primary target, then jump to nearby enemies.
+    ChainDamage { dice: String, max_jumps: i32, jump_range: i32, int_scaling: bool },
+    /// Temporarily boost a target's attribute.
+    Buff { attribute: String, amount: i32, duration: u32 },
+    /// Temporarily reduce a target's attribute.
+    Debuff { attribute: String, amount: i32, duration: u32 },
+    /// Apply damage-over-time poison status.
+    ApplyPoison { damage_per_turn: i32, duration: u32 },
+    /// Grant +50% speed for N turns.
+    ApplyHaste { duration: u32 },
+    /// Inflict -50% speed for N turns.
+    ApplySlow { duration: u32 },
+    /// Remove mana from target, add to caster.
+    DrainMana { amount: i32, int_scaling: bool },
+    /// Damage taken from mana instead of HP for N turns.
+    SpiritShield { duration: u32 },
+    /// Move caster to a tile. range=0 → random, range>0 → controlled.
+    Teleport { range: i32 },
 }
 
 // --- Spell Data ---

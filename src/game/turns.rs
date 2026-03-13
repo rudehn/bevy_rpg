@@ -378,7 +378,7 @@ fn handle_player_input(
                 let spell_id = active.slots.get(i)?.as_deref()?;
                 let registry = spell_registries.get(&spell_registry_handle.0)?;
                 let spell = registry.spells.get(spell_id)?;
-                Some(spell.target == SpellTarget::NearestEnemy)
+                Some(spell.target == SpellTarget::Enemy)
             }).unwrap_or(false);
 
             if needs_targeting {

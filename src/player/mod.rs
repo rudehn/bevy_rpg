@@ -21,7 +21,7 @@ use crate::{
         combat::{Damage, Health, HealthRegen},
         items::Equipment,
         level::{AvailableStatPoints, Experience},
-        magic::{ActiveSpells, KnownSpells, SpellCooldowns},
+        magic::{ActiveSpells, KnownSpells, ManaRegen, SpellCooldowns},
         spawn_item,
         stats::{AttributeModifiers, Attributes, CombatStats, Level, Mana, RolledHp},
     },
@@ -191,6 +191,7 @@ pub fn player_spawn_or_move_system(
                     current: player_asset.intelligence * 5,
                     max: player_asset.intelligence * 5,
                 },
+                ManaRegen::default(),
             ))
             .insert((
                 KnownSpells::default(),

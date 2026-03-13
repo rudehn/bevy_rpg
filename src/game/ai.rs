@@ -183,8 +183,8 @@ impl MonsterAI {
 /// the best one, or `None` if no spell is worth casting.
 ///
 /// The target entity is fully resolved here:
-///   - `Damage` effects  → `player_entity`
-///   - `HealCaster` effects → `caster` itself
+///   - `Damage` effects → `player_entity`
+///   - `Heal` effects   → `caster` itself (for Castor target spells)
 ///
 /// Score normalization prevents nova-ing:
 ///   effective_score = raw_score / (sqrt(mana_cost) * ln(cooldown + 1))
@@ -256,14 +256,28 @@ fn choose_spell(
                     // Damage hits the player (enemy of the monster).
                     (acc_score + damage, acc_target.or(player_entity))
                 }
-                SpellEffect::HealCaster { dice, int_scaling } => {
+                SpellEffect::Heal { dice, int_scaling } => {
                     let avg = avg_dice(dice);
                     let bonus = if *int_scaling { int_bonus } else { 0 };
                     let heal = (avg + bonus).max(1);
                     let missing_hp = caster_max_hp - caster_hp;
                     let score = if missing_hp <= 0 { 0 } else { heal.min(missing_hp) * 2 };
-                    // HealCaster always targets the caster itself.
+                    // For now, heal spells target the caster itself.
+                    // Ally/AllyOrSelf targeting will be added in Phase 11.
                     (acc_score + score, acc_target.or(Some(caster)))
+                }
+                // Stub: new effect types not yet scored by AI.
+                SpellEffect::AoeDamage { .. }
+                | SpellEffect::ChainDamage { .. }
+                | SpellEffect::Buff { .. }
+                | SpellEffect::Debuff { .. }
+                | SpellEffect::ApplyPoison { .. }
+                | SpellEffect::ApplyHaste { .. }
+                | SpellEffect::ApplySlow { .. }
+                | SpellEffect::DrainMana { .. }
+                | SpellEffect::SpiritShield { .. }
+                | SpellEffect::Teleport { .. } => {
+                    (acc_score, acc_target)
                 }
             },
         );

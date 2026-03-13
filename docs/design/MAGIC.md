@@ -13,16 +13,27 @@ A pure melee hero can ignore magic entirely. A hybrid can carry 2-3 utility spel
 | Property | Value |
 |----------|-------|
 | Max Mana | `INT × 5` (e.g., INT 10 = 50, INT 14 = 70, INT 20 = 100) |
-| Base Regen | 1 mana per 5 turns (passive, always active) |
+| Base Regen | `1 + floor(INT_bonus / 5)` mana per 5 turns (passive, always active) |
 | Staff bonus | Future: reduces turns_between_regen (e.g., from 5 to 4) |
 | Mana Potion | Restore 15 mana (instant) |
 
-**Mana is scarce by design.** In a typical 10-turn encounter, you regenerate only ~2 mana. Your mana pool IS your budget — conservation across encounters is critical.
+**Mana is scarce by design.** Higher INT increases both your pool AND your regen rate, with breakpoints at INT 15 and 20 that make stat investment feel rewarding.
+
+**Regen by INT:**
+
+| INT | Bonus | Regen/5 turns | Mana/10 turns |
+|-----|-------|---------------|---------------|
+| 10  | 0     | 1             | 2             |
+| 14  | 4     | 1             | 2             |
+| 15  | 5     | 2             | 4             |
+| 18  | 8     | 2             | 4             |
+| 20  | 10    | 3             | 6             |
 
 **Mana budget per encounter** (10-turn fight):
 - INT 10: 50 pool + 2 regen = **52 total**
 - INT 14: 70 pool + 2 regen = **72 total**
-- INT 20: 100 pool + 2 regen = **102 total**
+- INT 15: 75 pool + 4 regen = **79 total**
+- INT 20: 100 pool + 6 regen = **106 total**
 
 **Future enhancement hooks**:
 - Boss traits: "Mana Font" reduces regen interval to 3 turns
