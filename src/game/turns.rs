@@ -16,7 +16,7 @@ use crate::game::magic::{ActiveSpells, handle_cast_spell};
 use crate::game::ranged::handle_ranged_attack;
 use crate::game::targeting::TargetingMode;
 use crate::game::items::{handle_drop_item, handle_equip_item, handle_unequip_item};
-use crate::game::spells::{SpellRegistry, SpellTarget};
+use crate::game::spells::{SpellEffect, SpellRegistry, SpellTarget};
 use crate::game::targeting::TargetingContext;
 use crate::game::InGameState;
 use crate::player::{MovementTimer, Player};
@@ -374,30 +374,47 @@ fn handle_player_input(
     ];
     for (i, &key) in spell_keys.iter().enumerate() {
         if keys.just_pressed(key) {
-            let spell_target = player_active_spells.single().ok().and_then(|active| {
+            // Look up the spell data for targeting decisions.
+            let spell_info = player_active_spells.single().ok().and_then(|active| {
                 let spell_id = active.slots.get(i)?.as_deref()?;
                 let registry = spell_registries.get(&spell_registry_handle.0)?;
                 let spell = registry.spells.get(spell_id)?;
-                Some(spell.target.clone())
+                Some(spell.clone())
             });
 
-            match spell_target {
-                Some(SpellTarget::Enemy) => {
-                    targeting_context.mode = TargetingMode::Spell { slot: i };
+            if let Some(spell) = spell_info {
+                // Check for tile-targeted spells (Blink: Teleport with range > 0).
+                let needs_tile_targeting = spell.effects.iter().any(|e| matches!(e, SpellEffect::Teleport { range } if *range > 0));
+
+                if needs_tile_targeting {
+                    let range = spell.effects.iter().find_map(|e| match e {
+                        SpellEffect::Teleport { range } if *range > 0 => Some(*range),
+                        _ => None,
+                    }).unwrap_or(3);
+                    targeting_context.mode = TargetingMode::Tile { slot: i, range, radius: 0 };
                     next_ingame.set(InGameState::Targeting);
+                } else {
+                    match spell.target {
+                        SpellTarget::Enemy => {
+                            targeting_context.mode = TargetingMode::Spell { slot: i };
+                            next_ingame.set(InGameState::Targeting);
+                        }
+                        SpellTarget::Ally => {
+                            targeting_context.mode = TargetingMode::SpellAlly { slot: i, include_self: false };
+                            next_ingame.set(InGameState::Targeting);
+                        }
+                        SpellTarget::AllyOrSelf => {
+                            targeting_context.mode = TargetingMode::SpellAlly { slot: i, include_self: true };
+                            next_ingame.set(InGameState::Targeting);
+                        }
+                        SpellTarget::Castor => {
+                            action = Some(Action::CastSpell { slot: i, target: None, target_pos: None });
+                        }
+                    }
                 }
-                Some(SpellTarget::Ally) => {
-                    targeting_context.mode = TargetingMode::SpellAlly { slot: i, include_self: false };
-                    next_ingame.set(InGameState::Targeting);
-                }
-                Some(SpellTarget::AllyOrSelf) => {
-                    targeting_context.mode = TargetingMode::SpellAlly { slot: i, include_self: true };
-                    next_ingame.set(InGameState::Targeting);
-                }
-                _ => {
-                    // Castor or unknown — no targeting needed
-                    action = Some(Action::CastSpell { slot: i, target: None });
-                }
+            } else {
+                // No spell in this slot — still try to cast (will show "no spell" message)
+                action = Some(Action::CastSpell { slot: i, target: None, target_pos: None });
             }
             break;
         }

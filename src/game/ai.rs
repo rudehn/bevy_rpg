@@ -100,6 +100,7 @@ impl MonsterAI {
                     caster: entity,
                     slot: spell_slot,
                     target,
+                    target_pos: None,
                 });
                 return;
             }

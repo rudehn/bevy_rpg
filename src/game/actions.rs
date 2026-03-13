@@ -32,7 +32,8 @@ pub enum Action {
     UseItem     { item: Entity },
     /// Cast the spell assigned to the given slot (0-based, keys 1–6).
     /// `target`: None = self-target (Caster spells), Some(e) = pre-resolved entity target.
-    CastSpell   { slot: usize, target: Option<Entity> },
+    /// `target_pos`: tile position for tile-targeted spells (blink, AoE).
+    CastSpell   { slot: usize, target: Option<Entity>, target_pos: Option<(i32, i32)> },
     /// Fire a ranged weapon at a pre-selected target entity.
     RangedAttack { target: Entity },
 }
@@ -139,9 +140,9 @@ pub fn dispatch_player_action(
             Action::UnequipItem { item } => { unequip_events.write(UnequipItemMessage { item_entity: item }); }
             Action::DropItem { item } => { drop_events.write(DropItemMessage { item_entity: item }); }
             Action::UseItem { item } => { use_item_events.write(UseItemMessage { item_entity: item }); }
-            Action::CastSpell { slot, target } => {
+            Action::CastSpell { slot, target, target_pos } => {
                 let target_entity = target.unwrap_or(player_entity);
-                cast_spell_events.write(CastSpellMessage { caster: player_entity, slot, target: target_entity });
+                cast_spell_events.write(CastSpellMessage { caster: player_entity, slot, target: target_entity, target_pos });
             }
             Action::RangedAttack { target } => {
                 ranged_events.write(RangedAttackIntent { attacker: player_entity, target });

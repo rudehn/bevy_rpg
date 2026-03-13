@@ -12,7 +12,7 @@ use crate::{
         turns::TurnState,
         InGameState,
     },
-    map::Map,
+    map::{Map, tile::is_walkable},
     player::Player,
     ui::game_log::{GameLog, GameLogMessage},
 };
@@ -27,6 +27,9 @@ pub enum TargetingMode {
     /// Player is selecting an allied target for a spell slot.
     /// `include_self`: if true, the player can also target themselves (AllyOrSelf).
     SpellAlly { slot: usize, include_self: bool },
+    /// Player is selecting a tile for a spell (blink, AoE).
+    /// `range`: max Manhattan distance from caster. `radius`: AoE blast radius (0 for blink).
+    Tile { slot: usize, range: i32, radius: i32 },
     /// Player is selecting a target for a ranged weapon attack.
     RangedAttack,
 }
@@ -93,6 +96,10 @@ fn setup_targeting(
                 best_ally.unwrap_or(*player_pos)
             }
         }
+        TargetingMode::Tile { .. } => {
+            // Tile targeting: start cursor at player position.
+            *player_pos
+        }
         _ => {
             // Enemy targeting: snap to nearest visible monster.
             monsters
@@ -106,6 +113,7 @@ fn setup_targeting(
 
     let cursor_color = match &ctx.mode {
         TargetingMode::SpellAlly { .. } => Color::srgba(0.2, 1.0, 0.2, 0.4), // Green for ally
+        TargetingMode::Tile { .. } => Color::srgba(0.4, 0.8, 1.0, 0.4), // Blue for tile
         _ => Color::srgba(1.0, 1.0, 0.0, 0.4), // Yellow for enemy/ranged
     };
 
@@ -125,6 +133,7 @@ fn setup_targeting(
 
     let prompt = match &ctx.mode {
         TargetingMode::SpellAlly { .. } => "Choose ally: arrows to move, Enter to confirm, Esc to cancel.",
+        TargetingMode::Tile { .. } => "Choose tile: arrows to move, Enter to confirm, Esc to cancel.",
         _ => "Choose target: arrows to move, Enter to confirm, Esc to cancel.",
     };
     game_log.status_message = Some(prompt.to_string());
@@ -211,7 +220,7 @@ fn handle_targeting_input(
                     .map(|(e, _)| e);
 
                 if let Some(entity) = found {
-                    pending.0 = Some(Action::CastSpell { slot: *slot, target: Some(entity) });
+                    pending.0 = Some(Action::CastSpell { slot: *slot, target: Some(entity), target_pos: None });
                     next_turn_state.set(TurnState::Processing);
                     next_ingame_state.set(InGameState::Running);
                 } else {
@@ -244,11 +253,43 @@ fn handle_targeting_input(
                 };
 
                 if let Some(entity) = found {
-                    pending.0 = Some(Action::CastSpell { slot: *slot, target: Some(entity) });
+                    pending.0 = Some(Action::CastSpell { slot: *slot, target: Some(entity), target_pos: None });
                     next_turn_state.set(TurnState::Processing);
                     next_ingame_state.set(InGameState::Running);
                 } else {
                     log_writer.write(GameLogMessage("No valid ally at cursor.".to_string()));
+                }
+            }
+            TargetingMode::Tile { slot, range, .. } => {
+                // Tile targeting: validate walkable tile within range.
+                let player_pos = player_query.single().ok().map(|(_, p, _)| *p);
+                let in_range = player_pos.map(|pp| {
+                    (target_pos.x - pp.x).abs() + (target_pos.y - pp.y).abs() <= *range
+                }).unwrap_or(false);
+
+                let idx = map.xy_idx(target_pos.x, target_pos.y);
+                let walkable = is_walkable(map.tiles[idx]);
+
+                // Check no entity is standing on the tile (for blink).
+                let occupied = faction_entities.iter().any(|(_, pos, _)| {
+                    pos.x == target_pos.x && pos.y == target_pos.y
+                }) || player_pos.map(|pp| pp.x == target_pos.x && pp.y == target_pos.y).unwrap_or(false);
+
+                if in_range && walkable && !occupied {
+                    let player_entity = player_query.single().ok().map(|(e, _, _)| e);
+                    pending.0 = Some(Action::CastSpell {
+                        slot: *slot,
+                        target: player_entity,
+                        target_pos: Some((target_pos.x, target_pos.y)),
+                    });
+                    next_turn_state.set(TurnState::Processing);
+                    next_ingame_state.set(InGameState::Running);
+                } else if !in_range {
+                    log_writer.write(GameLogMessage("Target is out of range.".to_string()));
+                } else if !walkable {
+                    log_writer.write(GameLogMessage("Can't target that tile.".to_string()));
+                } else {
+                    log_writer.write(GameLogMessage("That tile is occupied.".to_string()));
                 }
             }
             TargetingMode::RangedAttack => {

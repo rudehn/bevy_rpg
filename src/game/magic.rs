@@ -141,11 +141,14 @@ pub struct SpiritShielded {
 /// `target` is always fully resolved by the caller before sending:
 /// - Damage spells → the enemy entity
 /// - Heal spells   → the resolved target (caster for Castor, ally for Ally, etc.)
+/// `target_pos` is used for tile-targeted spells (blink, AoE) where
+/// the effect is centered on a tile rather than an entity.
 #[derive(Message, Debug)]
 pub struct CastSpellMessage {
     pub caster: Entity,
     pub slot: usize,
     pub target: Entity,
+    pub target_pos: Option<(i32, i32)>,
 }
 
 // =====================================================================
@@ -174,12 +177,12 @@ pub fn handle_cast_spell(
         return;
     };
 
-    let messages: Vec<(Entity, usize, Entity)> = messages
+    let messages: Vec<(Entity, usize, Entity, Option<(i32, i32)>)> = messages
         .read()
-        .map(|m| (m.caster, m.slot, m.target))
+        .map(|m| (m.caster, m.slot, m.target, m.target_pos))
         .collect();
 
-    for (caster_entity, slot, target_entity) in messages {
+    for (caster_entity, slot, target_entity, target_pos) in messages {
         let Ok((stats, active_spells, caster_name)) = caster_ro.get(caster_entity) else {
             continue;
         };
@@ -453,16 +456,32 @@ pub fn handle_cast_spell(
                 } => {
                     let bonus = if *int_scaling { int_bonus } else { 0 };
                     let drain = (*amount + bonus).max(0);
-                    // We can't query caster_resources for target if it's a different entity,
-                    // so we handle this with deferred commands. For now, log the intent.
-                    // The actual drain needs a dedicated message or direct world access.
-                    log_writer.write(GameLogMessage(format!(
-                        "{} drains {} mana!",
-                        caster_label, drain
-                    )));
-                    // Drain is applied via DrainManaMessage (to be processed separately).
-                    // For now, apply directly if we can access both entities.
-                    // This is handled in drain_mana_system below.
+                    let caster_e = caster_entity;
+                    let target_e = target_entity;
+                    let label = caster_label.clone();
+                    commands.queue(move |world: &mut World| {
+                        // Drain mana from target (capped by what they have).
+                        let actual_drain = {
+                            if let Some(mut target_mana) = world.get_mut::<Mana>(target_e) {
+                                let actual = drain.min(target_mana.current);
+                                target_mana.current -= actual;
+                                actual
+                            } else {
+                                0
+                            }
+                        };
+                        // Give drained mana to caster (capped by max).
+                        if actual_drain > 0 {
+                            if let Some(mut caster_mana) = world.get_mut::<Mana>(caster_e) {
+                                caster_mana.current =
+                                    (caster_mana.current + actual_drain).min(caster_mana.max);
+                            }
+                        }
+                        world.write_message(GameLogMessage(format!(
+                            "{} drains {} mana!",
+                            label, actual_drain
+                        )));
+                    });
                 }
                 SpellEffect::SpiritShield { duration } => {
                     commands
@@ -492,9 +511,15 @@ pub fn handle_cast_spell(
                                 caster_label
                             )));
                         }
-                    } else {
-                        // Controlled teleport (blink) — requires tile targeting.
-                        warn!("Controlled teleport (blink) requires tile targeting — not yet wired");
+                    } else if let Some((tx, ty)) = target_pos {
+                        // Controlled teleport (blink) — move caster to target tile.
+                        commands
+                            .entity(caster_entity)
+                            .insert(Position { x: tx, y: ty });
+                        log_writer.write(GameLogMessage(format!(
+                            "{} blinks to ({}, {})!",
+                            caster_label, tx, ty
+                        )));
                     }
                 }
             }
