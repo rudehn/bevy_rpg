@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::{
@@ -22,7 +23,7 @@ use crate::{
 // =====================================================================
 
 /// Spell IDs the entity has learned.
-#[derive(Component, Debug, Clone, Reflect, Default)]
+#[derive(Component, Debug, Clone, Reflect, Default, Serialize, Deserialize)]
 #[reflect(Component)]
 pub struct KnownSpells {
     pub spells: Vec<String>,
@@ -30,7 +31,7 @@ pub struct KnownSpells {
 
 /// Active spell slot assignments (index 0 = key 1, …, 5 = key 6).
 /// Always `MAX_SPELL_SLOTS` long; unused entries are None.
-#[derive(Component, Debug, Clone, Reflect, Default)]
+#[derive(Component, Debug, Clone, Reflect, Default, Serialize, Deserialize)]
 #[reflect(Component)]
 pub struct ActiveSpells {
     pub slots: Vec<Option<String>>,
@@ -48,7 +49,7 @@ impl ActiveSpells {
 
 /// Counter-based mana regeneration. Every `turns_between_regen` turns, the entity
 /// regenerates `1 + (INT_bonus / 5)` mana. INT breakpoints at 15 and 20.
-#[derive(Component, Debug, Clone, Reflect)]
+#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
 #[reflect(Component)]
 pub struct ManaRegen {
     pub turns_between_regen: u32,
@@ -65,7 +66,7 @@ impl Default for ManaRegen {
 }
 
 /// Per-entity spell cooldowns. Key = spell ID, value = turns remaining (0 = ready).
-#[derive(Component, Debug, Clone, Default)]
+#[derive(Component, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SpellCooldowns {
     pub cooldowns: HashMap<String, u32>,
 }
@@ -90,7 +91,7 @@ impl SpellCooldowns {
 
 /// A single timed attribute modifier applied by a Buff or Debuff spell.
 /// Positive amount = buff, negative = debuff.
-#[derive(Debug, Clone, Reflect)]
+#[derive(Debug, Clone, Reflect, Serialize, Deserialize)]
 pub struct TimedModifierEntry {
     pub attribute: String,
     pub amount: i32,
@@ -98,28 +99,28 @@ pub struct TimedModifierEntry {
 }
 
 /// Collection of all active timed modifiers on an entity.
-#[derive(Component, Debug, Clone, Reflect, Default)]
+#[derive(Component, Debug, Clone, Reflect, Default, Serialize, Deserialize)]
 #[reflect(Component)]
 pub struct TimedModifiers {
     pub entries: Vec<TimedModifierEntry>,
 }
 
 /// +50% speed (delay × 0.5) for N turns.
-#[derive(Component, Debug, Clone, Reflect)]
+#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
 #[reflect(Component)]
 pub struct Hasted {
     pub turns_remaining: u32,
 }
 
 /// -50% speed (delay × 1.5) for N turns.
-#[derive(Component, Debug, Clone, Reflect)]
+#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
 #[reflect(Component)]
 pub struct Slowed {
     pub turns_remaining: u32,
 }
 
 /// Damage-over-time poison effect.
-#[derive(Component, Debug, Clone, Reflect)]
+#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
 #[reflect(Component)]
 pub struct Poisoned {
     pub damage_per_turn: i32,
@@ -127,7 +128,7 @@ pub struct Poisoned {
 }
 
 /// Damage taken from mana instead of HP for N turns.
-#[derive(Component, Debug, Clone, Reflect)]
+#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
 #[reflect(Component)]
 pub struct SpiritShielded {
     pub turns_remaining: u32,

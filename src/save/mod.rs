@@ -14,6 +14,10 @@ use crate::{
         combat::{Damage, Health},
         items::{Equipment, ItemProperties, ItemStack},
         level::{AvailableStatPoints, Experience},
+        magic::{
+            ActiveSpells, Hasted, KnownSpells, ManaRegen, Poisoned, Slowed,
+            SpellCooldowns, SpiritShielded, TimedModifiers,
+        },
         spawner::spawn_item,
         stats::{AttributeModifiers, Attributes, Level, Mana},
     },
@@ -213,6 +217,24 @@ pub struct PlayerSaveData {
     pub viewshed_range: i32,
     pub damage: String,
     pub mana_current: i32,
+    #[serde(default)]
+    pub known_spells: KnownSpells,
+    #[serde(default)]
+    pub active_spells: ActiveSpells,
+    #[serde(default)]
+    pub mana_regen: ManaRegen,
+    #[serde(default)]
+    pub spell_cooldowns: SpellCooldowns,
+    #[serde(default)]
+    pub timed_modifiers: TimedModifiers,
+    #[serde(default)]
+    pub hasted: Option<Hasted>,
+    #[serde(default)]
+    pub slowed: Option<Slowed>,
+    #[serde(default)]
+    pub poisoned: Option<Poisoned>,
+    #[serde(default)]
+    pub spirit_shielded: Option<SpiritShielded>,
     pub inventory: Vec<InventoryItemSave>,
 }
 
@@ -355,6 +377,20 @@ pub fn auto_save_system(
         ),
         With<Player>,
     >,
+    player_magic_query: Query<
+        (
+            &KnownSpells,
+            &ActiveSpells,
+            &ManaRegen,
+            &SpellCooldowns,
+            Option<&TimedModifiers>,
+            Option<&Hasted>,
+            Option<&Slowed>,
+            Option<&Poisoned>,
+            Option<&SpiritShielded>,
+        ),
+        With<Player>,
+    >,
     inv_item_query: Query<(&Name, &ItemProperties, Has<Equipped>, Option<&ItemStack>), With<InInventory>>,
     monster_query: Query<(&Position, &Name, &Health), With<Monster>>,
     floor_item_query: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
@@ -415,6 +451,31 @@ pub fn auto_save_system(
         })
         .collect();
 
+    // Magic state
+    let (known_spells, active_spells, mana_regen, spell_cooldowns, timed_modifiers, hasted, slowed, poisoned, spirit_shielded) =
+        if let Ok((ks, as_, mr, sc, tm, h, sl, p, ss)) = player_magic_query.single() {
+            (
+                ks.clone(),
+                as_.clone(),
+                mr.clone(),
+                sc.clone(),
+                tm.cloned().unwrap_or_default(),
+                h.cloned(),
+                sl.cloned(),
+                p.cloned(),
+                ss.cloned(),
+            )
+        } else {
+            (
+                KnownSpells::default(),
+                ActiveSpells::default(),
+                ManaRegen::default(),
+                SpellCooldowns::default(),
+                TimedModifiers::default(),
+                None, None, None, None,
+            )
+        };
+
     // Candles
     let candles: Vec<[i32; 2]> = candle_query.iter().map(|pos| [pos.x, pos.y]).collect();
 
@@ -453,6 +514,15 @@ pub fn auto_save_system(
             viewshed_range: viewshed.range,
             damage: damage.0.clone(),
             mana_current: mana.current,
+            known_spells,
+            active_spells,
+            mana_regen,
+            spell_cooldowns,
+            timed_modifiers,
+            hasted,
+            slowed,
+            poisoned,
+            spirit_shielded,
             inventory: inv_saves,
         },
         monsters,
@@ -495,6 +565,7 @@ pub fn apply_player_load_system(
         ),
         With<Player>,
     >,
+    player_entity_query: Query<Entity, With<Player>>,
     item_manifests: Res<Assets<ItemManifest>>,
     item_manifest_handle: Res<ItemManifestHandle>,
     item_sprite_assets: Res<ItemSpriteAssets>,
@@ -559,6 +630,29 @@ pub fn apply_player_load_system(
     viewshed.range = player_data.viewshed_range;
     viewshed.dirty = true;
     mana.current = player_data.mana_current;
+
+    // --- Magic state ---
+    if let Ok(player_entity) = player_entity_query.single() {
+        commands.entity(player_entity)
+            .insert(player_data.known_spells.clone())
+            .insert(player_data.active_spells.clone())
+            .insert(player_data.mana_regen.clone())
+            .insert(player_data.spell_cooldowns.clone())
+            .insert(player_data.timed_modifiers.clone());
+
+        if let Some(ref h) = player_data.hasted {
+            commands.entity(player_entity).insert(h.clone());
+        }
+        if let Some(ref s) = player_data.slowed {
+            commands.entity(player_entity).insert(s.clone());
+        }
+        if let Some(ref p) = player_data.poisoned {
+            commands.entity(player_entity).insert(p.clone());
+        }
+        if let Some(ref ss) = player_data.spirit_shielded {
+            commands.entity(player_entity).insert(ss.clone());
+        }
+    }
 
     // --- Inventory ---
     inventory.items.clear();
