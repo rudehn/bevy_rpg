@@ -1,0 +1,33 @@
+PrefabManifest(
+    prefabs: [
+        PrefabTemplate(
+            name: "Goblin Camp",
+            width: 7,
+            height: 7,
+            min_floor: 2,
+            max_floor: 8,
+            tiles: [
+                ".......",
+                ".#####.",
+                ".#...#.",
+                ".#...#.",
+                ".#...#.",
+                ".###.#.",
+                ".......",
+            ],
+            props: [
+                (x: 3, y: 3, prop: "watchfire"),
+            ],
+            monster_spawns: [
+                (x: 2, y: 2, monster: Some("Goblin"),        guard: true, squad: true),
+                (x: 4, y: 2, monster: Some("Goblin Archer"), guard: true, squad: true),
+                (x: 2, y: 4, monster: Some("Goblin"),        guard: true, squad: true),
+            ],
+            item_spawns: [
+                (x: 4, y: 4, item: None),
+            ],
+            on_leader_death: "scatter",
+            flee_threshold: 0.3,
+        ),
+    ],
+)

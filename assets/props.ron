@@ -1,0 +1,37 @@
+PropManifest(
+    props: {
+        "candle": PropAsset(
+            name: "Candle",
+            sprite: "sprites/candle.png#0",
+            is_blocking: false,
+            is_opaque: false,
+            light_radius: Some(30.0),
+            animated_frames: Some(4),
+            grid_size: Some((4, 1)),
+            tile_size: Some((16, 16)),
+        ),
+        "watchfire": PropAsset(
+            name: "Watchfire",
+            sprite: "sprites/candle.png#0",
+            is_blocking: false,
+            is_opaque: false,
+            light_radius: Some(40.0),
+            light_color: Some((1.0, 0.6, 0.2)),
+            animated_frames: Some(4),
+            grid_size: Some((4, 1)),
+            tile_size: Some((16, 16)),
+        ),
+        "totem_pole": PropAsset(
+            name: "Totem Pole",
+            sprite: "sprites/candle.png#0",
+            is_blocking: true,
+            is_opaque: false,
+        ),
+        "barricade": PropAsset(
+            name: "Barricade",
+            sprite: "sprites/candle.png#0",
+            is_blocking: true,
+            is_opaque: false,
+        ),
+    },
+)

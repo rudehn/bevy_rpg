@@ -1,11 +1,12 @@
 use bracket_lib::{
     prelude::{Point, Rect},
     random::RandomNumberGenerator,
-}; // Added Point
+};
 
 use crate::{
-    assets::{ItemSpawnInfo, MonsterSpawnInfo},
+    assets::{ItemSpawnInfo, MonsterSpawnInfo, PrefabTemplate},
     components::Position,
+    game::squad::{SquadConfig, SquadId, SquadIdCounter},
     map::{
         Map,
         builders::{
@@ -14,6 +15,7 @@ use crate::{
             exit_points::DistantExit,
             item_spawner::ItemSpawner,
             monster_spawner::MonsterSpawner,
+            prefab_placer::PrefabPlacer,
             start_point::{StartPointBuilder, XStart, YStart},
             unseen_culler::UnseenCuller,
         },
@@ -31,9 +33,32 @@ mod exit_points;
 pub mod item_spawner;
 mod lake_builder;
 pub mod monster_spawner;
+pub mod prefab_placer;
 mod room_drawer;
 mod start_point;
 mod unseen_culler;
+
+/// A single monster spawn entry, optionally linked to a squad.
+pub struct SpawnEntry {
+    pub pos: Point,
+    pub name: String,
+    pub squad_id: Option<SquadId>,
+    pub squad_config: Option<SquadConfig>,
+    pub is_leader: bool,
+    pub home_position: Option<Point>,
+}
+
+impl SpawnEntry {
+    /// Create a solo spawn with no squad affiliation.
+    pub fn solo(pos: Point, name: String) -> Self {
+        Self { pos, name, squad_id: None, squad_config: None, is_leader: false, home_position: None }
+    }
+
+    /// Create a squad member spawn.
+    pub fn squad(pos: Point, name: String, id: SquadId, config: SquadConfig, is_leader: bool) -> Self {
+        Self { pos, name, squad_id: Some(id), squad_config: Some(config), is_leader, home_position: None }
+    }
+}
 
 #[allow(dead_code)]
 pub struct BuilderMap {
@@ -47,8 +72,9 @@ pub struct BuilderMap {
     // pub history: Vec<Map>,
     pub width: i32,
     pub height: i32,
-    pub spawn_list: Vec<(Point, String)>, // Add spawn_list for entities
+    pub spawn_list: Vec<SpawnEntry>,
     pub item_spawn_list: Vec<(Point, String, u32)>, // (pos, item_name, count)
+    pub prop_spawn_list: Vec<(Point, String)>,       // (pos, prop_name)
 }
 
 impl BuilderMap {
@@ -85,8 +111,9 @@ impl BuilderChain {
                 // history: Vec::new(),
                 width,
                 height,
-                spawn_list: Vec::new(),      // Initialize spawn_list
-                item_spawn_list: Vec::new(), // Initialize item_spawn_list
+                spawn_list: Vec::new(),
+                item_spawn_list: Vec::new(),
+                prop_spawn_list: Vec::new(),
             },
         }
     }
@@ -164,6 +191,8 @@ pub fn floor_builder(
     height: i32,
     spawn_table: &[MonsterSpawnInfo],
     item_spawn_table: &[ItemSpawnInfo],
+    squad_counter: SquadIdCounter,
+    prefabs: Vec<PrefabTemplate>,
 ) -> BuilderChain {
     let mut map_name = "Floor ".to_owned() + &new_depth.to_string();
     if new_depth == 1 {
@@ -178,14 +207,12 @@ pub fn floor_builder(
     builder.with(DiagonalCuller::new());
     builder.with(StartPointBuilder::new());
     // builder.with(LakeBuilder::new(LiquidType::Water));
+    builder.with(PrefabPlacer::new(prefabs, squad_counter.clone()));
     builder.with(CandleSpawner::new());
-    builder.with(MonsterSpawner::new(spawn_table));
+    builder.with(MonsterSpawner::new(spawn_table, squad_counter));
     builder.with(ItemSpawner::new(item_spawn_table));
     builder.with(UnseenCuller::new());
     builder.with(DistantExit::new());
-
-    // let (start_x, start_y) = random_start_position();
-    // builder.with(AreaStartingPosition::new(start_x, start_y));
 
     builder
 }
@@ -196,6 +223,8 @@ pub fn level_builder(
     height: i32,
     spawn_table: &[MonsterSpawnInfo],
     item_spawn_table: &[ItemSpawnInfo],
+    squad_counter: SquadIdCounter,
+    prefabs: Vec<PrefabTemplate>,
 ) -> BuilderChain {
-    floor_builder(new_depth, width, height, spawn_table, item_spawn_table)
+    floor_builder(new_depth, width, height, spawn_table, item_spawn_table, squad_counter, prefabs)
 }

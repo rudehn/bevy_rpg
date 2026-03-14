@@ -94,3 +94,8 @@ pub struct Ammo;
 /// Marker component for the final boss entity. Death triggers victory.
 #[derive(Component, Debug, Default)]
 pub struct FinalBoss;
+
+/// Marker component for props — non-item, non-monster world entities
+/// (watchfires, totem poles, barricades, etc.).
+#[derive(Component, Debug, Default)]
+pub struct Prop;

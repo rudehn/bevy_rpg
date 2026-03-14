@@ -3,9 +3,13 @@ use bevy::prelude::*;
 use bracket_lib::prelude::Point;
 
 use crate::{
-    assets::{MonsterAsset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets, ItemManifest, ItemManifestHandle, ItemSpriteAssets},
+    assets::{
+        MonsterAsset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets,
+        ItemManifest, ItemManifestHandle, ItemSpriteAssets,
+        PropManifest, PropManifestHandle, PropSpriteAssets,
+    },
     components::{
-        Ammo, Collider, FinalBoss, FloorEntityMarker, GameEntityMarker, Monster, Name, Position, Viewshed, Item,
+        Ammo, Collider, FinalBoss, FloorEntityMarker, GameEntityMarker, Monster, Name, Position, Prop, Viewshed, Item,
     },
     constants::{TILE_SIZE_X, TILE_SIZE_Y, Z_MONSTER, Z_ITEM},
     game::{
@@ -366,6 +370,77 @@ pub fn spawn_item(
 
     if asset.is_ammo {
         entity.insert(Ammo);
+    }
+
+    Some(entity.id())
+}
+
+pub fn spawn_prop(
+    commands: &mut Commands,
+    prop_name: &str,
+    spawn_point: &Point,
+    prop_manifests: &Res<Assets<PropManifest>>,
+    prop_manifest_handle: &Res<PropManifestHandle>,
+    prop_sprite_assets: &Res<PropSpriteAssets>,
+) -> Option<Entity> {
+    let manifest = prop_manifests.get(&prop_manifest_handle.0)?;
+    let asset = manifest.props.get(prop_name).or_else(|| {
+        warn!("Prop '{}' not found in manifest.", prop_name);
+        None
+    })?;
+
+    let (texture_path, index) = crate::assets::parse_sprite_path(&asset.sprite);
+
+    let texture_handle = prop_sprite_assets.handles.get(texture_path).cloned().or_else(|| {
+        error!("Missing prop sprite texture: '{}'", texture_path);
+        None
+    })?;
+    let layout_handle = prop_sprite_assets.layouts.get(texture_path).cloned().or_else(|| {
+        error!("Missing prop sprite layout: '{}'", texture_path);
+        None
+    })?;
+
+    let tile_size = asset.tile_size.unwrap_or(UVec2::new(16, 16));
+    let scale_x = TILE_SIZE_X as f32 / tile_size.x as f32;
+    let scale_y = TILE_SIZE_Y as f32 / tile_size.y as f32;
+
+    let mut entity = commands.spawn((
+        Prop,
+        Name(asset.name.clone()),
+        GameEntityMarker,
+        FloorEntityMarker,
+        Position { x: spawn_point.x, y: spawn_point.y },
+        Sprite::from_atlas_image(
+            texture_handle,
+            TextureAtlas {
+                index,
+                layout: layout_handle,
+            },
+        ),
+        Transform {
+            translation: Vec3::new(
+                spawn_point.x as f32 * GRID_SIZE.x,
+                spawn_point.y as f32 * GRID_SIZE.y,
+                Z_ITEM,
+            ),
+            scale: Vec3::new(scale_x, scale_y, 1.0),
+            ..Default::default()
+        },
+        Visibility::Hidden,
+        RenderLayers::layer(1),
+    ));
+
+    // Light-emitting props get the Candle component + animation timer so they
+    // integrate with the existing lighting infrastructure.
+    if asset.light_radius.is_some() {
+        entity.insert((
+            crate::map::light::Candle,
+            crate::map::light::AnimationTimer(Timer::from_seconds(0.2, TimerMode::Repeating)),
+        ));
+    }
+
+    if asset.is_blocking {
+        entity.insert(Collider);
     }
 
     Some(entity.id())

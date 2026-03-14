@@ -2,13 +2,17 @@
   spawns: [
     // --- Vermin ---
     (monster: "Rat",           min_floor: 1,  max_floor: 1,  min_group: 1, max_group: 1),
-    (monster: "Rat",           min_floor: 2,  max_floor: 5,  min_group: 2, max_group: 4),
-    (monster: "Giant Bat",     min_floor: 2,  max_floor: 8,  min_group: 1, max_group: 3),
+    (monster: "Rat",           min_floor: 2,  max_floor: 5,  min_group: 2, max_group: 4,
+     on_leader_death: "scatter", flee_threshold: 0.4),
+    (monster: "Giant Bat",     min_floor: 2,  max_floor: 8,  min_group: 1, max_group: 3,
+     on_leader_death: "scatter", flee_threshold: 0.4),
     (monster: "Giant Spider",  min_floor: 3,  max_floor: 8,  min_group: 1, max_group: 2),
-    (monster: "Plague Rat",    min_floor: 5,  max_floor: 10, min_group: 2, max_group: 5),
+    (monster: "Plague Rat",    min_floor: 5,  max_floor: 10, min_group: 2, max_group: 5,
+     on_leader_death: "scatter", flee_threshold: 0.3),
 
     // --- Goblinoid ---
-    (monster: "Goblin",          min_floor: 1,  max_floor: 6,  min_group: 1, max_group: 3),
+    (monster: "Goblin",          min_floor: 1,  max_floor: 6,  min_group: 1, max_group: 3,
+     on_leader_death: "scatter"),
     (monster: "Goblin Archer",   min_floor: 2,  max_floor: 8,  min_group: 1, max_group: 2),
     (monster: "Goblin Shaman",   min_floor: 3,  max_floor: 10),
     (monster: "Goblin Warchief", min_floor: 5,  max_floor: 10),
@@ -16,7 +20,7 @@
     (group: [
         (monster: "Goblin",        min_count: 2, max_count: 2),
         (monster: "Goblin Archer", min_count: 2, max_count: 2),
-    ], min_floor: 4, max_floor: 8),
+    ], min_floor: 4, max_floor: 8, on_leader_death: "enrage"),
 
     // --- Undead ---
     (monster: "Skeleton",        min_floor: 5,  max_floor: 14, min_group: 1, max_group: 3),
@@ -26,8 +30,10 @@
     (monster: "Lich Apprentice", min_floor: 7,  max_floor: 16),
 
     // --- Orcish ---
-    (monster: "Orc",             min_floor: 8,  max_floor: 14, min_group: 1, max_group: 3),
-    (monster: "Orc Berserker",   min_floor: 10, max_floor: 16, min_group: 1, max_group: 2),
+    (monster: "Orc",             min_floor: 8,  max_floor: 14, min_group: 1, max_group: 3,
+     on_leader_death: "enrage"),
+    (monster: "Orc Berserker",   min_floor: 10, max_floor: 16, min_group: 1, max_group: 2,
+     on_leader_death: "enrage"),
     (monster: "Orc Shaman",      min_floor: 10, max_floor: 16),
     (monster: "Orc Warlord",     min_floor: 12, max_floor: 18),
 

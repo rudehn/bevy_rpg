@@ -651,7 +651,6 @@ impl Plugin for CombatPlugin {
                         .chain()
                         .in_set(CombatDamageSet),
                     regen_system,
-                    death_system,
                     handle_heal_system,
                     handle_toggle_god_mode_system,
                 )

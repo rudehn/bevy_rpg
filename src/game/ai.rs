@@ -37,15 +37,50 @@ enum MonsterAIMode {
     Asleep,
     Hunting,
     Wandering,
+    Guarding,
 }
+
+pub const GUARD_PATROL_RADIUS: i32 = 3;
 
 #[derive(Default, Component)]
 pub struct MonsterAI {
     mode: MonsterAIMode,
     last_known_player_position: Option<Point>,
+    pub home_position: Option<Point>,
 }
 
 impl MonsterAI {
+    /// Create a guard AI that patrols around `home` and returns there after chasing.
+    pub fn guard(home: Point) -> Self {
+        Self {
+            mode: MonsterAIMode::Guarding,
+            last_known_player_position: None,
+            home_position: Some(home),
+        }
+    }
+
+    /// Wake this monster and point it at a target. Transitions from
+    /// Asleep or Guarding → Hunting; has no effect if already hunting/wandering.
+    pub fn alert_to_position(&mut self, target: Point) {
+        if self.mode == MonsterAIMode::Asleep || self.mode == MonsterAIMode::Guarding {
+            self.mode = MonsterAIMode::Hunting;
+            self.last_known_player_position = Some(target);
+        }
+    }
+
+    /// Force this monster into Wandering mode, clearing its target.
+    /// Used for squad scatter on leader death.
+    pub fn scatter(&mut self) {
+        self.mode = MonsterAIMode::Wandering;
+        self.last_known_player_position = None;
+    }
+
+    /// Returns true if this monster is not asleep (i.e., hunting, wandering, or guarding).
+    #[allow(dead_code)]
+    pub fn is_alert(&self) -> bool {
+        self.mode != MonsterAIMode::Asleep
+    }
+
     pub fn execute(&mut self, entity: Entity, world: &mut World) {
         let mut rng = rng();
 
@@ -107,7 +142,12 @@ impl MonsterAI {
                     self.last_known_player_position = Some(player_point);
                 }
                 if !is_player_visible && Some(monster_pos) == self.last_known_player_position {
-                    self.mode = MonsterAIMode::Wandering;
+                    // Guards return to guarding; non-guards wander.
+                    if self.home_position.is_some() {
+                        self.mode = MonsterAIMode::Guarding;
+                    } else {
+                        self.mode = MonsterAIMode::Wandering;
+                    }
                     self.last_known_player_position = None;
                 }
             }
@@ -116,49 +156,63 @@ impl MonsterAI {
                     self.mode = MonsterAIMode::Hunting;
                 }
             }
+            MonsterAIMode::Guarding => {
+                if is_player_visible {
+                    self.mode = MonsterAIMode::Hunting;
+                }
+            }
         }
 
         // --- STEP 2.4: COWARDLY FLEE ---
-        // Cowardly monsters flee when below 50% HP.
+        // Cowardly monsters flee when hurt. Squad members use the group's collective
+        // HP ratio against the squad's flee_threshold; solo monsters flee below 50%.
         if world.get::<crate::game::abilities::Cowardly>(entity).is_some() {
-            let health = world.get::<Health>(entity);
-            if let Some(health) = health {
-                if health.current < health.max / 2 {
-                    // Greedy flee: pick adjacent walkable tile furthest from player
-                    let map = world.resource::<Map>();
-                    let mut best_dir: Option<Direction> = None;
-                    let mut best_dist: f32 = -1.0;
+            let should_flee = if let Some(squad_id) = world.get::<crate::game::squad::SquadId>(entity) {
+                let threshold = world
+                    .get::<crate::game::squad::SquadConfig>(entity)
+                    .map(|c| c.flee_threshold)
+                    .unwrap_or(0.5);
+                let (current, max) = crate::game::squad::compute_squad_hp(*squad_id, world);
+                max > 0 && (current as f32 / max as f32) < threshold
+            } else {
+                let health = world.get::<Health>(entity);
+                health.map_or(false, |h| h.current < h.max / 2)
+            };
+            if should_flee {
+                // Greedy flee: pick adjacent walkable tile furthest from player
+                let map = world.resource::<Map>();
+                let mut best_dir: Option<Direction> = None;
+                let mut best_dist: f32 = -1.0;
 
-                    for dir in Direction::ALL {
-                        let target_pos = monster_pos + dir.offset();
-                        if map.in_bounds(target_pos)
-                            && is_walkable(map.tiles[map.xy_idx(target_pos.x, target_pos.y)])
-                        {
-                            let dist = DistanceAlg::Pythagoras.distance2d(target_pos, player_point);
-                            if dist > best_dist {
-                                best_dist = dist;
-                                best_dir = Some(dir);
-                            }
+                for dir in Direction::ALL {
+                    let target_pos = monster_pos + dir.offset();
+                    if map.in_bounds(target_pos)
+                        && is_walkable(map.tiles[map.xy_idx(target_pos.x, target_pos.y)])
+                    {
+                        let dist = DistanceAlg::Pythagoras.distance2d(target_pos, player_point);
+                        if dist > best_dist {
+                            best_dist = dist;
+                            best_dir = Some(dir);
                         }
                     }
-
-                    if let Some(dir) = best_dir {
-                        let current_dist = DistanceAlg::Pythagoras.distance2d(monster_pos, player_point);
-                        // Only flee if the best tile is actually further away
-                        if best_dist > current_dist {
-                            let name = world
-                                .get::<crate::components::Name>(entity)
-                                .map(|n| n.0.clone())
-                                .unwrap_or_else(|| "Something".to_string());
-                            world.write_message(crate::ui::game_log::GameLogMessage(format!(
-                                "{} squeaks in fear and flees!", name
-                            )));
-                            world.write_message(MovementIntent { entity, dir });
-                            return;
-                        }
-                    }
-                    // Cornered: fall through to normal attack logic
                 }
+
+                if let Some(dir) = best_dir {
+                    let current_dist = DistanceAlg::Pythagoras.distance2d(monster_pos, player_point);
+                    // Only flee if the best tile is actually further away
+                    if best_dist > current_dist {
+                        let name = world
+                            .get::<crate::components::Name>(entity)
+                            .map(|n| n.0.clone())
+                            .unwrap_or_else(|| "Something".to_string());
+                        world.write_message(crate::ui::game_log::GameLogMessage(format!(
+                            "{} squeaks in fear and flees!", name
+                        )));
+                        world.write_message(MovementIntent { entity, dir });
+                        return;
+                    }
+                }
+                // Cornered: fall through to normal attack logic
             }
         }
 
@@ -196,13 +250,43 @@ impl MonsterAI {
             }
         }
 
+        // --- STEP 2.8: SQUAD LEADER POSITION ---
+        // Non-leader squad members leash to their leader: if they're too far away,
+        // they pathfind toward the leader instead of the player. This keeps squads
+        // moving as a group through corridors.
+        const SQUAD_LEASH_RANGE: f32 = 4.0;
+        let leader_leash_target: Option<Point> = {
+            use crate::game::squad::{SquadId, SquadLeader};
+            let squad_id = world.get::<SquadId>(entity).copied();
+            let is_leader = world.get::<SquadLeader>(entity).is_some();
+            if let (Some(squad_id), false) = (squad_id, is_leader) {
+                // Find our squad's leader position.
+                let mut leader_pos = None;
+                let mut query = world.query_filtered::<(&SquadId, &Position), With<SquadLeader>>();
+                for (sid, pos) in query.iter(world) {
+                    if *sid == squad_id {
+                        leader_pos = Some(pos.to_point());
+                        break;
+                    }
+                }
+                // Only leash if we're far enough from the leader.
+                leader_pos.filter(|lp| {
+                    DistanceAlg::Pythagoras.distance2d(monster_pos, *lp) > SQUAD_LEASH_RANGE
+                })
+            } else {
+                None
+            }
+        };
+
         // --- STEP 3: PATHFINDING AND MOVEMENT ---
         let intent_to_send = {
             let map = world.resource::<Map>();
 
             match self.mode {
                 MonsterAIMode::Hunting => {
-                    if let Some(target) = self.last_known_player_position {
+                    // Squad followers too far from leader move toward leader instead.
+                    let target = leader_leash_target.or(self.last_known_player_position);
+                    if let Some(target) = target {
                         let path = a_star_search(
                             map.point2d_to_index(monster_pos),
                             map.point2d_to_index(target),
@@ -224,20 +308,81 @@ impl MonsterAI {
                     }
                 }
                 MonsterAIMode::Wandering => {
-                    let mut directions = Direction::ALL.to_vec();
-                    directions.shuffle(&mut rng);
-
-                    let mut chosen_dir = None;
-                    for dir in directions {
-                        let target = monster_pos + dir.offset();
-                        if map.in_bounds(target)
-                            && is_walkable(map.tiles[map.xy_idx(target.x, target.y)])
-                        {
-                            chosen_dir = Some(dir);
-                            break;
+                    // Squad followers move toward their leader instead of random walking.
+                    if let Some(target) = leader_leash_target {
+                        let path = a_star_search(
+                            map.point2d_to_index(monster_pos),
+                            map.point2d_to_index(target),
+                            map,
+                        );
+                        if path.success && path.steps.len() > 1 {
+                            let next_step = map.index_to_point2d(path.steps[1]);
+                            let dir = Direction::from_pos(
+                                &Position::from_point(monster_pos),
+                                &Position::from_point(next_step),
+                            );
+                            Some(MovementIntent { entity, dir })
+                        } else {
+                            None
                         }
+                    } else {
+                        let mut directions = Direction::ALL.to_vec();
+                        directions.shuffle(&mut rng);
+
+                        let mut chosen_dir = None;
+                        for dir in directions {
+                            let target = monster_pos + dir.offset();
+                            if map.in_bounds(target)
+                                && is_walkable(map.tiles[map.xy_idx(target.x, target.y)])
+                            {
+                                chosen_dir = Some(dir);
+                                break;
+                            }
+                        }
+                        chosen_dir.map(|dir| MovementIntent { entity, dir })
                     }
-                    chosen_dir.map(|dir| MovementIntent { entity, dir })
+                }
+                MonsterAIMode::Guarding => {
+                    if let Some(home) = self.home_position {
+                        let dist_from_home = DistanceAlg::Pythagoras.distance2d(monster_pos, home);
+                        if dist_from_home > GUARD_PATROL_RADIUS as f32 {
+                            // Too far from home — pathfind back.
+                            let path = a_star_search(
+                                map.point2d_to_index(monster_pos),
+                                map.point2d_to_index(home),
+                                map,
+                            );
+                            if path.success && path.steps.len() > 1 {
+                                let next_step = map.index_to_point2d(path.steps[1]);
+                                let dir = Direction::from_pos(
+                                    &Position::from_point(monster_pos),
+                                    &Position::from_point(next_step),
+                                );
+                                Some(MovementIntent { entity, dir })
+                            } else {
+                                None
+                            }
+                        } else {
+                            // Within patrol radius — random walk constrained to radius.
+                            let mut directions = Direction::ALL.to_vec();
+                            directions.shuffle(&mut rng);
+
+                            let mut chosen_dir = None;
+                            for dir in directions {
+                                let target = monster_pos + dir.offset();
+                                if map.in_bounds(target)
+                                    && is_walkable(map.tiles[map.xy_idx(target.x, target.y)])
+                                    && DistanceAlg::Pythagoras.distance2d(target, home) <= GUARD_PATROL_RADIUS as f32
+                                {
+                                    chosen_dir = Some(dir);
+                                    break;
+                                }
+                            }
+                            chosen_dir.map(|dir| MovementIntent { entity, dir })
+                        }
+                    } else {
+                        None
+                    }
                 }
                 _ => None,
             }

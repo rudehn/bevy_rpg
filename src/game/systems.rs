@@ -13,7 +13,7 @@ use bracket_lib::prelude::{Algorithm2D, Point, field_of_view};
 use crate::game::magic::{Enraged, Stunned};
 use crate::map::map::GRID_SIZE;
 use crate::{
-    components::{InInventory, Item, Monster, Position, Viewshed},
+    components::{InInventory, Item, Monster, Position, Prop, Viewshed},
     map::Map,
     player::Player,
 };
@@ -97,6 +97,36 @@ pub fn update_status_visuals(
             sprite.color = bevy::prelude::Color::srgba(1.0, 1.0, 0.3, 1.0);
         } else {
             sprite.color = bevy::prelude::Color::WHITE;
+        }
+    }
+}
+
+/// Updates prop visibility to match the player's explored/visible state.
+/// Same logic as items: explored-but-not-visible tiles show dimmed.
+pub fn update_prop_visibility(
+    player_query: Query<&Viewshed, With<Player>>,
+    map: Res<Map>,
+    mut prop_query: Query<(&Position, &mut Visibility, &mut Sprite), With<Prop>>,
+) {
+    let Ok(viewshed) = player_query.single() else {
+        return;
+    };
+
+    for (pos, mut vis, mut sprite) in prop_query.iter_mut() {
+        if !map.in_bounds(Point::new(pos.x, pos.y)) {
+            continue;
+        }
+        let idx = map.xy_idx(pos.x, pos.y);
+        let pt = Point::new(pos.x, pos.y);
+
+        if viewshed.visible_tiles.contains(&pt) {
+            *vis = Visibility::Visible;
+            sprite.color = bevy::prelude::Color::WHITE;
+        } else if map.explored_tiles[idx] {
+            *vis = Visibility::Visible;
+            sprite.color = bevy::prelude::Color::srgb(0.5, 0.5, 0.5);
+        } else {
+            *vis = Visibility::Hidden;
         }
     }
 }

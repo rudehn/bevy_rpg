@@ -9,9 +9,11 @@ use crate::assets::{
     CandleSpritesheet, ItemManifest, ItemManifestHandle, ItemSpriteAssets, ItemSpawnTable,
     ItemSpawnTableHandle, MonsterManifest, MonsterManifestHandle, MonsterSpawnTable,
     MonsterSpawnTableHandle, MonsterSpriteAssets, TileManifest, TileManifestHandle, TileSpriteAssets,
+    PropManifest, PropManifestHandle, PropSpriteAssets,
+    PrefabManifest, PrefabManifestHandle,
 };
-use crate::components::{FloorEntityMarker, InInventory, Monster, Name, Position, Item};
-use crate::game::{TurnManager, spawn_monster_by_name, spawn_item, items::ItemStack, turns::TurnMarker};
+use crate::components::{FloorEntityMarker, InInventory, Monster, Name, Position, Item, Prop};
+use crate::game::{TurnManager, spawn_monster_by_name, spawn_item, spawn_prop, items::ItemStack, turns::TurnMarker};
 use crate::map::Map;
 use crate::map::builders::BuilderMap;
 use crate::map::light::{Candle, spawn_candle};
@@ -37,7 +39,7 @@ pub struct TileAssets<'w> {
     sprite_assets: Res<'w, TileSpriteAssets>,
 }
 
-/// Groups monster, item, and candle assets to keep parameter count down.
+/// Groups monster, item, candle, and prop assets to keep parameter count down.
 #[derive(SystemParam)]
 pub struct EntityAssets<'w> {
     pub candle_spritesheet: Res<'w, CandleSpritesheet>,
@@ -51,6 +53,11 @@ pub struct EntityAssets<'w> {
     pub item_sprite_assets: Res<'w, ItemSpriteAssets>,
     pub item_spawn_tables: Res<'w, Assets<ItemSpawnTable>>,
     pub item_spawn_table_handle: Res<'w, ItemSpawnTableHandle>,
+    pub prop_manifests: Res<'w, Assets<PropManifest>>,
+    pub prop_manifest_handle: Res<'w, PropManifestHandle>,
+    pub prop_sprite_assets: Res<'w, PropSpriteAssets>,
+    pub prefab_manifests: Res<'w, Assets<PrefabManifest>>,
+    pub prefab_manifest_handle: Res<'w, PrefabManifestHandle>,
 }
 
 // ---------------------------------------------------------------------------
@@ -60,17 +67,29 @@ pub struct EntityAssets<'w> {
 
 pub struct CachedFloor {
     pub map: Map,
-    /// Alive monsters: their last-known grid position and manifest name.
-    pub monster_list: Vec<(Point, String)>,
+    /// Alive monsters: their position, name, and optional squad data.
+    pub monster_list: Vec<CachedMonster>,
     /// Surrounding items: their position, name, and stack count.
     pub item_list: Vec<(Point, String, u32)>,
     pub candle_spawn_points: Vec<Point>,
+    /// Props: their position and prop name.
+    pub prop_list: Vec<(Point, String)>,
     /// Position of the DownStairs on this floor; player lands adjacent to it
     /// when returning from below (ascending).
     pub down_stairs_pos: Point,
     /// Position of the UpStairs on this floor; player lands adjacent to it
     /// when returning from above (descending).
     pub up_stairs_pos: Point,
+}
+
+/// A monster entry in the floor cache, preserving squad membership.
+pub struct CachedMonster {
+    pub pos: Point,
+    pub name: String,
+    pub squad_id: Option<u64>,
+    pub is_leader: bool,
+    pub squad_config: Option<crate::game::squad::SquadConfig>,
+    pub home_position: Option<Point>,
 }
 
 #[derive(Resource, Default)]
@@ -219,13 +238,21 @@ fn find_adjacent_floor(map: &Map, target: Point) -> Option<Point> {
 /// Snapshot the current floor's surviving entities into a `CachedFloor`.
 fn snapshot_floor(
     map: &Map,
-    monster_query: &Query<(&Position, &Name), With<Monster>>,
+    monster_query: &Query<(&Position, &Name, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, &crate::game::MonsterAI), With<Monster>>,
     item_query: &Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     candle_query: &Query<&Position, With<Candle>>,
+    prop_query: &Query<(&Position, &Name), With<Prop>>,
 ) -> CachedFloor {
     let monster_list = monster_query
         .iter()
-        .map(|(pos, name)| (pos.to_point(), name.0.clone()))
+        .map(|(pos, name, squad_id, squad_config, is_leader, ai)| CachedMonster {
+            pos: pos.to_point(),
+            name: name.0.clone(),
+            squad_id: squad_id.map(|s| s.0),
+            is_leader,
+            squad_config: squad_config.cloned(),
+            home_position: ai.home_position,
+        })
         .collect();
 
     let item_list = item_query
@@ -241,6 +268,11 @@ fn snapshot_floor(
         .map(|pos| Point::new(pos.x, pos.y))
         .collect();
 
+    let prop_list = prop_query
+        .iter()
+        .map(|(pos, name)| (pos.to_point(), name.0.clone()))
+        .collect();
+
     let down_stairs_pos = find_down_stairs(map).unwrap_or(Point::new(0, 0));
     let up_stairs_pos = find_up_stairs(map).unwrap_or(Point::new(0, 0));
 
@@ -249,6 +281,7 @@ fn snapshot_floor(
         monster_list,
         item_list,
         candle_spawn_points,
+        prop_list,
         down_stairs_pos,
         up_stairs_pos,
     }
@@ -308,15 +341,16 @@ fn map_transition_system(
     q_map_markers: Query<Entity, With<DungeonECSMap>>,
     q_tiles: Query<Entity, With<TileMarker>>,
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
-    q_monsters: Query<(&Position, &Name), With<Monster>>,
+    q_monsters: Query<(&Position, &Name, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, &crate::game::MonsterAI), With<Monster>>,
     q_items: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     q_candles: Query<&Position, With<Candle>>,
+    q_props: Query<(&Position, &Name), With<Prop>>,
     mut turn_manager: ResMut<TurnManager>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     // Snapshot before despawning so we can return to this floor later.
-    let cached = snapshot_floor(&map, &q_monsters, &q_items, &q_candles);
+    let cached = snapshot_floor(&map, &q_monsters, &q_items, &q_candles, &q_props);
     floor_cache.0.insert(floor.0, cached);
 
     despawn_floor_entities(&mut commands, &q_map_markers, &q_tiles, &q_floor_entities);
@@ -341,9 +375,10 @@ fn ascend_stairs_system(
     q_map_markers: Query<Entity, With<DungeonECSMap>>,
     q_tiles: Query<Entity, With<TileMarker>>,
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
-    q_monsters: Query<(&Position, &Name), With<Monster>>,
+    q_monsters: Query<(&Position, &Name, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, &crate::game::MonsterAI), With<Monster>>,
     q_items: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     q_candles: Query<&Position, With<Candle>>,
+    q_props: Query<(&Position, &Name), With<Prop>>,
     mut turn_manager: ResMut<TurnManager>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
@@ -353,7 +388,7 @@ fn ascend_stairs_system(
     }
 
     // Snapshot current floor before leaving it.
-    let cached = snapshot_floor(&map, &q_monsters, &q_items, &q_candles);
+    let cached = snapshot_floor(&map, &q_monsters, &q_items, &q_candles, &q_props);
     floor_cache.0.insert(floor.0, cached);
 
     despawn_floor_entities(&mut commands, &q_map_markers, &q_tiles, &q_floor_entities);
@@ -410,16 +445,28 @@ fn spawn_dungeon_entities(
         spawn_candle(commands, &assets.candle_spritesheet, pt);
     }
 
-    for (pt, name) in build_data.spawn_list.iter() {
-        spawn_monster_by_name(
+    for entry in build_data.spawn_list.iter() {
+        if let Some(entity) = spawn_monster_by_name(
             commands,
-            name.as_str(),
-            pt,
+            entry.name.as_str(),
+            &entry.pos,
             turn_manager,
             &assets.monster_manifests,
             &assets.monster_manifest_handle,
             &assets.monster_sprite_assets,
-        );
+        ) {
+            // Attach squad components if this monster is part of a squad.
+            if let (Some(squad_id), Some(squad_config)) = (entry.squad_id, entry.squad_config.clone()) {
+                commands.entity(entity).insert((squad_id, squad_config));
+                if entry.is_leader {
+                    commands.entity(entity).insert(crate::game::squad::SquadLeader);
+                }
+            }
+            // Guard AI: override default MonsterAI with guard behavior.
+            if let Some(home) = entry.home_position {
+                commands.entity(entity).insert(crate::game::MonsterAI::guard(home));
+            }
+        }
     }
 
     for (pt, name, count) in build_data.item_spawn_list.iter() {
@@ -441,6 +488,17 @@ fn spawn_dungeon_entities(
             }
         }
     }
+
+    for (pt, name) in build_data.prop_spawn_list.iter() {
+        spawn_prop(
+            commands,
+            name.as_str(),
+            pt,
+            &assets.prop_manifests,
+            &assets.prop_manifest_handle,
+            &assets.prop_sprite_assets,
+        );
+    }
 }
 
 pub fn spawn_dungeon(
@@ -453,6 +511,7 @@ pub fn spawn_dungeon(
     mut pending_player_load: ResMut<PendingPlayerLoad>,
     mut auto_save_pending: ResMut<AutoSavePending>,
     mut needs_explored_init: ResMut<NeedsExploredInit>,
+    squad_counter: ResMut<crate::game::squad::SquadIdCounter>,
     assets: EntityAssets,
     tile_assets: TileAssets,
     mut log_writer: MessageWriter<GameLogMessage>,
@@ -471,7 +530,10 @@ pub fn spawn_dungeon(
         *map = save_data_to_map(&save_data.map);
         spawn_tiles_into_ecs(&mut commands, map_entity, &map, &tile_assets);
 
-        // Spawn monsters with saved HP override
+        // Restore squad ID counter
+        commands.insert_resource(crate::game::squad::SquadIdCounter(save_data.squad_id_counter));
+
+        // Spawn monsters with saved HP override and squad data
         for entry in &save_data.monsters {
             let pt = Point::new(entry.x, entry.y);
             if let Some(entity) = spawn_monster_by_name(
@@ -484,6 +546,19 @@ pub fn spawn_dungeon(
                 &assets.monster_sprite_assets,
             ) {
                 commands.entity(entity).insert(SavedHp(entry.hp_current));
+                if let (Some(sid), Some(cfg)) = (entry.squad_id, entry.squad_config.clone()) {
+                    commands.entity(entity).insert((
+                        crate::game::squad::SquadId(sid),
+                        cfg,
+                    ));
+                    if entry.is_leader {
+                        commands.entity(entity).insert(crate::game::squad::SquadLeader);
+                    }
+                }
+                if let Some(home) = entry.home_position {
+                    let home_pt = Point::new(home[0], home[1]);
+                    commands.entity(entity).insert(crate::game::MonsterAI::guard(home_pt));
+                }
             }
         }
 
@@ -515,6 +590,19 @@ pub fn spawn_dungeon(
             spawn_candle(&mut commands, &assets.candle_spritesheet, &pt);
         }
 
+        // Spawn props
+        for entry in &save_data.props {
+            let pt = Point::new(entry.x, entry.y);
+            spawn_prop(
+                &mut commands,
+                &entry.name,
+                &pt,
+                &assets.prop_manifests,
+                &assets.prop_manifest_handle,
+                &assets.prop_sprite_assets,
+            );
+        }
+
         // Pass the floor cache save data to apply_player_load_system
         let saved_floor_cache: std::collections::HashMap<u32, crate::save::CachedFloorSave> =
             save_data.floor_cache.clone();
@@ -539,16 +627,29 @@ pub fn spawn_dungeon(
 
         spawn_tiles_into_ecs(&mut commands, map_entity, &map, &tile_assets);
 
-        for (pt, name) in &cached.monster_list {
-            spawn_monster_by_name(
+        for cached_mon in &cached.monster_list {
+            if let Some(entity) = spawn_monster_by_name(
                 &mut commands,
-                name.as_str(),
-                pt,
+                cached_mon.name.as_str(),
+                &cached_mon.pos,
                 &mut turn_manager,
                 &assets.monster_manifests,
                 &assets.monster_manifest_handle,
                 &assets.monster_sprite_assets,
-            );
+            ) {
+                if let (Some(sid), Some(cfg)) = (cached_mon.squad_id, cached_mon.squad_config.clone()) {
+                    commands.entity(entity).insert((
+                        crate::game::squad::SquadId(sid),
+                        cfg,
+                    ));
+                    if cached_mon.is_leader {
+                        commands.entity(entity).insert(crate::game::squad::SquadLeader);
+                    }
+                }
+                if let Some(home) = cached_mon.home_position {
+                    commands.entity(entity).insert(crate::game::MonsterAI::guard(home));
+                }
+            }
         }
 
         for (pt, name, count) in &cached.item_list {
@@ -575,6 +676,17 @@ pub fn spawn_dungeon(
             spawn_candle(&mut commands, &assets.candle_spritesheet, pt);
         }
 
+        for (pt, name) in &cached.prop_list {
+            spawn_prop(
+                &mut commands,
+                name.as_str(),
+                pt,
+                &assets.prop_manifests,
+                &assets.prop_manifest_handle,
+                &assets.prop_sprite_assets,
+            );
+        }
+
         needs_explored_init.0 = true;
 
         // Land the player adjacent to the stairs they arrived through so they
@@ -598,12 +710,19 @@ pub fn spawn_dungeon(
             .get(&assets.item_spawn_table_handle.0)
             .unwrap();
 
+        let prefabs = assets.prefab_manifests
+            .get(&assets.prefab_manifest_handle.0)
+            .map(|m| m.prefabs.clone())
+            .unwrap_or_default();
+
         let mut builder = level_builder(
             floor.0 as i32,
             MAP_SIZE.x as i32,
             MAP_SIZE.y as i32,
             &spawn_table.spawns,
             &item_spawn_table.spawns,
+            squad_counter.clone(),
+            prefabs,
         );
         builder.build_map();
         *map = builder.build_data.map.clone();

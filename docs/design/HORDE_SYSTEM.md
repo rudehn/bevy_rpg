@@ -85,6 +85,14 @@ When a room rolls a spawn, the spawner picks a group size in `[min_group, max_gr
 
 ---
 
+## Related: Squad System
+
+Horde-spawned groups are linked by the [squad system](SQUAD_SYSTEM.md), which
+adds shared alerting, leader death effects (scatter/enrage), and collective flee
+decisions. Squad behavior is configured per spawn entry in `monster_spawns.ron`.
+
+---
+
 ## Future Tuning Knobs
 
 - **Spawn chance scaling**: Currently flat 50% per room. Could scale with depth (e.g., `40 + depth * 2`, capped at 80%) if density is too low after horde testing.

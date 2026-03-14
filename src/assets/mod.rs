@@ -52,6 +52,8 @@ impl Plugin for AssetsPlugin {
             .init_resource::<ItemSpawnTableHandle>()
             .init_resource::<PlayerAssetHandle>()
             .init_resource::<SpellRegistryHandle>()
+            .init_resource::<PropManifestHandle>()
+            .init_resource::<PrefabManifestHandle>()
             .add_systems(
                 OnEnter(AppState::Loading),
                 (
@@ -63,6 +65,8 @@ impl Plugin for AssetsPlugin {
                     load_item_spawn_table,
                     load_player_asset,
                     load_spell_registry,
+                    load_prop_manifest,
+                    load_prefab_manifest,
                 ),
             )
             .add_systems(
@@ -71,6 +75,7 @@ impl Plugin for AssetsPlugin {
                     load_monster_sprites,
                     load_tile_sprites,
                     load_item_sprites,
+                    load_prop_sprites,
                     check_assets_loaded,
                 )
                     .run_if(in_state(AppState::Loading)),
@@ -90,11 +95,14 @@ impl Plugin for LoadingPlugin {
             RonAssetPlugin::<ItemSpawnTable>::new(&["item_spawns.ron"]),
             RonAssetPlugin::<PlayerAsset>::new(&["player.ron"]),
             RonAssetPlugin::<SpellRegistry>::new(&["spells.ron"]),
+            RonAssetPlugin::<PropManifest>::new(&["props.ron"]),
+            RonAssetPlugin::<PrefabManifest>::new(&["prefabs.ron"]),
         ))
         .add_systems(Startup, (camera::setup_camera, set_clear_color))
         .init_resource::<MonsterSpriteAssets>()
         .init_resource::<TileSpriteAssets>()
-        .init_resource::<ItemSpriteAssets>();
+        .init_resource::<ItemSpriteAssets>()
+        .init_resource::<PropSpriteAssets>();
     }
 }
 
@@ -121,6 +129,95 @@ pub struct CandleSpritesheet {
     pub layout: Handle<TextureAtlasLayout>,
     pub texture: Handle<Image>,
 }
+
+#[derive(Resource, Default)]
+pub struct PropSpriteAssets {
+    pub handles: HashMap<String, Handle<Image>>,
+    pub layouts: HashMap<String, Handle<TextureAtlasLayout>>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize, Debug, Clone)]
+pub struct PropAsset {
+    pub name: String,
+    pub sprite: String,
+    #[serde(default)]
+    pub is_blocking: bool,
+    #[serde(default)]
+    pub is_opaque: bool,
+    #[serde(default)]
+    pub light_radius: Option<f32>,
+    #[serde(default)]
+    pub light_color: Option<[f32; 3]>,
+    #[serde(default)]
+    pub animated_frames: Option<u32>,
+    #[serde(default)]
+    pub grid_size: Option<UVec2>,
+    #[serde(default)]
+    pub tile_size: Option<UVec2>,
+}
+
+#[derive(Asset, TypePath, Deserialize, Debug, Clone)]
+pub struct PropManifest {
+    pub props: HashMap<String, PropAsset>,
+}
+
+#[derive(Resource, Default)]
+pub struct PropManifestHandle(pub Handle<PropManifest>);
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct PrefabPropEntry {
+    pub x: i32,
+    pub y: i32,
+    pub prop: String,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct PrefabMonsterSpawn {
+    pub x: i32,
+    pub y: i32,
+    pub monster: Option<String>,
+    #[serde(default)]
+    pub guard: bool,
+    #[serde(default)]
+    pub squad: bool,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct PrefabItemSpawn {
+    pub x: i32,
+    pub y: i32,
+    pub item: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize, Debug, Clone)]
+pub struct PrefabTemplate {
+    pub name: String,
+    pub width: i32,
+    pub height: i32,
+    pub min_floor: i32,
+    pub max_floor: i32,
+    pub tiles: Vec<String>,
+    #[serde(default)]
+    pub props: Vec<PrefabPropEntry>,
+    #[serde(default)]
+    pub monster_spawns: Vec<PrefabMonsterSpawn>,
+    #[serde(default)]
+    pub item_spawns: Vec<PrefabItemSpawn>,
+    #[serde(default)]
+    pub on_leader_death: String,
+    #[serde(default = "default_flee_threshold")]
+    pub flee_threshold: f32,
+}
+
+#[derive(Asset, TypePath, Deserialize, Debug, Clone)]
+pub struct PrefabManifest {
+    pub prefabs: Vec<PrefabTemplate>,
+}
+
+#[derive(Resource, Default)]
+pub struct PrefabManifestHandle(pub Handle<PrefabManifest>);
 
 #[derive(Asset, TypePath, Deserialize, Resource, Debug, Clone)]
 pub struct PlayerAsset {
@@ -260,6 +357,14 @@ pub struct MonsterSpawnInfo {
     /// Mixed-species group. When non-empty, `monster`/`min_group`/`max_group` are ignored.
     #[serde(default)]
     pub group: Vec<GroupMember>,
+
+    /// Squad behavior: what happens when the leader dies ("scatter", "enrage", or "" for nothing).
+    #[serde(default)]
+    pub on_leader_death: String,
+
+    /// Squad behavior: collective HP ratio below which cowardly squad members flee.
+    #[serde(default = "default_flee_threshold")]
+    pub flee_threshold: f32,
 }
 
 /// A single species entry within a mixed group spawn.
@@ -274,6 +379,10 @@ pub struct GroupMember {
 
 fn default_group_one() -> i32 {
     1
+}
+
+fn default_flee_threshold() -> f32 {
+    0.5
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
@@ -457,6 +566,14 @@ fn load_spell_registry(asset_server: Res<AssetServer>, mut handle: ResMut<SpellR
     handle.0 = asset_server.load("spells.ron");
 }
 
+fn load_prop_manifest(asset_server: Res<AssetServer>, mut handle: ResMut<PropManifestHandle>) {
+    handle.0 = asset_server.load("props.ron");
+}
+
+fn load_prefab_manifest(asset_server: Res<AssetServer>, mut handle: ResMut<PrefabManifestHandle>) {
+    handle.0 = asset_server.load("prefabs.ron");
+}
+
 fn load_monster_sprites(
     asset_server: Res<AssetServer>,
     monster_manifest_handle: Res<MonsterManifestHandle>,
@@ -611,6 +728,45 @@ fn load_item_sprites(
     }
 }
 
+fn load_prop_sprites(
+    asset_server: Res<AssetServer>,
+    prop_manifest_handle: Res<PropManifestHandle>,
+    prop_manifests: Res<Assets<PropManifest>>,
+    mut prop_sprite_assets: ResMut<PropSpriteAssets>,
+    mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
+) {
+    if let Some(manifest) = prop_manifests.get(&prop_manifest_handle.0) {
+        for prop_asset in manifest.props.values() {
+            let (texture_path, _) = parse_sprite_path(&prop_asset.sprite);
+            let texture_path_string = texture_path.to_string();
+
+            if !prop_sprite_assets
+                .handles
+                .contains_key(&texture_path_string)
+            {
+                let texture_handle = asset_server.load::<Image>(texture_path_string.clone());
+                prop_sprite_assets
+                    .handles
+                    .insert(texture_path_string.clone(), texture_handle);
+
+                let tile_size = prop_asset.tile_size.unwrap_or(UVec2::new(16, 16));
+                let grid_size = prop_asset.grid_size.unwrap_or(UVec2::new(4, 1));
+
+                let layout_handle = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
+                    tile_size,
+                    grid_size.x,
+                    grid_size.y,
+                    None,
+                    None,
+                ));
+                prop_sprite_assets
+                    .layouts
+                    .insert(texture_path_string, layout_handle);
+            }
+        }
+    }
+}
+
 // Groups the overflow resources so check_assets_loaded stays within Bevy's
 // 16-SystemParam limit.
 #[derive(bevy::ecs::system::SystemParam)]
@@ -621,6 +777,11 @@ struct ExtraLoadingParams<'w> {
     player_assets: Res<'w, Assets<PlayerAsset>>,
     spell_registry_handle: Res<'w, SpellRegistryHandle>,
     spell_registries: Res<'w, Assets<SpellRegistry>>,
+    prop_manifest_handle: Res<'w, PropManifestHandle>,
+    prop_manifests: Res<'w, Assets<PropManifest>>,
+    prop_sprite_assets: Res<'w, PropSpriteAssets>,
+    prefab_manifest_handle: Res<'w, PrefabManifestHandle>,
+    prefab_manifests: Res<'w, Assets<PrefabManifest>>,
     next_state: ResMut<'w, NextState<AppState>>,
 }
 
@@ -690,6 +851,22 @@ fn check_assets_loaded(
         return;
     }
 
+    if extra
+        .prop_manifests
+        .get(&extra.prop_manifest_handle.0)
+        .is_none()
+    {
+        return;
+    }
+
+    if extra
+        .prefab_manifests
+        .get(&extra.prefab_manifest_handle.0)
+        .is_none()
+    {
+        return;
+    }
+
     if monster_sprite_assets.handles.is_empty()
         || tile_sprite_assets.handles.is_empty()
         || item_sprite_assets.handles.is_empty()
@@ -710,6 +887,12 @@ fn check_assets_loaded(
     }
 
     for handle in item_sprite_assets.handles.values() {
+        if !asset_server.is_loaded_with_dependencies(handle) {
+            return;
+        }
+    }
+
+    for handle in extra.prop_sprite_assets.handles.values() {
         if !asset_server.is_loaded_with_dependencies(handle) {
             return;
         }

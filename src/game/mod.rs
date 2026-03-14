@@ -1,5 +1,6 @@
 use crate::game::abilities::AbilitiesPlugin;
 use crate::game::boss::BossPlugin;
+use crate::game::squad::SquadPlugin;
 use crate::game::targeting::TargetingPlugin;
 use crate::{
     assets::{ItemManifest, ItemManifestHandle, ItemSpriteAssets},
@@ -13,7 +14,7 @@ use crate::{
         magic::MagicPlugin,
         particles::ParticlesPlugin,
         stats::StatsPlugin,
-        systems::{fov_update_system, sync_entity_transforms, update_monster_visibility, update_item_visibility, update_status_visuals},
+        systems::{fov_update_system, sync_entity_transforms, update_monster_visibility, update_item_visibility, update_prop_visibility, update_status_visuals},
         turns::TurnOrderPlugin,
     },
     map::{
@@ -50,6 +51,7 @@ pub mod particles;
 pub mod ranged;
 pub mod spawner;
 pub mod spells;
+pub mod squad;
 pub mod stats;
 mod systems;
 pub mod targeting;
@@ -102,6 +104,7 @@ impl Plugin for GamePlugin {
                 ParticlesPlugin,
                 AbilitiesPlugin,
                 BossPlugin,
+                SquadPlugin,
                 TargetingPlugin,
             ))
             // Position→Transform sync and camera run whenever in-game, including Targeting state.
@@ -126,6 +129,9 @@ impl Plugin for GamePlugin {
                         .run_if(|query: Query<(), Changed<Position>>| !query.is_empty())
                         .after(fov_update_system),
                     update_item_visibility
+                        .run_if(|query: Query<(), Changed<Viewshed>>| !query.is_empty())
+                        .after(fov_update_system),
+                    update_prop_visibility
                         .run_if(|query: Query<(), Changed<Viewshed>>| !query.is_empty())
                         .after(fov_update_system),
                     loot_drop_system.after(CombatDamageSet),

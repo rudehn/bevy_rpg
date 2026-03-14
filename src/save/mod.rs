@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     assets::{ItemManifest, ItemManifestHandle, ItemSpriteAssets},
-    components::{Equipped, FloorEntityMarker, InInventory, Inventory, Item, Monster, Name, Position, Viewshed},
+    components::{Equipped, FloorEntityMarker, InInventory, Inventory, Item, Monster, Name, Position, Prop, Viewshed},
     game::{
         AppState,
         combat::{Damage, Health},
@@ -19,6 +19,7 @@ use crate::{
             SpellCooldowns, SpiritShielded, Stunned, TimedModifiers,
         },
         spawner::spawn_item,
+        squad::{SquadConfig, SquadId, SquadIdCounter, SquadLeader},
         stats::{AttributeModifiers, Attributes, Level, Mana},
     },
     map::{
@@ -180,7 +181,18 @@ pub struct GameSaveData {
     pub monsters: Vec<MonsterEntry>,
     pub floor_items: Vec<ItemEntry>,
     pub candles: Vec<[i32; 2]>,
+    #[serde(default)]
+    pub props: Vec<PropEntry>,
     pub floor_cache: HashMap<u32, CachedFloorSave>,
+    #[serde(default)]
+    pub squad_id_counter: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PropEntry {
+    pub x: i32,
+    pub y: i32,
+    pub name: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -263,6 +275,14 @@ pub struct MonsterEntry {
     pub y: i32,
     pub name: String,
     pub hp_current: i32,
+    #[serde(default)]
+    pub squad_id: Option<u64>,
+    #[serde(default)]
+    pub is_leader: bool,
+    #[serde(default)]
+    pub squad_config: Option<SquadConfig>,
+    #[serde(default)]
+    pub home_position: Option<[i32; 2]>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -277,12 +297,28 @@ pub struct ItemEntry {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CachedFloorSave {
     pub map: MapSaveData,
-    pub monster_list: Vec<([i32; 2], String)>,
+    pub monster_list: Vec<CachedMonsterSave>,
     pub item_list: Vec<([i32; 2], String, u32)>,
     pub candle_spawn_points: Vec<[i32; 2]>,
+    #[serde(default)]
+    pub prop_list: Vec<([i32; 2], String)>,
     pub down_stairs_pos: [i32; 2],
     #[serde(default)]
     pub up_stairs_pos: [i32; 2],
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CachedMonsterSave {
+    pub pos: [i32; 2],
+    pub name: String,
+    #[serde(default)]
+    pub squad_id: Option<u64>,
+    #[serde(default)]
+    pub is_leader: bool,
+    #[serde(default)]
+    pub squad_config: Option<SquadConfig>,
+    #[serde(default)]
+    pub home_position: Option<[i32; 2]>,
 }
 
 // ---- Conversion helpers ----
@@ -315,7 +351,14 @@ pub fn cached_floor_to_save(cached: &CachedFloor) -> CachedFloorSave {
         monster_list: cached
             .monster_list
             .iter()
-            .map(|(pt, name)| ([pt.x, pt.y], name.clone()))
+            .map(|m| CachedMonsterSave {
+                pos: [m.pos.x, m.pos.y],
+                name: m.name.clone(),
+                squad_id: m.squad_id,
+                is_leader: m.is_leader,
+                squad_config: m.squad_config.clone(),
+                home_position: m.home_position.map(|p| [p.x, p.y]),
+            })
             .collect(),
         item_list: cached
             .item_list
@@ -327,18 +370,31 @@ pub fn cached_floor_to_save(cached: &CachedFloor) -> CachedFloorSave {
             .iter()
             .map(|pt| [pt.x, pt.y])
             .collect(),
+        prop_list: cached
+            .prop_list
+            .iter()
+            .map(|(pt, name)| ([pt.x, pt.y], name.clone()))
+            .collect(),
         down_stairs_pos: [cached.down_stairs_pos.x, cached.down_stairs_pos.y],
         up_stairs_pos: [cached.up_stairs_pos.x, cached.up_stairs_pos.y],
     }
 }
 
 pub fn save_to_cached_floor(data: &CachedFloorSave) -> CachedFloor {
+    use crate::map::dungeon::CachedMonster;
     CachedFloor {
         map: save_data_to_map(&data.map),
         monster_list: data
             .monster_list
             .iter()
-            .map(|(pos, name)| (Point::new(pos[0], pos[1]), name.clone()))
+            .map(|m| CachedMonster {
+                pos: Point::new(m.pos[0], m.pos[1]),
+                name: m.name.clone(),
+                squad_id: m.squad_id,
+                is_leader: m.is_leader,
+                squad_config: m.squad_config.clone(),
+                home_position: m.home_position.map(|p| Point::new(p[0], p[1])),
+            })
             .collect(),
         item_list: data
             .item_list
@@ -349,6 +405,11 @@ pub fn save_to_cached_floor(data: &CachedFloorSave) -> CachedFloor {
             .candle_spawn_points
             .iter()
             .map(|pos| Point::new(pos[0], pos[1]))
+            .collect(),
+        prop_list: data
+            .prop_list
+            .iter()
+            .map(|(pos, name)| (Point::new(pos[0], pos[1]), name.clone()))
             .collect(),
         down_stairs_pos: Point::new(data.down_stairs_pos[0], data.down_stairs_pos[1]),
         up_stairs_pos: Point::new(data.up_stairs_pos[0], data.up_stairs_pos[1]),
@@ -399,9 +460,11 @@ pub fn auto_save_system(
         With<Player>,
     >,
     inv_item_query: Query<(&Name, &ItemProperties, Has<Equipped>, Option<&ItemStack>), With<InInventory>>,
-    monster_query: Query<(&Position, &Name, &Health), With<Monster>>,
+    monster_query: Query<(&Position, &Name, &Health, Option<&SquadId>, Option<&SquadConfig>, Has<SquadLeader>, &crate::game::MonsterAI), With<Monster>>,
+    squad_counter: Res<SquadIdCounter>,
     floor_item_query: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     candle_query: Query<&Position, With<Candle>>,
+    prop_query: Query<(&Position, &Name), With<Prop>>,
 ) {
     auto_save_pending.0 = false;
 
@@ -439,11 +502,15 @@ pub fn auto_save_system(
     // Floor monsters
     let monsters: Vec<MonsterEntry> = monster_query
         .iter()
-        .map(|(pos, name, health)| MonsterEntry {
+        .map(|(pos, name, health, squad_id, squad_config, is_leader, ai)| MonsterEntry {
             x: pos.x,
             y: pos.y,
             name: name.0.clone(),
             hp_current: health.current,
+            squad_id: squad_id.map(|s| s.0),
+            is_leader,
+            squad_config: squad_config.cloned(),
+            home_position: ai.home_position.map(|p| [p.x, p.y]),
         })
         .collect();
 
@@ -487,6 +554,12 @@ pub fn auto_save_system(
 
     // Candles
     let candles: Vec<[i32; 2]> = candle_query.iter().map(|pos| [pos.x, pos.y]).collect();
+
+    // Props
+    let props: Vec<PropEntry> = prop_query
+        .iter()
+        .map(|(pos, name)| PropEntry { x: pos.x, y: pos.y, name: name.0.clone() })
+        .collect();
 
     // Floor cache
     let floor_cache_save: HashMap<u32, CachedFloorSave> = floor_cache
@@ -539,7 +612,9 @@ pub fn auto_save_system(
         monsters,
         floor_items,
         candles,
+        props,
         floor_cache: floor_cache_save,
+        squad_id_counter: squad_counter.0,
     };
 
     match ron::ser::to_string_pretty(&save_data, ron::ser::PrettyConfig::default()) {
