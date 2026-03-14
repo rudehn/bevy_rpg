@@ -2,19 +2,16 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::{
-    components::{Collider, InInventory, Inventory, Monster, Name, Position, Viewshed, Item, AmuletOfBevy},
+    components::{Collider, InInventory, Inventory, Monster, Name, Position, Viewshed, Item},
     constants::BASE_ACTION_COST,
     game::{
         combat::{AttackIntentMessage, DamageType, DamageTypeTag, DamageSource},
         effects::UseItemMessage,
         items::{DropItemMessage, EquipItemMessage, ItemStack, UnequipItemMessage},
-        level::Experience,
         magic::CastSpellMessage,
-        stats::Level,
         turns::MyTurn,
-        AppState, RunSummary,
     },
-    map::{Map, dungeon::Floor, tile::{is_walkable, TerrainType, TileMarker}, map::DungeonECSMap},
+    map::{Map, tile::{is_walkable, TerrainType, TileMarker}, map::DungeonECSMap},
     player::Player,
     assets::{TileManifest, TileManifestHandle, TileSpriteAssets},
     ui::game_log::GameLogMessage,
@@ -228,13 +225,9 @@ pub fn handle_pickup(
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
     actors_query: Query<(Entity, &Position, Has<Player>)>,
-    items_query: Query<(Entity, &Position, &Name, Has<AmuletOfBevy>, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
+    items_query: Query<(Entity, &Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     mut inv_query: Query<&mut Inventory, With<Player>>,
     inv_stacks_query: Query<(&Name, &ItemStack), With<InInventory>>,
-    player_stats_query: Query<(Option<&Experience>, Option<&Level>), With<Player>>,
-    mut next_state: ResMut<NextState<AppState>>,
-    floor: Res<Floor>,
-    mut run_summary: ResMut<RunSummary>,
 ) {
     for intent in intents.read() {
         let Ok((actor_entity, actor_pos, is_player)) = actors_query.get(intent.entity) else {
@@ -242,25 +235,9 @@ pub fn handle_pickup(
         };
 
         let mut picked_up = false;
-        for (item_entity, item_pos, item_name, is_amulet, item_stack) in items_query.iter() {
+        for (item_entity, item_pos, item_name, item_stack) in items_query.iter() {
             if actor_pos != item_pos {
                 continue;
-            }
-
-            if is_player && is_amulet {
-                info!("Player picked up the Amulet of Bevy! VICTORY!");
-                let (exp, level) = player_stats_query.single().unwrap_or((None, None));
-                *run_summary = RunSummary {
-                    floor_reached: floor.0,
-                    level: level.map(|l| l.value).unwrap_or(1),
-                    xp_earned: exp.map(|e| e.current).unwrap_or(0),
-                    cause: String::new(),
-                    victory: true,
-                };
-                next_state.set(AppState::Victory);
-                commands.entity(item_entity).despawn();
-                picked_up = true;
-                break;
             }
 
             if is_player {

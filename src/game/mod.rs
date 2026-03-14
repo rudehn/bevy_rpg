@@ -1,4 +1,5 @@
 use crate::game::abilities::AbilitiesPlugin;
+use crate::game::boss::BossPlugin;
 use crate::game::targeting::TargetingPlugin;
 use crate::{
     assets::{ItemManifest, ItemManifestHandle, ItemSpriteAssets},
@@ -37,6 +38,7 @@ pub struct RunSummary {
 pub mod abilities;
 pub mod actions;
 mod ai;
+pub mod boss;
 pub mod camera;
 pub mod combat;
 pub mod effects;
@@ -98,6 +100,7 @@ impl Plugin for GamePlugin {
                 MagicPlugin,
                 ParticlesPlugin,
                 AbilitiesPlugin,
+                BossPlugin,
                 TargetingPlugin,
             ))
             // Position→Transform sync and camera run whenever in-game, including Targeting state.

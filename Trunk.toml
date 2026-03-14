@@ -1,3 +1,7 @@
 [build]
 # Must match the GitHub Pages subdirectory path (repo name)
 public_url = "/bevy_rpg/"
+
+[serve]
+# Override public_url for local development so asset fetches use "/"
+public_url = "/"

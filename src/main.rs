@@ -1,4 +1,5 @@
 use bevy::asset::AssetMetaCheck;
+use bevy::diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin};
 use bevy::prelude::*;
 
 use crate::assets::LoadingPlugin;
@@ -25,6 +26,7 @@ fn main() {
                     ..default()
                 }),
             (LoadingPlugin, SavePlugin, GamePlugin, UiPlugin),
+            (FrameTimeDiagnosticsPlugin::default(), LogDiagnosticsPlugin::default()),
         ))
         .init_state::<AppState>()
         .run();

@@ -58,9 +58,6 @@ pub struct Name(pub String);
 pub struct Item;
 
 #[derive(Component)]
-pub struct AmuletOfBevy;
-
-#[derive(Component)]
 pub struct GameEntityMarker;
 
 #[derive(Component)]
@@ -91,3 +88,7 @@ pub struct Equipped;
 /// Used by the ranged attack system to find consumable ammo in inventory.
 #[derive(Component, Debug, Default)]
 pub struct Ammo;
+
+/// Marker component for the final boss entity. Death triggers victory.
+#[derive(Component, Debug, Default)]
+pub struct FinalBoss;

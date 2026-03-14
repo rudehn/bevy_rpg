@@ -27,14 +27,6 @@ pub struct MonsterInfoPanel;
 #[derive(Component)]
 struct MonsterInfoContent;
 
-/// Marker for the sub-tooltip that shows ability/spell descriptions on hover.
-#[derive(Component)]
-struct InfoSubTooltip;
-
-/// Stores the description text shown when the user hovers this row.
-#[derive(Component)]
-struct InfoRowDescription(String);
-
 /// Tracks which entity the panel is currently showing and its last known HP,
 /// to avoid rebuilding every frame.
 #[derive(Component)]
@@ -79,33 +71,6 @@ fn spawn_monster_info_panel(mut commands: Commands, q_ui_camera: Query<Entity, W
             ));
         });
 
-    // Sub-tooltip for hover descriptions
-    commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                display: Display::None,
-                flex_direction: FlexDirection::Column,
-                padding: UiRect::all(Val::Px(4.0)),
-                border: UiRect::all(Val::Px(1.0)),
-                max_width: Val::Px(220.0),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.1, 0.1, 0.15, 0.95)),
-            BorderColor::all(Color::srgb(0.6, 0.6, 0.7)),
-            ZIndex(110),
-            Visibility::Hidden,
-            UiTargetCamera(ui_camera),
-            InfoSubTooltip,
-            GameEntityMarker,
-        ))
-        .with_children(|parent| {
-            parent.spawn((
-                Text::new(""),
-                TextFont::default(),
-                TextColor(Color::srgb(0.9, 0.9, 0.9)),
-            ));
-        });
 }
 
 // --- Ability/Spell Description Helpers ---
@@ -183,7 +148,7 @@ fn update_monster_info_panel(
     q_camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     mut q_panel: Query<
         (Entity, &mut Node, &mut Visibility, Option<&PanelTarget>),
-        (With<MonsterInfoPanel>, Without<InfoSubTooltip>),
+        With<MonsterInfoPanel>,
     >,
     q_content: Query<Entity, With<MonsterInfoContent>>,
     // Split into two queries to stay under Bevy's 15-element tuple limit:
@@ -227,7 +192,7 @@ fn update_monster_info_panel(
         Option<&TimedModifiers>,
     )>,
     nearby_state: Res<NearbyState>,
-    pos_query: Query<&Position>,
+    pos_query: Query<(Entity, &Position), Or<(With<Monster>, With<Player>)>>,
     asset_server: Res<AssetServer>,
     spell_registry_handle: Option<Res<SpellRegistryHandle>>,
     spell_registries: Res<Assets<SpellRegistry>>,
@@ -251,29 +216,30 @@ fn update_monster_info_panel(
     let mut focused_entity = None;
     let mut screen_position = None;
 
-    // Use grid-based lookup instead of iterating all entities with AABB checks.
-    // Convert mouse world position to grid coords and find matching entity.
+    // Grid-based lookup: convert mouse to grid coords, then find a matching
+    // Monster/Player entity at that position. Only iterates pos_query (lightweight)
+    // instead of unpacking all q_base components for every entity.
     if let Some(screen_pos) = window.cursor_position() {
         if let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, screen_pos) {
             let grid_x = (world_pos.x / TILE_SIZE_X as f32 + 0.5).floor() as i32;
             let grid_y = (world_pos.y / TILE_SIZE_X as f32 + 0.5).floor() as i32;
 
-            for (entity, _, _, _, _, _, _, visibility) in q_base.iter() {
-                if !visibility.get() {
-                    continue;
-                }
-                if let Ok(pos) = pos_query.get(entity) {
-                    if pos.x == grid_x && pos.y == grid_y {
-                        focused_entity = Some(entity);
-                        let entity_world = Vec3::new(
-                            pos.x as f32 * TILE_SIZE_X as f32,
-                            pos.y as f32 * TILE_SIZE_X as f32,
-                            0.0,
-                        );
-                        if let Ok(sp) = camera.world_to_viewport(camera_transform, entity_world) {
-                            screen_position = Some(sp);
+            for (entity, pos) in pos_query.iter() {
+                if pos.x == grid_x && pos.y == grid_y {
+                    // Check that it's a visible Monster or Player with base stats
+                    if let Ok((_, _, _, _, _, _, _, visibility)) = q_base.get(entity) {
+                        if visibility.get() {
+                            focused_entity = Some(entity);
+                            let entity_world = Vec3::new(
+                                pos.x as f32 * TILE_SIZE_X as f32,
+                                pos.y as f32 * TILE_SIZE_X as f32,
+                                0.0,
+                            );
+                            if let Ok(sp) = camera.world_to_viewport(camera_transform, entity_world) {
+                                screen_position = Some(sp);
+                            }
+                            break;
                         }
-                        break;
                     }
                 }
             }
@@ -286,7 +252,7 @@ fn update_monster_info_panel(
             if let Some(&entity) = nearby_state.entity_list.get(idx) {
                 if q_base.get(entity).is_ok() {
                     focused_entity = Some(entity);
-                    if let Ok(pos) = pos_query.get(entity) {
+                    if let Ok((_, pos)) = pos_query.get(entity) {
                         let entity_world = Vec3::new(
                             pos.x as f32 * TILE_SIZE_X as f32,
                             pos.y as f32 * TILE_SIZE_X as f32 + TILE_SIZE_X as f32 * 0.5,
@@ -561,26 +527,19 @@ fn update_monster_info_panel(
                 },
             ));
             for entry in &ability_entries {
-                parent
-                    .spawn((
-                        Node {
-                            padding: UiRect::left(Val::Px(8.0)),
-                            ..default()
-                        },
-                        Interaction::None,
-                        InfoRowDescription(entry.description.clone()),
-                    ))
-                    .with_children(|row| {
-                        row.spawn((
-                            Text::new(format!("- {}", entry.name)),
-                            TextFont {
-                                font: font.clone(),
-                                font_size: 12.0,
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.85, 0.85, 0.85)),
-                        ));
-                    });
+                parent.spawn((
+                    Text::new(format!("- {}", entry.description)),
+                    TextFont {
+                        font: font.clone(),
+                        font_size: 11.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.85, 0.85, 0.85)),
+                    Node {
+                        padding: UiRect::left(Val::Px(8.0)),
+                        ..default()
+                    },
+                ));
             }
         }
 
@@ -599,27 +558,20 @@ fn update_monster_info_panel(
                     ..default()
                 },
             ));
-            for (spell_name, spell_desc) in &spell_entries {
-                parent
-                    .spawn((
-                        Node {
-                            padding: UiRect::left(Val::Px(8.0)),
-                            ..default()
-                        },
-                        Interaction::None,
-                        InfoRowDescription(spell_desc.clone()),
-                    ))
-                    .with_children(|row| {
-                        row.spawn((
-                            Text::new(format!("- {}", spell_name)),
-                            TextFont {
-                                font: font.clone(),
-                                font_size: 12.0,
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.85, 0.85, 0.85)),
-                        ));
-                    });
+            for (spell_name, _spell_desc) in &spell_entries {
+                parent.spawn((
+                    Text::new(format!("- {}", spell_name)),
+                    TextFont {
+                        font: font.clone(),
+                        font_size: 12.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.85, 0.85, 0.85)),
+                    Node {
+                        padding: UiRect::left(Val::Px(8.0)),
+                        ..default()
+                    },
+                ));
             }
         }
 
@@ -674,47 +626,8 @@ fn update_monster_info_panel(
 
 // --- Sub-tooltip hover system ---
 
-#[allow(clippy::type_complexity)]
-fn update_info_sub_tooltip(
-    q_rows: Query<(&Interaction, &InfoRowDescription, &GlobalTransform)>,
-    mut q_tooltip: Query<
-        (&mut Node, &mut Visibility),
-        (With<InfoSubTooltip>, Without<InfoRowDescription>),
-    >,
-    mut q_tooltip_text: Query<&mut Text, With<InfoSubTooltip>>,
-) {
-    let Ok((mut tooltip_node, mut tooltip_vis)) = q_tooltip.single_mut() else {
-        return;
-    };
-
-    let mut found_hover = false;
-
-    for (interaction, desc, global_transform) in q_rows.iter() {
-        if *interaction == Interaction::Hovered && !desc.0.is_empty() {
-            found_hover = true;
-
-            *tooltip_vis = Visibility::Visible;
-            tooltip_node.display = Display::Flex;
-
-            // Position near the hovered row
-            let pos = global_transform.translation();
-            tooltip_node.left = Val::Px(pos.x + 80.0);
-            tooltip_node.top = Val::Px(pos.y.max(0.0));
-
-            // Update text
-            if let Ok(mut text) = q_tooltip_text.single_mut() {
-                text.0 = desc.0.clone();
-            }
-
-            break;
-        }
-    }
-
-    if !found_hover {
-        *tooltip_vis = Visibility::Hidden;
-        tooltip_node.display = Display::None;
-    }
-}
+// Sub-tooltip hover is disabled to avoid Bevy picking system overhead.
+// Ability descriptions are shown inline in the panel instead.
 
 // --- Plugin ---
 
@@ -725,7 +638,7 @@ impl Plugin for MonsterInfoPlugin {
         app.add_systems(OnEnter(AppState::InGame), spawn_monster_info_panel)
             .add_systems(
                 Update,
-                (update_monster_info_panel, update_info_sub_tooltip)
+                update_monster_info_panel
                     .run_if(in_state(AppState::InGame)),
             );
     }

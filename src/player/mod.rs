@@ -139,6 +139,24 @@ pub fn player_spawn_or_move_system(
                     .remove::<FloorEntityMarker>();
                 items.push(arrow_entity);
             }
+            // Starting spellbooks: Fire Dart and Spark
+            for tome_name in &["Tome of Fire Dart", "Tome of Spark"] {
+                if let Some(tome_entity) = spawn_item(
+                    &mut commands,
+                    tome_name,
+                    &Point::new(0, 0),
+                    &item_manifests,
+                    &item_manifest_handle,
+                    &item_sprite_assets,
+                ) {
+                    commands
+                        .entity(tome_entity)
+                        .insert(InInventory)
+                        .insert(Visibility::Hidden)
+                        .remove::<FloorEntityMarker>();
+                    items.push(tome_entity);
+                }
+            }
             items
         };
 

@@ -448,5 +448,27 @@
             ],
             thorn_aura: Some(2),
         ),
+
+        // ==================== BOSS ====================
+
+        "The Veiled Tyrant": (
+            name: "The Veiled Tyrant",
+            perception: 16,
+            sprite: "sprites/monsters/orc.png#0",
+            damage: "2d8+4",
+            damage_type: "necrotic",
+            level: 12,
+            base_hp: 120,
+            strength: 18,
+            dexterity: 14,
+            constitution: 20,
+            agility: 10,
+            intelligence: 20,
+            base_armor: 3,
+            regen: 5,
+            spells: ["shadow_bolt", "mana_drain", "heal_self", "chain_lightning", "spirit_shield", "death_coil", "enrage"],
+            summon_on_death: Some(("Wraith", 2)),
+            is_boss: true,
+        ),
     }
 )

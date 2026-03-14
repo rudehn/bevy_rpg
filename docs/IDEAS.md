@@ -2,6 +2,9 @@
 
 This document is a curation of gameplay ideas that would be nice to add to the game (potentially with modification)
 
+* I want particle effects for arrows
+* I want particle effects for spells (as many as possible, prompt where sprites don't exist)
+
 HP regen should be slow.
 * Most monsters should regain hp slowly, while some monsters, like Trolls, should regain HP at an accelerated rate
 * Player should be able to find resources to regen HP faster (items, higher constitution, etc)
@@ -21,7 +24,6 @@ Monsters
 
 Items
 * Items with higher than common rarity should have a hue around them when on the floor. This hue is defined in ITEMS.md
-* Remove is_victory from required item definition ron file
 
 
 
@@ -124,3 +126,4 @@ System,Simple (Traditional),Advanced (Simulation-Heavy)
 Movement,Random wander,Goal-oriented (hunting/fleeing)
 Detection,Proximity based,Sound/Scent/Light level based
 Interaction,"""Bump"" to attack",Environment manipulation (pushing boulders)
+

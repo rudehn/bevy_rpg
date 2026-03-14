@@ -234,6 +234,10 @@ pub struct MonsterAsset {
     /// Summon on death: (monster_name, count).
     #[serde(default)]
     pub summon_on_death: Option<(String, u32)>,
+
+    /// Whether this monster is a boss (gets FinalBoss + BossAI components).
+    #[serde(default)]
+    pub is_boss: bool,
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]

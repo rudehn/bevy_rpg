@@ -8,7 +8,7 @@ use crate::{
         AppState,
         combat::{ApplyDamageMessage, CombatDamageSet, HealMessage, MissMessage},
     },
-    map::{tile::is_opaque, Map},
+    map::{Map, tile::is_opaque},
     player::Player,
 };
 
@@ -52,6 +52,32 @@ pub enum ParticleRequest {
         color: Color,
         speed: f32, // world-units per second
         on_impact: Option<ImpactData>,
+    },
+    /// A sprite-based projectile (arrow, lightning, etc.) that travels from
+    /// source to destination using an image asset instead of a text glyph.
+    SpriteProjectile {
+        source: Vec2,
+        destination: Vec2,
+        sprite_path: String,
+        speed: f32,
+        on_impact: Option<ImpactData>,
+    },
+    /// An animated sprite projectile that cycles through multiple frames
+    /// while traveling from source to destination (fire bolts, lightning).
+    AnimatedSpriteProjectile {
+        source: Vec2,
+        destination: Vec2,
+        sprite_paths: Vec<String>,
+        frame_rate: f32,
+        speed: f32,
+        on_impact: Option<ImpactData>,
+    },
+    /// Static animated sprite flash at a position (fire burst, lightning impact).
+    SpriteImpact {
+        world_pos: Vec2,
+        sprite_paths: Vec<String>,
+        frame_rate: f32,
+        duration: f32,
     },
     /// Brief flash at a position; no movement, just fades.
     Impact {
@@ -120,15 +146,80 @@ impl ParticleRequest {
         }
     }
 
-    /// Tan '·' arrow projectile with no impact flash.
-    pub fn arrow(src: Vec2, dst: Vec2) -> Self {
-        Self::Projectile {
+    /// Sprite-based arrow projectile with direction-appropriate sprite.
+    pub fn arrow(src_grid: (i32, i32), dst_grid: (i32, i32)) -> Self {
+        let src = grid_to_world_center(src_grid.0, src_grid.1);
+        let dst = grid_to_world_center(dst_grid.0, dst_grid.1);
+        let dir_idx = direction_index_8(src, dst);
+        Self::SpriteProjectile {
             source: src,
             destination: dst,
-            glyph: '\u{00B7}', // ·
-            color: Color::srgb(0.82, 0.71, 0.55),
+            sprite_path: format!("sprites/effects/arrow_{}.png", dir_idx),
             speed: 120.0,
             on_impact: None,
+        }
+    }
+
+    /// Animated lightning projectile — cycles through zap_0..3 sprites rapidly.
+    pub fn lightning(src_grid: (i32, i32), dst_grid: (i32, i32)) -> Self {
+        let src = grid_to_world_center(src_grid.0, src_grid.1);
+        let dst = grid_to_world_center(dst_grid.0, dst_grid.1);
+        Self::AnimatedSpriteProjectile {
+            source: src,
+            destination: dst,
+            sprite_paths: (0..4)
+                .map(|i| format!("sprites/effects/zap_{}.png", i))
+                .collect(),
+            frame_rate: 500.0,
+            speed: 160.0,
+            on_impact: None,
+        }
+    }
+
+    /// Animated fire projectile — cycles through flame_0..2 with orange impact on arrival.
+    pub fn fire_bolt(src_grid: (i32, i32), dst_grid: (i32, i32)) -> Self {
+        let src = grid_to_world_center(src_grid.0, src_grid.1);
+        let dst = grid_to_world_center(dst_grid.0, dst_grid.1);
+        Self::AnimatedSpriteProjectile {
+            source: src,
+            destination: dst,
+            sprite_paths: (0..3)
+                .map(|i| format!("sprites/effects/flame_{}.png", i))
+                .collect(),
+            frame_rate: 10.0,
+            speed: 100.0,
+            on_impact: Some(ImpactData {
+                glyph: '*',
+                color: Color::srgb(1.0, 0.5, 0.1),
+                font_size: 16.0,
+                duration: 0.3,
+            }),
+        }
+    }
+
+    /// Static animated flame impact at a grid position (for AoE fire effects).
+    pub fn fire_impact(grid_pos: (i32, i32)) -> Self {
+        let pos = grid_to_world_center(grid_pos.0, grid_pos.1);
+        Self::SpriteImpact {
+            world_pos: pos,
+            sprite_paths: (0..3)
+                .map(|i| format!("sprites/effects/flame_{}.png", i))
+                .collect(),
+            frame_rate: 10.0,
+            duration: 0.4,
+        }
+    }
+
+    /// Static animated lightning impact at a grid position (for AoE lightning effects).
+    pub fn lightning_impact(grid_pos: (i32, i32)) -> Self {
+        let pos = grid_to_world_center(grid_pos.0, grid_pos.1);
+        Self::SpriteImpact {
+            world_pos: pos,
+            sprite_paths: (0..4)
+                .map(|i| format!("sprites/effects/zap_{}.png", i))
+                .collect(),
+            frame_rate: 12.0,
+            duration: 0.3,
         }
     }
 
@@ -154,27 +245,94 @@ pub struct ParticleEffect {
 
 #[derive(Component)]
 pub enum ParticleKind {
-    Float { velocity: Vec2 },
-    Projectile { destination: Vec2, speed: f32, on_impact: Option<ImpactData> },
+    Float {
+        velocity: Vec2,
+    },
+    Projectile {
+        destination: Vec2,
+        speed: f32,
+        on_impact: Option<ImpactData>,
+    },
+    SpriteProjectile {
+        destination: Vec2,
+        speed: f32,
+        on_impact: Option<ImpactData>,
+    },
+    AnimatedSpriteProjectile {
+        destination: Vec2,
+        speed: f32,
+        sprite_handles: Vec<Handle<Image>>,
+        frame_rate: f32,
+        frame_timer: f32,
+        current_frame: usize,
+        on_impact: Option<ImpactData>,
+    },
+    AnimatedImpact {
+        sprite_handles: Vec<Handle<Image>>,
+        frame_rate: f32,
+        frame_timer: f32,
+        current_frame: usize,
+    },
     Impact,
 }
 
 // --- Setup ---
 
 fn setup_particle_font(mut commands: Commands, asset_server: Res<AssetServer>) {
-    commands.insert_resource(ParticleFont(
-        asset_server.load("fonts/Macondo-Regular.ttf"),
-    ));
+    commands.insert_resource(ParticleFont(asset_server.load("fonts/Macondo-Regular.ttf")));
 }
 
 // --- Helpers ---
 
+/// Converts grid coordinates to world position, offset upward by half a tile
+/// (used for floating text so it appears above the entity sprite).
 pub fn grid_to_world(gx: i32, gy: i32) -> Vec2 {
     use crate::map::map::GRID_SIZE;
-    Vec2::new(gx as f32 * GRID_SIZE.x, gy as f32 * GRID_SIZE.y + GRID_SIZE.y * 0.5)
+    Vec2::new(
+        gx as f32 * GRID_SIZE.x,
+        gy as f32 * GRID_SIZE.y + GRID_SIZE.y * 0.5,
+    )
 }
 
-fn spawn_impact_entity(commands: &mut Commands, font: &ParticleFont, world_pos: Vec2, impact: &ImpactData) {
+/// Converts grid coordinates to world position centered on the tile
+/// (used for projectiles that should fly through tile centers).
+pub fn grid_to_world_center(gx: i32, gy: i32) -> Vec2 {
+    use crate::map::map::GRID_SIZE;
+    Vec2::new(gx as f32 * GRID_SIZE.x, gy as f32 * GRID_SIZE.y)
+}
+
+/// Maps the direction from `src` to `dst` to a sprite index 0–7.
+/// Convention: 0=↑, 1=↗, 2=→, 3=↘, 4=↓, 5=↙, 6=←, 7=↖ (clockwise from up).
+fn direction_index_8(src: Vec2, dst: Vec2) -> usize {
+    let d = dst - src;
+    // atan2 gives angle from +X axis counter-clockwise; convert to clockwise-from-up index.
+    let angle = d.y.atan2(d.x); // radians, -π..π
+    // Map atan2 octant (CCW from +X) to our sprite index (CW from up).
+    const OCTANT_TO_INDEX: [usize; 8] = [2, 1, 0, 7, 6, 5, 4, 3];
+    // Snap to nearest 45° octant: shift by half-octant so boundaries fall between directions.
+    let octant = ((angle / std::f32::consts::FRAC_PI_4).round() as i32).rem_euclid(8) as usize;
+    OCTANT_TO_INDEX[octant]
+}
+
+/// Returns a thematic color for a given damage type (used for non-sprite spell projectile fallback).
+pub fn damage_type_color(dt: crate::game::combat::DamageType) -> Color {
+    use crate::game::combat::DamageType;
+    match dt {
+        DamageType::Fire => Color::srgb(1.0, 0.5, 0.1),
+        DamageType::Lightning => Color::srgb(0.5, 0.8, 1.0),
+        DamageType::Ice => Color::srgb(0.4, 0.7, 1.0),
+        DamageType::Necrotic => Color::srgb(0.6, 0.1, 0.8),
+        DamageType::Poison => Color::srgb(0.2, 0.9, 0.2),
+        DamageType::Physical => Color::srgb(0.9, 0.9, 0.9),
+    }
+}
+
+fn spawn_impact_entity(
+    commands: &mut Commands,
+    font: &ParticleFont,
+    world_pos: Vec2,
+    impact: &ImpactData,
+) {
     commands.spawn((
         Text2d::new(impact.glyph.to_string()),
         TextFont {
@@ -228,12 +386,18 @@ pub fn particle_spawn_system(
     mut requests: MessageReader<ParticleRequest>,
     mut commands: Commands,
     font: Res<ParticleFont>,
+    asset_server: Res<AssetServer>,
     map: Option<Res<Map>>,
     player_viewshed: Query<&Viewshed, With<Player>>,
 ) {
     for req in requests.read() {
         match req {
-            ParticleRequest::FloatingText { world_pos, text, color, font_size } => {
+            ParticleRequest::FloatingText {
+                world_pos,
+                text,
+                color,
+                font_size,
+            } => {
                 commands.spawn((
                     Text2d::new(text.clone()),
                     TextFont {
@@ -249,11 +413,20 @@ pub fn particle_spawn_system(
                         lifetime_remaining: LIFETIME_FLOAT,
                         lifetime_total: LIFETIME_FLOAT,
                     },
-                    ParticleKind::Float { velocity: FLOAT_VEL },
+                    ParticleKind::Float {
+                        velocity: FLOAT_VEL,
+                    },
                 ));
             }
 
-            ParticleRequest::Projectile { source, destination, glyph, color, speed, on_impact } => {
+            ParticleRequest::Projectile {
+                source,
+                destination,
+                glyph,
+                color,
+                speed,
+                on_impact,
+            } => {
                 let dist = source.distance(*destination);
                 let travel_duration = if *speed > 0.0 { dist / speed } else { 0.1 };
                 commands.spawn((
@@ -279,7 +452,112 @@ pub fn particle_spawn_system(
                 ));
             }
 
-            ParticleRequest::Impact { world_pos, glyph, color, font_size, duration } => {
+            ParticleRequest::SpriteProjectile {
+                source,
+                destination,
+                sprite_path,
+                speed,
+                on_impact,
+            } => {
+                let dist = source.distance(*destination);
+                let travel_duration = if *speed > 0.0 { dist / speed } else { 0.1 };
+                commands.spawn((
+                    Sprite {
+                        image: asset_server.load(sprite_path),
+                        custom_size: Some(Vec2::splat(16.0)),
+                        ..default()
+                    },
+                    Transform::from_translation(source.extend(Z_PARTICLE)),
+                    RenderLayers::layer(1),
+                    GameEntityMarker,
+                    ParticleEffect {
+                        lifetime_remaining: travel_duration,
+                        lifetime_total: travel_duration,
+                    },
+                    ParticleKind::SpriteProjectile {
+                        destination: *destination,
+                        speed: *speed,
+                        on_impact: on_impact.clone(),
+                    },
+                ));
+            }
+
+            ParticleRequest::AnimatedSpriteProjectile {
+                source,
+                destination,
+                sprite_paths,
+                frame_rate,
+                speed,
+                on_impact,
+            } => {
+                let dist = source.distance(*destination);
+                let travel_duration = if *speed > 0.0 { dist / speed } else { 0.1 };
+                let handles: Vec<Handle<Image>> =
+                    sprite_paths.iter().map(|p| asset_server.load(p)).collect();
+                let first_handle = handles[0].clone();
+                commands.spawn((
+                    Sprite {
+                        image: first_handle,
+                        custom_size: Some(Vec2::splat(16.0)),
+                        ..default()
+                    },
+                    Transform::from_translation(source.extend(Z_PARTICLE)),
+                    RenderLayers::layer(1),
+                    GameEntityMarker,
+                    ParticleEffect {
+                        lifetime_remaining: travel_duration,
+                        lifetime_total: travel_duration,
+                    },
+                    ParticleKind::AnimatedSpriteProjectile {
+                        destination: *destination,
+                        speed: *speed,
+                        sprite_handles: handles,
+                        frame_rate: *frame_rate,
+                        frame_timer: 0.0,
+                        current_frame: 0,
+                        on_impact: on_impact.clone(),
+                    },
+                ));
+            }
+
+            ParticleRequest::SpriteImpact {
+                world_pos,
+                sprite_paths,
+                frame_rate,
+                duration,
+            } => {
+                let handles: Vec<Handle<Image>> =
+                    sprite_paths.iter().map(|p| asset_server.load(p)).collect();
+                let first_handle = handles[0].clone();
+                commands.spawn((
+                    Sprite {
+                        image: first_handle,
+                        custom_size: Some(Vec2::splat(16.0)),
+                        ..default()
+                    },
+                    Transform::from_translation(world_pos.extend(Z_PARTICLE)),
+                    RenderLayers::layer(1),
+                    GameEntityMarker,
+                    ParticleEffect {
+                        lifetime_remaining: *duration,
+                        lifetime_total: *duration,
+                    },
+                    ParticleKind::AnimatedImpact {
+                        sprite_handles: handles,
+                        frame_rate: *frame_rate,
+                        frame_timer: 0.0,
+                        current_frame: 0,
+                    },
+                ));
+            }
+
+            ParticleRequest::Impact {
+                world_pos,
+                glyph,
+                color,
+                font_size,
+                duration,
+            } => {
                 commands.spawn((
                     Text2d::new(glyph.to_string()),
                     TextFont {
@@ -299,8 +577,17 @@ pub fn particle_spawn_system(
                 ));
             }
 
-            ParticleRequest::AoeImpact { center_grid, radius, glyph, color, font_size, duration } => {
-                let Some(map) = &map else { continue; };
+            ParticleRequest::AoeImpact {
+                center_grid,
+                radius,
+                glyph,
+                color,
+                font_size,
+                duration,
+            } => {
+                let Some(map) = &map else {
+                    continue;
+                };
                 let viewshed = player_viewshed.single().ok();
                 let r = *radius as i32;
                 let cx = center_grid.x;
@@ -369,7 +656,13 @@ pub fn particle_update_system(
     mut commands: Commands,
     time: Res<Time>,
     font: Res<ParticleFont>,
-    mut particles: Query<(Entity, &mut Transform, &mut TextColor, &mut ParticleEffect, &mut ParticleKind)>,
+    mut particles: Query<(
+        Entity,
+        &mut Transform,
+        &mut TextColor,
+        &mut ParticleEffect,
+        &mut ParticleKind,
+    )>,
 ) {
     let dt = time.delta_secs();
     for (entity, mut transform, mut text_color, mut effect, mut kind) in particles.iter_mut() {
@@ -386,7 +679,11 @@ pub fn particle_update_system(
             ParticleKind::Float { velocity } => {
                 transform.translation += velocity.extend(0.0) * dt;
             }
-            ParticleKind::Projectile { destination, speed, on_impact } => {
+            ParticleKind::Projectile {
+                destination,
+                speed,
+                on_impact,
+            } => {
                 let current_pos = transform.translation.xy();
                 let remaining = *destination - current_pos;
                 let dir = remaining.normalize_or_zero();
@@ -402,9 +699,115 @@ pub fn particle_update_system(
                     transform.translation += step.extend(0.0);
                 }
             }
+            ParticleKind::SpriteProjectile { .. }
+            | ParticleKind::AnimatedSpriteProjectile { .. }
+            | ParticleKind::AnimatedImpact { .. } => {
+                // Handled by sprite_particle_update_system (won't match this query).
+            }
             ParticleKind::Impact => {
                 // Alpha fade handled above; no positional update needed
             }
+        }
+    }
+}
+
+/// Updates sprite-based projectile particles (arrows, etc.).
+/// Separate from `particle_update_system` because these have `Sprite` instead of `TextColor`.
+pub fn sprite_particle_update_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    font: Res<ParticleFont>,
+    mut particles: Query<
+        (
+            Entity,
+            &mut Transform,
+            &mut Sprite,
+            &mut ParticleEffect,
+            &mut ParticleKind,
+        ),
+        Without<TextColor>,
+    >,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut transform, mut sprite, mut effect, mut kind) in particles.iter_mut() {
+        effect.lifetime_remaining -= dt;
+        if effect.lifetime_remaining <= 0.0 {
+            commands.entity(entity).despawn();
+            continue;
+        }
+
+        let alpha = (effect.lifetime_remaining / effect.lifetime_total).clamp(0.0, 1.0);
+        sprite.color = sprite.color.with_alpha(alpha);
+
+        match &mut *kind {
+            ParticleKind::SpriteProjectile {
+                destination,
+                speed,
+                on_impact,
+            } => {
+                let current_pos = transform.translation.xy();
+                let remaining = *destination - current_pos;
+                let dir = remaining.normalize_or_zero();
+                let step = dir * *speed * dt;
+
+                if step.length() >= remaining.length() {
+                    if let Some(impact) = on_impact.take() {
+                        spawn_impact_entity(&mut commands, &font, *destination, &impact);
+                    }
+                    commands.entity(entity).despawn();
+                } else {
+                    transform.translation += step.extend(0.0);
+                }
+            }
+            ParticleKind::AnimatedSpriteProjectile {
+                destination,
+                speed,
+                sprite_handles,
+                frame_rate,
+                frame_timer,
+                current_frame,
+                on_impact,
+            } => {
+                // Frame cycling
+                *frame_timer += dt;
+                let frame_duration = 1.0 / *frame_rate;
+                if *frame_timer >= frame_duration && !sprite_handles.is_empty() {
+                    *frame_timer -= frame_duration;
+                    *current_frame = (*current_frame + 1) % sprite_handles.len();
+                    sprite.image = sprite_handles[*current_frame].clone();
+                }
+
+                // Movement
+                let current_pos = transform.translation.xy();
+                let remaining = *destination - current_pos;
+                let dir = remaining.normalize_or_zero();
+                let step = dir * *speed * dt;
+
+                if step.length() >= remaining.length() {
+                    if let Some(impact) = on_impact.take() {
+                        spawn_impact_entity(&mut commands, &font, *destination, &impact);
+                    }
+                    commands.entity(entity).despawn();
+                } else {
+                    transform.translation += step.extend(0.0);
+                }
+            }
+            ParticleKind::AnimatedImpact {
+                sprite_handles,
+                frame_rate,
+                frame_timer,
+                current_frame,
+            } => {
+                // Frame cycling only (no movement)
+                *frame_timer += dt;
+                let frame_duration = 1.0 / *frame_rate;
+                if *frame_timer >= frame_duration && !sprite_handles.is_empty() {
+                    *frame_timer -= frame_duration;
+                    *current_frame = (*current_frame + 1) % sprite_handles.len();
+                    sprite.image = sprite_handles[*current_frame].clone();
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -419,12 +822,18 @@ pub fn combat_particle_bridge_system(
 ) {
     for msg in damage_messages.read() {
         if let Ok(pos) = pos_query.get(msg.target) {
-            particle_writer.write(ParticleRequest::damage(grid_to_world(pos.x, pos.y), msg.final_damage));
+            particle_writer.write(ParticleRequest::damage(
+                grid_to_world(pos.x, pos.y),
+                msg.final_damage,
+            ));
         }
     }
     for msg in heal_messages.read() {
         if let Ok(pos) = pos_query.get(msg.entity) {
-            particle_writer.write(ParticleRequest::heal(grid_to_world(pos.x, pos.y), msg.amount));
+            particle_writer.write(ParticleRequest::heal(
+                grid_to_world(pos.x, pos.y),
+                msg.amount,
+            ));
         }
     }
     for msg in miss_messages.read() {
@@ -448,6 +857,7 @@ impl Plugin for ParticlesPlugin {
                     combat_particle_bridge_system.after(CombatDamageSet),
                     particle_spawn_system.after(combat_particle_bridge_system),
                     particle_update_system,
+                    sprite_particle_update_system,
                 )
                     .run_if(in_state(AppState::InGame)),
             );

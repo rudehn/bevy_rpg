@@ -5,7 +5,7 @@ use bracket_lib::prelude::Point;
 use crate::{
     assets::{MonsterAsset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets, ItemManifest, ItemManifestHandle, ItemSpriteAssets},
     components::{
-        Ammo, Collider, FloorEntityMarker, GameEntityMarker, Monster, Name, Position, Viewshed, Item, AmuletOfBevy,
+        Ammo, Collider, FinalBoss, FloorEntityMarker, GameEntityMarker, Monster, Name, Position, Viewshed, Item,
     },
     constants::{TILE_SIZE_X, TILE_SIZE_Y, Z_MONSTER, Z_ITEM},
     game::{
@@ -250,6 +250,14 @@ pub fn spawn_monster(
         );
     }
 
+    // Boss marker + AI
+    if monster_asset.is_boss {
+        commands.entity(monster_entity).insert((
+            FinalBoss,
+            crate::game::boss::BossAI::default(),
+        ));
+    }
+
     turn_manager.add_entity(monster_entity);
     Some(monster_entity)
 }
@@ -359,10 +367,6 @@ pub fn spawn_item(
     });
 
     entity.insert(ItemStack { count: 1, max_stack: asset.max_stack });
-
-    if asset.is_victory {
-        entity.insert(AmuletOfBevy);
-    }
 
     if asset.is_ammo {
         entity.insert(Ammo);

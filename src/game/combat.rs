@@ -3,7 +3,7 @@ use bracket_lib::random::{RandomNumberGenerator, parse_dice_string};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::components::{Monster, Name, GodMode};
+use crate::components::{FinalBoss, Monster, Name, GodMode};
 use crate::game::level::{Experience, ExperienceReward};
 use crate::game::magic::{Disarmed, Enraged, SpiritShielded};
 use crate::game::stats::{CombatStats, Level, Mana};
@@ -556,14 +556,15 @@ pub fn handle_toggle_god_mode_system(
 /// System that checks for entities with Health <= 0 and handles death.
 pub fn death_system(
     mut commands: Commands,
-    query_dead: Query<(Entity, &Health, &Name, Option<&Player>, Option<&Monster>, Option<&Experience>, Option<&Level>)>,
+    query_dead: Query<(Entity, &Health, &Name, Option<&Player>, Option<&Monster>, Has<FinalBoss>, Option<&Experience>, Option<&Level>)>,
     mut next_state: ResMut<NextState<AppState>>,
     mut turn_manager: ResMut<TurnManager>,
     mut log_writer: MessageWriter<GameLogMessage>,
     floor: Res<Floor>,
     mut run_summary: ResMut<RunSummary>,
+    player_stats_query: Query<(Option<&Experience>, Option<&Level>), With<Player>>,
 ) {
-    for (entity, health, name, is_player, is_monster, exp, level) in query_dead.iter() {
+    for (entity, health, name, is_player, is_monster, is_final_boss, exp, level) in query_dead.iter() {
         if health.current <= 0 {
             if is_player.is_some() {
                 // Player died — permadeath: erase the save
@@ -578,6 +579,23 @@ pub fn death_system(
                 };
                 crate::save::delete_save();
                 next_state.set(AppState::GameOver);
+            } else if is_final_boss {
+                // Final boss defeated — VICTORY!
+                info!("Final boss {:?} defeated!", entity);
+                log_writer.write(GameLogMessage("The Veiled Tyrant falls! Freedom at last!".to_string()));
+                commands.entity(entity).despawn();
+                turn_manager.turn_queue.retain(|&(e, _)| e != entity);
+
+                let (p_exp, p_level) = player_stats_query.single().unwrap_or((None, None));
+                *run_summary = RunSummary {
+                    floor_reached: floor.0,
+                    level: p_level.map(|l| l.value).unwrap_or(1),
+                    xp_earned: p_exp.map(|e| e.current).unwrap_or(0),
+                    cause: String::new(),
+                    victory: true,
+                };
+                crate::save::delete_save();
+                next_state.set(AppState::Victory);
             } else if is_monster.is_some() {
                 // Monster died
                 info!("Monster {:?} died!", entity);

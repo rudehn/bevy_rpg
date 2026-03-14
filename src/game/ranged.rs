@@ -8,6 +8,7 @@ use crate::{
         actions::{ActionFinishedEvent, FreeActionEvent, RangedAttackIntent},
         combat::{AttackIntentMessage, DamageType, DamageSource},
         items::{Equipment, ItemProperties, ItemStack},
+        particles::ParticleRequest,
     },
     player::Player,
     ui::game_log::GameLogMessage,
@@ -33,6 +34,7 @@ pub fn handle_ranged_attack(
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut free_writer: MessageWriter<FreeActionEvent>,
     mut attack_writer: MessageWriter<AttackIntentMessage>,
+    mut particle_writer: MessageWriter<ParticleRequest>,
     mut log_writer: MessageWriter<GameLogMessage>,
     attacker_query: Query<(
         &Position,
@@ -152,6 +154,12 @@ pub fn handle_ranged_attack(
         let attacker_str = attacker_name.map(|n| n.0.as_str()).unwrap_or("Someone");
         let target_str = target_name.map(|n| n.0.as_str()).unwrap_or("the target");
         log_writer.write(GameLogMessage(format!("{} fires at {}!", attacker_str, target_str)));
+
+        // Arrow particle effect.
+        particle_writer.write(ParticleRequest::arrow(
+            (attacker_pos.x, attacker_pos.y),
+            (target_pos.x, target_pos.y),
+        ));
 
         // Valid shot — hand off to the normal attack pipeline.
         // Ranged attacks are always physical for now.

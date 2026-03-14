@@ -65,12 +65,23 @@ impl DistantExit {
             }
         }
 
-        // Place a staircase or the Amulet
+        // Place a staircase or the boss on the final floor
         let stairs_idx = exit_tile.0;
         let stairs_pos = build_data.map.index_to_point2d(stairs_idx);
-        
+
         if build_data.map.depth == 10 {
-            build_data.item_spawn_list.push((stairs_pos, "Amulet of Bevy".to_string(), 1));
+            // Final floor: spawn The Veiled Tyrant + guards, no down stairs
+            build_data.spawn_list.push((stairs_pos, "The Veiled Tyrant".to_string()));
+            // Guard minions near the boss
+            for (dx, dy) in [(1, 0), (-1, 0), (0, 1)] {
+                let guard_pt = Point::new(stairs_pos.x + dx, stairs_pos.y + dy);
+                if build_data.map.in_bounds(guard_pt) {
+                    let idx = build_data.map.point2d_to_index(guard_pt);
+                    if build_data.map.tiles[idx].terrain == TerrainType::Floor {
+                        build_data.spawn_list.push((guard_pt, "Wraith".to_string()));
+                    }
+                }
+            }
         } else {
             build_data.map.set_tile(stairs_pos, TerrainType::DownStairs);
         }

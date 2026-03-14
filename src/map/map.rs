@@ -129,6 +129,10 @@ pub fn update_tile_visibility(
 
     let fov_tiles = &player_viewshed.visible_tiles;
 
+    // Collect newly-explored tile indices so we only trigger map change detection
+    // when there is actually something new to mark (avoids 23ms/frame light map rebuild).
+    let mut newly_explored = Vec::new();
+
     for (tile_pos, mut tile_visibility, mut tile_explored, mut sprite, mut visibility) in
         tile_render_query.iter_mut()
     {
@@ -141,7 +145,9 @@ pub fn update_tile_visibility(
 
             let light = if map.in_bounds(current_point) {
                 let idx = map.xy_idx(tile_pos.x, tile_pos.y);
-                map.explored_tiles[idx] = true;
+                if !map.explored_tiles[idx] {
+                    newly_explored.push(idx);
+                }
                 light_map.values.get(idx).copied().unwrap_or(0.0).max(AMBIENT)
             } else {
                 AMBIENT
@@ -159,6 +165,13 @@ pub fn update_tile_visibility(
                 *visibility = Visibility::Hidden;
                 sprite.color = Color::BLACK;
             }
+        }
+    }
+
+    // Only touch ResMut<Map> (triggering change detection) if there are new tiles to mark.
+    if !newly_explored.is_empty() {
+        for idx in newly_explored {
+            map.explored_tiles[idx] = true;
         }
     }
 }

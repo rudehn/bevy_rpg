@@ -4,6 +4,7 @@ use crate::{
     game::{
         abilities::{Faction, FactionKind},
         actions::{Direction, MovementIntent, RangedAttackIntent, WaitIntent},
+        boss::BossAI,
         combat::Health,
         magic::{ActiveSpells, CastSpellMessage, Hasted, Poisoned, Slowed, SpellCooldowns},
         ranged::RangedCapable,
@@ -261,6 +262,28 @@ struct NearbyEntity {
     has_haste: bool,
 }
 
+/// Spells gated by boss phase. The boss has all spells in its list, but only
+/// considers certain ones based on HP-driven phase. Spells NOT in this list
+/// (e.g. tier-granted fireball, haste) are always available.
+const BOSS_PHASE_SPELLS: &[(&str, u8)] = &[
+    ("shadow_bolt", 1),
+    ("mana_drain", 1),
+    ("heal_self", 1),
+    ("chain_lightning", 2),
+    ("spirit_shield", 2),
+    ("death_coil", 3),
+    ("enrage", 3),
+];
+
+/// Returns the minimum boss phase required to use a spell, or 0 if ungated.
+fn boss_spell_min_phase(spell_id: &str) -> u8 {
+    BOSS_PHASE_SPELLS
+        .iter()
+        .find(|(id, _)| *id == spell_id)
+        .map(|(_, phase)| *phase)
+        .unwrap_or(0) // Ungated spells (fireball, haste, etc.) always available
+}
+
 /// Evaluates all ready spells for `caster` and returns `(slot_index, target_entity)` for
 /// the best one, or `None` if no spell is worth casting.
 ///
@@ -277,6 +300,9 @@ fn choose_spell(
 ) -> Option<(usize, Entity)> {
     // --- Gather caster data upfront ---
     let caster_faction = world.get::<Faction>(caster)?.0.clone();
+
+    // Boss phase filtering: if the caster has BossAI, only allow spells up to the current phase.
+    let boss_phase = world.get::<BossAI>(caster).map(|b| b.phase);
 
     let (active_slots, cooldowns, mana_current, caster_hp, caster_max_hp, int_bonus) = {
         let active = world.get::<ActiveSpells>(caster)?;
@@ -359,6 +385,14 @@ fn choose_spell(
         }
         if mana_current < spell.mana_cost {
             continue;
+        }
+
+        // Boss phase gating: skip spells the boss hasn't unlocked yet.
+        if let Some(phase) = boss_phase {
+            let min_phase = boss_spell_min_phase(spell_id);
+            if min_phase > 0 && phase < min_phase {
+                continue;
+            }
         }
 
         // Resolve the primary target based on SpellTarget and available entities.

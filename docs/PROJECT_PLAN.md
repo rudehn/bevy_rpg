@@ -376,8 +376,6 @@ Files: `src/map/builders/`, `src/map/dungeon.rs`, `src/map/tile.rs`, new `src/ga
 ## Stretch Goals (Post v1.0)
 
 - Item identification system (consumables have randomized unknown appearances each run)
-- WASM export
-- Save/load (already has `bevy_save` dependency)
 - Particle effects (stairs, spells, death)
 - More spell variety (Summon Familiar, Animate Bone, Call Lightning)
 - Animated water/lake tiles

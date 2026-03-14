@@ -1,14 +1,5 @@
 (
     items: {
-        "Amulet of Bevy": (
-            name: "Amulet of Bevy",
-            sprite: "sprites/items/amulets/urand_brooch_of_shielding_new.png#0",
-            tile_size: (32, 32),
-            grid_size: (8, 8),
-            is_victory: true,
-            item_kind: Amulet,
-            rarity: Legendary,
-        ),
         "Iron Sword": (
             name: "Iron Sword",
             sprite: "sprites/items/weapons/long_sword_1_new.png#0",

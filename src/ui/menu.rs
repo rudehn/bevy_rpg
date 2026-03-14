@@ -114,14 +114,14 @@ fn menu_setup(
         .with_children(|root| {
             // Title
             root.spawn((
-                Text::new("IRONVEIL"),
+                Text::new("THE VEILED TYRANT"),
                 TextFont { font: font.clone(), font_size: 80.0, ..default() },
                 TextColor(GOLD),
             ));
 
             // Subtitle
             root.spawn((
-                Text::new("A dungeon lies beneath. The amulet awaits."),
+                Text::new("A dungeon lies beneath. The Tyrant awaits."),
                 TextFont { font: font.clone(), font_size: 18.0, ..default() },
                 TextColor(Color::srgb(0.55, 0.55, 0.55)),
                 Node { margin: UiRect::top(Val::Px(8.0)), ..default() },
@@ -349,13 +349,13 @@ fn victory_setup(
                 TextColor(GOLD),
             ));
             root.spawn((
-                Text::new("The Amulet of Bevy is yours."),
+                Text::new("The Veiled Tyrant falls."),
                 TextFont { font: font.clone(), font_size: 22.0, ..default() },
                 TextColor(Color::WHITE),
                 Node { margin: UiRect::top(Val::Px(10.0)), ..default() },
             ));
             root.spawn((
-                Text::new("Ironveil will remember your name."),
+                Text::new("Freedom at last."),
                 TextFont { font: font.clone(), font_size: 16.0, ..default() },
                 TextColor(Color::srgb(0.6, 0.6, 0.6)),
                 Node { margin: UiRect::top(Val::Px(6.0)), ..default() },

@@ -9,6 +9,7 @@ use crate::{
     game::{
         actions::ActionFinishedEvent,
         combat::{ApplyDamageMessage, DamageSource, DamageType, GameRng, HealMessage},
+        particles::{ParticleRequest, damage_type_color, grid_to_world_center},
         spells::{SpellEffect, SpellRegistry, roll_dice_expr},
         stats::{AttributeModifiers, CombatStats, Mana, sync_action_speed_system},
         turns::TurnEndEvent,
@@ -199,6 +200,7 @@ pub fn handle_cast_spell(
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut damage_writer: MessageWriter<ApplyDamageMessage>,
     mut heal_writer: MessageWriter<HealMessage>,
+    mut particle_writer: MessageWriter<ParticleRequest>,
     mut game_rng: ResMut<GameRng>,
     all_positions: Query<(Entity, &Position)>,
     map: Res<Map>,
@@ -297,6 +299,22 @@ pub fn handle_cast_spell(
                         damage_type: spell_damage_type,
                         source: DamageSource::Spell,
                     });
+                    // Emit spell projectile particle
+                    if let (Ok(caster_pos), Ok(target_pos)) =
+                        (positions.get(caster_entity), positions.get(target_entity))
+                    {
+                        let src = (caster_pos.x, caster_pos.y);
+                        let dst = (target_pos.x, target_pos.y);
+                        match spell_damage_type {
+                            DamageType::Fire => { particle_writer.write(ParticleRequest::fire_bolt(src, dst)); },
+                            DamageType::Lightning => { particle_writer.write(ParticleRequest::lightning(src, dst)); },
+                            _ => { particle_writer.write(ParticleRequest::spell(
+                                grid_to_world_center(src.0, src.1),
+                                grid_to_world_center(dst.0, dst.1),
+                                damage_type_color(spell_damage_type),
+                            )); },
+                        }
+                    }
                 }
                 SpellEffect::Heal { dice, int_scaling } => {
                     let roll = roll_dice_expr(&mut game_rng.0, dice);
@@ -361,6 +379,42 @@ pub fn handle_cast_spell(
                                 hit_count
                             )));
                         }
+
+                        // Emit projectile from caster to center + impact sprites at AoE tiles
+                        if let Ok(caster_pos) = positions.get(caster_entity) {
+                            let src = (caster_pos.x, caster_pos.y);
+                            let center = (cx, cy);
+                            match spell_damage_type {
+                                DamageType::Fire => {
+                                    particle_writer.write(ParticleRequest::fire_bolt(src, center));
+                                    for dx in -radius..=*radius {
+                                        for dy in -radius..=*radius {
+                                            if dx.abs() + dy.abs() <= *radius {
+                                                particle_writer.write(ParticleRequest::fire_impact((cx + dx, cy + dy)));
+                                            }
+                                        }
+                                    }
+                                }
+                                DamageType::Lightning => {
+                                    particle_writer.write(ParticleRequest::lightning(src, center));
+                                    for dx in -radius..=*radius {
+                                        for dy in -radius..=*radius {
+                                            if dx.abs() + dy.abs() <= *radius {
+                                                particle_writer.write(ParticleRequest::lightning_impact((cx + dx, cy + dy)));
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    let color = damage_type_color(spell_damage_type);
+                                    particle_writer.write(ParticleRequest::spell(
+                                        grid_to_world_center(src.0, src.1),
+                                        grid_to_world_center(center.0, center.1),
+                                        color,
+                                    ));
+                                }
+                            }
+                        }
                     }
                 }
                 SpellEffect::ChainDamage {
@@ -380,6 +434,16 @@ pub fn handle_cast_spell(
                         damage_type: spell_damage_type,
                         source: DamageSource::Spell,
                     });
+
+                    // Emit lightning from caster to primary target
+                    if let (Ok(caster_pos), Ok(target_pos)) =
+                        (positions.get(caster_entity), positions.get(target_entity))
+                    {
+                        particle_writer.write(ParticleRequest::lightning(
+                            (caster_pos.x, caster_pos.y),
+                            (target_pos.x, target_pos.y),
+                        ));
+                    }
 
                     // Chain jumps
                     let mut hit_entities = vec![target_entity, caster_entity];
@@ -404,6 +468,13 @@ pub fn handle_cast_spell(
                             }
                         }
                         if let Some((next_ent, _)) = best {
+                            // Emit lightning particle from last position to next target
+                            let next_pos = positions
+                                .get(next_ent)
+                                .map(|p| (p.x, p.y))
+                                .unwrap_or(last_pos);
+                            particle_writer.write(ParticleRequest::lightning(last_pos, next_pos));
+
                             // Secondary targets use halved dice (1dM instead of NdM)
                             let jump_roll = game_rng.0.roll_dice(1, 6);
                             let jump_bonus = if *int_scaling { int_bonus } else { 0 };
@@ -415,10 +486,7 @@ pub fn handle_cast_spell(
                                 damage_type: spell_damage_type,
                                 source: DamageSource::Spell,
                             });
-                            last_pos = positions
-                                .get(next_ent)
-                                .map(|p| (p.x, p.y))
-                                .unwrap_or(last_pos);
+                            last_pos = next_pos;
                             hit_entities.push(next_ent);
                             log_writer.write(GameLogMessage(
                                 "Lightning arcs to another target!".to_string(),
