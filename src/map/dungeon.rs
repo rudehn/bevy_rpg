@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::assets::{
-    CandleSpritesheet, ItemManifest, ItemManifestHandle, ItemSpriteAssets, ItemSpawnTable,
+    ItemManifest, ItemManifestHandle, ItemSpriteAssets, ItemSpawnTable,
     ItemSpawnTableHandle, MonsterManifest, MonsterManifestHandle, MonsterSpawnTable,
     MonsterSpawnTableHandle, MonsterSpriteAssets, TileManifest, TileManifestHandle, TileSpriteAssets,
     PropManifest, PropManifestHandle, PropSpriteAssets,
@@ -16,7 +16,6 @@ use crate::components::{FloorEntityMarker, InInventory, Monster, Name, Position,
 use crate::game::{TurnManager, spawn_monster_by_name, spawn_item, spawn_prop, items::ItemStack, turns::TurnMarker};
 use crate::map::Map;
 use crate::map::builders::BuilderMap;
-use crate::map::light::{Candle, spawn_candle};
 use crate::map::tile::{TerrainType, is_walkable};
 use crate::player::Player;
 use crate::ui::game_log::GameLogMessage;
@@ -39,10 +38,9 @@ pub struct TileAssets<'w> {
     sprite_assets: Res<'w, TileSpriteAssets>,
 }
 
-/// Groups monster, item, candle, and prop assets to keep parameter count down.
+/// Groups monster, item, and prop assets to keep parameter count down.
 #[derive(SystemParam)]
 pub struct EntityAssets<'w> {
-    pub candle_spritesheet: Res<'w, CandleSpritesheet>,
     pub monster_manifests: Res<'w, Assets<MonsterManifest>>,
     pub monster_manifest_handle: Res<'w, MonsterManifestHandle>,
     pub monster_spawn_tables: Res<'w, Assets<MonsterSpawnTable>>,
@@ -71,7 +69,6 @@ pub struct CachedFloor {
     pub monster_list: Vec<CachedMonster>,
     /// Surrounding items: their position, name, and stack count.
     pub item_list: Vec<(Point, String, u32)>,
-    pub candle_spawn_points: Vec<Point>,
     /// Props: their position and prop name.
     pub prop_list: Vec<(Point, String)>,
     /// Position of the DownStairs on this floor; player lands adjacent to it
@@ -240,7 +237,6 @@ fn snapshot_floor(
     map: &Map,
     monster_query: &Query<(&Position, &Name, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, &crate::game::MonsterAI), With<Monster>>,
     item_query: &Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
-    candle_query: &Query<&Position, With<Candle>>,
     prop_query: &Query<(&Position, &Name), With<Prop>>,
 ) -> CachedFloor {
     let monster_list = monster_query
@@ -263,11 +259,6 @@ fn snapshot_floor(
         })
         .collect();
 
-    let candle_spawn_points = candle_query
-        .iter()
-        .map(|pos| Point::new(pos.x, pos.y))
-        .collect();
-
     let prop_list = prop_query
         .iter()
         .map(|(pos, name)| (pos.to_point(), name.0.clone()))
@@ -280,7 +271,6 @@ fn snapshot_floor(
         map: map.clone(),
         monster_list,
         item_list,
-        candle_spawn_points,
         prop_list,
         down_stairs_pos,
         up_stairs_pos,
@@ -343,14 +333,13 @@ fn map_transition_system(
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
     q_monsters: Query<(&Position, &Name, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, &crate::game::MonsterAI), With<Monster>>,
     q_items: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
-    q_candles: Query<&Position, With<Candle>>,
     q_props: Query<(&Position, &Name), With<Prop>>,
     mut turn_manager: ResMut<TurnManager>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     // Snapshot before despawning so we can return to this floor later.
-    let cached = snapshot_floor(&map, &q_monsters, &q_items, &q_candles, &q_props);
+    let cached = snapshot_floor(&map, &q_monsters, &q_items, &q_props);
     floor_cache.0.insert(floor.0, cached);
 
     despawn_floor_entities(&mut commands, &q_map_markers, &q_tiles, &q_floor_entities);
@@ -377,7 +366,6 @@ fn ascend_stairs_system(
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
     q_monsters: Query<(&Position, &Name, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, &crate::game::MonsterAI), With<Monster>>,
     q_items: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
-    q_candles: Query<&Position, With<Candle>>,
     q_props: Query<(&Position, &Name), With<Prop>>,
     mut turn_manager: ResMut<TurnManager>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
@@ -388,7 +376,7 @@ fn ascend_stairs_system(
     }
 
     // Snapshot current floor before leaving it.
-    let cached = snapshot_floor(&map, &q_monsters, &q_items, &q_candles, &q_props);
+    let cached = snapshot_floor(&map, &q_monsters, &q_items, &q_props);
     floor_cache.0.insert(floor.0, cached);
 
     despawn_floor_entities(&mut commands, &q_map_markers, &q_tiles, &q_floor_entities);
@@ -441,10 +429,6 @@ fn spawn_dungeon_entities(
     turn_manager: &mut ResMut<TurnManager>,
     assets: &EntityAssets,
 ) {
-    for pt in build_data.candle_spawn_points.iter() {
-        spawn_candle(commands, &assets.candle_spritesheet, pt);
-    }
-
     for entry in build_data.spawn_list.iter() {
         if let Some(entity) = spawn_monster_by_name(
             commands,
@@ -584,12 +568,6 @@ pub fn spawn_dungeon(
             }
         }
 
-        // Spawn candles
-        for pos in &save_data.candles {
-            let pt = Point::new(pos[0], pos[1]);
-            spawn_candle(&mut commands, &assets.candle_spritesheet, &pt);
-        }
-
         // Spawn props
         for entry in &save_data.props {
             let pt = Point::new(entry.x, entry.y);
@@ -602,7 +580,6 @@ pub fn spawn_dungeon(
                 &assets.prop_sprite_assets,
             );
         }
-
         // Pass the floor cache save data to apply_player_load_system
         let saved_floor_cache: std::collections::HashMap<u32, crate::save::CachedFloorSave> =
             save_data.floor_cache.clone();
@@ -670,10 +647,6 @@ pub fn spawn_dungeon(
                     commands.entity(entity).insert(ItemStack { count: *count, max_stack });
                 }
             }
-        }
-
-        for pt in &cached.candle_spawn_points {
-            spawn_candle(&mut commands, &assets.candle_spritesheet, pt);
         }
 
         for (pt, name) in &cached.prop_list {

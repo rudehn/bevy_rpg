@@ -24,7 +24,6 @@ use crate::{
     },
     map::{
         dungeon::{CachedFloor, FloorCache, Floor, PendingGameLoad, PendingPlayerLoad, AutoSavePending},
-        light::Candle,
         map::Map,
         tile::Tile,
     },
@@ -180,7 +179,6 @@ pub struct GameSaveData {
     pub player: PlayerSaveData,
     pub monsters: Vec<MonsterEntry>,
     pub floor_items: Vec<ItemEntry>,
-    pub candles: Vec<[i32; 2]>,
     #[serde(default)]
     pub props: Vec<PropEntry>,
     pub floor_cache: HashMap<u32, CachedFloorSave>,
@@ -299,7 +297,6 @@ pub struct CachedFloorSave {
     pub map: MapSaveData,
     pub monster_list: Vec<CachedMonsterSave>,
     pub item_list: Vec<([i32; 2], String, u32)>,
-    pub candle_spawn_points: Vec<[i32; 2]>,
     #[serde(default)]
     pub prop_list: Vec<([i32; 2], String)>,
     pub down_stairs_pos: [i32; 2],
@@ -365,11 +362,6 @@ pub fn cached_floor_to_save(cached: &CachedFloor) -> CachedFloorSave {
             .iter()
             .map(|(pt, name, count)| ([pt.x, pt.y], name.clone(), *count))
             .collect(),
-        candle_spawn_points: cached
-            .candle_spawn_points
-            .iter()
-            .map(|pt| [pt.x, pt.y])
-            .collect(),
         prop_list: cached
             .prop_list
             .iter()
@@ -400,11 +392,6 @@ pub fn save_to_cached_floor(data: &CachedFloorSave) -> CachedFloor {
             .item_list
             .iter()
             .map(|(pos, name, count)| (Point::new(pos[0], pos[1]), name.clone(), *count))
-            .collect(),
-        candle_spawn_points: data
-            .candle_spawn_points
-            .iter()
-            .map(|pos| Point::new(pos[0], pos[1]))
             .collect(),
         prop_list: data
             .prop_list
@@ -463,7 +450,6 @@ pub fn auto_save_system(
     monster_query: Query<(&Position, &Name, &Health, Option<&SquadId>, Option<&SquadConfig>, Has<SquadLeader>, &crate::game::MonsterAI), With<Monster>>,
     squad_counter: Res<SquadIdCounter>,
     floor_item_query: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
-    candle_query: Query<&Position, With<Candle>>,
     prop_query: Query<(&Position, &Name), With<Prop>>,
 ) {
     auto_save_pending.0 = false;
@@ -552,9 +538,6 @@ pub fn auto_save_system(
             )
         };
 
-    // Candles
-    let candles: Vec<[i32; 2]> = candle_query.iter().map(|pos| [pos.x, pos.y]).collect();
-
     // Props
     let props: Vec<PropEntry> = prop_query
         .iter()
@@ -611,7 +594,6 @@ pub fn auto_save_system(
         },
         monsters,
         floor_items,
-        candles,
         props,
         floor_cache: floor_cache_save,
         squad_id_counter: squad_counter.0,

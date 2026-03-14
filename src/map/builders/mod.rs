@@ -68,7 +68,6 @@ pub struct BuilderMap {
     pub starting_position: Option<Position>,
     pub rooms: Option<Vec<Rect>>,
     pub corridors: Option<Vec<Vec<usize>>>,
-    pub candle_spawn_points: Vec<Point>, // New field for candle spawn points
     // pub history: Vec<Map>,
     pub width: i32,
     pub height: i32,
@@ -107,7 +106,6 @@ impl BuilderChain {
                 starting_position: None,
                 rooms: None,
                 corridors: None,
-                candle_spawn_points: Vec::new(),
                 // history: Vec::new(),
                 width,
                 height,

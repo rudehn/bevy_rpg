@@ -46,7 +46,7 @@ impl CandleSpawner {
             // Spread candles as far apart as possible for even coverage.
             let chosen = pick_spread_positions(&candidates, candle_count, &mut rng);
             for pt in chosen {
-                build_data.candle_spawn_points.push(pt);
+                build_data.prop_spawn_list.push((pt, "candle".to_string()));
             }
         }
     }

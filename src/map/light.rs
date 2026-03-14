@@ -1,14 +1,10 @@
-use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::{
-    assets::CandleSpritesheet,
-    components::{FloorEntityMarker, GameEntityMarker, Position, Viewshed},
-    constants::Z_ITEM,
+    components::Position,
     game::AppState,
-    map::{Map, map::GRID_SIZE, tile::{is_opaque, TerrainType}},
-    player::Player,
+    map::{Map, tile::{is_opaque, TerrainType}},
 };
 
 // --- Resource ---
@@ -43,7 +39,6 @@ impl Plugin for LightPlugin {
             Update,
             (
                 rebuild_light_map_system,
-                update_candle_visibility,
                 animate_candles,
             )
                 .chain()
@@ -99,26 +94,6 @@ pub fn rebuild_light_map_system(
     *light_map = LightMap { values };
 }
 
-/// Hides/shows the candle sprite based on whether it is in the player's FOV.
-pub fn update_candle_visibility(
-    player_query: Query<&Viewshed, With<Player>>,
-    mut candle_query: Query<(&Position, &mut Visibility), With<Candle>>,
-) {
-    let Ok(player_viewshed) = player_query.single() else {
-        return;
-    };
-    for (position, mut candle_vis) in &mut candle_query {
-        *candle_vis = if player_viewshed
-            .visible_tiles
-            .contains(&Point::new(position.x, position.y))
-        {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
-    }
-}
-
 fn animate_candles(
     time: Res<Time>,
     mut query: Query<(&mut AnimationTimer, &mut Sprite), With<Candle>>,
@@ -131,32 +106,6 @@ fn animate_candles(
             texture_atlas.index = (texture_atlas.index + 1) % 4;
         }
     }
-}
-
-// --- Spawning ---
-
-pub fn spawn_candle(
-    commands: &mut Commands,
-    candle_spritesheet: &Res<CandleSpritesheet>,
-    pt: &Point,
-) {
-    commands.spawn((
-        Candle,
-        GameEntityMarker,
-        FloorEntityMarker,
-        Position { x: pt.x, y: pt.y },
-        AnimationTimer(Timer::from_seconds(0.2, TimerMode::Repeating)),
-        Sprite::from_atlas_image(
-            candle_spritesheet.texture.clone(),
-            TextureAtlas {
-                layout: candle_spritesheet.layout.clone(),
-                index: 0,
-            },
-        ),
-        Transform::from_xyz(pt.x as f32 * GRID_SIZE.x, pt.y as f32 * GRID_SIZE.y, Z_ITEM),
-        Visibility::Hidden,
-        RenderLayers::layer(1),
-    ));
 }
 
 // --- LOS Helpers ---

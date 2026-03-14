@@ -7,10 +7,7 @@ use crate::game::effects::Effect;
 use crate::game::items::{ArmorSlot, ItemKind, Rarity};
 use crate::game::spells::SpellRegistry;
 
-use crate::{
-    constants::{TILE_SIZE_X, TILE_SIZE_Y},
-    game::{AppState, camera},
-};
+use crate::game::{AppState, camera};
 
 /// Parse a sprite path like `"sprites/foo.png#3"` into `("sprites/foo.png", 3)`.
 /// If the `#index` suffix is omitted, defaults to index 0.
@@ -44,8 +41,7 @@ pub struct AssetsPlugin;
 
 impl Plugin for AssetsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CandleSpritesheet>()
-            .init_resource::<MonsterManifestHandle>()
+        app.init_resource::<MonsterManifestHandle>()
             .init_resource::<MonsterSpawnTableHandle>()
             .init_resource::<TileManifestHandle>()
             .init_resource::<ItemManifestHandle>()
@@ -57,7 +53,6 @@ impl Plugin for AssetsPlugin {
             .add_systems(
                 OnEnter(AppState::Loading),
                 (
-                    setup_candle_spritesheet,
                     load_monster_manifest,
                     load_monster_spawn_table,
                     load_tile_manifest,
@@ -122,12 +117,6 @@ pub struct TileSpriteAssets {
 pub struct ItemSpriteAssets {
     pub handles: HashMap<String, Handle<Image>>,
     pub layouts: HashMap<String, Handle<TextureAtlasLayout>>,
-}
-
-#[derive(Resource, Default)]
-pub struct CandleSpritesheet {
-    pub layout: Handle<TextureAtlasLayout>,
-    pub texture: Handle<Image>,
 }
 
 #[derive(Resource, Default)]
@@ -496,21 +485,6 @@ pub struct ItemManifest {
     pub items: HashMap<String, ItemAsset>,
 }
 
-fn setup_candle_spritesheet(
-    asset_server: Res<AssetServer>,
-    mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
-    mut candle_spritesheet: ResMut<CandleSpritesheet>,
-) {
-    candle_spritesheet.texture = asset_server.load("sprites/candle.png");
-    candle_spritesheet.layout = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
-        UVec2::new(TILE_SIZE_X, TILE_SIZE_Y),
-        4,
-        1,
-        None,
-        None,
-    ));
-}
-
 #[derive(Resource, Default)]
 pub struct MonsterManifestHandle(pub Handle<MonsterManifest>);
 
@@ -787,7 +761,6 @@ struct ExtraLoadingParams<'w> {
 
 fn check_assets_loaded(
     asset_server: Res<AssetServer>,
-    candle_spritesheet: Res<CandleSpritesheet>,
     monster_manifest_handle: Res<MonsterManifestHandle>,
     monster_manifests: Res<Assets<MonsterManifest>>,
     monster_spawn_table_handle: Res<MonsterSpawnTableHandle>,
@@ -801,13 +774,6 @@ fn check_assets_loaded(
     item_sprite_assets: Res<ItemSpriteAssets>,
     mut extra: ExtraLoadingParams,
 ) {
-    let core_textures_loaded =
-        asset_server.is_loaded_with_dependencies(&candle_spritesheet.texture);
-
-    if !core_textures_loaded {
-        return;
-    }
-
     if monster_manifests.get(&monster_manifest_handle.0).is_none() {
         return;
     }
