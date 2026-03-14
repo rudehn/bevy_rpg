@@ -19,11 +19,13 @@ use bracket_lib::prelude::{Algorithm2D, DistanceAlg, Point, a_star_search};
 use rand::rng;
 use rand::seq::SliceRandom;
 
+#[allow(dead_code)]
 #[derive(Component)]
 pub struct Actor {
     pub ai: Box<dyn ActorAI>,
 }
 
+#[allow(dead_code)]
 pub trait ActorAI: Send + Sync {
     /// AI now directly sends events to the world instead of returning an Action enum.
     fn execute(&mut self, entity: Entity, world: &mut World);

@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::components::{GameEntityMarker, Name};
+use crate::components::GameEntityMarker;
 use crate::game::camera::UiCamera;
 use crate::game::{
     AppState,
@@ -48,6 +48,7 @@ pub struct PlayerHealthText;
 pub struct PlayerHealthBar;
 
 /// Marker component for the player's health bar UI element.
+#[allow(dead_code)]
 #[derive(Component)]
 pub struct PlayerHealthBarBackground;
 
@@ -561,7 +562,7 @@ fn update_player_status_effects_ui(
     );
 
     // Quick hash: combine effect count with sum of turns to detect changes
-    use std::hash::{Hash, Hasher};
+    use std::hash::Hash;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     for (label, _) in &effects {
         label.hash(&mut hasher);

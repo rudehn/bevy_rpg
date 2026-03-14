@@ -1,4 +1,3 @@
-use crate::components::{GameEntityMarker, Position};
 use crate::game::AppState;
 use crate::game::InGameState;
 use crate::game::combat::{Damage, Health};
@@ -35,6 +34,7 @@ impl Plugin for CharacterInfoPlugin {
 #[derive(Component)]
 pub struct OnCharacterInfoScreen;
 
+#[allow(dead_code)]
 #[derive(Component)]
 pub struct HotkeyBar;
 

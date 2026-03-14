@@ -27,6 +27,7 @@ use crate::{
 use bevy::prelude::*;
 
 /// Captures end-of-run statistics for the death/victory screen.
+#[allow(dead_code)]
 #[derive(Resource, Default, Clone)]
 pub struct RunSummary {
     pub floor_reached: u32,

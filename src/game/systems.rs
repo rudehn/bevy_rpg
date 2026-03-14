@@ -1,6 +1,6 @@
 use bevy::ecs::change_detection::DetectChanges;
 use bevy::ecs::world::Ref;
-use bevy::prelude::{Or, Sprite, Visibility};
+use bevy::prelude::{Sprite, Visibility};
 use bevy::{
     ecs::{
         query::{Changed, With, Without},

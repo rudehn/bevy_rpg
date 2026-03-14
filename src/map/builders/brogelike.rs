@@ -1,7 +1,7 @@
 use bracket_lib::prelude::{Point, Algorithm2D, DijkstraMap, Rect};
 use rand::prelude::*;
 use rand::seq::SliceRandom;
-use crate::map::tile::{is_walkable, Tile, TerrainType, LiquidType};
+use crate::map::tile::{is_walkable, Tile, TerrainType};
 use crate::map::builders::{BuilderMap, InitialMapBuilder};
 use crate::game::actions::Direction;
 use crate::map::map::Map;

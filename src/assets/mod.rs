@@ -16,13 +16,6 @@ mod serde_helpers {
     use bevy::prelude::UVec2;
     use serde::{Deserialize, Deserializer};
 
-    pub fn deserialize_f32_as_option<'de, D>(deserializer: D) -> Result<Option<f32>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Ok(Some(f32::deserialize(deserializer)?))
-    }
-
     pub fn deserialize_i32_as_option<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
     where
         D: Deserializer<'de>,
@@ -340,7 +333,6 @@ pub struct ItemAsset {
         deserialize_with = "serde_helpers::deserialize_uvec2_as_option"
     )]
     pub tile_size: Option<UVec2>,
-    pub is_victory: bool,
 
     #[serde(default)]
     pub item_kind: ItemKind,

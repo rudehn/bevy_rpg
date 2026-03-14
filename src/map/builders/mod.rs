@@ -13,12 +13,10 @@ use crate::{
             diagonal_culler::DiagonalCuller,
             exit_points::DistantExit,
             item_spawner::ItemSpawner,
-            lake_builder::LakeBuilder,
             monster_spawner::MonsterSpawner,
             start_point::{StartPointBuilder, XStart, YStart},
             unseen_culler::UnseenCuller,
         },
-        tile::LiquidType,
     },
 };
 
@@ -37,6 +35,7 @@ mod room_drawer;
 mod start_point;
 mod unseen_culler;
 
+#[allow(dead_code)]
 pub struct BuilderMap {
     // pub spawn_list: Vec<(usize, String)>,
     // pub modified_spawn_list: Vec<(SpawnOptions, String)>, // includes spawn options
@@ -137,6 +136,7 @@ pub trait MetaMapBuilder: Send + 'static {
     fn build_map(&mut self, build_data: &mut BuilderMap);
 }
 
+#[allow(dead_code)]
 fn random_start_position() -> (XStart, YStart) {
     let x;
     let mut rng = RandomNumberGenerator::new();

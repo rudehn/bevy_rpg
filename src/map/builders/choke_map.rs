@@ -9,6 +9,7 @@ use std::collections::{VecDeque, HashSet};
 /// so comparisons stay meaningful.
 const FLOOD_FILL_CAP: i32 = 1000;
 
+#[allow(dead_code)]
 pub struct ChokeMap {
     pub width: i32,
     pub height: i32,

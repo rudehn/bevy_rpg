@@ -1,9 +1,10 @@
 use bevy::camera::visibility::RenderLayers;
 use bevy::{camera::Viewport, prelude::*};
 
-use crate::{components::Position, game::AppState, player::Player};
+use crate::{game::AppState, player::Player};
 
 // Components for distinguishing cameras
+#[allow(dead_code)]
 #[derive(Component)]
 pub struct MinimapCamera;
 

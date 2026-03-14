@@ -5,11 +5,13 @@ use crate::map::builders::algorithms::{Grid, BlobGenConfig, create_blob, BlobTyp
 use bracket_lib::prelude::{DijkstraMap, Point, Algorithm2D, BaseMap, SmallVec};
 use rand::prelude::*;
 
+#[allow(dead_code)]
 pub struct LakeBuilder {
     liquid_type: LiquidType,
 }
 
 // Wrapper to perform Dijkstra checks using only walkable tiles
+#[allow(dead_code)]
 struct WalkableMap<'a> {
     map: &'a Map,
 }
@@ -49,6 +51,7 @@ impl<'a> BaseMap for WalkableMap<'a> {
     }
 }
 
+#[allow(dead_code)]
 impl LakeBuilder {
     pub fn new(liquid_type: LiquidType) -> Box<LakeBuilder> {
         Box::new(LakeBuilder { liquid_type })

@@ -42,9 +42,11 @@ impl Viewshed {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Component, Debug, Clone)]
 pub struct BlocksVisibility;
 
+#[allow(dead_code)]
 #[derive(Component, Debug, Clone)]
 pub struct Hidden;
 

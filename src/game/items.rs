@@ -6,7 +6,6 @@ use crate::components::{Equipped, FloorEntityMarker, GameEntityMarker, InInvento
 use crate::constants::{BASE_ACTION_COST, UNARMED_DAMAGE, Z_ITEM};
 use crate::game::actions::ActionFinishedEvent;
 use crate::game::effects::Effect;
-use crate::game::AppState;
 use crate::game::stats::{AttributeModifiers, CombatStats};
 use crate::player::Player;
 use crate::ui::game_log::GameLogMessage;

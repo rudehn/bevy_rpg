@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::game::combat::{Health, GameRng, DeathEvent};
+use crate::game::combat::{GameRng, DeathEvent};
 use crate::game::stats::{CombatStats, Level, RolledHp};
 use crate::player::Player;
 use crate::ui::game_log::GameLogMessage;
@@ -26,6 +26,7 @@ pub struct ExperienceReward(pub i32);
 
 // --- Messages ---
 
+#[allow(dead_code)]
 #[derive(Message)]
 pub struct LevelUpEvent {
     pub entity: Entity,

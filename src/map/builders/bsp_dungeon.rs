@@ -24,6 +24,7 @@ pub struct BspConfig {
     pub max_padding: i32,
 }
 
+#[allow(dead_code)]
 impl BspConfig {
     pub fn dungeon() -> Self {
         BspConfig {
@@ -86,12 +87,14 @@ impl BspDungeonBuilder {
         Box::new(BspDungeonBuilder { config })
     }
 
+    #[allow(dead_code)]
     pub fn dungeon() -> Box<BspDungeonBuilder> {
         Box::new(BspDungeonBuilder {
             config: BspConfig::dungeon(),
         })
     }
 
+    #[allow(dead_code)]
     pub fn interior() -> Box<BspDungeonBuilder> {
         Box::new(BspDungeonBuilder {
             config: BspConfig::interior(),

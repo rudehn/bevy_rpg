@@ -19,6 +19,7 @@ pub struct GameLogNode;
 #[derive(Component)]
 pub struct GameLogText;
 
+#[allow(dead_code)]
 #[derive(Resource)]
 pub struct GameLogSettings {
     pub expanded: bool,

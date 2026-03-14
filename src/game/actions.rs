@@ -11,7 +11,7 @@ use crate::{
         magic::CastSpellMessage,
         turns::MyTurn,
     },
-    map::{Map, tile::{is_walkable, TerrainType, TileMarker}, map::DungeonECSMap},
+    map::{Map, tile::{is_walkable, TerrainType, TileMarker}},
     player::Player,
     assets::{TileManifest, TileManifestHandle, TileSpriteAssets},
     ui::game_log::GameLogMessage,
@@ -21,6 +21,7 @@ use crate::{
 pub enum Action {
     Wait,
     Move { dir: Direction },
+    #[allow(dead_code)]
     MeleeAttack { target: Entity },
     PickUp,
     EquipItem   { item: Entity },

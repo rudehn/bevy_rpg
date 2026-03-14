@@ -136,6 +136,7 @@ fn on_hit_effect_description(effect: &OnHitEffect) -> String {
 // --- Update System ---
 
 /// Collected ability info for display.
+#[allow(dead_code)]
 struct AbilityEntry {
     name: String,
     description: String,

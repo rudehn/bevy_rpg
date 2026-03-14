@@ -6,7 +6,7 @@ use crate::{
     game::AppState,
     map::{
         light::LightMap,
-        tile::{TileExplored, Tile, TerrainType, LiquidType, TileVisibility, is_opaque, is_walkable},
+        tile::{TileExplored, Tile, TerrainType, LiquidType, TileVisibility, is_opaque},
     },
     player::Player,
     ui::game_log::GameLogMessage,
@@ -236,6 +236,7 @@ impl Map {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_liquid(&mut self, pt: Point, liquid: LiquidType) {
         if self.in_bounds(pt) {
             let idx = self.xy_idx(pt.x, pt.y);

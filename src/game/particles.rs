@@ -80,6 +80,7 @@ pub enum ParticleRequest {
         duration: f32,
     },
     /// Brief flash at a position; no movement, just fades.
+    #[allow(dead_code)]
     Impact {
         world_pos: Vec2,
         glyph: char,
@@ -88,6 +89,7 @@ pub enum ParticleRequest {
         duration: f32,
     },
     /// AoE flash filtered by wall LOS and player FOV.
+    #[allow(dead_code)]
     AoeImpact {
         center_grid: IVec2,
         radius: u32,
@@ -224,6 +226,7 @@ impl ParticleRequest {
     }
 
     /// Single '*' impact flash at the given position.
+    #[allow(dead_code)]
     pub fn impact(world_pos: Vec2, color: Color) -> Self {
         Self::Impact {
             world_pos,

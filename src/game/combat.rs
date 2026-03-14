@@ -77,6 +77,7 @@ impl ResistanceLevel {
         }
     }
 
+    #[allow(dead_code)]
     pub fn label(&self) -> &'static str {
         match self {
             ResistanceLevel::Weak => "weak",
@@ -167,6 +168,7 @@ pub struct DamageReductionMessage {
 }
 
 /// Message sent after armor reduction to finally apply damage to health.
+#[allow(dead_code)]
 #[derive(Message, Debug)]
 pub struct ApplyDamageMessage {
     pub attacker: Entity,
@@ -184,6 +186,7 @@ pub struct HealMessage {
 }
 
 /// Message sent when an attack misses its target.
+#[allow(dead_code)]
 #[derive(Message, Debug)]
 pub struct MissMessage {
     pub attacker: Entity,
@@ -198,6 +201,7 @@ pub struct OnHitTriggerMessage {
 }
 
 /// Message emitted when an entity takes damage, for on-being-hit passive abilities.
+#[allow(dead_code)]
 #[derive(Message, Debug)]
 pub struct OnBeingHitTriggerMessage {
     pub attacker: Entity,

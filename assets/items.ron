@@ -5,7 +5,7 @@
             sprite: "sprites/items/weapons/long_sword_1_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Weapon,
             damage: Some("1d6"),
             rarity: Common,
@@ -15,7 +15,7 @@
             sprite: "sprites/items/weapons/long_sword_1_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Weapon,
             damage: Some("1d8+1"),
             rarity: Uncommon,
@@ -26,7 +26,7 @@
             sprite: "sprites/items/armor/torso/leather_armor_1.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Armor,
             armor_slot: Some(Chest),
             defense: 1,
@@ -37,7 +37,7 @@
             sprite: "sprites/items/armor/torso/studded_leather_armor.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Armor,
             armor_slot: Some(Chest),
             defense: 2,
@@ -48,7 +48,7 @@
             sprite: "sprites/items/potions/ruby_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Consumable,
             rarity: Common,
             effect: Some(HealHp(15)),
@@ -59,7 +59,7 @@
             sprite: "sprites/items/potions/sky_blue.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Consumable,
             rarity: Uncommon,
             effect: Some(GainStr(2)),
@@ -70,7 +70,7 @@
             sprite: "sprites/items/rings/gold.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Ring,
             rarity: Uncommon,
             per_bonus: 2,
@@ -83,7 +83,7 @@
             sprite: "sprites/items/books/yellow_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Common,
             effect: Some(LearnSpell("spark")),
@@ -93,7 +93,7 @@
             sprite: "sprites/items/books/book_gray.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("magic_missile")),
@@ -103,7 +103,7 @@
             sprite: "sprites/items/books/white_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Common,
             effect: Some(LearnSpell("minor_heal")),
@@ -113,7 +113,7 @@
             sprite: "sprites/items/books/red_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("fire_dart")),
@@ -127,7 +127,7 @@
             sprite: "sprites/items/books/light_blue_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("ice_shard")),
@@ -137,7 +137,7 @@
             sprite: "sprites/items/books/dark_green_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("poison_bolt")),
@@ -147,7 +147,7 @@
             sprite: "sprites/items/books/dark_brown_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("vampiric_strike")),
@@ -157,7 +157,7 @@
             sprite: "sprites/items/books/magenta_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("heal_self")),
@@ -167,7 +167,7 @@
             sprite: "sprites/items/books/light_green_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("heal_ally")),
@@ -177,7 +177,7 @@
             sprite: "sprites/items/books/book_orange.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("enrage")),
@@ -187,7 +187,7 @@
             sprite: "sprites/items/books/tan_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("fortify")),
@@ -197,7 +197,7 @@
             sprite: "sprites/items/books/dark_gray_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("weaken")),
@@ -207,7 +207,7 @@
             sprite: "sprites/items/books/cyan_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("haste")),
@@ -217,7 +217,7 @@
             sprite: "sprites/items/books/turquoise_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("blink")),
@@ -231,7 +231,7 @@
             sprite: "sprites/items/books/dark_blue_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("shadow_bolt")),
@@ -241,7 +241,7 @@
             sprite: "sprites/items/books/metal_cyan_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("lightning_bolt")),
@@ -251,7 +251,7 @@
             sprite: "sprites/items/books/book_orange.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("fireball")),
@@ -261,7 +261,7 @@
             sprite: "sprites/items/books/metal_blue_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("chain_lightning")),
@@ -271,7 +271,7 @@
             sprite: "sprites/items/books/cloth_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("cure_wounds")),
@@ -281,7 +281,7 @@
             sprite: "sprites/items/books/metal_green_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("haste_ally")),
@@ -291,7 +291,7 @@
             sprite: "sprites/items/books/leather_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("iron_skin")),
@@ -301,7 +301,7 @@
             sprite: "sprites/items/books/gold.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("battle_hymn")),
@@ -311,7 +311,7 @@
             sprite: "sprites/items/books/parchment_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("slow")),
@@ -325,7 +325,7 @@
             sprite: "sprites/items/books/book_of_the_dead_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("death_coil")),
@@ -335,7 +335,7 @@
             sprite: "sprites/items/books/velvet_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("greater_heal")),
@@ -345,7 +345,7 @@
             sprite: "sprites/items/books/purple_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("arcane_surge")),
@@ -355,7 +355,7 @@
             sprite: "sprites/items/books/book_indigo.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("spirit_shield")),
@@ -365,7 +365,7 @@
             sprite: "sprites/items/books/wrinkled_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("curse")),
@@ -375,7 +375,7 @@
             sprite: "sprites/items/books/vellum_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("mana_drain")),
@@ -385,7 +385,7 @@
             sprite: "sprites/items/books/plaid_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("teleport")),
@@ -399,7 +399,7 @@
             sprite: "sprites/items/books/buckle_new.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("meteor")),
@@ -409,7 +409,7 @@
             sprite: "sprites/items/weapons/arrow.png#0",
             tile_size: (32, 32),
             grid_size: (1, 1),
-            is_victory: false,
+
             item_kind: Consumable,
             rarity: Common,
             max_stack: 30,
@@ -420,7 +420,7 @@
             sprite: "sprites/items/weapons/shortbow_1.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Weapon,
             damage: Some("1d4"),
             weapon_range: 8,
@@ -431,7 +431,7 @@
             sprite: "sprites/items/weapons/longbow_1.png#0",
             tile_size: (32, 32),
             grid_size: (8, 8),
-            is_victory: false,
+
             item_kind: Weapon,
             damage: Some("1d6"),
             weapon_range: 8,

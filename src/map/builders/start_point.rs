@@ -22,6 +22,7 @@ pub enum YStart {
     BOTTOM,
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct AreaStartingPosition {
     x: XStart,

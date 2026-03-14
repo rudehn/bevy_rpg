@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     assets::{ItemManifest, ItemManifestHandle, ItemSpriteAssets},
-    components::{Equipped, FloorEntityMarker, GameEntityMarker, InInventory, Inventory, Item, Monster, Name, Position, Viewshed},
+    components::{Equipped, FloorEntityMarker, InInventory, Inventory, Item, Monster, Name, Position, Viewshed},
     game::{
         AppState,
         combat::{Damage, Health},
@@ -36,6 +36,7 @@ use crate::{
 // Native: read/write a RON file at saves/ironveil_save.ron
 // WASM:   read/write the browser's localStorage under key "ironveil_save"
 
+#[allow(dead_code)]
 const WASM_SAVE_KEY: &str = "ironveil_save";
 
 #[cfg(not(target_arch = "wasm32"))]

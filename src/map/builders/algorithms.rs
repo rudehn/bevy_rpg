@@ -1,6 +1,7 @@
 use std::collections::{VecDeque, HashSet};
 use rand::Rng; // Add this for rng.gen_range
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BlobType {
     #[default]
@@ -19,6 +20,7 @@ where
     pub height: i32,
 }
 
+#[allow(dead_code)]
 impl<T> Grid<T>
 where
     T: Copy + Clone + PartialEq + Default,
