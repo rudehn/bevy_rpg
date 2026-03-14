@@ -1,33 +1,33 @@
 (
   spawns: [
     // --- Vermin ---
-    (monster: "Rat",           min_floor: 1,  max_floor: 5),
-    (monster: "Giant Bat",     min_floor: 2,  max_floor: 8),
-    (monster: "Giant Spider",  min_floor: 3,  max_floor: 8),
-    (monster: "Plague Rat",    min_floor: 5,  max_floor: 10),
+    (monster: "Rat",           min_floor: 1,  max_floor: 5,  min_group: 2, max_group: 4),
+    (monster: "Giant Bat",     min_floor: 2,  max_floor: 8,  min_group: 1, max_group: 3),
+    (monster: "Giant Spider",  min_floor: 3,  max_floor: 8,  min_group: 1, max_group: 2),
+    (monster: "Plague Rat",    min_floor: 5,  max_floor: 10, min_group: 2, max_group: 5),
 
     // --- Goblinoid ---
-    (monster: "Goblin",          min_floor: 1,  max_floor: 6),
-    (monster: "Goblin Archer",   min_floor: 2,  max_floor: 8),
+    (monster: "Goblin",          min_floor: 1,  max_floor: 6,  min_group: 1, max_group: 3),
+    (monster: "Goblin Archer",   min_floor: 2,  max_floor: 8,  min_group: 1, max_group: 2),
     (monster: "Goblin Shaman",   min_floor: 3,  max_floor: 10),
     (monster: "Goblin Warchief", min_floor: 5,  max_floor: 10),
 
     // --- Undead ---
-    (monster: "Skeleton",        min_floor: 5,  max_floor: 14),
-    (monster: "Bone Archer",     min_floor: 6,  max_floor: 14),
-    (monster: "Zombie",          min_floor: 5,  max_floor: 14),
+    (monster: "Skeleton",        min_floor: 5,  max_floor: 14, min_group: 1, max_group: 3),
+    (monster: "Bone Archer",     min_floor: 6,  max_floor: 14, min_group: 1, max_group: 2),
+    (monster: "Zombie",          min_floor: 5,  max_floor: 14, min_group: 1, max_group: 3),
     (monster: "Wraith",          min_floor: 8,  max_floor: 18),
     (monster: "Lich Apprentice", min_floor: 7,  max_floor: 16),
 
     // --- Orcish ---
-    (monster: "Orc",             min_floor: 8,  max_floor: 14),
-    (monster: "Orc Berserker",   min_floor: 10, max_floor: 16),
+    (monster: "Orc",             min_floor: 8,  max_floor: 14, min_group: 1, max_group: 3),
+    (monster: "Orc Berserker",   min_floor: 10, max_floor: 16, min_group: 1, max_group: 2),
     (monster: "Orc Shaman",      min_floor: 10, max_floor: 16),
     (monster: "Orc Warlord",     min_floor: 12, max_floor: 18),
 
     // --- Demonic ---
-    (monster: "Imp",             min_floor: 12, max_floor: 20),
-    (monster: "Hell Hound",      min_floor: 14, max_floor: 22),
+    (monster: "Imp",             min_floor: 12, max_floor: 20, min_group: 1, max_group: 2),
+    (monster: "Hell Hound",      min_floor: 14, max_floor: 22, min_group: 1, max_group: 2),
     (monster: "Shadow Fiend",    min_floor: 16, max_floor: 22),
 
     // --- Giant ---

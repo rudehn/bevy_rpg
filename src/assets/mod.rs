@@ -218,7 +218,13 @@ pub struct MonsterSpawnInfo {
     pub monster: String,
     pub min_floor: i32,
     pub max_floor: i32,
+    #[serde(default = "default_group_one")]
+    pub min_group: i32,
+    #[serde(default = "default_group_one")]
+    pub max_group: i32,
 }
+
+fn default_group_one() -> i32 { 1 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
 pub struct MonsterSpawnTable {
