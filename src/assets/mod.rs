@@ -247,6 +247,7 @@ pub struct MonsterManifest {
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
 pub struct MonsterSpawnInfo {
+    #[serde(default)]
     pub monster: String,
     pub min_floor: i32,
     pub max_floor: i32,
@@ -254,6 +255,19 @@ pub struct MonsterSpawnInfo {
     pub min_group: i32,
     #[serde(default = "default_group_one")]
     pub max_group: i32,
+    /// Mixed-species group. When non-empty, `monster`/`min_group`/`max_group` are ignored.
+    #[serde(default)]
+    pub group: Vec<GroupMember>,
+}
+
+/// A single species entry within a mixed group spawn.
+#[derive(Deserialize, Debug, Clone)]
+pub struct GroupMember {
+    pub monster: String,
+    #[serde(default = "default_group_one")]
+    pub min_count: i32,
+    #[serde(default = "default_group_one")]
+    pub max_count: i32,
 }
 
 fn default_group_one() -> i32 {

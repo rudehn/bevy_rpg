@@ -54,21 +54,45 @@ impl MonsterSpawner {
                     let monster_info = &possible_spawns[spawn_index];
 
                     if let Some(origin) = self.get_walkable_room_point(room, map, &mut rng) {
-                        // Roll group size
-                        let group_size = if monster_info.max_group > monster_info.min_group {
-                            rng.range(monster_info.min_group, monster_info.max_group + 1)
+                        if !monster_info.group.is_empty() {
+                            // Mixed group: build a list of (name, count) pairs, then
+                            // place them all as one cluster.
+                            let mut members: Vec<String> = Vec::new();
+                            for gm in &monster_info.group {
+                                let count = if gm.max_count > gm.min_count {
+                                    rng.range(gm.min_count, gm.max_count + 1)
+                                } else {
+                                    gm.min_count
+                                };
+                                for _ in 0..count {
+                                    members.push(gm.monster.clone());
+                                }
+                            }
+
+                            let points =
+                                find_cluster_points(origin, members.len(), map, &occupied);
+                            for (pt, name) in points.iter().zip(members.iter()) {
+                                let idx = map.xy_idx(pt.x, pt.y);
+                                occupied.insert(idx);
+                                build_data.spawn_list.push((*pt, name.clone()));
+                            }
                         } else {
-                            monster_info.min_group
-                        } as usize;
+                            // Single-monster group
+                            let group_size =
+                                if monster_info.max_group > monster_info.min_group {
+                                    rng.range(monster_info.min_group, monster_info.max_group + 1)
+                                } else {
+                                    monster_info.min_group
+                                } as usize;
 
-                        let points = find_cluster_points(origin, group_size, map, &occupied);
-
-                        for pt in &points {
-                            let idx = map.xy_idx(pt.x, pt.y);
-                            occupied.insert(idx);
-                            build_data
-                                .spawn_list
-                                .push((*pt, monster_info.monster.clone()));
+                            let points = find_cluster_points(origin, group_size, map, &occupied);
+                            for pt in &points {
+                                let idx = map.xy_idx(pt.x, pt.y);
+                                occupied.insert(idx);
+                                build_data
+                                    .spawn_list
+                                    .push((*pt, monster_info.monster.clone()));
+                            }
                         }
                     }
                 }

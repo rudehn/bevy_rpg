@@ -1,7 +1,8 @@
 (
   spawns: [
     // --- Vermin ---
-    (monster: "Rat",           min_floor: 1,  max_floor: 5,  min_group: 2, max_group: 4),
+    (monster: "Rat",           min_floor: 1,  max_floor: 1,  min_group: 1, max_group: 1),
+    (monster: "Rat",           min_floor: 2,  max_floor: 5,  min_group: 2, max_group: 4),
     (monster: "Giant Bat",     min_floor: 2,  max_floor: 8,  min_group: 1, max_group: 3),
     (monster: "Giant Spider",  min_floor: 3,  max_floor: 8,  min_group: 1, max_group: 2),
     (monster: "Plague Rat",    min_floor: 5,  max_floor: 10, min_group: 2, max_group: 5),
@@ -11,6 +12,11 @@
     (monster: "Goblin Archer",   min_floor: 2,  max_floor: 8,  min_group: 1, max_group: 2),
     (monster: "Goblin Shaman",   min_floor: 3,  max_floor: 10),
     (monster: "Goblin Warchief", min_floor: 5,  max_floor: 10),
+    // Goblin war party (mixed group)
+    (group: [
+        (monster: "Goblin",        min_count: 2, max_count: 2),
+        (monster: "Goblin Archer", min_count: 2, max_count: 2),
+    ], min_floor: 4, max_floor: 8),
 
     // --- Undead ---
     (monster: "Skeleton",        min_floor: 5,  max_floor: 14, min_group: 1, max_group: 3),
