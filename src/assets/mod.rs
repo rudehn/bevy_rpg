@@ -206,6 +206,34 @@ pub struct MonsterAsset {
     /// On-hit effects applied when this monster lands melee damage.
     #[serde(default)]
     pub on_hit_effects: Vec<crate::game::abilities::OnHitEffect>,
+
+    /// Explode on death: (radius, damage). Deals fire AoE when this entity dies.
+    #[serde(default)]
+    pub explode_on_death: Option<(i32, i32)>,
+
+    /// Reanimate: HP to revive with (one-time). None = no reanimate.
+    #[serde(default)]
+    pub reanimate_hp: Option<i32>,
+
+    /// Poison body: stacks of poison applied to melee attackers.
+    #[serde(default)]
+    pub poison_body: Option<i32>,
+
+    /// Thorn aura: flat damage reflected to melee attackers.
+    #[serde(default)]
+    pub thorn_aura: Option<i32>,
+
+    /// Enrage on hit: threshold HP percentage to trigger Enraged.
+    #[serde(default)]
+    pub enrage_on_hit: Option<u32>,
+
+    /// Death curse applied to the killer.
+    #[serde(default)]
+    pub death_curse: Option<crate::game::abilities::DeathCurseEffect>,
+
+    /// Summon on death: (monster_name, count).
+    #[serde(default)]
+    pub summon_on_death: Option<(String, u32)>,
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
@@ -224,7 +252,9 @@ pub struct MonsterSpawnInfo {
     pub max_group: i32,
 }
 
-fn default_group_one() -> i32 { 1 }
+fn default_group_one() -> i32 {
+    1
+}
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
 pub struct MonsterSpawnTable {
@@ -238,8 +268,6 @@ pub struct ItemSpawnInfo {
     pub max_floor: i32,
     #[serde(default = "default_weight")]
     pub weight: i32,
-    #[serde(default = "default_spawn_chance")]
-    pub spawn_chance: f32,
     /// Minimum number of items to spawn in a single batch (e.g., arrows).
     #[serde(default = "default_count_one")]
     pub min_count: u32,
@@ -248,9 +276,12 @@ pub struct ItemSpawnInfo {
     pub max_count: u32,
 }
 
-fn default_weight() -> i32 { 1 }
-fn default_spawn_chance() -> f32 { 0.75 }
-fn default_count_one() -> u32 { 1 }
+fn default_weight() -> i32 {
+    1
+}
+fn default_count_one() -> u32 {
+    1
+}
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
 pub struct ItemSpawnTable {
@@ -323,9 +354,14 @@ pub struct ItemAsset {
     /// Maximum number of items that can share one inventory slot (1 = not stackable).
     #[serde(default = "default_max_stack")]
     pub max_stack: u32,
+    /// Whether this item is ammunition (consumed by ranged attacks).
+    #[serde(default)]
+    pub is_ammo: bool,
 }
 
-fn default_max_stack() -> u32 { 1 }
+fn default_max_stack() -> u32 {
+    1
+}
 
 #[derive(Asset, TypePath, Deserialize, Resource, Debug, Clone)]
 pub struct ItemManifest {
@@ -337,7 +373,7 @@ fn setup_candle_spritesheet(
     mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
     mut candle_spritesheet: ResMut<CandleSpritesheet>,
 ) {
-    candle_spritesheet.texture = asset_server.load("candle.png");
+    candle_spritesheet.texture = asset_server.load("sprites/candle.png");
     candle_spritesheet.layout = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
         UVec2::new(TILE_SIZE_X, TILE_SIZE_Y),
         4,
@@ -589,7 +625,8 @@ fn check_assets_loaded(
     item_sprite_assets: Res<ItemSpriteAssets>,
     mut extra: ExtraLoadingParams,
 ) {
-    let core_textures_loaded = asset_server.is_loaded_with_dependencies(&candle_spritesheet.texture);
+    let core_textures_loaded =
+        asset_server.is_loaded_with_dependencies(&candle_spritesheet.texture);
 
     if !core_textures_loaded {
         return;
@@ -614,15 +651,27 @@ fn check_assets_loaded(
         return;
     }
 
-    if extra.item_spawn_tables.get(&extra.item_spawn_table_handle.0).is_none() {
+    if extra
+        .item_spawn_tables
+        .get(&extra.item_spawn_table_handle.0)
+        .is_none()
+    {
         return;
     }
 
-    if extra.player_assets.get(&extra.player_asset_handle.0).is_none() {
+    if extra
+        .player_assets
+        .get(&extra.player_asset_handle.0)
+        .is_none()
+    {
         return;
     }
 
-    if extra.spell_registries.get(&extra.spell_registry_handle.0).is_none() {
+    if extra
+        .spell_registries
+        .get(&extra.spell_registry_handle.0)
+        .is_none()
+    {
         return;
     }
 

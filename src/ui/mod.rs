@@ -1,14 +1,15 @@
-use bevy::{prelude::*, window::Window};
+use bevy::prelude::*;
 
-use crate::components::{GameEntityMarker, Monster, Name};
-use crate::constants::TILE_SIZE_X;
-use crate::game::camera::{MainCamera, UiCamera};
+use crate::components::{GameEntityMarker, Name};
+use crate::game::camera::UiCamera;
 use crate::game::{
     AppState,
-    actions::SpeedStats,
-    combat::{Damage, Health, HealthRegen},
+    combat::{Health, HealthRegen},
     level::Experience,
-    magic::{ActiveSpells, SpellCooldowns},
+    magic::{
+        ActiveSpells, Burning, Disarmed, Enraged, Hasted, Poisoned, Slowed, SpellCooldowns,
+        SpiritShielded, Stunned, TimedModifiers,
+    },
     stats::{Level, Mana},
 };
 use crate::map::dungeon::Floor;
@@ -19,6 +20,8 @@ pub mod cheat_menu;
 pub mod game_log;
 pub mod inventory;
 pub mod log_history;
+pub mod menu;
+pub mod monster_info;
 pub mod nearby;
 pub mod spells;
 
@@ -26,6 +29,7 @@ use character_info::CharacterInfoPlugin;
 use cheat_menu::CheatMenuPlugin;
 use inventory::InventoryPlugin;
 use log_history::LogHistoryPlugin;
+use menu::MenuPlugin;
 use nearby::{NearbyListRoot, NearbyPlugin};
 use spells::SpellsPlugin;
 use game_log::{
@@ -47,30 +51,6 @@ pub struct PlayerHealthBar;
 #[derive(Component)]
 pub struct PlayerHealthBarBackground;
 
-/// Marker component for the root UI node of the monster tooltip.
-#[derive(Component)]
-pub struct MonsterTooltip;
-
-/// Marker component for the text displaying the monster's name in the tooltip.
-#[derive(Component)]
-pub struct MonsterTooltipName;
-
-/// Marker component for the text displaying the monster's health in the tooltip.
-#[derive(Component)]
-pub struct MonsterTooltipHealth;
-
-/// Marker component for the text displaying the monster's damage in the tooltip.
-#[derive(Component)]
-pub struct MonsterTooltipDamage;
-
-/// Marker component for the text displaying the monster's move speed in the tooltip.
-#[derive(Component)]
-pub struct MonsterTooltipMoveSpeed;
-
-/// Marker component for the text displaying the monster's action speed in the tooltip.
-#[derive(Component)]
-pub struct MonsterTooltipActionSpeed;
-
 #[derive(Component)]
 pub struct PlayerManaText;
 #[derive(Component)]
@@ -84,6 +64,14 @@ pub struct PlayerXpBar;
 /// Marker for a spell slot label in the HUD. Contains 0-based slot index.
 #[derive(Component)]
 pub struct SpellSlotHudLabel(pub usize);
+
+/// Container for player status effect icons in the HUD.
+/// Stores a snapshot of the last rendered effect count to avoid per-frame rebuilds.
+#[derive(Component)]
+struct PlayerStatusEffectsContainer {
+    last_count: usize,
+    last_hash: u64,
+}
 
 // --- Systems ---
 
@@ -255,6 +243,20 @@ fn spawn_player_stats_ui(
                         PlayerXpBar,
                     ));
                 });
+
+            // Status effects container (dynamically populated)
+            parent.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: Val::Px(6.0),
+                    row_gap: Val::Px(2.0),
+                    margin: UiRect::top(Val::Px(6.0)),
+                    ..default()
+                },
+                PlayerStatusEffectsContainer { last_count: 0, last_hash: 0 },
+            ));
 
             // Spell slots header
             parent.spawn((
@@ -435,92 +437,182 @@ fn update_spell_slots_ui(
     }
 }
 
-/// System that spawns the monster tooltip UI.
-fn spawn_monster_tooltip_ui(
+/// Collects active status effects as (label, color) tuples.
+pub fn collect_status_effects(
+    poisoned: Option<&Poisoned>,
+    burning: Option<&Burning>,
+    slowed: Option<&Slowed>,
+    hasted: Option<&Hasted>,
+    stunned: Option<&Stunned>,
+    enraged: Option<&Enraged>,
+    disarmed: Option<&Disarmed>,
+    spirit_shielded: Option<&SpiritShielded>,
+    timed_modifiers: Option<&TimedModifiers>,
+) -> Vec<(String, Color)> {
+    let mut effects = Vec::new();
+
+    if let Some(p) = poisoned {
+        effects.push((
+            format!("Poisoned ({}t)", p.turns_remaining),
+            Color::srgb(0.3, 0.85, 0.3),
+        ));
+    }
+    if let Some(b) = burning {
+        effects.push((
+            format!("Burning ({}t)", b.turns_remaining),
+            Color::srgb(1.0, 0.5, 0.1),
+        ));
+    }
+    if let Some(s) = slowed {
+        effects.push((
+            format!("Slowed ({}t)", s.turns_remaining),
+            Color::srgb(0.5, 0.5, 0.9),
+        ));
+    }
+    if let Some(h) = hasted {
+        effects.push((
+            format!("Hasted ({}t)", h.turns_remaining),
+            Color::srgb(1.0, 1.0, 0.3),
+        ));
+    }
+    if let Some(s) = stunned {
+        effects.push((
+            format!("Stunned ({}t)", s.turns_remaining),
+            Color::srgb(1.0, 1.0, 0.0),
+        ));
+    }
+    if let Some(e) = enraged {
+        effects.push((
+            format!("Enraged ({}t)", e.turns_remaining),
+            Color::srgb(1.0, 0.2, 0.2),
+        ));
+    }
+    if let Some(d) = disarmed {
+        effects.push((
+            format!("Disarmed ({}t)", d.turns_remaining),
+            Color::srgb(0.7, 0.4, 0.4),
+        ));
+    }
+    if let Some(ss) = spirit_shielded {
+        effects.push((
+            format!("Spirit Shield ({}t)", ss.turns_remaining),
+            Color::srgb(0.6, 0.8, 1.0),
+        ));
+    }
+    if let Some(tm) = timed_modifiers {
+        for entry in &tm.entries {
+            let sign = if entry.amount > 0 { "+" } else { "" };
+            let attr_short = match entry.attribute.as_str() {
+                "strength" => "STR",
+                "dexterity" => "DEX",
+                "constitution" => "CON",
+                "agility" => "AGI",
+                "intelligence" => "INT",
+                "perception" => "PER",
+                "armor" => "ARM",
+                other => other,
+            };
+            let color = if entry.amount > 0 {
+                Color::srgb(0.3, 0.9, 0.3)
+            } else {
+                Color::srgb(0.9, 0.3, 0.3)
+            };
+            effects.push((
+                format!("{}{} {} ({}t)", sign, entry.amount, attr_short, entry.turns_remaining),
+                color,
+            ));
+        }
+    }
+
+    effects
+}
+
+#[allow(clippy::type_complexity)]
+fn update_player_status_effects_ui(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    q_ui_camera: Query<Entity, With<UiCamera>>,
+    mut q_container: Query<(Entity, &mut PlayerStatusEffectsContainer)>,
+    player_query: Query<
+        (
+            Option<&Poisoned>,
+            Option<&Burning>,
+            Option<&Slowed>,
+            Option<&Hasted>,
+            Option<&Stunned>,
+            Option<&Enraged>,
+            Option<&Disarmed>,
+            Option<&SpiritShielded>,
+            Option<&TimedModifiers>,
+        ),
+        With<Player>,
+    >,
 ) {
-    let Ok(ui_camera) = q_ui_camera.single() else {
+    let Ok((container, mut tracker)) = q_container.single_mut() else {
+        return;
+    };
+    let Ok((poisoned, burning, slowed, hasted, stunned, enraged, disarmed, spirit_shielded, timed_modifiers)) =
+        player_query.single()
+    else {
         return;
     };
 
-    commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                display: Display::None, // Initially hidden
-                flex_direction: FlexDirection::Column,
-                padding: UiRect::all(Val::Px(5.0)),
-                border: UiRect::all(Val::Px(1.0)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
-            BorderColor::all(Color::WHITE),
-            ZIndex(100),        // Ensure it's on top
-            Visibility::Hidden, // Use Visibility for intent
-            UiTargetCamera(ui_camera),
-            MonsterTooltip,
-            GameEntityMarker,
-        ))
-        .with_children(|parent| {
+    let effects = collect_status_effects(
+        poisoned, burning, slowed, hasted, stunned, enraged, disarmed, spirit_shielded, timed_modifiers,
+    );
+
+    // Quick hash: combine effect count with sum of turns to detect changes
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for (label, _) in &effects {
+        label.hash(&mut hasher);
+    }
+    let hash = std::hash::Hasher::finish(&hasher);
+
+    if effects.len() == tracker.last_count && hash == tracker.last_hash {
+        return;
+    }
+    tracker.last_count = effects.len();
+    tracker.last_hash = hash;
+
+    // Rebuild children
+    commands.entity(container).despawn_related::<Children>();
+
+    if effects.is_empty() {
+        return;
+    }
+
+    let font: Handle<Font> = asset_server.load("fonts/Macondo-Regular.ttf");
+
+    commands.entity(container).with_children(|parent| {
+        for (label, color) in &effects {
             parent.spawn((
-                Text::new("Name: "),
-                TextFont {
-                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                    font_size: 18.0,
+                Node {
+                    padding: UiRect::axes(Val::Px(4.0), Val::Px(1.0)),
+                    border: UiRect::all(Val::Px(1.0)),
                     ..default()
                 },
-                TextColor(Color::WHITE),
-                MonsterTooltipName,
-            ));
-            parent.spawn((
-                Text::new("Health: "),
-                TextFont {
-                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                    font_size: 16.0,
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                MonsterTooltipHealth,
-            ));
-            parent.spawn((
-                Text::new("Damage: "),
-                TextFont {
-                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                    font_size: 16.0,
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                MonsterTooltipDamage,
-            ));
-            parent.spawn((
-                Text::new(""),
-                TextFont {
-                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                    font_size: 16.0,
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                MonsterTooltipMoveSpeed,
-            ));
-            parent.spawn((
-                Text::new(""),
-                TextFont {
-                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                    font_size: 16.0,
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                MonsterTooltipActionSpeed,
-            ));
-        });
+                BorderColor::all(*color),
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
+            ))
+            .with_children(|badge| {
+                badge.spawn((
+                    Text::new(label.clone()),
+                    TextFont {
+                        font: font.clone(),
+                        font_size: 11.0,
+                        ..default()
+                    },
+                    TextColor(*color),
+                ));
+            });
+        }
+    });
 }
 
 /// Helper to get semantic speed traits and their colors based on dangerousness.
 /// Fast = Low Multiplier = RED (Dangerous)
 /// Slow = High Multiplier = GREEN (Advantage)
-fn get_speed_trait(multiplier: f32, category: &str) -> Option<(String, Color)> {
+pub fn get_speed_trait(multiplier: f32, category: &str) -> Option<(String, Color)> {
     if multiplier < 0.75 {
         Some((
             format!("Very Quick {}", category),
@@ -537,174 +629,6 @@ fn get_speed_trait(multiplier: f32, category: &str) -> Option<(String, Color)> {
     }
 }
 
-/// System that detects mouse hover over monsters/player and updates the tooltip.
-fn update_monster_tooltip_ui(
-    windows: Query<&Window>,
-    q_camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
-    q_actors: Query<
-        (
-            Entity,
-            &GlobalTransform,
-            &Name,
-            &Health,
-            Option<&HealthRegen>,
-            &Damage,
-            Option<&SpeedStats>,
-            &InheritedVisibility,
-        ),
-        (Or<(With<Monster>, With<Player>)>, Without<MonsterTooltip>),
-    >,
-    mut q_tooltip_root: Query<
-        (&mut Node, &mut Visibility),
-        (With<MonsterTooltip>, Without<Monster>, Without<Player>),
-    >,
-    mut q_tooltip_name: Query<&mut Text, With<MonsterTooltipName>>,
-    mut q_tooltip_health: Query<
-        &mut Text,
-        (With<MonsterTooltipHealth>, Without<MonsterTooltipName>),
-    >,
-    mut q_tooltip_damage: Query<
-        &mut Text,
-        (
-            With<MonsterTooltipDamage>,
-            Without<MonsterTooltipName>,
-            Without<MonsterTooltipHealth>,
-        ),
-    >,
-    mut q_tooltip_move_speed: Query<
-        (&mut Text, &mut TextColor),
-        (
-            With<MonsterTooltipMoveSpeed>,
-            Without<MonsterTooltipName>,
-            Without<MonsterTooltipHealth>,
-            Without<MonsterTooltipDamage>,
-        ),
-    >,
-    mut q_tooltip_action_speed: Query<
-        (&mut Text, &mut TextColor),
-        (
-            With<MonsterTooltipActionSpeed>,
-            Without<MonsterTooltipName>,
-            Without<MonsterTooltipHealth>,
-            Without<MonsterTooltipDamage>,
-            Without<MonsterTooltipMoveSpeed>,
-        ),
-    >,
-) {
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    let Ok((camera, camera_transform)) = q_camera.single() else {
-        return;
-    };
-
-    let mut hovered_actor_data = None;
-
-    if let Some(screen_pos) = window.cursor_position() {
-        if let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, screen_pos) {
-            let mouse_world_x = world_pos.x;
-            let mouse_world_y = world_pos.y;
-
-            // Simple AABB check for hover using GlobalTransform
-            for (entity, global_transform, name, health, regen, damage, action_stats, visibility) in
-                q_actors.iter()
-            {
-                if !visibility.get() {
-                    continue;
-                }
-
-                let translation = global_transform.translation();
-                let scale = global_transform.compute_transform().scale;
-
-                // Effective size in world units
-                let half_size_x = (TILE_SIZE_X as f32 * scale.x) / 2.0;
-                let half_size_y = (TILE_SIZE_X as f32 * scale.y) / 2.0;
-
-                let min_x = translation.x - half_size_x;
-                let max_x = translation.x + half_size_x;
-                let min_y = translation.y - half_size_y;
-                let max_y = translation.y + half_size_y;
-
-                if mouse_world_x >= min_x
-                    && mouse_world_x <= max_x
-                    && mouse_world_y >= min_y
-                    && mouse_world_y <= max_y
-                {
-                    hovered_actor_data = Some((
-                        entity,
-                        translation,
-                        name,
-                        health,
-                        regen,
-                        damage,
-                        action_stats,
-                    ));
-                    break;
-                }
-            }
-        }
-    }
-
-    let Ok((mut tooltip_node, mut tooltip_visibility)) = q_tooltip_root.single_mut() else {
-        return;
-    };
-
-    if let Some((_entity, actor_world_pos, name, health, regen, damage, action_stats)) =
-        hovered_actor_data
-    {
-        // Show tooltip
-        *tooltip_visibility = Visibility::Visible;
-        tooltip_node.display = Display::Flex;
-
-        // Position tooltip near the actor
-        if let Ok(screen_pos_actor) = camera.world_to_viewport(camera_transform, actor_world_pos) {
-            tooltip_node.left = Val::Px(screen_pos_actor.x + 15.0);
-            tooltip_node.top = Val::Px(screen_pos_actor.y - 15.0);
-        }
-
-        // Update tooltip text
-        if let Ok(mut name_text) = q_tooltip_name.single_mut() {
-            name_text.0 = format!("Name: {}", name.0);
-        }
-        if let Ok(mut health_text) = q_tooltip_health.single_mut() {
-            let mut health_str = format!("Health: {}/{}", health.current, health.max);
-            if let Some(r) = regen {
-                if r.regen_rate > 0 {
-                    if r.regen_rate >= 100 {
-                        health_str.push_str(&format!(" (+{}/t)", r.regen_rate / 100));
-                    } else {
-                        let turns = 100 / r.regen_rate;
-                        health_str.push_str(&format!(" (+1/{}t)", turns));
-                    }
-                }
-            }
-            health_text.0 = health_str;
-        }
-        if let Ok(mut damage_text) = q_tooltip_damage.single_mut() {
-            damage_text.0 = format!("Damage: {}", damage.0);
-        }
-
-        // Handle Speed Traits
-        let (mut move_trait_text, mut move_trait_color) = (String::new(), Color::WHITE);
-
-        if let Some(stats) = action_stats {
-            if let Some((label, color)) = get_speed_trait(stats.delay, "Action") {
-                move_trait_text = label;
-                move_trait_color = color;
-            }
-        }
-
-        if let Ok((mut text, mut color)) = q_tooltip_move_speed.single_mut() {
-            text.0 = move_trait_text;
-            color.0 = move_trait_color;
-        }
-    } else {
-        // Hide tooltip
-        *tooltip_visibility = Visibility::Hidden;
-        tooltip_node.display = Display::None;
-    }
-}
-
 // --- Plugin ---
 
 pub struct UiPlugin;
@@ -714,12 +638,14 @@ impl Plugin for UiPlugin {
         app.init_resource::<GameLog>()
             .init_resource::<GameLogSettings>()
             .add_message::<GameLogMessage>()
-            .add_plugins((CharacterInfoPlugin, CheatMenuPlugin, InventoryPlugin, LogHistoryPlugin, NearbyPlugin, SpellsPlugin))
+            .add_plugins((
+                CharacterInfoPlugin, CheatMenuPlugin, InventoryPlugin, LogHistoryPlugin,
+                MenuPlugin, NearbyPlugin, SpellsPlugin, monster_info::MonsterInfoPlugin,
+            ))
             .add_systems(
                 OnEnter(AppState::InGame),
                 (
                     spawn_player_stats_ui,
-                    spawn_monster_tooltip_ui,
                     spawn_game_log_ui,
                 ),
             )
@@ -731,7 +657,7 @@ impl Plugin for UiPlugin {
                     update_floor_ui,
                     update_xp_ui,
                     update_spell_slots_ui,
-                    update_monster_tooltip_ui,
+                    update_player_status_effects_ui,
                     add_log_message_system,
                     update_game_log_ui,
                     game_log_input_system,

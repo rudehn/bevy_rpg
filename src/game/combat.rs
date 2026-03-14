@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::components::{Monster, Name, GodMode};
 use crate::game::level::{Experience, ExperienceReward};
-use crate::game::magic::{Enraged, SpiritShielded};
+use crate::game::magic::{Disarmed, Enraged, SpiritShielded};
 use crate::game::stats::{CombatStats, Level, Mana};
 use crate::game::turns::TurnEndEvent;
 use crate::game::{AppState, RunSummary, TurnManager};
@@ -106,6 +106,7 @@ pub struct DamageTypeTag(pub DamageType);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DamageSource {
     Melee,
+    Ranged,
     Spell,
     Poison,
     Environment,
@@ -194,6 +195,15 @@ pub struct MissMessage {
 pub struct OnHitTriggerMessage {
     pub attacker: Entity,
     pub defender: Entity,
+}
+
+/// Message emitted when an entity takes damage, for on-being-hit passive abilities.
+#[derive(Message, Debug)]
+pub struct OnBeingHitTriggerMessage {
+    pub attacker: Entity,
+    pub defender: Entity,
+    pub damage: i32,
+    pub source: DamageSource,
 }
 
 /// Message sent to toggle GodMode on an entity.
@@ -300,15 +310,16 @@ fn damage_roll_system(
     mut roll_messages: MessageReader<DamageRollMessage>,
     mut reduction_writer: MessageWriter<DamageReductionMessage>,
     mut game_rng: ResMut<GameRng>,
-    query: Query<(&Damage, &CombatStats, Has<Enraged>)>,
+    query: Query<(&Damage, &CombatStats, Has<Enraged>, Has<Disarmed>)>,
 ) {
     for message in roll_messages.read() {
-        let Ok((damage_dice, attacker_stats, is_enraged)) = query.get(message.attacker) else {
+        let Ok((damage_dice, attacker_stats, is_enraged, is_disarmed)) = query.get(message.attacker) else {
             continue;
         };
 
         let rolled_damage = roll_dice(&damage_dice.0, &mut game_rng.0);
-        let mut raw_damage = rolled_damage + attacker_stats.damage_bonus;
+        let damage_bonus = if is_disarmed { 0 } else { attacker_stats.damage_bonus };
+        let mut raw_damage = rolled_damage + damage_bonus;
 
         // Enraged: +50% damage
         if is_enraged {
@@ -400,6 +411,7 @@ fn damage_application_system(
     mut apply_messages: MessageReader<ApplyDamageMessage>,
     mut death_writer: MessageWriter<DeathEvent>,
     mut on_hit_writer: MessageWriter<OnHitTriggerMessage>,
+    mut on_being_hit_writer: MessageWriter<OnBeingHitTriggerMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut query_health: Query<(
         &mut Health,
@@ -471,6 +483,16 @@ fn damage_application_system(
             on_hit_writer.write(OnHitTriggerMessage {
                 attacker: message.attacker,
                 defender: message.target,
+            });
+        }
+
+        // Trigger on-being-hit effects for all damage that landed
+        if remaining_damage > 0 {
+            on_being_hit_writer.write(OnBeingHitTriggerMessage {
+                attacker: message.attacker,
+                defender: message.target,
+                damage: remaining_damage,
+                source: message.source,
             });
         }
 
@@ -589,6 +611,7 @@ impl Plugin for CombatPlugin {
             .add_message::<MissMessage>()
             .add_message::<ToggleGodModeMessage>()
             .add_message::<OnHitTriggerMessage>()
+            .add_message::<OnBeingHitTriggerMessage>()
             .add_message::<DeathEvent>()
             .register_type::<Health>()
             .register_type::<HealthRegen>()

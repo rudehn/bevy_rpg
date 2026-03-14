@@ -79,7 +79,11 @@ impl Plugin for TurnOrderPlugin {
                 (
                     select_next_actor.run_if(in_state(TurnState::NextTurn)),
                     // Only accept movement input when no UI screen is open.
-                    handle_player_input.run_if(
+                    // player_stun_check intercepts before input if stunned.
+                    (
+                        player_stun_check,
+                        handle_player_input.after(player_stun_check),
+                    ).run_if(
                         in_state(TurnState::PlayerInput).and(in_state(InGameState::Running))
                     ),
                     (
@@ -130,7 +134,6 @@ fn select_next_actor(
     mut turn_manager: ResMut<TurnManager>,
     query_player: Query<Entity, With<Player>>,
     query_all: Query<Entity>,
-    query_stunned: Query<&crate::game::magic::Stunned>,
     mut next_state: ResMut<NextState<TurnState>>,
 ) {
     if turn_manager.turn_queue.is_empty() {
@@ -144,11 +147,11 @@ fn select_next_actor(
     turn_manager.current_time = next_scheduled_time;
 
     let mut player_ready = false;
-    let mut npc_tagged = false;
+    let mut npc_tagged = 0u32;
+    const MAX_NPC_BATCH: u32 = 4;
 
-    // Identify all actors ready at this time slice
-    // We look at the queue and tag everyone whose time is <= current_time
-    // But we MUST stop if we hit the player to gather input.
+    // Identify actors ready at this time slice, batching NPCs up to MAX_NPC_BATCH.
+    // We MUST stop if we hit the player to gather input.
 
     let mut i = 0;
     while i < turn_queue_len(turn_manager.as_ref()) {
@@ -167,55 +170,31 @@ fn select_next_actor(
             player_ready = true;
             // If we have already tagged some NPCs this batch, we MUST process them FIRST
             // before switching to PlayerInput state.
-            if npc_tagged {
+            if npc_tagged > 0 {
                 break;
             } else {
                 // If no NPCs were tagged yet, the player is the very first one ready.
-                // We'll tag them and go to input.
+                // We'll tag them and go to input. Stun is handled by player_stun_check
+                // which runs in PlayerInput state before handle_player_input.
                 commands.queue(move |world: &mut World| {
                     if let Ok(mut ec) = world.get_entity_mut(entity) {
                         ec.insert(MyTurn);
                     }
-
-                    // Stun check: if player is stunned, skip their input turn
-                    if world.get::<crate::game::magic::Stunned>(entity).is_some() {
-                        let name = world
-                            .get::<crate::components::Name>(entity)
-                            .map(|n| n.0.clone())
-                            .unwrap_or_else(|| "You".to_string());
-                        world.write_message(crate::ui::game_log::GameLogMessage(
-                            format!("{} is stunned and cannot act!", name)
-                        ));
-                        // Floating "★" particle above the stunned player
-                        if let Some(pos) = world.get::<crate::components::Position>(entity) {
-                            let world_pos = bevy::math::Vec2::new(pos.x as f32 * 16.0, pos.y as f32 * 16.0 + 8.0);
-                            world.write_message(crate::game::particles::ParticleRequest::FloatingText {
-                                world_pos,
-                                text: "\u{2605}".to_string(),
-                                color: bevy::prelude::Color::srgba(1.0, 1.0, 0.3, 1.0),
-                                font_size: 5.0,
-                            });
-                        }
-                        // Auto-emit wait intent so the turn advances
-                        world.write_message(WaitIntent { entity });
-                    }
                 });
-                // Check if player is stunned: if so, go straight to Processing instead
-                if query_stunned.get(entity).is_ok() {
-                    next_state.set(TurnState::Processing);
-                } else {
-                    next_state.set(TurnState::PlayerInput);
-                }
+                next_state.set(TurnState::PlayerInput);
                 return;
             }
         } else {
-            // It's an NPC or Marker
+            // It's an NPC or Marker — cap batch size to spread work across frames
+            if npc_tagged >= MAX_NPC_BATCH {
+                break;
+            }
             commands.queue(move |world: &mut World| {
                 if let Ok(mut ec) = world.get_entity_mut(entity) {
                     ec.insert(MyTurn);
                 }
             });
-            npc_tagged = true;
+            npc_tagged += 1;
         }
         i += 1;
     }
@@ -226,7 +205,7 @@ fn select_next_actor(
         turn_manager.turn_queue.remove(0);
     }
 
-    if npc_tagged {
+    if npc_tagged > 0 {
         next_state.set(TurnState::Processing);
     } else if player_ready {
         // This case should be handled by the "if no NPCs tagged yet" block above,
@@ -313,7 +292,8 @@ fn continue_turn_processing(
     mut next_state: ResMut<NextState<TurnState>>,
 ) {
     // Check if we can immediately trigger another batch of NPCs who are ready "now"
-    let mut npc_added = false;
+    let mut npc_added = 0u32;
+    const MAX_NPC_BATCH: u32 = 4;
     // Queue is already sorted by resolve_turn_end; no redundant sort needed.
 
     while !turn_manager.turn_queue.is_empty() {
@@ -326,7 +306,7 @@ fn continue_turn_processing(
         if query_player.get(next_entity).is_ok() {
             // If NPCs were already added this frame, we let them act first.
             // If not, we switch to player input.
-            if !npc_added {
+            if npc_added == 0 {
                 let (entity, _) = turn_manager.turn_queue.remove(0);
                 commands.queue(move |world: &mut World| {
                     if let Ok(mut ec) = world.get_entity_mut(entity) {
@@ -339,18 +319,49 @@ fn continue_turn_processing(
             break;
         }
 
+        // Cap batch size to avoid lag spikes from many simultaneous NPC turns
+        if npc_added >= MAX_NPC_BATCH {
+            break;
+        }
+
         let (entity, _) = turn_manager.turn_queue.remove(0);
         commands.queue(move |world: &mut World| {
             if let Ok(mut ec) = world.get_entity_mut(entity) {
                 ec.insert(MyTurn);
             }
         });
-        npc_added = true;
+        npc_added += 1;
     }
 
-    if !npc_added {
+    if npc_added == 0 {
         next_state.set(TurnState::NextTurn);
     }
+}
+
+/// Pre-check: if the player is stunned, skip their input and go straight to Processing.
+/// This keeps stun logic out of the turn system — it's a status effect concern.
+fn player_stun_check(
+    query: Query<(Entity, &crate::components::Position), (With<Player>, With<MyTurn>, With<crate::game::magic::Stunned>)>,
+    mut log_writer: MessageWriter<crate::ui::game_log::GameLogMessage>,
+    mut particle_writer: MessageWriter<crate::game::particles::ParticleRequest>,
+    mut wait_writer: MessageWriter<WaitIntent>,
+    mut next_state: ResMut<NextState<TurnState>>,
+) {
+    let Ok((entity, pos)) = query.single() else {
+        return;
+    };
+    log_writer.write(crate::ui::game_log::GameLogMessage(
+        "You are stunned and cannot act!".to_string(),
+    ));
+    let world_pos = crate::game::particles::grid_to_world(pos.x, pos.y);
+    particle_writer.write(crate::game::particles::ParticleRequest::FloatingText {
+        world_pos,
+        text: "\u{2605}".to_string(),
+        color: bevy::prelude::Color::srgba(1.0, 1.0, 0.3, 1.0),
+        font_size: 5.0,
+    });
+    wait_writer.write(WaitIntent { entity });
+    next_state.set(TurnState::Processing);
 }
 
 fn handle_player_input(

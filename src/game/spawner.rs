@@ -5,7 +5,7 @@ use bracket_lib::prelude::Point;
 use crate::{
     assets::{MonsterAsset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets, ItemManifest, ItemManifestHandle, ItemSpriteAssets},
     components::{
-        Collider, FloorEntityMarker, GameEntityMarker, Monster, Name, Position, Viewshed, Item, AmuletOfBevy,
+        Ammo, Collider, FloorEntityMarker, GameEntityMarker, Monster, Name, Position, Viewshed, Item, AmuletOfBevy,
     },
     constants::{TILE_SIZE_X, TILE_SIZE_Y, Z_MONSTER, Z_ITEM},
     game::{
@@ -28,7 +28,7 @@ pub fn spawn_monster(
     turn_manager: &mut ResMut<TurnManager>,
     monster_asset: &MonsterAsset,
     monster_sprite_assets: &Res<MonsterSpriteAssets>,
-) -> Entity {
+) -> Option<Entity> {
     let tile_size = monster_asset.tile_size.unwrap_or(UVec2::new(32, 32));
     let scale_x = TILE_SIZE_X as f32 / tile_size.x as f32;
     let scale_y = TILE_SIZE_Y as f32 / tile_size.y as f32;
@@ -51,16 +51,14 @@ pub fn spawn_monster(
     let texture_path = sprite_path_parts[0];
     let index = sprite_path_parts[1].parse::<usize>().unwrap_or_default();
 
-    let texture_handle = monster_sprite_assets
-        .handles
-        .get(texture_path)
-        .unwrap()
-        .clone();
-    let layout_handle = monster_sprite_assets
-        .layouts
-        .get(texture_path)
-        .unwrap()
-        .clone();
+    let Some(texture_handle) = monster_sprite_assets.handles.get(texture_path).cloned() else {
+        error!("Missing monster sprite texture: '{}'", texture_path);
+        return None;
+    };
+    let Some(layout_handle) = monster_sprite_assets.layouts.get(texture_path).cloned() else {
+        error!("Missing monster sprite layout: '{}'", texture_path);
+        return None;
+    };
 
     // Calculate XP reward: Base 10 + (Level * 5) + (Base HP / 2)
     let xp_reward = 10 + (monster_asset.level * 5) + (monster_asset.base_hp / 2);
@@ -200,8 +198,60 @@ pub fn spawn_monster(
         commands.entity(monster_entity).insert(OnHitEffects(monster_asset.on_hit_effects.clone()));
     }
 
+    // Explode on death
+    if let Some((radius, damage)) = monster_asset.explode_on_death {
+        commands.entity(monster_entity).insert(
+            crate::game::abilities::ExplodeOnDeath { radius, damage },
+        );
+    }
+
+    // Reanimate
+    if let Some(revive_hp) = monster_asset.reanimate_hp {
+        commands.entity(monster_entity).insert(
+            crate::game::abilities::Reanimate { revive_hp },
+        );
+    }
+
+    // Poison body
+    if let Some(stacks) = monster_asset.poison_body {
+        commands.entity(monster_entity).insert(
+            crate::game::abilities::PoisonBody { stacks },
+        );
+    }
+
+    // Thorn aura
+    if let Some(damage) = monster_asset.thorn_aura {
+        commands.entity(monster_entity).insert(
+            crate::game::abilities::ThornAura { damage },
+        );
+    }
+
+    // Enrage on hit
+    if let Some(threshold_percent) = monster_asset.enrage_on_hit {
+        commands.entity(monster_entity).insert(
+            crate::game::abilities::EnrageOnHit { threshold_percent },
+        );
+    }
+
+    // Death curse
+    if let Some(ref effect) = monster_asset.death_curse {
+        commands.entity(monster_entity).insert(
+            crate::game::abilities::DeathCurse { effect: effect.clone() },
+        );
+    }
+
+    // Summon on death
+    if let Some((ref monster_name, count)) = monster_asset.summon_on_death {
+        commands.entity(monster_entity).insert(
+            crate::game::abilities::SummonOnDeath {
+                monster_name: monster_name.clone(),
+                count,
+            },
+        );
+    }
+
     turn_manager.add_entity(monster_entity);
-    monster_entity
+    Some(monster_entity)
 }
 
 pub fn spawn_monster_by_name(
@@ -215,13 +265,13 @@ pub fn spawn_monster_by_name(
 ) -> Option<Entity> {
     if let Some(manifest) = monster_manifests.get(&monster_manifest_handle.0) {
         if let Some(monster_asset) = manifest.monsters.get(monster_name) {
-            Some(spawn_monster(
+            spawn_monster(
                 commands,
                 spawn_point,
                 turn_manager,
                 monster_asset,
                 monster_sprite_assets,
-            ))
+            )
         } else {
             warn!("Monster '{}' not found in manifest.", monster_name);
             None
@@ -252,8 +302,14 @@ pub fn spawn_item(
     let texture_path = sprite_path_parts[0];
     let index = sprite_path_parts[1].parse::<usize>().unwrap_or_default();
 
-    let texture_handle = item_sprite_assets.handles.get(texture_path).unwrap().clone();
-    let layout_handle = item_sprite_assets.layouts.get(texture_path).unwrap().clone();
+    let Some(texture_handle) = item_sprite_assets.handles.get(texture_path).cloned() else {
+        error!("Missing item sprite texture: '{}'", texture_path);
+        return None;
+    };
+    let Some(layout_handle) = item_sprite_assets.layouts.get(texture_path).cloned() else {
+        error!("Missing item sprite layout: '{}'", texture_path);
+        return None;
+    };
 
     // Determine scale to fit one game map tile (GRID_SIZE)
     let tile_size = asset.tile_size.unwrap_or(UVec2::new(32, 32));
@@ -306,6 +362,10 @@ pub fn spawn_item(
 
     if asset.is_victory {
         entity.insert(AmuletOfBevy);
+    }
+
+    if asset.is_ammo {
+        entity.insert(Ammo);
     }
 
     Some(entity.id())

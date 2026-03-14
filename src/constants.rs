@@ -5,3 +5,6 @@ pub const Z_MONSTER: f32 = 2.0;
 pub const Z_ITEM: f32 = 1.0;
 
 pub const BASE_ACTION_COST: u32 = 100;
+
+/// Damage dice used when no weapon is equipped (bare fists).
+pub const UNARMED_DAMAGE: &str = "1d4";

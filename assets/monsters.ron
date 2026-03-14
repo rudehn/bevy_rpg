@@ -43,6 +43,7 @@
                 ApplyPoison(damage_per_turn: 1, duration: 3, chance: 50),
                 ApplySlow(duration: 3, chance: 30),
             ],
+            poison_body: Some(1),
         ),
         "Plague Rat": (
             name: "Plague Rat",
@@ -60,6 +61,7 @@
             on_hit_effects: [
                 ApplyPoison(damage_per_turn: 2, duration: 4, chance: 40),
             ],
+            poison_body: Some(2),
         ),
 
         // ==================== GOBLINOID (Floors 1-10) ====================
@@ -131,6 +133,7 @@
                 (item: "Iron Sword", spawn_chance: 0.20),
                 (item: "Healing Potion", spawn_chance: 0.30),
             ],
+            summon_on_death: Some(("Goblin", 2)),
         ),
 
         // ==================== UNDEAD (Floors 5-16) ====================
@@ -148,6 +151,7 @@
             agility: 8,
             base_armor: 2,
             resistances: {"poison": "immune"},
+            reanimate_hp: Some(8),
         ),
         "Bone Archer": (
             name: "Bone Archer",
@@ -179,6 +183,7 @@
             agility: 4,
             base_armor: 1,
             resistances: {"poison": "immune"},
+            reanimate_hp: Some(10),
         ),
         "Wraith": (
             name: "Wraith",
@@ -196,6 +201,7 @@
             on_hit_effects: [
                 AttributeDrain(attribute: "strength", amount: 2, duration: 6, chance: 40),
             ],
+            death_curse: Some(Slow(duration: 3)),
         ),
         "Lich Apprentice": (
             name: "Lich Apprentice",
@@ -214,6 +220,7 @@
             loot_table: [
                 (item: "Tome of Magic Missile", spawn_chance: 0.30),
             ],
+            death_curse: Some(WeakenStr(amount: 3, duration: 5)),
         ),
 
         // ==================== ORCISH (Floors 8-16) ====================
@@ -251,6 +258,10 @@
             loot_table: [
                 (item: "Iron Sword", spawn_chance: 0.20),
             ],
+            on_hit_effects: [
+                Knockback(distance: 1, chance: 30),
+            ],
+            enrage_on_hit: Some(50),
         ),
         "Orc Shaman": (
             name: "Orc Shaman",
@@ -287,6 +298,7 @@
                 (item: "Iron Sword", spawn_chance: 0.25),
                 (item: "Healing Potion", spawn_chance: 0.40),
             ],
+            summon_on_death: Some(("Orc Berserker", 1)),
         ),
 
         // ==================== DEMONIC (Floors 12-20) ====================
@@ -306,6 +318,7 @@
             intelligence: 12,
             resistances: {"fire": "immune"},
             spells: ["fire_dart", "spark"],
+            explode_on_death: Some((2, 6)),
         ),
         "Hell Hound": (
             name: "Hell Hound",
@@ -320,6 +333,10 @@
             constitution: 12,
             agility: 14,
             resistances: {"fire": "immune", "ice": "weak"},
+            on_hit_effects: [
+                ApplyBurning(damage_per_turn: 2, duration: 3, chance: 40),
+            ],
+            explode_on_death: Some((1, 8)),
         ),
         "Shadow Fiend": (
             name: "Shadow Fiend",
@@ -352,6 +369,10 @@
             constitution: 16,
             agility: 6,
             base_armor: 1,
+            on_hit_effects: [
+                Knockback(distance: 2, chance: 50),
+            ],
+            enrage_on_hit: Some(40),
         ),
         "Ogre Mage": (
             name: "Ogre Mage",
@@ -381,6 +402,8 @@
             regen: 3,
             base_armor: 1,
             resistances: {"fire": "weak"},
+            thorn_aura: Some(3),
+            enrage_on_hit: Some(30),
         ),
 
         // ==================== DARK (Floors 18-26) ====================
@@ -420,6 +443,10 @@
             loot_table: [
                 (item: "Iron Sword", spawn_chance: 0.30),
             ],
+            on_hit_effects: [
+                Disarm(duration: 3, chance: 25),
+            ],
+            thorn_aura: Some(2),
         ),
     }
 )

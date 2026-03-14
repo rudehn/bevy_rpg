@@ -155,6 +155,73 @@ pub fn dispatch_player_action(
     commands.entity(player_entity).remove::<MyTurn>();
 }
 
+/// Merges a stackable floor item into existing inventory stacks, spilling remainder
+/// into a new slot if space allows. Returns the total number of items transferred.
+/// Handles despawn/update of the floor entity.
+fn try_stack_pickup(
+    commands: &mut Commands,
+    floor_entity: Entity,
+    item_name: &str,
+    floor_stack: Option<&ItemStack>,
+    inv: &mut Inventory,
+    inv_stacks_query: &Query<(&Name, &ItemStack), With<InInventory>>,
+) -> u32 {
+    let floor_count = floor_stack.map(|s| s.count).unwrap_or(1);
+    let max_stack = floor_stack.map(|s| s.max_stack).unwrap_or(1);
+    let mut remaining = floor_count;
+
+    // Fill every existing inventory stack that has room.
+    let merge_targets: Vec<(Entity, u32, u32)> = inv.items.iter()
+        .filter_map(|&e| {
+            inv_stacks_query.get(e).ok().and_then(|(inv_name, inv_stack)| {
+                if inv_name.0 == item_name && inv_stack.count < inv_stack.max_stack {
+                    Some((e, inv_stack.count, inv_stack.max_stack))
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+
+    let mut total_transferred = 0u32;
+    for (target_entity, current_count, target_max) in merge_targets {
+        if remaining == 0 { break; }
+        let space = target_max - current_count;
+        let transfer = remaining.min(space);
+        remaining -= transfer;
+        total_transferred += transfer;
+        commands.entity(target_entity).insert(ItemStack {
+            count: current_count + transfer,
+            max_stack: target_max,
+        });
+    }
+
+    // Spill remainder into a new inventory slot if space allows.
+    let mut moved_to_inv = false;
+    if remaining > 0 && inv.items.len() < inv.capacity {
+        commands.entity(floor_entity).insert(ItemStack { count: remaining, max_stack });
+        inv.items.push(floor_entity);
+        commands.entity(floor_entity)
+            .insert(InInventory)
+            .insert(Visibility::Hidden)
+            .remove::<crate::components::FloorEntityMarker>();
+        total_transferred += remaining;
+        remaining = 0;
+        moved_to_inv = true;
+    }
+
+    // Clean up: despawn or update the floor entity.
+    if !moved_to_inv {
+        if remaining == 0 {
+            commands.entity(floor_entity).despawn();
+        } else if total_transferred > 0 {
+            commands.entity(floor_entity).insert(ItemStack { count: remaining, max_stack });
+        }
+    }
+
+    total_transferred
+}
+
 pub fn handle_pickup(
     mut commands: Commands,
     mut intents: MessageReader<PickUpIntent>,
@@ -201,63 +268,17 @@ pub fn handle_pickup(
                     let is_stackable = item_stack.map(|s| s.max_stack > 1).unwrap_or(false);
 
                     if is_stackable {
-                        let floor_count = item_stack.map(|s| s.count).unwrap_or(1);
-                        let max_stack = item_stack.map(|s| s.max_stack).unwrap_or(1);
-                        let mut remaining = floor_count;
-
-                        // Fill every existing inventory stack that has room.
-                        let merge_targets: Vec<(Entity, u32, u32)> = inv.items.iter()
-                            .filter_map(|&e| {
-                                inv_stacks_query.get(e).ok().and_then(|(inv_name, inv_stack)| {
-                                    if inv_name.0 == item_name.0 && inv_stack.count < inv_stack.max_stack {
-                                        Some((e, inv_stack.count, inv_stack.max_stack))
-                                    } else {
-                                        None
-                                    }
-                                })
-                            })
-                            .collect();
-
-                        let mut total_transferred = 0u32;
-                        for (target_entity, current_count, target_max) in merge_targets {
-                            if remaining == 0 { break; }
-                            let space = target_max - current_count;
-                            let transfer = remaining.min(space);
-                            remaining -= transfer;
-                            total_transferred += transfer;
-                            commands.entity(target_entity).insert(ItemStack {
-                                count: current_count + transfer,
-                                max_stack: target_max,
-                            });
-                        }
-
-                        // Spill remainder into a new inventory slot if space allows.
-                        let mut moved_to_inv = false;
-                        if remaining > 0 && inv.items.len() < inv.capacity {
-                            commands.entity(item_entity).insert(ItemStack { count: remaining, max_stack });
-                            inv.items.push(item_entity);
-                            commands.entity(item_entity)
-                                .insert(InInventory)
-                                .insert(Visibility::Hidden)
-                                .remove::<crate::components::FloorEntityMarker>();
-                            total_transferred += remaining;
-                            remaining = 0;
-                            moved_to_inv = true;
-                        }
-
-                        // Clean up: despawn or update the floor entity.
-                        if !moved_to_inv {
-                            if remaining == 0 {
-                                commands.entity(item_entity).despawn();
-                            } else if total_transferred > 0 {
-                                // Partial pickup — update floor entity's remaining count.
-                                commands.entity(item_entity).insert(ItemStack { count: remaining, max_stack });
-                            }
-                        }
-
-                        if total_transferred > 0 {
+                        let transferred = try_stack_pickup(
+                            &mut commands,
+                            item_entity,
+                            &item_name.0,
+                            item_stack,
+                            &mut inv,
+                            &inv_stacks_query,
+                        );
+                        if transferred > 0 {
                             log_writer.write(GameLogMessage(format!(
-                                "You pick up the {} (x{}).", item_name.0, total_transferred
+                                "You pick up the {} (x{}).", item_name.0, transferred
                             )));
                             picked_up = true;
                         } else {

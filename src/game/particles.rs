@@ -169,8 +169,9 @@ fn setup_particle_font(mut commands: Commands, asset_server: Res<AssetServer>) {
 
 // --- Helpers ---
 
-fn grid_to_world(gx: i32, gy: i32) -> Vec2 {
-    Vec2::new(gx as f32 * 16.0, gy as f32 * 16.0 + 8.0)
+pub fn grid_to_world(gx: i32, gy: i32) -> Vec2 {
+    use crate::map::map::GRID_SIZE;
+    Vec2::new(gx as f32 * GRID_SIZE.x, gy as f32 * GRID_SIZE.y + GRID_SIZE.y * 0.5)
 }
 
 fn spawn_impact_entity(commands: &mut Commands, font: &ParticleFont, world_pos: Vec2, impact: &ImpactData) {

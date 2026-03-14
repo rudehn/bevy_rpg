@@ -57,7 +57,7 @@ impl MonsterAI {
             )));
             // Floating "★" particle above the stunned entity
             if let Some(pos) = world.get::<Position>(entity) {
-                let world_pos = bevy::math::Vec2::new(pos.x as f32 * 16.0, pos.y as f32 * 16.0 + 8.0);
+                let world_pos = crate::game::particles::grid_to_world(pos.x, pos.y);
                 world.write_message(crate::game::particles::ParticleRequest::FloatingText {
                     world_pos,
                     text: "\u{2605}".to_string(), // ★

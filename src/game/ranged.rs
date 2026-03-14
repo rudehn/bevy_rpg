@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{DistanceAlg, Point};
 
 use crate::{
-    components::{InInventory, Inventory, Name, Position, Viewshed},
+    components::{Ammo, InInventory, Inventory, Name, Position, Viewshed},
     constants::BASE_ACTION_COST,
     game::{
         actions::{ActionFinishedEvent, FreeActionEvent, RangedAttackIntent},
@@ -45,7 +45,7 @@ pub fn handle_ranged_attack(
     target_query: Query<(&Position, Option<&Name>)>,
     item_props_query: Query<&ItemProperties>,
     mut player_inv_query: Query<&mut Inventory, With<Player>>,
-    arrow_query: Query<(&Name, &ItemStack), With<InInventory>>,
+    arrow_query: Query<(&Name, &ItemStack), (With<InInventory>, With<Ammo>)>,
 ) {
     for intent in intents.read() {
         let Ok((attacker_pos, viewshed, ranged_capable, equipment, attacker_name, is_player)) =
@@ -107,7 +107,7 @@ pub fn handle_ranged_attack(
         };
 
         let attacker_point = Point::new(attacker_pos.x, attacker_pos.y);
-        let dist = DistanceAlg::Pythagoras.distance2d(attacker_point, target_point);
+        let dist = DistanceAlg::Manhattan.distance2d(attacker_point, target_point);
         if dist > range as f32 {
             let who = attacker_name.map(|n| n.0.as_str()).unwrap_or("Target");
             log_writer.write(GameLogMessage(format!("{} is out of range.", who)));
@@ -127,8 +127,8 @@ pub fn handle_ranged_attack(
             };
 
             let arrow = inv.items.iter().find_map(|&e| {
-                arrow_query.get(e).ok().and_then(|(name, stack)| {
-                    if name.0 == "Arrow" { Some((e, stack.count, stack.max_stack)) } else { None }
+                arrow_query.get(e).ok().map(|(_name, stack)| {
+                    (e, stack.count, stack.max_stack)
                 })
             });
 
@@ -159,7 +159,7 @@ pub fn handle_ranged_attack(
             attacker: intent.attacker,
             target: intent.target,
             damage_type: DamageType::Physical,
-            source: DamageSource::Melee, // Ranged uses same pipeline as melee
+            source: DamageSource::Ranged,
         });
         finish_writer.write(ActionFinishedEvent {
             entity: intent.attacker,

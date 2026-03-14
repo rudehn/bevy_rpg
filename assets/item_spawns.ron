@@ -1,71 +1,71 @@
 (
     spawns: [
         // Consumables — common across all floors
-        (item: "Healing Potion",     min_floor: 1,  max_floor: 10, weight: 5, spawn_chance: 0.80),
-        (item: "Strength Potion",    min_floor: 2,  max_floor: 10, weight: 2, spawn_chance: 0.60),
-        (item: "Arrow",              min_floor: 1,  max_floor: 10, weight: 4, spawn_chance: 0.75, min_count: 5, max_count: 12),
+        (item: "Healing Potion",     min_floor: 1,  max_floor: 10, weight: 5),
+        (item: "Strength Potion",    min_floor: 2,  max_floor: 10, weight: 2),
+        (item: "Arrow",              min_floor: 1,  max_floor: 10, weight: 4, min_count: 5, max_count: 12),
 
         // Weapons — early tiers fade out as depth increases
-        (item: "Iron Sword",         min_floor: 1,  max_floor: 5,  weight: 3, spawn_chance: 0.70),
-        (item: "Steel Sword",        min_floor: 3,  max_floor: 10, weight: 2, spawn_chance: 0.65),
-        (item: "Short Bow",          min_floor: 1,  max_floor: 5,  weight: 2, spawn_chance: 0.50),
-        (item: "Long Bow",           min_floor: 3,  max_floor: 10, weight: 2, spawn_chance: 0.50),
-        
+        (item: "Iron Sword",         min_floor: 1,  max_floor: 5,  weight: 3),
+        (item: "Steel Sword",        min_floor: 3,  max_floor: 10, weight: 2),
+        (item: "Short Bow",          min_floor: 1,  max_floor: 5,  weight: 2),
+        (item: "Long Bow",           min_floor: 3,  max_floor: 10, weight: 2),
+
         // Armor
-        (item: "Leather Armor",      min_floor: 1,  max_floor: 6,  weight: 3, spawn_chance: 0.70),
+        (item: "Leather Armor",      min_floor: 1,  max_floor: 6,  weight: 3),
 
         // Accessories
-        (item: "Ring of Perception",      min_floor: 3,  max_floor: 10, weight: 1, spawn_chance: 0.40),
+        (item: "Ring of Perception",      min_floor: 3,  max_floor: 10, weight: 1),
 
         // ===========================
         // SPELLBOOKS — Zone 1 (1-5)
         // ===========================
-        (item: "Tome of Spark",            min_floor: 1,  max_floor: 5,  weight: 2, spawn_chance: 0.50),
-        (item: "Tome of Magic Missile",    min_floor: 1,  max_floor: 8,  weight: 2, spawn_chance: 0.50),
-        (item: "Tome of Minor Heal",       min_floor: 1,  max_floor: 5,  weight: 2, spawn_chance: 0.50),
-        (item: "Tome of Fire Dart",        min_floor: 2,  max_floor: 8,  weight: 1, spawn_chance: 0.40),
+        (item: "Tome of Spark",            min_floor: 1,  max_floor: 5,  weight: 2),
+        (item: "Tome of Magic Missile",    min_floor: 1,  max_floor: 8,  weight: 2),
+        (item: "Tome of Minor Heal",       min_floor: 1,  max_floor: 5,  weight: 2),
+        (item: "Tome of Fire Dart",        min_floor: 2,  max_floor: 8,  weight: 1),
 
         // ===========================
         // SPELLBOOKS — Zone 2 (6-10)
         // ===========================
-        (item: "Tome of Ice Shard",        min_floor: 6,  max_floor: 13, weight: 2, spawn_chance: 0.45),
-        (item: "Tome of Poison Bolt",      min_floor: 6,  max_floor: 13, weight: 1, spawn_chance: 0.40),
-        (item: "Tome of Vampiric Strike",  min_floor: 6,  max_floor: 13, weight: 1, spawn_chance: 0.40),
-        (item: "Tome of Healing",          min_floor: 6,  max_floor: 13, weight: 2, spawn_chance: 0.50),
-        (item: "Tome of Heal Ally",        min_floor: 6,  max_floor: 13, weight: 1, spawn_chance: 0.40),
-        (item: "Tome of Enrage",           min_floor: 6,  max_floor: 13, weight: 1, spawn_chance: 0.40),
-        (item: "Tome of Fortify",          min_floor: 6,  max_floor: 13, weight: 1, spawn_chance: 0.40),
-        (item: "Tome of Weaken",           min_floor: 6,  max_floor: 13, weight: 1, spawn_chance: 0.40),
-        (item: "Tome of Haste",            min_floor: 7,  max_floor: 14, weight: 1, spawn_chance: 0.35),
-        (item: "Tome of Blink",            min_floor: 7,  max_floor: 14, weight: 1, spawn_chance: 0.35),
+        (item: "Tome of Ice Shard",        min_floor: 6,  max_floor: 13, weight: 2),
+        (item: "Tome of Poison Bolt",      min_floor: 6,  max_floor: 13, weight: 1),
+        (item: "Tome of Vampiric Strike",  min_floor: 6,  max_floor: 13, weight: 1),
+        (item: "Tome of Healing",          min_floor: 6,  max_floor: 13, weight: 2),
+        (item: "Tome of Heal Ally",        min_floor: 6,  max_floor: 13, weight: 1),
+        (item: "Tome of Enrage",           min_floor: 6,  max_floor: 13, weight: 1),
+        (item: "Tome of Fortify",          min_floor: 6,  max_floor: 13, weight: 1),
+        (item: "Tome of Weaken",           min_floor: 6,  max_floor: 13, weight: 1),
+        (item: "Tome of Haste",            min_floor: 7,  max_floor: 14, weight: 1),
+        (item: "Tome of Blink",            min_floor: 7,  max_floor: 14, weight: 1),
 
         // ============================
         // SPELLBOOKS — Zone 3 (11-16)
         // ============================
-        (item: "Tome of Shadow Bolt",      min_floor: 11, max_floor: 19, weight: 1, spawn_chance: 0.40),
-        (item: "Tome of Lightning Bolt",   min_floor: 11, max_floor: 19, weight: 1, spawn_chance: 0.40),
-        (item: "Tome of Fireball",         min_floor: 12, max_floor: 19, weight: 1, spawn_chance: 0.35),
-        (item: "Tome of Chain Lightning",  min_floor: 12, max_floor: 19, weight: 1, spawn_chance: 0.35),
-        (item: "Tome of Cure Wounds",      min_floor: 11, max_floor: 19, weight: 1, spawn_chance: 0.40),
-        (item: "Tome of Haste Ally",       min_floor: 11, max_floor: 19, weight: 1, spawn_chance: 0.35),
-        (item: "Tome of Iron Skin",        min_floor: 11, max_floor: 19, weight: 1, spawn_chance: 0.35),
-        (item: "Tome of Battle Hymn",      min_floor: 12, max_floor: 19, weight: 1, spawn_chance: 0.35),
-        (item: "Tome of Slow",             min_floor: 11, max_floor: 19, weight: 1, spawn_chance: 0.40),
+        (item: "Tome of Shadow Bolt",      min_floor: 11, max_floor: 19, weight: 1),
+        (item: "Tome of Lightning Bolt",   min_floor: 11, max_floor: 19, weight: 1),
+        (item: "Tome of Fireball",         min_floor: 12, max_floor: 19, weight: 1),
+        (item: "Tome of Chain Lightning",  min_floor: 12, max_floor: 19, weight: 1),
+        (item: "Tome of Cure Wounds",      min_floor: 11, max_floor: 19, weight: 1),
+        (item: "Tome of Haste Ally",       min_floor: 11, max_floor: 19, weight: 1),
+        (item: "Tome of Iron Skin",        min_floor: 11, max_floor: 19, weight: 1),
+        (item: "Tome of Battle Hymn",      min_floor: 12, max_floor: 19, weight: 1),
+        (item: "Tome of Slow",             min_floor: 11, max_floor: 19, weight: 1),
 
         // ============================
         // SPELLBOOKS — Zone 4 (17-21)
         // ============================
-        (item: "Tome of Death Coil",       min_floor: 17, max_floor: 24, weight: 1, spawn_chance: 0.35),
-        (item: "Tome of Greater Heal",     min_floor: 17, max_floor: 24, weight: 1, spawn_chance: 0.35),
-        (item: "Tome of Arcane Surge",     min_floor: 17, max_floor: 24, weight: 1, spawn_chance: 0.30),
-        (item: "Tome of Spirit Shield",    min_floor: 17, max_floor: 24, weight: 1, spawn_chance: 0.30),
-        (item: "Tome of Curse",            min_floor: 17, max_floor: 24, weight: 1, spawn_chance: 0.35),
-        (item: "Tome of Mana Drain",       min_floor: 17, max_floor: 24, weight: 1, spawn_chance: 0.35),
-        (item: "Tome of Teleport",         min_floor: 18, max_floor: 25, weight: 1, spawn_chance: 0.30),
+        (item: "Tome of Death Coil",       min_floor: 17, max_floor: 24, weight: 1),
+        (item: "Tome of Greater Heal",     min_floor: 17, max_floor: 24, weight: 1),
+        (item: "Tome of Arcane Surge",     min_floor: 17, max_floor: 24, weight: 1),
+        (item: "Tome of Spirit Shield",    min_floor: 17, max_floor: 24, weight: 1),
+        (item: "Tome of Curse",            min_floor: 17, max_floor: 24, weight: 1),
+        (item: "Tome of Mana Drain",       min_floor: 17, max_floor: 24, weight: 1),
+        (item: "Tome of Teleport",         min_floor: 18, max_floor: 25, weight: 1),
 
         // ============================
         // SPELLBOOKS — Zone 5 (22-26)
         // ============================
-        (item: "Tome of Meteor",           min_floor: 22, max_floor: 26, weight: 1, spawn_chance: 0.25),
+        (item: "Tome of Meteor",           min_floor: 22, max_floor: 26, weight: 1),
     ]
 )

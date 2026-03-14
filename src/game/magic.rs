@@ -10,7 +10,7 @@ use crate::{
         actions::ActionFinishedEvent,
         combat::{ApplyDamageMessage, DamageSource, DamageType, GameRng, HealMessage},
         spells::{SpellEffect, SpellRegistry, roll_dice_expr},
-        stats::{AttributeModifiers, CombatStats, Mana},
+        stats::{AttributeModifiers, CombatStats, Mana, sync_action_speed_system},
         turns::TurnEndEvent,
         AppState,
     },
@@ -145,6 +145,21 @@ pub struct Enraged {
 #[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
 #[reflect(Component)]
 pub struct Stunned {
+    pub turns_remaining: u32,
+}
+
+/// Fire damage-over-time effect (mirrors Poisoned but uses DamageType::Fire).
+#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
+#[reflect(Component)]
+pub struct Burning {
+    pub damage_per_turn: i32,
+    pub turns_remaining: u32,
+}
+
+/// Disarmed: entity's damage bonus is zeroed for N turns.
+#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
+#[reflect(Component)]
+pub struct Disarmed {
     pub turns_remaining: u32,
 }
 
@@ -610,12 +625,7 @@ fn recalc_attribute_modifiers(
             "agility" => mods.agility += entry.amount,
             "intelligence" => mods.intelligence += entry.amount,
             "perception" => mods.perception += entry.amount,
-            "armor" => {
-                // Armor is on CombatStats, not Attributes. Handle separately.
-                if let Some(mut stats) = world.get_mut::<CombatStats>(entity) {
-                    stats.armor += entry.amount;
-                }
-            }
+            "armor" => mods.armor += entry.amount,
             _ => warn!("Unknown attribute for modifier: {}", entry.attribute),
         }
     }
@@ -838,6 +848,63 @@ pub fn tick_stunned_system(
     }
 }
 
+/// Process burning damage each turn (mirrors process_poison_system).
+pub fn process_burning_system(
+    mut turn_end: MessageReader<TurnEndEvent>,
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut Burning, &Name)>,
+    mut damage_writer: MessageWriter<ApplyDamageMessage>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+) {
+    for _ in turn_end.read() {
+        for (entity, mut burning, name) in query.iter_mut() {
+            log_writer.write(GameLogMessage(format!(
+                "{} takes {} fire damage from burning!",
+                name.0, burning.damage_per_turn
+            )));
+            damage_writer.write(ApplyDamageMessage {
+                attacker: entity,
+                target: entity,
+                final_damage: burning.damage_per_turn,
+                damage_type: DamageType::Fire,
+                source: DamageSource::Environment,
+            });
+            burning.turns_remaining = burning.turns_remaining.saturating_sub(1);
+            if burning.turns_remaining == 0 {
+                commands.entity(entity).remove::<Burning>();
+                log_writer.write(GameLogMessage(format!(
+                    "{} is no longer burning.",
+                    name.0
+                )));
+            }
+        }
+    }
+}
+
+/// Tick disarmed duration: decrement, remove when expired.
+pub fn tick_disarmed_system(
+    mut turn_end: MessageReader<TurnEndEvent>,
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut Disarmed)>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+    names: Query<&Name>,
+) {
+    for _ in turn_end.read() {
+        for (entity, mut disarmed) in query.iter_mut() {
+            disarmed.turns_remaining = disarmed.turns_remaining.saturating_sub(1);
+            if disarmed.turns_remaining == 0 {
+                commands.entity(entity).remove::<Disarmed>();
+                if let Ok(name) = names.get(entity) {
+                    log_writer.write(GameLogMessage(format!(
+                        "{} is no longer disarmed.",
+                        name.0
+                    )));
+                }
+            }
+        }
+    }
+}
+
 // =====================================================================
 // Plugin
 // =====================================================================
@@ -856,6 +923,8 @@ impl Plugin for MagicPlugin {
             .register_type::<SpiritShielded>()
             .register_type::<Enraged>()
             .register_type::<Stunned>()
+            .register_type::<Burning>()
+            .register_type::<Disarmed>()
             .add_message::<CastSpellMessage>()
             .add_systems(
                 Update,
@@ -868,7 +937,9 @@ impl Plugin for MagicPlugin {
                     tick_spirit_shield_system,
                     tick_enraged_system,
                     tick_stunned_system,
-                    apply_speed_effects_system,
+                    process_burning_system,
+                    tick_disarmed_system,
+                    apply_speed_effects_system.after(sync_action_speed_system),
                 )
                     .run_if(in_state(AppState::InGame)),
             );

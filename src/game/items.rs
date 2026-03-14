@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::components::{Equipped, FloorEntityMarker, GameEntityMarker, InInventory, Inventory, Item, Name, Position};
-use crate::constants::{BASE_ACTION_COST, Z_ITEM};
+use crate::constants::{BASE_ACTION_COST, UNARMED_DAMAGE, Z_ITEM};
 use crate::game::actions::ActionFinishedEvent;
 use crate::game::effects::Effect;
 use crate::game::AppState;
@@ -273,7 +273,7 @@ fn unapply_item_effects(
     attr_mods.perception   -= props.per_bonus;
     combat_stats.armor     -= props.defense;
     if props.kind == ItemKind::Weapon {
-        damage.0 = "1d4".to_string(); // Reset to unarmed
+        damage.0 = UNARMED_DAMAGE.to_string();
     }
 }
 
@@ -350,8 +350,11 @@ pub fn handle_equip_item(
         if let Some(old_entity) = equipment.get_entity(slot) {
             if let Ok((old_props, _)) = item_query.get(old_entity) {
                 unapply_item_effects(old_props, &mut attr_mods, &mut combat_stats, &mut damage);
+                commands.entity(old_entity).remove::<Equipped>();
+            } else {
+                warn!("Equipped item entity {:?} in slot '{}' no longer exists; clearing slot.", old_entity, slot);
             }
-            commands.entity(old_entity).remove::<Equipped>();
+            equipment.set_slot(slot, None);
         }
 
         // Equip the new item
@@ -387,6 +390,8 @@ pub fn handle_unequip_item(
             continue;
         };
         let Ok((props, name)) = item_query.get(msg.item_entity) else {
+            warn!("Equipped item entity {:?} in slot '{}' no longer exists; clearing slot.", msg.item_entity, slot);
+            equipment.set_slot(slot, None);
             continue;
         };
 

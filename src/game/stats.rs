@@ -28,6 +28,7 @@ pub struct AttributeModifiers {
     pub agility: i32,
     pub intelligence: i32,
     pub perception: i32,
+    pub armor: i32,
 }
 
 /// Mana pool — derived from Intelligence (max = INT × 5). Updated by stat_recalculation_system.
@@ -152,8 +153,8 @@ pub fn stat_recalculation_system(
         stats.damage_bonus = stats.strength_bonus;
         stats.hit_chance = 10 + stats.strength_bonus;
         stats.dodge_chance = 5 + stats.dexterity_bonus;
-        // Base armor from monster definition (TimedModifiers "armor" adds on top via recalc_attribute_modifiers)
-        stats.armor = base_armor.map(|a| a.0).unwrap_or(0);
+        // Base armor + timed modifier bonus
+        stats.armor = base_armor.map(|a| a.0).unwrap_or(0) + mods.armor;
 
         // 5. Update Mana (max = INT × 5)
         if let Some(mut m) = mana {
@@ -171,8 +172,11 @@ pub fn stat_recalculation_system(
         }
 
         // 7. Update Vision Range (PER drives Viewshed — base 8 tiles + PER bonus)
-        viewshed.range = (8 + stats.perception_bonus).max(2);
-        viewshed.dirty = true;
+        let new_range = (8 + stats.perception_bonus).max(2);
+        if viewshed.range != new_range {
+            viewshed.range = new_range;
+            viewshed.dirty = true;
+        }
     }
 }
 

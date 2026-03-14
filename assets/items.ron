@@ -422,6 +422,7 @@
             item_kind: Consumable,
             rarity: Common,
             max_stack: 30,
+            is_ammo: true,
         ),
         "Short Bow": (
             name: "Short Bow",

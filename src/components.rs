@@ -86,3 +86,8 @@ pub struct InInventory;
 /// Equipped items remain in Inventory.items and the UI shows them with [E].
 #[derive(Component, Debug, Default)]
 pub struct Equipped;
+
+/// Marker component for ammunition items (arrows, bolts, etc.).
+/// Used by the ranged attack system to find consumable ammo in inventory.
+#[derive(Component, Debug, Default)]
+pub struct Ammo;
