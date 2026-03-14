@@ -47,9 +47,7 @@ pub fn spawn_monster(
         y: spawn_point.y,
     };
 
-    let sprite_path_parts: Vec<&str> = monster_asset.sprite.split('#').collect();
-    let texture_path = sprite_path_parts[0];
-    let index = sprite_path_parts[1].parse::<usize>().unwrap_or_default();
+    let (texture_path, index) = crate::assets::parse_sprite_path(&monster_asset.sprite);
 
     let Some(texture_handle) = monster_sprite_assets.handles.get(texture_path).cloned() else {
         error!("Missing monster sprite texture: '{}'", texture_path);
@@ -306,9 +304,7 @@ pub fn spawn_item(
         return None;
     };
 
-    let sprite_path_parts: Vec<&str> = asset.sprite.split('#').collect();
-    let texture_path = sprite_path_parts[0];
-    let index = sprite_path_parts[1].parse::<usize>().unwrap_or_default();
+    let (texture_path, index) = crate::assets::parse_sprite_path(&asset.sprite);
 
     let Some(texture_handle) = item_sprite_assets.handles.get(texture_path).cloned() else {
         error!("Missing item sprite texture: '{}'", texture_path);

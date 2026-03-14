@@ -2,7 +2,7 @@
     items: {
         "Iron Sword": (
             name: "Iron Sword",
-            sprite: "sprites/items/weapons/long_sword_1_new.png#0",
+            sprite: "sprites/items/weapons/long_sword_1_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -12,7 +12,7 @@
         ),
         "Steel Sword": (
             name: "Steel Sword",
-            sprite: "sprites/items/weapons/long_sword_1_new.png#0",
+            sprite: "sprites/items/weapons/long_sword_1_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -23,7 +23,7 @@
         ),
         "Leather Armor": (
             name: "Leather Armor",
-            sprite: "sprites/items/armor/torso/leather_armor_1.png#0",
+            sprite: "sprites/items/armor/torso/leather_armor_1.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -34,7 +34,7 @@
         ),
         "Studded Leather Armor": (
             name: "Leather Armor",
-            sprite: "sprites/items/armor/torso/studded_leather_armor.png#0",
+            sprite: "sprites/items/armor/torso/studded_leather_armor.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -45,7 +45,7 @@
         ),
         "Healing Potion": (
             name: "Healing Potion",
-            sprite: "sprites/items/potions/ruby_new.png#0",
+            sprite: "sprites/items/potions/ruby_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -56,7 +56,7 @@
         ),
         "Strength Potion": (
             name: "Strength Potion",
-            sprite: "sprites/items/potions/sky_blue.png#0",
+            sprite: "sprites/items/potions/sky_blue.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -67,7 +67,7 @@
         ),
         "Ring of Perception": (
             name: "Ring of Perception",
-            sprite: "sprites/items/rings/gold.png#0",
+            sprite: "sprites/items/rings/gold.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -80,7 +80,7 @@
         // ===========================
         "Tome of Spark": (
             name: "Tome of Spark",
-            sprite: "sprites/items/books/yellow_new.png#0",
+            sprite: "sprites/items/books/yellow_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -90,7 +90,7 @@
         ),
         "Tome of Magic Missile": (
             name: "Tome of Magic Missile",
-            sprite: "sprites/items/books/book_gray.png#0",
+            sprite: "sprites/items/books/book_gray.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -100,7 +100,7 @@
         ),
         "Tome of Minor Heal": (
             name: "Tome of Minor Heal",
-            sprite: "sprites/items/books/white_new.png#0",
+            sprite: "sprites/items/books/white_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -110,7 +110,7 @@
         ),
         "Tome of Fire Dart": (
             name: "Tome of Fire Dart",
-            sprite: "sprites/items/books/red_new.png#0",
+            sprite: "sprites/items/books/red_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -124,7 +124,7 @@
         // ===========================
         "Tome of Ice Shard": (
             name: "Tome of Ice Shard",
-            sprite: "sprites/items/books/light_blue_new.png#0",
+            sprite: "sprites/items/books/light_blue_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -134,7 +134,7 @@
         ),
         "Tome of Poison Bolt": (
             name: "Tome of Poison Bolt",
-            sprite: "sprites/items/books/dark_green_new.png#0",
+            sprite: "sprites/items/books/dark_green_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -144,7 +144,7 @@
         ),
         "Tome of Vampiric Strike": (
             name: "Tome of Vampiric Strike",
-            sprite: "sprites/items/books/dark_brown_new.png#0",
+            sprite: "sprites/items/books/dark_brown_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -154,7 +154,7 @@
         ),
         "Tome of Healing": (
             name: "Tome of Healing",
-            sprite: "sprites/items/books/magenta_new.png#0",
+            sprite: "sprites/items/books/magenta_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -164,7 +164,7 @@
         ),
         "Tome of Heal Ally": (
             name: "Tome of Heal Ally",
-            sprite: "sprites/items/books/light_green_new.png#0",
+            sprite: "sprites/items/books/light_green_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -174,7 +174,7 @@
         ),
         "Tome of Enrage": (
             name: "Tome of Enrage",
-            sprite: "sprites/items/books/book_orange.png#0",
+            sprite: "sprites/items/books/book_orange.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -184,7 +184,7 @@
         ),
         "Tome of Fortify": (
             name: "Tome of Fortify",
-            sprite: "sprites/items/books/tan_new.png#0",
+            sprite: "sprites/items/books/tan_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -194,7 +194,7 @@
         ),
         "Tome of Weaken": (
             name: "Tome of Weaken",
-            sprite: "sprites/items/books/dark_gray_new.png#0",
+            sprite: "sprites/items/books/dark_gray_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -204,7 +204,7 @@
         ),
         "Tome of Haste": (
             name: "Tome of Haste",
-            sprite: "sprites/items/books/cyan_new.png#0",
+            sprite: "sprites/items/books/cyan_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -214,7 +214,7 @@
         ),
         "Tome of Blink": (
             name: "Tome of Blink",
-            sprite: "sprites/items/books/turquoise_new.png#0",
+            sprite: "sprites/items/books/turquoise_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -228,7 +228,7 @@
         // ===========================
         "Tome of Shadow Bolt": (
             name: "Tome of Shadow Bolt",
-            sprite: "sprites/items/books/dark_blue_new.png#0",
+            sprite: "sprites/items/books/dark_blue_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -238,7 +238,7 @@
         ),
         "Tome of Lightning Bolt": (
             name: "Tome of Lightning Bolt",
-            sprite: "sprites/items/books/metal_cyan_new.png#0",
+            sprite: "sprites/items/books/metal_cyan_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -248,7 +248,7 @@
         ),
         "Tome of Fireball": (
             name: "Tome of Fireball",
-            sprite: "sprites/items/books/book_orange.png#0",
+            sprite: "sprites/items/books/book_orange.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -258,7 +258,7 @@
         ),
         "Tome of Chain Lightning": (
             name: "Tome of Chain Lightning",
-            sprite: "sprites/items/books/metal_blue_new.png#0",
+            sprite: "sprites/items/books/metal_blue_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -268,7 +268,7 @@
         ),
         "Tome of Cure Wounds": (
             name: "Tome of Cure Wounds",
-            sprite: "sprites/items/books/cloth_new.png#0",
+            sprite: "sprites/items/books/cloth_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -278,7 +278,7 @@
         ),
         "Tome of Haste Ally": (
             name: "Tome of Haste Ally",
-            sprite: "sprites/items/books/metal_green_new.png#0",
+            sprite: "sprites/items/books/metal_green_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -288,7 +288,7 @@
         ),
         "Tome of Iron Skin": (
             name: "Tome of Iron Skin",
-            sprite: "sprites/items/books/leather_new.png#0",
+            sprite: "sprites/items/books/leather_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -298,7 +298,7 @@
         ),
         "Tome of Battle Hymn": (
             name: "Tome of Battle Hymn",
-            sprite: "sprites/items/books/gold.png#0",
+            sprite: "sprites/items/books/gold.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -308,7 +308,7 @@
         ),
         "Tome of Slow": (
             name: "Tome of Slow",
-            sprite: "sprites/items/books/parchment_new.png#0",
+            sprite: "sprites/items/books/parchment_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -322,7 +322,7 @@
         // ===========================
         "Tome of Death Coil": (
             name: "Tome of Death Coil",
-            sprite: "sprites/items/books/book_of_the_dead_new.png#0",
+            sprite: "sprites/items/books/book_of_the_dead_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -332,7 +332,7 @@
         ),
         "Tome of Greater Heal": (
             name: "Tome of Greater Heal",
-            sprite: "sprites/items/books/velvet_new.png#0",
+            sprite: "sprites/items/books/velvet_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -342,7 +342,7 @@
         ),
         "Tome of Arcane Surge": (
             name: "Tome of Arcane Surge",
-            sprite: "sprites/items/books/purple_new.png#0",
+            sprite: "sprites/items/books/purple_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -352,7 +352,7 @@
         ),
         "Tome of Spirit Shield": (
             name: "Tome of Spirit Shield",
-            sprite: "sprites/items/books/book_indigo.png#0",
+            sprite: "sprites/items/books/book_indigo.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -362,7 +362,7 @@
         ),
         "Tome of Curse": (
             name: "Tome of Curse",
-            sprite: "sprites/items/books/wrinkled_new.png#0",
+            sprite: "sprites/items/books/wrinkled_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -372,7 +372,7 @@
         ),
         "Tome of Mana Drain": (
             name: "Tome of Mana Drain",
-            sprite: "sprites/items/books/vellum_new.png#0",
+            sprite: "sprites/items/books/vellum_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -382,7 +382,7 @@
         ),
         "Tome of Teleport": (
             name: "Tome of Teleport",
-            sprite: "sprites/items/books/plaid_new.png#0",
+            sprite: "sprites/items/books/plaid_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -396,7 +396,7 @@
         // ===========================
         "Tome of Meteor": (
             name: "Tome of Meteor",
-            sprite: "sprites/items/books/buckle_new.png#0",
+            sprite: "sprites/items/books/buckle_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -406,7 +406,7 @@
         ),
         "Arrow": (
             name: "Arrow",
-            sprite: "sprites/items/weapons/arrow.png#0",
+            sprite: "sprites/items/weapons/arrow.png",
             tile_size: (32, 32),
             grid_size: (1, 1),
 
@@ -417,7 +417,7 @@
         ),
         "Short Bow": (
             name: "Short Bow",
-            sprite: "sprites/items/weapons/shortbow_1.png#0",
+            sprite: "sprites/items/weapons/shortbow_1.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
@@ -428,7 +428,7 @@
         ),
         "Long Bow": (
             name: "Short Bow",
-            sprite: "sprites/items/weapons/longbow_1.png#0",
+            sprite: "sprites/items/weapons/longbow_1.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 

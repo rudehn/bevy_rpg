@@ -2,7 +2,7 @@
     tiles: {
         "Floor": (
             name: "Floor",
-            sprite: "sprites/floors/floor_stone.png#0",
+            sprite: "sprites/floors/floor_stone.png",
             walkable: true,
             opaque: false,
             tile_size: (32, 32),
@@ -10,7 +10,7 @@
         ),
         "Wall": (
             name: "Wall",
-            sprite: "sprites/walls/wall_brick.png#0",
+            sprite: "sprites/walls/wall_brick.png",
             walkable: false,
             opaque: true,
             tile_size: (32, 32),
@@ -18,7 +18,7 @@
         ),
         "DownStairs": (
             name: "DownStairs",
-            sprite: "sprites/stairs/stone_stairs_down.png#0",
+            sprite: "sprites/stairs/stone_stairs_down.png",
             walkable: true,
             opaque: false,
             tile_size: (32, 32),
@@ -26,7 +26,7 @@
         ),
         "UpStairs": (
             name: "UpStairs",
-            sprite: "sprites/stairs/stone_stairs_up.png#0",
+            sprite: "sprites/stairs/stone_stairs_up.png",
             walkable: true,
             opaque: false,
             tile_size: (32, 32),
@@ -34,7 +34,7 @@
         ),
         "Empty": (
             name: "Empty",
-            sprite: "sprites/floors/floor_stone.png#0",
+            sprite: "sprites/floors/floor_stone.png",
             walkable: false,
             opaque: false,
             tile_size: (32, 32),
@@ -42,7 +42,7 @@
         ),
         "Door": (
             name: "Door",
-            sprite: "sprites/doors/closed_door.png#0",
+            sprite: "sprites/doors/closed_door.png",
             walkable: false,
             opaque: true,
             tile_size: (32, 32),
@@ -50,7 +50,7 @@
         ),
         "OpenDoor": (
             name: "OpenDoor",
-            sprite: "sprites/doors/open_door.png#0",
+            sprite: "sprites/doors/open_door.png",
             walkable: true,
             opaque: false,
             tile_size: (32, 32),
@@ -58,7 +58,7 @@
         ),
         "Water": (
             name: "Water",
-            sprite: "sprites/liquid/shoals_deep_water_8.png#0",
+            sprite: "sprites/liquid/shoals_deep_water_8.png",
             walkable: false,
             opaque: false,
             tile_size: (32, 32),
@@ -66,7 +66,7 @@
         ),
         "ShallowWater": (
             name: "ShallowWater",
-            sprite: "sprites/liquid/shoals_shallow_water_8.png#0",
+            sprite: "sprites/liquid/shoals_shallow_water_8.png",
             walkable: true,
             opaque: false,
             tile_size: (32, 32),
@@ -74,7 +74,7 @@
         ),
         "Lava": (
             name: "Lava",
-            sprite: "sprites/liquid/lava_2.png#0",
+            sprite: "sprites/liquid/lava_2.png",
             walkable: false,
             opaque: false,
             tile_size: (32, 32),

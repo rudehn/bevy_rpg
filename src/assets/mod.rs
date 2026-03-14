@@ -12,6 +12,15 @@ use crate::{
     game::{AppState, camera},
 };
 
+/// Parse a sprite path like `"sprites/foo.png#3"` into `("sprites/foo.png", 3)`.
+/// If the `#index` suffix is omitted, defaults to index 0.
+pub fn parse_sprite_path(sprite: &str) -> (&str, usize) {
+    match sprite.rsplit_once('#') {
+        Some((path, idx_str)) => (path, idx_str.parse::<usize>().unwrap_or(0)),
+        None => (sprite, 0),
+    }
+}
+
 mod serde_helpers {
     use bevy::prelude::UVec2;
     use serde::{Deserialize, Deserializer};
@@ -458,8 +467,7 @@ fn load_monster_sprites(
     {
         if let Some(manifest) = monster_manifests.get(&monster_manifest_handle.0) {
             for monster_asset in manifest.monsters.values() {
-                let sprite_path_parts: Vec<&str> = monster_asset.sprite.split('#').collect();
-                let texture_path = sprite_path_parts[0];
+                let (texture_path, _) = parse_sprite_path(&monster_asset.sprite);
                 let texture_path_string = texture_path.to_string();
 
                 if !monster_sprite_assets
@@ -501,8 +509,7 @@ fn load_tile_sprites(
 ) {
     if let Some(manifest) = tile_manifests.get(&tile_manifest_handle.0) {
         for tile_asset in manifest.tiles.values() {
-            let sprite_path_parts: Vec<&str> = tile_asset.sprite.split('#').collect();
-            let texture_path = sprite_path_parts[0];
+            let (texture_path, _) = parse_sprite_path(&tile_asset.sprite);
             let texture_path_string = texture_path.to_string();
 
             if !tile_sprite_assets
@@ -534,8 +541,7 @@ fn load_tile_sprites(
     // Ensure player sprite is also loaded (checked independently — player.ron may
     // load after the tile manifest, so this must not be gated on tile handles being empty)
     if let Some(player_asset) = player_assets.get(&player_asset_handle.0) {
-        let sprite_path_parts: Vec<&str> = player_asset.sprite.split('#').collect();
-        let texture_path = sprite_path_parts[0];
+        let (texture_path, _) = parse_sprite_path(&player_asset.sprite);
         let texture_path_string = texture_path.to_string();
 
         if !tile_sprite_assets
@@ -574,8 +580,7 @@ fn load_item_sprites(
     {
         if let Some(manifest) = item_manifests.get(&item_manifest_handle.0) {
             for item_asset in manifest.items.values() {
-                let sprite_path_parts: Vec<&str> = item_asset.sprite.split('#').collect();
-                let texture_path = sprite_path_parts[0];
+                let (texture_path, _) = parse_sprite_path(&item_asset.sprite);
                 let texture_path_string = texture_path.to_string();
 
                 if !item_sprite_assets

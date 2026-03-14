@@ -134,9 +134,7 @@ pub fn spawn_tile_entity(
         .get(tile.terrain.name())
         .expect("Terrain type not in manifest");
 
-    let sprite_path_parts: Vec<&str> = terrain_asset.sprite.split('#').collect();
-    let texture_path = sprite_path_parts[0];
-    let index = sprite_path_parts[1].parse::<usize>().unwrap_or_default();
+    let (texture_path, index) = crate::assets::parse_sprite_path(&terrain_asset.sprite);
 
     let texture_handle = tile_sprite_assets
         .handles
@@ -192,9 +190,7 @@ pub fn spawn_tile_entity(
             .tiles
             .get(tile.liquid.name())
             .expect("Liquid type not in manifest");
-        let l_sprite_parts: Vec<&str> = liquid_asset.sprite.split('#').collect();
-        let l_texture_path = l_sprite_parts[0];
-        let l_index = l_sprite_parts[1].parse::<usize>().unwrap_or_default();
+        let (l_texture_path, l_index) = crate::assets::parse_sprite_path(&liquid_asset.sprite);
 
         let l_texture_handle = tile_sprite_assets
             .handles

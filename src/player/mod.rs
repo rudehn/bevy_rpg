@@ -80,9 +80,7 @@ pub fn player_spawn_or_move_system(
         player_tf.translation.y = spawn_point.0.y as f32 * GRID_SIZE.y;
         *player_pos = new_grid_pos;
     } else {
-        let sprite_path_parts: Vec<&str> = player_asset.sprite.split('#').collect();
-        let texture_path = sprite_path_parts[0];
-        let index = sprite_path_parts[1].parse::<usize>().unwrap_or_default();
+        let (texture_path, index) = crate::assets::parse_sprite_path(&player_asset.sprite);
 
         let texture_handle = tile_sprite_assets
             .handles

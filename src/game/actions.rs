@@ -484,9 +484,7 @@ pub fn handle_door_open(
                 *terrain_type = TerrainType::OpenDoor;
                 
                 if let Some(asset) = tile_manifest.tiles.get(TerrainType::OpenDoor.name()) {
-                    let sprite_path_parts: Vec<&str> = asset.sprite.split('#').collect();
-                    let texture_path = sprite_path_parts[0];
-                    let index = sprite_path_parts[1].parse::<usize>().unwrap_or_default();
+                    let (texture_path, index) = crate::assets::parse_sprite_path(&asset.sprite);
                     
                     // Update Sprite image, index, and layout
                     if let Some(texture_handle) = tile_sprite_assets.handles.get(texture_path) {

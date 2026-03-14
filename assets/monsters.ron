@@ -5,7 +5,7 @@
         "Rat": (
             name: "Rat",
             perception: 8,
-            sprite: "sprites/monsters/rat.png#0",
+            sprite: "sprites/monsters/rat.png",
             damage: "1d4",
             level: 1,
             base_hp: 8,
@@ -18,7 +18,7 @@
         "Giant Bat": (
             name: "Giant Bat",
             perception: 14,
-            sprite: "sprites/monsters/rat.png#0",
+            sprite: "sprites/monsters/rat.png",
             damage: "1d6",
             level: 2,
             base_hp: 12,
@@ -30,7 +30,7 @@
         "Giant Spider": (
             name: "Giant Spider",
             perception: 10,
-            sprite: "sprites/monsters/rat.png#0",
+            sprite: "sprites/monsters/rat.png",
             damage: "1d6",
             damage_type: "poison",
             level: 3,
@@ -48,7 +48,7 @@
         "Plague Rat": (
             name: "Plague Rat",
             perception: 10,
-            sprite: "sprites/monsters/rat.png#0",
+            sprite: "sprites/monsters/rat.png",
             damage: "1d4",
             level: 4,
             base_hp: 15,
@@ -69,7 +69,7 @@
         "Goblin": (
             name: "Goblin",
             perception: 10,
-            sprite: "sprites/monsters/goblin.png#0",
+            sprite: "sprites/monsters/goblin.png",
             damage: "1d4",
             level: 1,
             base_hp: 10,
@@ -84,7 +84,7 @@
         "Goblin Archer": (
             name: "Goblin Archer",
             perception: 12,
-            sprite: "sprites/monsters/goblin.png#0",
+            sprite: "sprites/monsters/goblin.png",
             damage: "1d6",
             level: 2,
             base_hp: 12,
@@ -101,7 +101,7 @@
         "Goblin Shaman": (
             name: "Goblin Shaman",
             perception: 12,
-            sprite: "sprites/monsters/goblin.png#0",
+            sprite: "sprites/monsters/goblin.png",
             damage: "1d4",
             level: 3,
             base_hp: 15,
@@ -118,7 +118,7 @@
         "Goblin Warchief": (
             name: "Goblin Warchief",
             perception: 12,
-            sprite: "sprites/monsters/goblin.png#0",
+            sprite: "sprites/monsters/goblin.png",
             damage: "1d8+1",
             level: 5,
             base_hp: 30,
@@ -141,7 +141,7 @@
         "Skeleton": (
             name: "Skeleton",
             perception: 8,
-            sprite: "sprites/monsters/goblin.png#0",
+            sprite: "sprites/monsters/goblin.png",
             damage: "1d6",
             level: 3,
             base_hp: 20,
@@ -156,7 +156,7 @@
         "Bone Archer": (
             name: "Bone Archer",
             perception: 12,
-            sprite: "sprites/monsters/goblin.png#0",
+            sprite: "sprites/monsters/goblin.png",
             damage: "1d8",
             level: 4,
             base_hp: 18,
@@ -173,7 +173,7 @@
         "Zombie": (
             name: "Zombie",
             perception: 6,
-            sprite: "sprites/monsters/orc.png#0",
+            sprite: "sprites/monsters/orc.png",
             damage: "1d6+1",
             level: 4,
             base_hp: 35,
@@ -188,7 +188,7 @@
         "Wraith": (
             name: "Wraith",
             perception: 14,
-            sprite: "sprites/monsters/goblin.png#0",
+            sprite: "sprites/monsters/goblin.png",
             damage: "1d6",
             damage_type: "necrotic",
             level: 6,
@@ -206,7 +206,7 @@
         "Lich Apprentice": (
             name: "Lich Apprentice",
             perception: 12,
-            sprite: "sprites/monsters/goblin.png#0",
+            sprite: "sprites/monsters/goblin.png",
             damage: "1d4",
             level: 5,
             base_hp: 22,
@@ -228,7 +228,7 @@
         "Orc": (
             name: "Orc",
             perception: 10,
-            sprite: "sprites/monsters/orc.png#0",
+            sprite: "sprites/monsters/orc.png",
             damage: "1d6+1",
             level: 4,
             base_hp: 25,
@@ -245,7 +245,7 @@
         "Orc Berserker": (
             name: "Orc Berserker",
             perception: 8,
-            sprite: "sprites/monsters/orc.png#0",
+            sprite: "sprites/monsters/orc.png",
             damage: "1d8+2",
             level: 6,
             base_hp: 35,
@@ -266,7 +266,7 @@
         "Orc Shaman": (
             name: "Orc Shaman",
             perception: 12,
-            sprite: "sprites/monsters/orc.png#0",
+            sprite: "sprites/monsters/orc.png",
             damage: "1d4+1",
             level: 6,
             base_hp: 28,
@@ -283,7 +283,7 @@
         "Orc Warlord": (
             name: "Orc Warlord",
             perception: 12,
-            sprite: "sprites/monsters/orc.png#0",
+            sprite: "sprites/monsters/orc.png",
             damage: "1d10+2",
             level: 8,
             base_hp: 45,
@@ -306,7 +306,7 @@
         "Imp": (
             name: "Imp",
             perception: 12,
-            sprite: "sprites/monsters/goblin.png#0",
+            sprite: "sprites/monsters/goblin.png",
             damage: "1d4",
             damage_type: "fire",
             level: 5,
@@ -323,7 +323,7 @@
         "Hell Hound": (
             name: "Hell Hound",
             perception: 14,
-            sprite: "sprites/monsters/rat.png#0",
+            sprite: "sprites/monsters/rat.png",
             damage: "1d8+1",
             damage_type: "fire",
             level: 7,
@@ -341,7 +341,7 @@
         "Shadow Fiend": (
             name: "Shadow Fiend",
             perception: 14,
-            sprite: "sprites/monsters/goblin.png#0",
+            sprite: "sprites/monsters/goblin.png",
             damage: "1d8",
             damage_type: "necrotic",
             level: 8,
@@ -360,7 +360,7 @@
         "Ogre": (
             name: "Ogre",
             perception: 8,
-            sprite: "sprites/monsters/orc.png#0",
+            sprite: "sprites/monsters/orc.png",
             damage: "2d6+2",
             level: 7,
             base_hp: 50,
@@ -377,7 +377,7 @@
         "Ogre Mage": (
             name: "Ogre Mage",
             perception: 12,
-            sprite: "sprites/monsters/orc.png#0",
+            sprite: "sprites/monsters/orc.png",
             damage: "1d8+1",
             level: 9,
             base_hp: 45,
@@ -391,7 +391,7 @@
         "Troll": (
             name: "Troll",
             perception: 8,
-            sprite: "sprites/monsters/orc.png#0",
+            sprite: "sprites/monsters/orc.png",
             damage: "2d6+1",
             level: 8,
             base_hp: 55,
@@ -411,7 +411,7 @@
         "Vampire": (
             name: "Vampire",
             perception: 14,
-            sprite: "sprites/monsters/goblin.png#0",
+            sprite: "sprites/monsters/goblin.png",
             damage: "1d8+1",
             damage_type: "necrotic",
             level: 9,
@@ -430,7 +430,7 @@
         "Dark Knight": (
             name: "Dark Knight",
             perception: 10,
-            sprite: "sprites/monsters/orc.png#0",
+            sprite: "sprites/monsters/orc.png",
             damage: "2d6+3",
             level: 10,
             base_hp: 55,
@@ -454,7 +454,7 @@
         "The Veiled Tyrant": (
             name: "The Veiled Tyrant",
             perception: 16,
-            sprite: "sprites/monsters/orc.png#0",
+            sprite: "sprites/monsters/orc.png",
             damage: "2d8+4",
             damage_type: "necrotic",
             level: 12,
