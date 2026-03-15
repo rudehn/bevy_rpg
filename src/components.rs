@@ -99,3 +99,8 @@ pub struct FinalBoss;
 /// (watchfires, totem poles, barricades, etc.).
 #[derive(Component, Debug, Default)]
 pub struct Prop;
+
+/// Marker component for chest props. When bumped by the player, the chest
+/// despawns and spawns level-appropriate items at its position.
+#[derive(Component, Debug, Default)]
+pub struct Chest;

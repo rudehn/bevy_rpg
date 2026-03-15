@@ -688,6 +688,10 @@ pub fn spawn_dungeon(
             .map(|m| m.prefabs.clone())
             .unwrap_or_default();
 
+        let monster_manifest = assets.monster_manifests
+            .get(&assets.monster_manifest_handle.0)
+            .unwrap();
+
         let mut builder = level_builder(
             floor.0 as i32,
             MAP_SIZE.x as i32,
@@ -696,6 +700,7 @@ pub fn spawn_dungeon(
             &item_spawn_table.spawns,
             squad_counter.clone(),
             prefabs,
+            &monster_manifest.monsters,
         );
         builder.build_map();
         // Write the updated counter back so future floors don't reuse IDs.

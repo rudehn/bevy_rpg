@@ -14,6 +14,8 @@
             constitution: 8,
             agility: 14,
             is_cowardly: true,
+            faction_tag: "beast",
+            role: "melee_guard",
         ),
         "Giant Bat": (
             name: "Giant Bat",
@@ -26,6 +28,8 @@
             dexterity: 12,
             constitution: 8,
             agility: 16,
+            faction_tag: "beast",
+            role: "melee_guard",
         ),
         "Giant Spider": (
             name: "Giant Spider",
@@ -44,6 +48,8 @@
                 ApplySlow(duration: 3, chance: 30),
             ],
             poison_body: Some(1),
+            faction_tag: "beast",
+            role: "brute",
         ),
         "Plague Rat": (
             name: "Plague Rat",
@@ -62,6 +68,8 @@
                 ApplyPoison(damage_per_turn: 2, duration: 4, chance: 40),
             ],
             poison_body: Some(2),
+            faction_tag: "beast",
+            role: "melee_guard",
         ),
 
         // ==================== GOBLINOID (Floors 1-10) ====================
@@ -80,6 +88,8 @@
             loot_table: [
                 (item: "Healing Potion", spawn_chance: 0.2),
             ],
+            faction_tag: "goblin",
+            role: "melee_guard",
         ),
         "Goblin Archer": (
             name: "Goblin Archer",
@@ -97,6 +107,8 @@
                 (item: "Short Bow", spawn_chance: 0.15),
                 (item: "Arrow", spawn_chance: 0.80, count_min: 3, count_max: 8),
             ],
+            faction_tag: "goblin",
+            role: "ranged",
         ),
         "Goblin Shaman": (
             name: "Goblin Shaman",
@@ -114,6 +126,8 @@
             loot_table: [
                 (item: "Tome of Magic Missile", spawn_chance: 0.20),
             ],
+            faction_tag: "goblin",
+            role: "caster",
         ),
         "Goblin Warchief": (
             name: "Goblin Warchief",
@@ -134,6 +148,8 @@
                 (item: "Healing Potion", spawn_chance: 0.30),
             ],
             summon_on_death: Some(("Goblin", 2)),
+            faction_tag: "goblin",
+            role: "leader",
         ),
 
         // ==================== UNDEAD (Floors 5-16) ====================
@@ -152,6 +168,8 @@
             base_armor: 2,
             resistances: {"poison": "immune"},
             reanimate_hp: Some(8),
+            faction_tag: "undead",
+            role: "melee_guard",
         ),
         "Bone Archer": (
             name: "Bone Archer",
@@ -169,6 +187,8 @@
             loot_table: [
                 (item: "Arrow", spawn_chance: 0.85, count_min: 5, count_max: 12),
             ],
+            faction_tag: "undead",
+            role: "ranged",
         ),
         "Zombie": (
             name: "Zombie",
@@ -184,6 +204,8 @@
             base_armor: 1,
             resistances: {"poison": "immune"},
             reanimate_hp: Some(10),
+            faction_tag: "undead",
+            role: "brute",
         ),
         "Wraith": (
             name: "Wraith",
@@ -202,6 +224,8 @@
                 AttributeDrain(attribute: "strength", amount: 2, duration: 6, chance: 40),
             ],
             death_curse: Some(Slow(duration: 3)),
+            faction_tag: "undead",
+            role: "melee_guard",
         ),
         "Lich Apprentice": (
             name: "Lich Apprentice",
@@ -221,6 +245,8 @@
                 (item: "Tome of Magic Missile", spawn_chance: 0.30),
             ],
             death_curse: Some(WeakenStr(amount: 3, duration: 5)),
+            faction_tag: "undead",
+            role: "caster",
         ),
 
         // ==================== ORCISH (Floors 8-16) ====================
@@ -241,6 +267,8 @@
                 (item: "Iron Sword", spawn_chance: 0.15),
                 (item: "Healing Potion", spawn_chance: 0.25),
             ],
+            faction_tag: "orc",
+            role: "melee_guard",
         ),
         "Orc Berserker": (
             name: "Orc Berserker",
@@ -262,6 +290,8 @@
                 Knockback(distance: 1, chance: 30),
             ],
             enrage_on_hit: Some(50),
+            faction_tag: "orc",
+            role: "brute",
         ),
         "Orc Shaman": (
             name: "Orc Shaman",
@@ -279,6 +309,8 @@
             loot_table: [
                 (item: "Healing Potion", spawn_chance: 0.30),
             ],
+            faction_tag: "orc",
+            role: "caster",
         ),
         "Orc Warlord": (
             name: "Orc Warlord",
@@ -299,6 +331,8 @@
                 (item: "Healing Potion", spawn_chance: 0.40),
             ],
             summon_on_death: Some(("Orc Berserker", 1)),
+            faction_tag: "orc",
+            role: "leader",
         ),
 
         // ==================== DEMONIC (Floors 12-20) ====================
@@ -319,6 +353,8 @@
             resistances: {"fire": "immune"},
             spells: ["fire_dart", "spark"],
             explode_on_death: Some((2, 6)),
+            faction_tag: "demon",
+            role: "caster",
         ),
         "Hell Hound": (
             name: "Hell Hound",
@@ -337,6 +373,8 @@
                 ApplyBurning(damage_per_turn: 2, duration: 3, chance: 40),
             ],
             explode_on_death: Some((1, 8)),
+            faction_tag: "demon",
+            role: "brute",
         ),
         "Shadow Fiend": (
             name: "Shadow Fiend",
@@ -353,6 +391,8 @@
             intelligence: 14,
             resistances: {"necrotic": "resistant", "physical": "resistant"},
             spells: ["shadow_bolt", "mana_drain"],
+            faction_tag: "demon",
+            role: "melee_guard",
         ),
 
         // ==================== GIANT (Floors 14-22) ====================
@@ -373,6 +413,8 @@
                 Knockback(distance: 2, chance: 50),
             ],
             enrage_on_hit: Some(40),
+            faction_tag: "giant",
+            role: "brute",
         ),
         "Ogre Mage": (
             name: "Ogre Mage",
@@ -387,6 +429,8 @@
             agility: 6,
             intelligence: 14,
             spells: ["lightning_bolt", "fire_dart", "vampiric_strike"],
+            faction_tag: "giant",
+            role: "caster",
         ),
         "Troll": (
             name: "Troll",
@@ -404,6 +448,8 @@
             resistances: {"fire": "weak"},
             thorn_aura: Some(3),
             enrage_on_hit: Some(30),
+            faction_tag: "giant",
+            role: "brute",
         ),
 
         // ==================== DARK (Floors 18-26) ====================
@@ -426,6 +472,8 @@
                 LifeDrain(amount: 3, chance: 50),
             ],
             spells: ["vampiric_strike", "heal_self"],
+            faction_tag: "dark",
+            role: "leader",
         ),
         "Dark Knight": (
             name: "Dark Knight",
@@ -447,6 +495,8 @@
                 Disarm(duration: 3, chance: 25),
             ],
             thorn_aura: Some(2),
+            faction_tag: "dark",
+            role: "brute",
         ),
 
         // ==================== BOSS ====================

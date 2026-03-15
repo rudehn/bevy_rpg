@@ -443,5 +443,9 @@ pub fn spawn_prop(
         entity.insert(Collider);
     }
 
+    if prop_name == "chest" {
+        entity.insert(crate::components::Chest);
+    }
+
     Some(entity.id())
 }

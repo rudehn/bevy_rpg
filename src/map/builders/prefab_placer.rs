@@ -1,19 +1,289 @@
-use bracket_lib::prelude::{Algorithm2D, Point, RandomNumberGenerator};
-use std::collections::{HashSet, VecDeque};
+use bracket_lib::prelude::{Algorithm2D, Point, RandomNumberGenerator, Rect};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::{
-    assets::PrefabTemplate,
+    assets::{MonsterAsset, MonsterSpawnInfo, PrefabTemplate},
     game::squad::SquadConfig,
     map::tile::TerrainType,
 };
 
 use super::{BuilderMap, MetaMapBuilder, SpawnEntry};
 
-/// Placement chance: ~40% per floor for MVP.
-const PREFAB_CHANCE: i32 = 40;
+// ---------------------------------------------------------------------------
+// MonsterRoleTable — faction-first role resolution for prefab spawns
+// ---------------------------------------------------------------------------
+
+pub struct MonsterRoleEntry {
+    pub name: String,
+    pub faction_tag: String,
+    pub role: String,
+    pub min_floor: i32,
+    pub max_floor: i32,
+}
+
+pub struct MonsterRoleTable {
+    entries: Vec<MonsterRoleEntry>,
+}
+
+impl MonsterRoleTable {
+    /// Build from the monster manifest and spawn table. Each spawn table entry
+    /// contributes a floor range; the faction/role come from the monster asset.
+    pub fn from_manifest(
+        monsters: &HashMap<String, MonsterAsset>,
+        spawn_table: &[MonsterSpawnInfo],
+    ) -> Self {
+        let mut entries = Vec::new();
+        for spawn in spawn_table {
+            // Skip mixed groups — they don't map cleanly to a single monster.
+            if !spawn.group.is_empty() {
+                continue;
+            }
+            if let Some(asset) = monsters.get(&spawn.monster) {
+                if !asset.faction_tag.is_empty() && !asset.role.is_empty() {
+                    entries.push(MonsterRoleEntry {
+                        name: asset.name.clone(),
+                        faction_tag: asset.faction_tag.clone(),
+                        role: asset.role.clone(),
+                        min_floor: spawn.min_floor,
+                        max_floor: spawn.max_floor,
+                    });
+                }
+            }
+        }
+        Self { entries }
+    }
+
+    /// Get all factions that have at least one monster for every required role at this depth.
+    pub fn eligible_factions(&self, roles: &[&str], depth: i32) -> Vec<String> {
+        // Unique roles needed.
+        let needed: HashSet<&str> = roles.iter().copied().collect();
+
+        // Build faction → set of available roles at this depth.
+        let mut faction_roles: HashMap<&str, HashSet<&str>> = HashMap::new();
+        for entry in &self.entries {
+            if depth >= entry.min_floor && depth <= entry.max_floor {
+                faction_roles
+                    .entry(entry.faction_tag.as_str())
+                    .or_default()
+                    .insert(entry.role.as_str());
+            }
+        }
+
+        faction_roles
+            .into_iter()
+            .filter(|(_, available)| needed.iter().all(|r| available.contains(r)))
+            .map(|(faction, _)| faction.to_string())
+            .collect()
+    }
+
+    /// Resolve a role to a random monster name within the given faction at this depth.
+    pub fn resolve_role(
+        &self,
+        faction: &str,
+        role: &str,
+        depth: i32,
+        rng: &mut RandomNumberGenerator,
+    ) -> Option<String> {
+        let candidates: Vec<&MonsterRoleEntry> = self
+            .entries
+            .iter()
+            .filter(|e| {
+                e.faction_tag == faction
+                    && e.role == role
+                    && depth >= e.min_floor
+                    && depth <= e.max_floor
+            })
+            .collect();
+
+        if candidates.is_empty() {
+            return None;
+        }
+        let idx = rng.range(0, candidates.len() as i32) as usize;
+        Some(candidates[idx].name.clone())
+    }
+}
+
+/// Total tile budget for prefabs per floor. Each placed prefab consumes
+/// width × height from this budget.
+const BASE_PREFAB_BUDGET: i32 = 200;
+
+/// Minimum area for a prefab to be considered "medium" size.
+const MEDIUM_THRESHOLD: i32 = 31;
+
+/// Padding between placed prefabs to prevent them from touching.
+const PREFAB_PADDING: i32 = 2;
+
+/// Returns true if a rect at (x, y, w, h) overlaps any already-placed region
+/// (with padding).
+fn overlaps_placed(occupied: &[Rect], x: i32, y: i32, w: i32, h: i32) -> bool {
+    let new_rect = Rect::with_size(
+        x - PREFAB_PADDING,
+        y - PREFAB_PADDING,
+        w + PREFAB_PADDING * 2,
+        h + PREFAB_PADDING * 2,
+    );
+    occupied.iter().any(|r| {
+        // bracket_lib Rect intersection check
+        !(new_rect.x2 < r.x1 || new_rect.x1 > r.x2 || new_rect.y2 < r.y1 || new_rect.y1 > r.y2)
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Orientation transforms
+// ---------------------------------------------------------------------------
+
+/// Generate all unique orientations (rotations + optional horizontal flip)
+/// of a prefab template. Returns cloned templates with transformed geometry.
+fn generate_orientations(prefab: &PrefabTemplate) -> Vec<PrefabTemplate> {
+    let mut orientations = Vec::with_capacity(8);
+    let mut seen_tiles: HashSet<Vec<String>> = HashSet::new();
+
+    // Identity is always included.
+    seen_tiles.insert(prefab.tiles.clone());
+    orientations.push(prefab.clone());
+
+    // Build candidate transforms.
+    let mut candidates: Vec<PrefabTemplate> = Vec::new();
+
+    if prefab.allow_rotate {
+        candidates.push(rotate_prefab(prefab, 1)); // 90° CW
+        candidates.push(rotate_prefab(prefab, 2)); // 180°
+        candidates.push(rotate_prefab(prefab, 3)); // 270° CW
+    }
+
+    if prefab.allow_flip {
+        let flipped = flip_prefab_h(prefab);
+        candidates.push(flipped.clone());
+        if prefab.allow_rotate {
+            candidates.push(rotate_prefab(&flipped, 1));
+            candidates.push(rotate_prefab(&flipped, 2));
+            candidates.push(rotate_prefab(&flipped, 3));
+        }
+    }
+
+    for c in candidates {
+        if seen_tiles.insert(c.tiles.clone()) {
+            orientations.push(c);
+        }
+    }
+
+    orientations
+}
+
+/// Rotate a prefab 90° clockwise `times` times (1=90°, 2=180°, 3=270°).
+fn rotate_prefab(prefab: &PrefabTemplate, times: u32) -> PrefabTemplate {
+    let mut p = prefab.clone();
+    for _ in 0..times {
+        p = rotate_90_cw(&p);
+    }
+    p
+}
+
+/// Single 90° clockwise rotation.
+/// Original (W×H) → New (H×W).
+/// new_x = H-1-old_y, new_y = old_x
+fn rotate_90_cw(prefab: &PrefabTemplate) -> PrefabTemplate {
+    let w = prefab.width;
+    let h = prefab.height;
+
+    // Build rotated tile grid: new dimensions are (h, w).
+    // New grid has `w` rows of length `h`.
+    let mut new_tiles: Vec<Vec<char>> = vec![vec![' '; h as usize]; w as usize];
+    for (old_y, row) in prefab.tiles.iter().enumerate() {
+        for (old_x, ch) in row.chars().enumerate() {
+            let new_x = (h - 1 - old_y as i32) as usize;
+            let new_y = old_x;
+            new_tiles[new_y][new_x] = ch;
+        }
+    }
+
+    let tiles: Vec<String> = new_tiles.iter().map(|row| row.iter().collect()).collect();
+
+    let transform = |x: i32, y: i32| -> (i32, i32) {
+        (h - 1 - y, x)
+    };
+
+    let props = prefab.props.iter().map(|p| {
+        let (nx, ny) = transform(p.x, p.y);
+        crate::assets::PrefabPropEntry { x: nx, y: ny, prop: p.prop.clone() }
+    }).collect();
+
+    let monster_spawns = prefab.monster_spawns.iter().map(|m| {
+        let (nx, ny) = transform(m.x, m.y);
+        crate::assets::PrefabMonsterSpawn { x: nx, y: ny, role: m.role.clone(), guard: m.guard }
+    }).collect();
+
+    let item_spawns = prefab.item_spawns.iter().map(|i| {
+        let (nx, ny) = transform(i.x, i.y);
+        crate::assets::PrefabItemSpawn { x: nx, y: ny, item: i.item.clone() }
+    }).collect();
+
+    PrefabTemplate {
+        name: prefab.name.clone(),
+        width: h,
+        height: w,
+        min_floor: prefab.min_floor,
+        max_floor: prefab.max_floor,
+        tiles,
+        props,
+        monster_spawns,
+        item_spawns,
+        on_leader_death: prefab.on_leader_death.clone(),
+        flee_threshold: prefab.flee_threshold,
+        placement: prefab.placement.clone(),
+        allow_rotate: prefab.allow_rotate,
+        allow_flip: prefab.allow_flip,
+    }
+}
+
+/// Horizontal flip: new_x = W-1-old_x, new_y = old_y.
+fn flip_prefab_h(prefab: &PrefabTemplate) -> PrefabTemplate {
+    let w = prefab.width;
+
+    let tiles: Vec<String> = prefab.tiles.iter()
+        .map(|row| row.chars().rev().collect())
+        .collect();
+
+    let transform = |x: i32, y: i32| -> (i32, i32) {
+        (w - 1 - x, y)
+    };
+
+    let props = prefab.props.iter().map(|p| {
+        let (nx, ny) = transform(p.x, p.y);
+        crate::assets::PrefabPropEntry { x: nx, y: ny, prop: p.prop.clone() }
+    }).collect();
+
+    let monster_spawns = prefab.monster_spawns.iter().map(|m| {
+        let (nx, ny) = transform(m.x, m.y);
+        crate::assets::PrefabMonsterSpawn { x: nx, y: ny, role: m.role.clone(), guard: m.guard }
+    }).collect();
+
+    let item_spawns = prefab.item_spawns.iter().map(|i| {
+        let (nx, ny) = transform(i.x, i.y);
+        crate::assets::PrefabItemSpawn { x: nx, y: ny, item: i.item.clone() }
+    }).collect();
+
+    PrefabTemplate {
+        name: prefab.name.clone(),
+        width: w,
+        height: prefab.height,
+        min_floor: prefab.min_floor,
+        max_floor: prefab.max_floor,
+        tiles,
+        props,
+        monster_spawns,
+        item_spawns,
+        on_leader_death: prefab.on_leader_death.clone(),
+        flee_threshold: prefab.flee_threshold,
+        placement: prefab.placement.clone(),
+        allow_rotate: prefab.allow_rotate,
+        allow_flip: prefab.allow_flip,
+    }
+}
 
 pub struct PrefabPlacer {
     prefabs: Vec<PrefabTemplate>,
+    role_table: MonsterRoleTable,
 }
 
 impl MetaMapBuilder for PrefabPlacer {
@@ -23,65 +293,139 @@ impl MetaMapBuilder for PrefabPlacer {
 }
 
 impl PrefabPlacer {
-    pub fn new(prefabs: Vec<PrefabTemplate>) -> Box<Self> {
-        Box::new(Self { prefabs })
+    pub fn new(prefabs: Vec<PrefabTemplate>, role_table: MonsterRoleTable) -> Box<Self> {
+        Box::new(Self { prefabs, role_table })
     }
 
     fn place_prefabs(&mut self, build_data: &mut BuilderMap) {
         let depth = build_data.map.depth;
         let mut rng = RandomNumberGenerator::new();
 
-        // Roll placement chance.
-        if rng.range(0, 100) >= PREFAB_CHANCE {
-            return;
-        }
+        let mut budget = BASE_PREFAB_BUDGET;
+        let mut occupied_regions: Vec<Rect> = Vec::new();
+        let mut placed_names: HashSet<String> = HashSet::new();
 
         // Filter prefabs eligible for this floor depth.
-        let eligible: Vec<&PrefabTemplate> = self
+        let eligible: Vec<PrefabTemplate> = self
             .prefabs
             .iter()
             .filter(|p| depth >= p.min_floor && depth <= p.max_floor)
+            .cloned()
             .collect();
 
         if eligible.is_empty() {
             return;
         }
 
-        let prefab = eligible[rng.range(0, eligible.len() as i32) as usize].clone();
-
-        let try_room = prefab.placement != "wall";
-        let try_wall = prefab.placement != "room";
-
-        // Try room-overlay placement first.
-        if try_room && self.try_room_placement(build_data, &prefab, &mut rng) {
-            return;
+        // Pass 1: medium + large prefabs (tactical landmarks). Each gets one attempt.
+        let mut big_prefabs: Vec<&PrefabTemplate> = eligible.iter()
+            .filter(|p| p.width * p.height >= MEDIUM_THRESHOLD)
+            .collect();
+        // Shuffle.
+        let n = big_prefabs.len() as i32;
+        for i in (1..n).rev() {
+            let j = rng.range(0, i + 1);
+            big_prefabs.swap(i as usize, j as usize);
         }
 
-        // Try wall-carve placement.
-        if try_wall {
-            self.try_wall_carve_placement(build_data, &prefab, &mut rng);
+        for prefab in &big_prefabs {
+            if budget <= 0 { break; }
+            if placed_names.contains(&prefab.name) { continue; }
+
+            if self.try_place_oriented(build_data, prefab, &mut rng, &mut occupied_regions) {
+                let area = prefab.width * prefab.height;
+                budget -= area;
+                placed_names.insert(prefab.name.clone());
+            }
+        }
+
+        // Pass 2: small prefabs — fill remaining budget.
+        let mut consecutive_failures = 0;
+        while budget > 0 && consecutive_failures < 3 {
+            let small: Vec<&PrefabTemplate> = eligible.iter()
+                .filter(|p| p.width * p.height < MEDIUM_THRESHOLD)
+                .filter(|p| !placed_names.contains(&p.name))
+                .collect();
+
+            if small.is_empty() { break; }
+
+            let prefab = small[rng.range(0, small.len() as i32) as usize];
+
+            if self.try_place_oriented(build_data, prefab, &mut rng, &mut occupied_regions) {
+                let area = prefab.width * prefab.height;
+                budget -= area;
+                placed_names.insert(prefab.name.clone());
+                consecutive_failures = 0;
+            } else {
+                consecutive_failures += 1;
+            }
         }
     }
 
-    /// Original room-overlay placement: center the prefab inside a room large enough.
-    fn try_room_placement(
+    /// Try all orientations of a prefab, recording the footprint on success.
+    fn try_place_oriented(
         &self,
         build_data: &mut BuilderMap,
         prefab: &PrefabTemplate,
         rng: &mut RandomNumberGenerator,
+        occupied: &mut Vec<Rect>,
     ) -> bool {
+        let mut orientations = generate_orientations(prefab);
+        let n = orientations.len() as i32;
+        for i in (1..n).rev() {
+            let j = rng.range(0, i + 1);
+            orientations.swap(i as usize, j as usize);
+        }
+
+        for oriented in &orientations {
+            let try_room = oriented.placement != "wall";
+            let try_wall = oriented.placement != "room";
+
+            if try_room {
+                if let Some(rect) = self.try_room_placement_with_overlap(
+                    build_data, oriented, rng, occupied,
+                ) {
+                    occupied.push(rect);
+                    return true;
+                }
+            }
+            if try_wall {
+                if let Some(rect) = self.try_wall_carve_placement_with_overlap(
+                    build_data, oriented, rng, occupied,
+                ) {
+                    occupied.push(rect);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Room-overlay placement with overlap checking against already-placed prefabs.
+    fn try_room_placement_with_overlap(
+        &self,
+        build_data: &mut BuilderMap,
+        prefab: &PrefabTemplate,
+        rng: &mut RandomNumberGenerator,
+        occupied: &[Rect],
+    ) -> Option<Rect> {
         let Some(rooms) = build_data.rooms.as_ref() else {
-            return false;
+            return None;
         };
 
-        // Collect candidate offsets up front to avoid borrowing rooms while mutating build_data.
         let mut candidate_offsets: Vec<(i32, i32)> = rooms
             .iter()
             .filter_map(|r| {
                 let rw = r.x2 - r.x1 + 1;
                 let rh = r.y2 - r.y1 + 1;
                 if rw >= prefab.width && rh >= prefab.height {
-                    Some((r.x1 + (rw - prefab.width) / 2, r.y1 + (rh - prefab.height) / 2))
+                    let ox = r.x1 + (rw - prefab.width) / 2;
+                    let oy = r.y1 + (rh - prefab.height) / 2;
+                    if !overlaps_placed(occupied, ox, oy, prefab.width, prefab.height) {
+                        Some((ox, oy))
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -89,10 +433,9 @@ impl PrefabPlacer {
             .collect();
 
         if candidate_offsets.is_empty() {
-            return false;
+            return None;
         }
 
-        // Shuffle candidates.
         let n = candidate_offsets.len() as i32;
         for i in (1..n).rev() {
             let j = rng.range(0, i + 1);
@@ -101,41 +444,40 @@ impl PrefabPlacer {
 
         for (offset_x, offset_y) in &candidate_offsets {
             if self.try_stamp_prefab(build_data, prefab, *offset_x, *offset_y) {
-                return true;
+                return Some(Rect::with_size(*offset_x, *offset_y, prefab.width, prefab.height));
             }
         }
 
-        false
+        None
     }
 
-    /// Wall-carve placement: find a solid wall region adjacent to existing floor,
-    /// carve the prefab into it, and add a door connection.
-    fn try_wall_carve_placement(
+    /// Wall-carve placement with overlap checking against already-placed prefabs.
+    fn try_wall_carve_placement_with_overlap(
         &self,
         build_data: &mut BuilderMap,
         prefab: &PrefabTemplate,
         rng: &mut RandomNumberGenerator,
-    ) -> bool {
+        occupied: &[Rect],
+    ) -> Option<Rect> {
         let map_w = build_data.map.width;
         let map_h = build_data.map.height;
 
-        // Collect candidate positions where the prefab fits entirely in walls
-        // and has at least one edge adjacent to floor.
         let mut candidates: Vec<(i32, i32)> = Vec::new();
 
         for oy in 1..map_h - prefab.height - 1 {
             for ox in 1..map_w - prefab.width - 1 {
-                if self.wall_carve_fits(build_data, prefab, ox, oy) {
+                if self.wall_carve_fits(build_data, prefab, ox, oy)
+                    && !overlaps_placed(occupied, ox, oy, prefab.width, prefab.height)
+                {
                     candidates.push((ox, oy));
                 }
             }
         }
 
         if candidates.is_empty() {
-            return false;
+            return None;
         }
 
-        // Shuffle candidates.
         let n = candidates.len() as i32;
         for i in (1..n).rev() {
             let j = rng.range(0, i + 1);
@@ -143,12 +485,9 @@ impl PrefabPlacer {
         }
 
         for (ox, oy) in candidates {
-            // Find connection point: a wall tile on the prefab border adjacent to existing floor.
             if let Some(door_pt) = self.find_connection_point(build_data, prefab, ox, oy) {
-                // Snapshot
                 let mut snapshot: Vec<(usize, crate::map::tile::Tile)> = Vec::new();
 
-                // Carve the prefab tiles
                 for (py, row_str) in prefab.tiles.iter().enumerate() {
                     for (px, ch) in row_str.chars().enumerate() {
                         let wx = ox + px as i32;
@@ -167,12 +506,10 @@ impl PrefabPlacer {
                     }
                 }
 
-                // Place door at connection point
                 let door_idx = build_data.map.xy_idx(door_pt.x, door_pt.y);
                 snapshot.push((door_idx, build_data.map.tiles[door_idx]));
                 build_data.map.tiles[door_idx].terrain = TerrainType::Door;
 
-                // Connectivity check
                 let start = build_data.starting_position.as_ref().map(|p| Point::new(p.x, p.y));
                 if let Some(start) = start {
                     if !check_connectivity(&build_data.map, start) {
@@ -183,13 +520,12 @@ impl PrefabPlacer {
                     }
                 }
 
-                // Success — add spawns
                 self.add_prefab_spawns(build_data, prefab, ox, oy);
-                return true;
+                return Some(Rect::with_size(ox, oy, prefab.width, prefab.height));
             }
         }
 
-        false
+        None
     }
 
     /// Check if the prefab footprint is entirely wall tiles (suitable for carving).
@@ -291,6 +627,8 @@ impl PrefabPlacer {
     }
 
     /// Add monster, prop, and item spawns for a successfully placed prefab.
+    /// Uses faction-first role resolution: pick one faction that can fill all
+    /// required roles at this depth, then resolve each role within that faction.
     fn add_prefab_spawns(
         &self,
         build_data: &mut BuilderMap,
@@ -298,42 +636,68 @@ impl PrefabPlacer {
         offset_x: i32,
         offset_y: i32,
     ) {
-        let has_squad = prefab.monster_spawns.iter().any(|m| m.squad);
-        let squad_id = if has_squad {
-            Some(build_data.squad_counter.next())
+        let depth = build_data.map.depth;
+        let mut rng = RandomNumberGenerator::new();
+
+        // Collect all roles needed by this prefab.
+        let needed_roles: Vec<&str> = prefab
+            .monster_spawns
+            .iter()
+            .map(|ms| ms.role.as_str())
+            .collect();
+
+        // Pick a faction that can fill all roles at this depth.
+        let eligible = self.role_table.eligible_factions(&needed_roles, depth);
+        if eligible.is_empty() {
+            // No faction can fill all roles — skip monster spawns entirely.
+            // Still place props and items below.
         } else {
-            None
-        };
+            let faction = &eligible[rng.range(0, eligible.len() as i32) as usize];
 
-        let squad_config = if has_squad {
-            let behavior = crate::game::squad::LeaderDeathBehavior::from_str(&prefab.on_leader_death);
-            Some(SquadConfig {
-                on_leader_death: behavior,
-                flee_threshold: prefab.flee_threshold,
-            })
-        } else {
-            None
-        };
+            // Resolve each monster spawn within the chosen faction.
+            let monster_count = prefab.monster_spawns.len();
+            let is_squad = monster_count >= 2;
 
-        let mut is_first_squad_member = true;
-        for ms in &prefab.monster_spawns {
-            let wx = offset_x + ms.x;
-            let wy = offset_y + ms.y;
-            let pos = Point::new(wx, wy);
+            let squad_id = if is_squad {
+                Some(build_data.squad_counter.next())
+            } else {
+                None
+            };
 
-            if let Some(ref monster_name) = ms.monster {
+            let squad_config = if is_squad {
+                let behavior =
+                    crate::game::squad::LeaderDeathBehavior::from_str(&prefab.on_leader_death);
+                Some(SquadConfig {
+                    on_leader_death: behavior,
+                    flee_threshold: prefab.flee_threshold,
+                })
+            } else {
+                None
+            };
+
+            let mut is_first_squad_member = true;
+            for ms in &prefab.monster_spawns {
+                let monster_name = match self.role_table.resolve_role(
+                    faction,
+                    &ms.role,
+                    depth,
+                    &mut rng,
+                ) {
+                    Some(name) => name,
+                    None => continue,
+                };
+
+                let wx = offset_x + ms.x;
+                let wy = offset_y + ms.y;
+                let pos = Point::new(wx, wy);
                 let home = if ms.guard { Some(pos) } else { None };
 
-                let mut entry = if ms.squad {
-                    if let (Some(sid), Some(cfg)) = (squad_id, squad_config.clone()) {
-                        let leader = is_first_squad_member;
-                        is_first_squad_member = false;
-                        SpawnEntry::squad(pos, monster_name.clone(), sid, cfg, leader)
-                    } else {
-                        SpawnEntry::solo(pos, monster_name.clone())
-                    }
+                let mut entry = if let (Some(sid), Some(cfg)) = (squad_id, squad_config.clone()) {
+                    let leader = is_first_squad_member;
+                    is_first_squad_member = false;
+                    SpawnEntry::squad(pos, monster_name, sid, cfg, leader)
                 } else {
-                    SpawnEntry::solo(pos, monster_name.clone())
+                    SpawnEntry::solo(pos, monster_name)
                 };
                 entry.home_position = home;
                 build_data.spawn_list.push(entry);

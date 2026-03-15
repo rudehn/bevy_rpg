@@ -165,11 +165,10 @@ pub struct PrefabPropEntry {
 pub struct PrefabMonsterSpawn {
     pub x: i32,
     pub y: i32,
-    pub monster: Option<String>,
+    /// Combat role to resolve via faction table (e.g. "melee_guard", "ranged", "caster", "leader", "brute").
+    pub role: String,
     #[serde(default)]
     pub guard: bool,
-    #[serde(default)]
-    pub squad: bool,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -201,9 +200,16 @@ pub struct PrefabTemplate {
     /// Placement mode: "room" (overlay on existing rooms), "wall" (carve into walls), "any" (try both).
     #[serde(default = "default_placement")]
     pub placement: String,
+    /// Allow 90/180/270° rotation at placement time (default: true).
+    #[serde(default = "default_true")]
+    pub allow_rotate: bool,
+    /// Allow horizontal flip at placement time (default: true).
+    #[serde(default = "default_true")]
+    pub allow_flip: bool,
 }
 
 fn default_placement() -> String { "any".to_string() }
+fn default_true() -> bool { true }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
 pub struct PrefabManifest {
@@ -331,6 +337,14 @@ pub struct MonsterAsset {
     /// Whether this monster is a boss (gets FinalBoss + BossAI components).
     #[serde(default)]
     pub is_boss: bool,
+
+    /// Faction tag for prefab role resolution (e.g. "goblin", "orc", "undead").
+    #[serde(default)]
+    pub faction_tag: String,
+
+    /// Combat role for prefab role resolution (e.g. "melee_guard", "ranged", "caster", "leader", "brute").
+    #[serde(default)]
+    pub role: String,
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]

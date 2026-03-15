@@ -3,8 +3,10 @@ use bracket_lib::{
     random::RandomNumberGenerator,
 };
 
+use std::collections::HashMap;
+
 use crate::{
-    assets::{ItemSpawnInfo, MonsterSpawnInfo, PrefabTemplate},
+    assets::{ItemSpawnInfo, MonsterAsset, MonsterSpawnInfo, PrefabTemplate},
     components::Position,
     game::squad::{SquadConfig, SquadId, SquadIdCounter},
     map::{
@@ -16,7 +18,7 @@ use crate::{
             exit_points::DistantExit,
             item_spawner::ItemSpawner,
             monster_spawner::MonsterSpawner,
-            prefab_placer::PrefabPlacer,
+            prefab_placer::{MonsterRoleTable, PrefabPlacer},
             start_point::{StartPointBuilder, XStart, YStart},
             unseen_culler::UnseenCuller,
         },
@@ -240,6 +242,7 @@ pub fn floor_builder(
     item_spawn_table: &[ItemSpawnInfo],
     squad_counter: SquadIdCounter,
     prefabs: Vec<PrefabTemplate>,
+    monster_manifest: &HashMap<String, MonsterAsset>,
 ) -> BuilderChain {
     let mut map_name = "Floor ".to_owned() + &new_depth.to_string();
     if new_depth == 1 {
@@ -247,6 +250,8 @@ pub fn floor_builder(
     }
     let profile = FloorProfile::for_depth(new_depth);
     let mut builder = BuilderChain::new(new_depth, width, height, map_name, squad_counter);
+
+    let role_table = MonsterRoleTable::from_manifest(monster_manifest, spawn_table);
 
     // MAP Generation
     builder.start_with(brogelike::BrogueLikeBuilder::dungeon(
@@ -256,7 +261,7 @@ pub fn floor_builder(
     builder.with(CaveEroder::with_profile(profile));
     builder.with(StartPointBuilder::new());
     // builder.with(LakeBuilder::new(LiquidType::Water));
-    builder.with(PrefabPlacer::new(prefabs));
+    builder.with(PrefabPlacer::new(prefabs, role_table));
     builder.with(CandleSpawner::new());
     builder.with(MonsterSpawner::new(spawn_table));
     builder.with(ItemSpawner::new(item_spawn_table));
@@ -274,6 +279,7 @@ pub fn level_builder(
     item_spawn_table: &[ItemSpawnInfo],
     squad_counter: SquadIdCounter,
     prefabs: Vec<PrefabTemplate>,
+    monster_manifest: &HashMap<String, MonsterAsset>,
 ) -> BuilderChain {
-    floor_builder(new_depth, width, height, spawn_table, item_spawn_table, squad_counter, prefabs)
+    floor_builder(new_depth, width, height, spawn_table, item_spawn_table, squad_counter, prefabs, monster_manifest)
 }

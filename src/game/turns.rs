@@ -6,9 +6,10 @@ use crate::constants::BASE_ACTION_COST;
 use crate::game::AppState;
 use crate::game::actions::{
     Action, ActionFinishedEvent, Direction, FreeActionEvent, MeleeIntent, MovementIntent,
-    OpenDoorIntent, PendingPlayerAction, PickUpIntent, RangedAttackIntent, SpeedStats, WaitIntent,
+    OpenChestIntent, OpenDoorIntent, PendingPlayerAction, PickUpIntent, RangedAttackIntent,
+    SpeedStats, WaitIntent,
     dispatch_player_action,
-    handle_door_open, handle_melee, handle_movement, handle_pickup, handle_wait,
+    handle_door_open, handle_melee, handle_movement, handle_open_chest, handle_pickup, handle_wait,
 };
 use crate::map::map::populate_blocked_tiles;
 use crate::game::ai::MonsterAI;
@@ -68,6 +69,7 @@ impl Plugin for TurnOrderPlugin {
             .add_message::<WaitIntent>()
             .add_message::<PickUpIntent>()
             .add_message::<OpenDoorIntent>()
+            .add_message::<OpenChestIntent>()
             .add_message::<RangedAttackIntent>()
             .add_message::<UseItemMessage>()
             // Turn-lifecycle messages.
@@ -98,6 +100,7 @@ impl Plugin for TurnOrderPlugin {
                         handle_melee,
                         handle_ranged_attack,
                         handle_door_open,
+                        handle_open_chest,
                         handle_pickup,
                         handle_wait,
                         handle_equip_item,

@@ -2,18 +2,23 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::{
-    components::{Collider, InInventory, Inventory, Monster, Name, Position, Viewshed, Item},
+    components::{Chest, Collider, InInventory, Inventory, Monster, Name, Position, Viewshed, Item},
     constants::BASE_ACTION_COST,
     game::{
         combat::{AttackIntentMessage, DamageType, DamageTypeTag, DamageSource},
         effects::UseItemMessage,
         items::{DropItemMessage, EquipItemMessage, ItemStack, UnequipItemMessage},
         magic::CastSpellMessage,
+        spawner::spawn_item,
         turns::MyTurn,
     },
     map::{Map, tile::{is_walkable, TerrainType, TileMarker}},
+    map::dungeon::Floor,
     player::Player,
-    assets::{TileManifest, TileManifestHandle, TileSpriteAssets},
+    assets::{
+        ItemManifest, ItemManifestHandle, ItemSpawnTable, ItemSpawnTableHandle, ItemSpriteAssets,
+        TileManifest, TileManifestHandle, TileSpriteAssets,
+    },
     ui::game_log::GameLogMessage,
 };
 
@@ -64,6 +69,12 @@ pub struct PickUpIntent {
 pub struct OpenDoorIntent {
     pub entity: Entity,
     pub door_pos: Point,
+}
+
+#[derive(Message)]
+pub struct OpenChestIntent {
+    pub entity: Entity,
+    pub chest_entity: Entity,
 }
 
 #[derive(Message)]
@@ -305,6 +316,7 @@ pub fn handle_movement(
     mut intents: MessageReader<MovementIntent>,
     mut melee_writer: MessageWriter<MeleeIntent>,
     mut open_door_writer: MessageWriter<OpenDoorIntent>,
+    mut open_chest_writer: MessageWriter<OpenChestIntent>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut free_writer: MessageWriter<FreeActionEvent>,
     mut actors_query: Query<(
@@ -313,11 +325,12 @@ pub fn handle_movement(
         Has<Player>,
         Has<Monster>,
         Has<Collider>,
+        Has<Chest>,
     ), (Without<TileMarker>, Without<Item>)>,
     map: Res<Map>,
 ) {
     for intent in intents.read() {
-        let Ok((_, pos, is_player, _, _)) = actors_query.get(intent.entity) else {
+        let Ok((_, pos, is_player, _, _, _)) = actors_query.get(intent.entity) else {
             finish_writer.write(ActionFinishedEvent {
                 entity: intent.entity,
                 base_cost: BASE_ACTION_COST,
@@ -351,25 +364,25 @@ pub fn handle_movement(
         // 3. Occupant Check (Bump-to-Attack / Block) — must happen before wall check
         //    so that monsters standing on non-walkable tiles can still be attacked.
         let mut bump_target = None;
-        for (e, other_pos, other_is_player, other_is_monster, other_has_collider) in
+        for (e, other_pos, other_is_player, other_is_monster, other_has_collider, other_is_chest) in
             actors_query.iter()
         {
             if other_pos.to_point() == target_pt && e != intent.entity {
-                bump_target = Some((e, other_is_player, other_is_monster, other_has_collider));
+                bump_target = Some((e, other_is_player, other_is_monster, other_has_collider, other_is_chest));
                 break;
             }
         }
 
-        if let Some((target_entity, target_is_player, target_is_monster, target_has_collider)) =
+        if let Some((target_entity, target_is_player, target_is_monster, target_has_collider, target_is_chest)) =
             bump_target
         {
             let actor_is_player = actors_query
                 .get(intent.entity)
-                .map(|(_, _, p, _, _)| p)
+                .map(|(_, _, p, _, _, _)| p)
                 .unwrap_or(false);
             let actor_is_monster = actors_query
                 .get(intent.entity)
-                .map(|(_, _, _, m, _)| m)
+                .map(|(_, _, _, m, _, _)| m)
                 .unwrap_or(false);
 
             let is_hostile =
@@ -379,6 +392,13 @@ pub fn handle_movement(
                 melee_writer.write(MeleeIntent {
                     attacker: intent.entity,
                     target: target_entity,
+                });
+                continue;
+            } else if target_is_chest && actor_is_player {
+                // Player bumps a chest — open it
+                open_chest_writer.write(OpenChestIntent {
+                    entity: intent.entity,
+                    chest_entity: target_entity,
                 });
                 continue;
             } else if target_has_collider {
@@ -397,7 +417,7 @@ pub fn handle_movement(
         if !is_walkable(target_tile) {
             let actor_is_player = actors_query
                 .get(intent.entity)
-                .map(|(_, _, p, _, _)| p)
+                .map(|(_, _, p, _, _, _)| p)
                 .unwrap_or(false);
             if actor_is_player {
                 free_writer.write(FreeActionEvent { entity: intent.entity });
@@ -408,7 +428,7 @@ pub fn handle_movement(
         }
 
         // 5. Apply Movement
-        if let Ok((_, mut pos, _, _, _)) = actors_query.get_mut(intent.entity) {
+        if let Ok((_, mut pos, _, _, _, _)) = actors_query.get_mut(intent.entity) {
             pos.x = target_pt.x;
             pos.y = target_pt.y;
         }
@@ -596,5 +616,84 @@ impl Direction {
             Direction::W => Direction::E,
             Direction::NoDirection => Direction::NoDirection,
         }
+    }
+}
+
+/// When a player bumps a chest, despawn it and spawn 1-3 random items from
+/// the floor's item spawn table at the chest's position.
+pub fn handle_open_chest(
+    mut commands: Commands,
+    mut intents: MessageReader<OpenChestIntent>,
+    mut finish_writer: MessageWriter<ActionFinishedEvent>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+    chest_query: Query<&Position, With<Chest>>,
+    floor: Res<Floor>,
+    item_spawn_table_handle: Res<ItemSpawnTableHandle>,
+    item_spawn_tables: Res<Assets<ItemSpawnTable>>,
+    item_manifests: Res<Assets<ItemManifest>>,
+    item_manifest_handle: Res<ItemManifestHandle>,
+    item_sprite_assets: Res<ItemSpriteAssets>,
+) {
+    use bracket_lib::prelude::RandomNumberGenerator;
+
+    for intent in intents.read() {
+        let Ok(chest_pos) = chest_query.get(intent.chest_entity) else {
+            continue;
+        };
+        let pos = *chest_pos;
+
+        // Despawn the chest entity.
+        commands.entity(intent.chest_entity).despawn();
+
+        // Pick random items from the spawn table.
+        let Some(spawn_table) = item_spawn_tables.get(&item_spawn_table_handle.0) else {
+            finish_writer.write(ActionFinishedEvent { entity: intent.entity, base_cost: BASE_ACTION_COST });
+            continue;
+        };
+
+        let depth = floor.0 as i32;
+        let candidates: Vec<_> = spawn_table.spawns.iter()
+            .filter(|s| depth >= s.min_floor && depth <= s.max_floor)
+            .collect();
+
+        if candidates.is_empty() {
+            log_writer.write(GameLogMessage("You open the chest but it's empty!".to_string()));
+            finish_writer.write(ActionFinishedEvent { entity: intent.entity, base_cost: BASE_ACTION_COST });
+            continue;
+        }
+
+        let total_weight: i32 = candidates.iter().map(|s| s.weight).sum();
+        let mut rng = RandomNumberGenerator::new();
+        let item_count = rng.range(1, 4); // 1-3 items
+
+        log_writer.write(GameLogMessage("You open the chest!".to_string()));
+
+        for _ in 0..item_count {
+            let roll = rng.range(0, total_weight);
+            let mut acc = 0;
+            let chosen = candidates.iter().find(|s| {
+                acc += s.weight;
+                roll < acc
+            });
+
+            if let Some(spawn_info) = chosen {
+                let pt = Point::new(pos.x, pos.y);
+                if let Some(_entity) = spawn_item(
+                    &mut commands,
+                    &spawn_info.item,
+                    &pt,
+                    &item_manifests,
+                    &item_manifest_handle,
+                    &item_sprite_assets,
+                ) {
+                    log_writer.write(GameLogMessage(format!("  Found: {}", spawn_info.item)));
+                }
+            }
+        }
+
+        finish_writer.write(ActionFinishedEvent {
+            entity: intent.entity,
+            base_cost: BASE_ACTION_COST,
+        });
     }
 }
