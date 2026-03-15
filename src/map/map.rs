@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, BaseMap, DistanceAlg, Point, SmallVec};
 
 use crate::{
-    components::{Position, Viewshed},
+    components::{Collider, Position, Viewshed},
     game::AppState,
     map::{
         light::LightMap,
@@ -176,12 +176,38 @@ pub fn update_tile_visibility(
     }
 }
 
+/// Marks tiles occupied by `Collider` entities so that A* pathfinding treats
+/// them as high-cost, causing monsters to route around each other.
+pub fn populate_blocked_tiles(
+    mut map: ResMut<Map>,
+    collider_query: Query<&Position, With<Collider>>,
+) {
+    // Clear all blocked flags.
+    for b in map.blocked.iter_mut() {
+        *b = false;
+    }
+
+    // Mark tiles occupied by collider entities.
+    for pos in collider_query.iter() {
+        let pt = Point::new(pos.x, pos.y);
+        if map.in_bounds(pt) {
+            let idx = map.xy_idx(pos.x, pos.y);
+            map.blocked[idx] = true;
+        }
+    }
+}
+
 #[derive(Default, Clone, Resource)]
 pub struct Map {
     pub name: String,
     pub tiles: Vec<Tile>,
     /// Mirrors `tiles` index-for-index: true once the player has seen that tile.
     pub explored_tiles: Vec<bool>,
+    /// Mirrors `tiles` index-for-index: true when an entity with `Collider` occupies
+    /// this tile. Populated each frame by `populate_blocked_tiles` before AI runs.
+    /// Pathfinding treats blocked tiles as high-cost rather than impassable so
+    /// monsters route around each other instead of lining up.
+    pub blocked: Vec<bool>,
     pub width: i32,
     pub height: i32,
     pub depth: i32,
@@ -195,6 +221,7 @@ impl Map {
             name: name.to_string(),
             tiles: vec![Tile { terrain: TerrainType::Wall, liquid: LiquidType::None }; map_tile_count],
             explored_tiles: vec![false; map_tile_count],
+            blocked: vec![false; map_tile_count],
             width,
             height,
             depth,
@@ -260,8 +287,12 @@ impl Map {
             return None;
         }
 
-        // For now, we return 1.0 for all passable tiles. 
-        // Later we can add higher costs for things like shallow water or debris.
+        // High cost for tiles occupied by another entity — A* will prefer
+        // routing around rather than queuing behind.
+        if self.blocked.get(idx).copied().unwrap_or(false) {
+            return Some(10.0);
+        }
+
         Some(1.0)
     }
 }

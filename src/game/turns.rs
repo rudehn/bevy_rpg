@@ -10,6 +10,7 @@ use crate::game::actions::{
     dispatch_player_action,
     handle_door_open, handle_melee, handle_movement, handle_pickup, handle_wait,
 };
+use crate::map::map::populate_blocked_tiles;
 use crate::game::ai::MonsterAI;
 use crate::game::effects::{UseItemMessage, handle_use_item};
 use crate::game::magic::{ActiveSpells, handle_cast_spell};
@@ -88,6 +89,7 @@ impl Plugin for TurnOrderPlugin {
                     ),
                     (
                         // --- Brain Systems ---
+                        populate_blocked_tiles,
                         dispatch_player_action,
                         monster_ai_dispatch,
                         marker_dispatch,

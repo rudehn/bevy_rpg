@@ -28,9 +28,9 @@
 //!
 //! - **No dynamic joining**: squads are formed at spawn time only. Solo monsters
 //!   never join an existing squad, and two squads never merge.
-//! - **No communication range**: all members alert regardless of distance on the
-//!   same floor. This is simpler and prevents the exploit of picking off distant
-//!   sentries one by one.
+//! - **Communication range**: alerting only propagates to squad members within
+//!   12 tiles of the alerting member. Distant sentries stay asleep until they
+//!   see the player or a nearby squad member alerts them.
 //! - **No centralized state**: all squad information is derived by querying
 //!   entities with matching `SquadId`. This avoids sync bugs with despawned
 //!   entities and keeps save/load trivial.
@@ -159,11 +159,16 @@ impl Plugin for SquadPlugin {
 // Systems
 // ---------------------------------------------------------------------------
 
-/// When any squad member can see the player, alert the entire squad.
+/// Maximum distance (tiles) at which a squad member's alert propagates to
+/// other members. Beyond this range, distant squad members stay asleep.
+const SQUAD_COMM_RANGE: f32 = 12.0;
+
+/// When any squad member can see the player, alert nearby squad members.
 /// Only triggers the Asleep→Hunting transition — ongoing position tracking
-/// remains per-individual.
+/// remains per-individual. Members beyond `SQUAD_COMM_RANGE` of the alerting
+/// member are not woken.
 fn squad_alert_system(
-    mut squad_members: Query<(&SquadId, &mut MonsterAI, &Viewshed), With<Monster>>,
+    mut squad_members: Query<(&SquadId, &mut MonsterAI, &Viewshed, &Position), With<Monster>>,
     player_query: Query<&Position, With<Player>>,
 ) {
     let Ok(player_pos) = player_query.single() else {
@@ -171,31 +176,37 @@ fn squad_alert_system(
     };
     let player_point = player_pos.to_point();
 
-    // Pass 1: collect which squads have a member that can see the player.
-    let mut alerted_squads: std::collections::HashSet<SquadId> =
-        std::collections::HashSet::new();
-    for (squad_id, _ai, viewshed) in squad_members.iter() {
+    // Pass 1: collect which squads have an alerting member, along with that member's position.
+    let mut alerters: Vec<(SquadId, bracket_lib::prelude::Point)> = Vec::new();
+    for (squad_id, _ai, viewshed, pos) in squad_members.iter() {
         if viewshed.visible_tiles.contains(&player_point) {
-            alerted_squads.insert(*squad_id);
+            alerters.push((*squad_id, pos.to_point()));
         }
     }
 
-    if alerted_squads.is_empty() {
+    if alerters.is_empty() {
         return;
     }
 
-    // Pass 2: wake all members of alerted squads.
-    for (squad_id, mut ai, _viewshed) in squad_members.iter_mut() {
-        if alerted_squads.contains(squad_id) {
+    // Pass 2: wake squad members within communication range of any alerting member.
+    for (squad_id, mut ai, _viewshed, pos) in squad_members.iter_mut() {
+        let member_point = pos.to_point();
+        let should_alert = alerters.iter().any(|(sid, alerter_pos)| {
+            *sid == *squad_id
+                && bracket_lib::prelude::DistanceAlg::Pythagoras
+                    .distance2d(member_point, *alerter_pos)
+                    <= SQUAD_COMM_RANGE
+        });
+        if should_alert {
             ai.alert_to_position(player_point);
         }
     }
 }
 
-/// When a squad member takes damage, alert the entire squad.
+/// When a squad member takes damage, alert nearby squad members.
 fn squad_damage_alert_system(
-    damaged_query: Query<&SquadId, (With<Monster>, Changed<Health>)>,
-    mut all_squad: Query<(&SquadId, &mut MonsterAI), With<Monster>>,
+    damaged_query: Query<(&SquadId, &Position, &Health), (With<Monster>, Changed<Health>)>,
+    mut all_squad: Query<(&SquadId, &mut MonsterAI, &Position), With<Monster>>,
     player_query: Query<&Position, With<Player>>,
 ) {
     let Ok(player_pos) = player_query.single() else {
@@ -203,20 +214,30 @@ fn squad_damage_alert_system(
     };
     let player_point = player_pos.to_point();
 
-    // Collect squads that had a member take damage.
-    let mut damaged_squads: std::collections::HashSet<SquadId> =
-        std::collections::HashSet::new();
-    for squad_id in damaged_query.iter() {
-        damaged_squads.insert(*squad_id);
+    // Collect damaged squad members and their positions.
+    // Guard: skip entities whose Health just got inserted (current == max on spawn);
+    // Changed<Health> fires on component insertion, not just mutation.
+    let mut damaged: Vec<(SquadId, bracket_lib::prelude::Point)> = Vec::new();
+    for (squad_id, pos, health) in damaged_query.iter() {
+        if health.current < health.max {
+            damaged.push((*squad_id, pos.to_point()));
+        }
     }
 
-    if damaged_squads.is_empty() {
+    if damaged.is_empty() {
         return;
     }
 
-    // Alert all members of damaged squads.
-    for (squad_id, mut ai) in all_squad.iter_mut() {
-        if damaged_squads.contains(squad_id) {
+    // Alert squad members within communication range of the damaged member.
+    for (squad_id, mut ai, pos) in all_squad.iter_mut() {
+        let member_point = pos.to_point();
+        let should_alert = damaged.iter().any(|(sid, dmg_pos)| {
+            *sid == *squad_id
+                && bracket_lib::prelude::DistanceAlg::Pythagoras
+                    .distance2d(member_point, *dmg_pos)
+                    <= SQUAD_COMM_RANGE
+        });
+        if should_alert {
             ai.alert_to_position(player_point);
         }
     }

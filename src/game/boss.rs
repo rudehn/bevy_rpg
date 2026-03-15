@@ -16,7 +16,9 @@ use crate::{
 
 // --- Constants ---
 
-pub const ESCALATION_INTERVAL: u32 = 1000;
+/// Time units between Tyrant power tier increases.
+/// Each player action costs BASE_ACTION_COST (100), so 100_000 = ~1000 player turns.
+pub const ESCALATION_INTERVAL: u32 = 100_000;
 
 // --- Components ---
 

@@ -109,7 +109,7 @@ pub fn handle_ranged_attack(
         };
 
         let attacker_point = Point::new(attacker_pos.x, attacker_pos.y);
-        let dist = DistanceAlg::Manhattan.distance2d(attacker_point, target_point);
+        let dist = DistanceAlg::Pythagoras.distance2d(attacker_point, target_point);
         if dist > range as f32 {
             let who = attacker_name.map(|n| n.0.as_str()).unwrap_or("Target");
             log_writer.write(GameLogMessage(format!("{} is out of range.", who)));

@@ -332,10 +332,12 @@ pub fn map_to_save_data(map: &Map) -> MapSaveData {
 }
 
 pub fn save_data_to_map(data: &MapSaveData) -> Map {
+    let tile_count = (data.width * data.height) as usize;
     Map {
         name: data.name.clone(),
         tiles: data.tiles.clone(),
         explored_tiles: data.explored.clone(),
+        blocked: vec![false; tile_count],
         width: data.width,
         height: data.height,
         depth: data.depth,
