@@ -2,7 +2,7 @@ use std::collections::{HashSet, VecDeque};
 
 use crate::{
     assets::MonsterSpawnInfo,
-    game::squad::{LeaderDeathBehavior, SquadConfig, SquadIdCounter},
+    game::squad::{LeaderDeathBehavior, SquadConfig},
     map::{builders::{BuilderMap, MetaMapBuilder, SpawnEntry}, map::Map, tile::is_walkable},
 };
 use bevy::prelude::*;
@@ -10,7 +10,6 @@ use bracket_lib::prelude::{Point, RandomNumberGenerator, Rect};
 
 pub struct MonsterSpawner {
     spawn_table: Vec<MonsterSpawnInfo>,
-    squad_counter: SquadIdCounter,
 }
 
 impl MetaMapBuilder for MonsterSpawner {
@@ -20,17 +19,10 @@ impl MetaMapBuilder for MonsterSpawner {
 }
 
 impl MonsterSpawner {
-    pub fn new(spawn_table: &[MonsterSpawnInfo], squad_counter: SquadIdCounter) -> Box<MonsterSpawner> {
+    pub fn new(spawn_table: &[MonsterSpawnInfo]) -> Box<MonsterSpawner> {
         Box::new(MonsterSpawner {
             spawn_table: spawn_table.to_vec(),
-            squad_counter,
         })
-    }
-
-    /// Return the counter so the caller can write it back to the resource.
-    #[allow(dead_code)]
-    pub fn into_squad_counter(self) -> SquadIdCounter {
-        self.squad_counter
     }
 
     fn spawn_monsters(&mut self, build_data: &mut BuilderMap) {
@@ -89,7 +81,7 @@ impl MonsterSpawner {
                                 find_cluster_points(origin, members.len(), map, &occupied);
 
                             // Mixed groups always get a squad (they have multiple species).
-                            let squad_id = self.squad_counter.next();
+                            let squad_id = build_data.squad_counter.next();
                             for (i, (pt, name)) in
                                 points.iter().zip(members.iter()).enumerate()
                             {
@@ -117,7 +109,7 @@ impl MonsterSpawner {
 
                             if points.len() > 1 {
                                 // Multiple monsters → assign squad
-                                let squad_id = self.squad_counter.next();
+                                let squad_id = build_data.squad_counter.next();
                                 for (i, pt) in points.iter().enumerate() {
                                     let idx = map.xy_idx(pt.x, pt.y);
                                     occupied.insert(idx);

@@ -495,7 +495,7 @@ pub fn spawn_dungeon(
     mut pending_player_load: ResMut<PendingPlayerLoad>,
     mut auto_save_pending: ResMut<AutoSavePending>,
     mut needs_explored_init: ResMut<NeedsExploredInit>,
-    squad_counter: ResMut<crate::game::squad::SquadIdCounter>,
+    mut squad_counter: ResMut<crate::game::squad::SquadIdCounter>,
     assets: EntityAssets,
     tile_assets: TileAssets,
     mut log_writer: MessageWriter<GameLogMessage>,
@@ -698,6 +698,8 @@ pub fn spawn_dungeon(
             prefabs,
         );
         builder.build_map();
+        // Write the updated counter back so future floors don't reuse IDs.
+        *squad_counter = builder.build_data.squad_counter.clone();
         *map = builder.build_data.map.clone();
 
         spawn_tiles_into_ecs(&mut commands, map_entity, &map, &tile_assets);

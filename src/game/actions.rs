@@ -575,6 +575,15 @@ impl Direction {
         }
     }
 
+    /// Returns the two cardinal directions perpendicular to this one (left, right).
+    pub fn perpendiculars(&self) -> (Direction, Direction) {
+        match self {
+            Direction::N | Direction::S => (Direction::W, Direction::E),
+            Direction::E | Direction::W => (Direction::N, Direction::S),
+            _ => (Direction::NoDirection, Direction::NoDirection),
+        }
+    }
+
     pub fn opposite(&self) -> Self {
         match self {
             Direction::NW => Direction::SE,

@@ -198,7 +198,12 @@ pub struct PrefabTemplate {
     pub on_leader_death: String,
     #[serde(default = "default_flee_threshold")]
     pub flee_threshold: f32,
+    /// Placement mode: "room" (overlay on existing rooms), "wall" (carve into walls), "any" (try both).
+    #[serde(default = "default_placement")]
+    pub placement: String,
 }
+
+fn default_placement() -> String { "any".to_string() }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
 pub struct PrefabManifest {

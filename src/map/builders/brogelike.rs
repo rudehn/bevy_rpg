@@ -2,48 +2,59 @@ use bracket_lib::prelude::{Point, Algorithm2D, DijkstraMap, Rect};
 use rand::prelude::*;
 use rand::seq::SliceRandom;
 use crate::map::tile::{is_walkable, Tile, TerrainType};
-use crate::map::builders::{BuilderMap, InitialMapBuilder};
+use crate::map::builders::{BuilderMap, FloorProfile, InitialMapBuilder};
 use crate::game::actions::Direction;
 use crate::map::map::Map;
 use crate::map::builders::algorithms::{Grid, BlobGenConfig, create_blob};
 use crate::map::builders::choke_map::ChokeMap;
 
 const MAX_ROOM_SIZE: i32 = 20;
+const MAX_CAVERN_SIZE: i32 = 40;
 
 struct RoomDesign {
     tiles: Vec<TerrainType>,
     width: i32,
     height: i32,
     door_sites: Vec<(Point, Direction)>,
+    is_cavern: bool,
 }
 
 pub struct BrogueLikeBuilder {
     width: i32,
     height: i32,
+    profile: FloorProfile,
 }
 
 impl BrogueLikeBuilder {
-    pub fn dungeon(_depth: i32, width: i32, height: i32) -> Box<Self> {
+    pub fn dungeon(_depth: i32, width: i32, height: i32, profile: FloorProfile) -> Box<Self> {
         Box::new(Self {
             width,
             height,
+            profile,
         })
     }
 
     fn design_random_room(&self) -> RoomDesign {
         let mut rng = rand::rng();
-        // Brogue rooms are designed on a large grid but we'll use a local one for efficiency
-        let w = MAX_ROOM_SIZE;
-        let h = MAX_ROOM_SIZE;
+
+        // Use profile cavern weight to determine if this room is a cavern.
+        let is_cavern = rng.random_range(0..100) < self.profile.cavern_weight;
+        let room_type = if is_cavern {
+            6 // cavern
+        } else {
+            rng.random_range(0..6) // structured room types
+        };
+
+        let w = if is_cavern { MAX_CAVERN_SIZE } else { MAX_ROOM_SIZE };
+        let h = if is_cavern { MAX_CAVERN_SIZE } else { MAX_ROOM_SIZE };
         let mut tiles = vec![TerrainType::Wall; (w * h) as usize];
 
-        let room_type = rng.random_range(0..6);
         match room_type {
             0 => self.draw_cross_room(&mut tiles, w, h),
             1 => self.draw_symmetrical_cross_room(&mut tiles, w, h),
             2 => self.draw_small_room(&mut tiles, w, h),
             3 => self.draw_circular_room(&mut tiles, w, h),
-            4 => self.draw_chunky_room(&mut tiles, w, h),
+            4 | 5 => self.draw_chunky_room(&mut tiles, w, h),
             _ => self.draw_cavern_room(&mut tiles, w, h),
         }
 
@@ -52,16 +63,26 @@ impl BrogueLikeBuilder {
             width: w,
             height: h,
             door_sites: Vec::new(),
+            is_cavern,
         };
 
-        // Potentially attach a hallway
-        if rng.random_range(0..100) < 25 {
-            self.attach_hallway(&mut design);
+        // Potentially attach a winding hallway
+        if rng.random_range(0..100) < self.profile.hallway_chance {
+            self.attach_winding_hallway(&mut design);
         } else {
             design.door_sites = self.find_door_sites(&design.tiles, w, h);
         }
 
         design
+    }
+
+    fn design_large_cavern(&self) -> RoomDesign {
+        let w = MAX_CAVERN_SIZE;
+        let h = MAX_CAVERN_SIZE;
+        let mut tiles = vec![TerrainType::Wall; (w * h) as usize];
+        self.draw_cavern_room(&mut tiles, w, h);
+        let door_sites = self.find_door_sites(&tiles, w, h);
+        RoomDesign { tiles, width: w, height: h, door_sites, is_cavern: true }
     }
 
     fn design_reward_room(&self) -> RoomDesign {
@@ -107,6 +128,7 @@ impl BrogueLikeBuilder {
             width: w,
             height: h,
             door_sites,
+            is_cavern: false,
         }
     }
 
@@ -232,19 +254,42 @@ impl BrogueLikeBuilder {
         solution
     }
 
-    fn attach_hallway(&self, design: &mut RoomDesign) {
+    fn attach_winding_hallway(&self, design: &mut RoomDesign) {
         let mut rng = rand::rng();
         let sites = self.find_door_sites(&design.tiles, design.width, design.height);
-        if let Some(&(start_pt, dir)) = sites.choose(&mut rng) {
-            let length = rng.random_range(3..8);
+        if let Some(&(start_pt, primary_dir)) = sites.choose(&mut rng) {
+            let length = rng.random_range(5..15);
             let mut curr = start_pt;
+            let (perp_left, perp_right) = primary_dir.perpendiculars();
+
             for _ in 0..length {
-                if curr.x < 0 || curr.x >= design.width || curr.y < 0 || curr.y >= design.height { break; }
+                if curr.x < 0 || curr.x >= design.width || curr.y < 0 || curr.y >= design.height {
+                    break;
+                }
                 design.tiles[(curr.y * design.width + curr.x) as usize] = TerrainType::Floor;
-                curr = curr + dir.offset();
+
+                // Occasionally widen the corridor
+                if rng.random_range(0..100) < 30 {
+                    let side = if rng.random_bool(0.5) { perp_left } else { perp_right };
+                    let adj = curr + side.offset();
+                    if adj.x >= 0 && adj.x < design.width && adj.y >= 0 && adj.y < design.height {
+                        design.tiles[(adj.y * design.width + adj.x) as usize] = TerrainType::Floor;
+                    }
+                }
+
+                // Biased random walk: 60% forward, 20% left, 20% right
+                let roll = rng.random_range(0..100);
+                let step_dir = if roll < 60 {
+                    primary_dir
+                } else if roll < 80 {
+                    perp_left
+                } else {
+                    perp_right
+                };
+                curr = curr + step_dir.offset();
             }
-            // The new door site is at the end of the hallway
-            design.door_sites = vec![(curr, dir)];
+
+            design.door_sites = vec![(curr, primary_dir)];
         }
     }
 
@@ -252,19 +297,34 @@ impl BrogueLikeBuilder {
         let mut rng = rand::rng();
         let initial_grid_dims = Grid::new(w, h, TerrainType::Wall);
 
-        // Pick one of the 3 room-sized cavern varieties from Architect.c
-        let (min_bw, max_w, min_bh, max_h) = match rng.random_range(0..3) {
-            0 => (3, 12, 4, 8),    // Compact cave room
-            1 => (3, 12, 15, h-2), // Large north-south cave room
-            _ => (15, w-2, 4, 8),  // Large east-west cave room
+        // Scale blob dimensions to the available grid size.
+        // On the 40×40 cavern grid these produce large organic caves;
+        // on the 20×20 room grid they fall back to compact shapes.
+        let (min_bw, max_bw, min_bh, max_bh) = match rng.random_range(0..3) {
+            0 => {
+                // Compact cave
+                let mw = (w / 4).max(3);
+                let mh = (h / 4).max(3);
+                (mw, (w * 3 / 4).max(mw + 1), mh, (h * 3 / 4).max(mh + 1))
+            }
+            1 => {
+                // Tall north-south cave
+                let mw = (w / 6).max(3);
+                (mw, (w / 3).max(mw + 1), (h / 2).max(5), (h - 2).max(6))
+            }
+            _ => {
+                // Wide east-west cave
+                let mh = (h / 6).max(3);
+                ((w / 2).max(5), (w - 2).max(6), mh, (h / 3).max(mh + 1))
+            }
         };
 
         let config = BlobGenConfig {
             round_count: 5,
             min_blob_width: min_bw,
             min_blob_height: min_bh,
-            max_blob_width: max_w,
-            max_blob_height: max_h,
+            max_blob_width: max_bw,
+            max_blob_height: max_bh,
             initial_alive_percent: 55,
             birth_threshold: 5,
             survival_threshold: 4,
@@ -272,21 +332,30 @@ impl BrogueLikeBuilder {
 
         // Generate the blob using the algorithms module
         let (blob_grid, _, _, _, _) = create_blob(&initial_grid_dims, &config, TerrainType::Floor, TerrainType::Wall);
-        
+
         // Copy the generated blob back into the room's tiles vector
         tiles.copy_from_slice(&blob_grid.data);
     }
 
     fn room_fits(&self, build_data: &BuilderMap, design: &RoomDesign, offset: Point, ignore_dungeon_pt: Point) -> bool {
+        self.room_fits_with_padding(build_data, design, offset, ignore_dungeon_pt, 1)
+    }
+
+    /// Relaxed fit check — only requires the room floor tiles themselves to land on walls.
+    /// No padding. Used for cavern-to-cavern connections so caves can nearly merge.
+    fn room_fits_relaxed(&self, build_data: &BuilderMap, design: &RoomDesign, offset: Point, ignore_dungeon_pt: Point) -> bool {
+        self.room_fits_with_padding(build_data, design, offset, ignore_dungeon_pt, 0)
+    }
+
+    fn room_fits_with_padding(&self, build_data: &BuilderMap, design: &RoomDesign, offset: Point, ignore_dungeon_pt: Point, padding: i32) -> bool {
         for y in 0..design.height {
             for x in 0..design.width {
                 if design.tiles[(y * design.width + x) as usize] == TerrainType::Floor {
                     let dungeon_pt = Point::new(x, y) + offset;
                     if !build_data.map.in_bounds(dungeon_pt) { return false; }
 
-                    // Check 3x3 padding
-                    for dx in -1..=1 {
-                        for dy in -1..=1 {
+                    for dx in -padding..=padding {
+                        for dy in -padding..=padding {
                             let check_pt = dungeon_pt + Point::new(dx, dy);
                             if check_pt == ignore_dungeon_pt { continue; }
                             if !build_data.map.in_bounds(check_pt) { return false; }
@@ -373,7 +442,11 @@ impl InitialMapBuilder for BrogueLikeBuilder {
         let mut rooms = Vec::new();
 
         // 1. First room in center
-        let first = self.design_random_room();
+        let first = if self.profile.force_cavern_start {
+            self.design_large_cavern()
+        } else {
+            self.design_random_room()
+        };
         let offset = Point::new(self.width / 2 - first.width / 2, self.height / 2 - first.height / 2);
         
         let mut min_x = i32::MAX; let mut max_x = i32::MIN;
@@ -394,7 +467,7 @@ impl InitialMapBuilder for BrogueLikeBuilder {
         // 2. Iteratively attach normal rooms
         let mut attempts = 0;
         let mut placed = 1;
-        while placed < 25 && attempts < 2000 {
+        while placed < self.profile.target_rooms && attempts < 2000 {
             attempts += 1;
             let design = self.design_random_room();
             if design.door_sites.is_empty() { continue; }
@@ -416,13 +489,22 @@ impl InitialMapBuilder for BrogueLikeBuilder {
             }
             dungeon_sites.shuffle(&mut rng);
 
+            // Use relaxed fitting for cavern rooms when profile allows (50% chance)
+            let use_relaxed = self.profile.relaxed_fitting && design.is_cavern && rng.random_bool(0.5);
+
             'attach: for (d_pt, d_dir) in dungeon_sites {
                 for (r_pt, r_dir) in &design.door_sites {
                     if d_dir == r_dir.opposite() {
                         let offset = d_pt - *r_pt;
                         let dungeon_floor_pt = d_pt + d_dir.opposite().offset();
 
-                        if self.room_fits(build_data, &design, offset, dungeon_floor_pt) {
+                        let fits = if use_relaxed {
+                            self.room_fits_relaxed(build_data, &design, offset, dungeon_floor_pt)
+                        } else {
+                            self.room_fits(build_data, &design, offset, dungeon_floor_pt)
+                        };
+
+                        if fits {
                             let mut r_min_x = i32::MAX; let mut r_max_x = i32::MIN;
                             let mut r_min_y = i32::MAX; let mut r_max_y = i32::MIN;
 
@@ -436,7 +518,35 @@ impl InitialMapBuilder for BrogueLikeBuilder {
                                     }
                                 }
                             }
-                            build_data.map.set_tile(d_pt, TerrainType::Door);
+
+                            if design.is_cavern {
+                                // Wide opening for caverns: carve 2-3 tile entrance
+                                build_data.map.set_tile(d_pt, TerrainType::Floor);
+                                let (perp_l, perp_r) = d_dir.perpendiculars();
+                                for perp in [perp_l, perp_r] {
+                                    let adj = d_pt + perp.offset();
+                                    if build_data.map.in_bounds(adj) {
+                                        let adj_idx = build_data.map.xy_idx(adj.x, adj.y);
+                                        if build_data.map.tiles[adj_idx].terrain == TerrainType::Wall {
+                                            // Check both sides of the wall for floor
+                                            let inner = adj + d_dir.opposite().offset();
+                                            let outer = adj + d_dir.offset();
+                                            if build_data.map.in_bounds(inner) && build_data.map.in_bounds(outer) {
+                                                let inner_idx = build_data.map.xy_idx(inner.x, inner.y);
+                                                let outer_idx = build_data.map.xy_idx(outer.x, outer.y);
+                                                if build_data.map.tiles[inner_idx].terrain == TerrainType::Floor
+                                                    || build_data.map.tiles[outer_idx].terrain == TerrainType::Floor
+                                                {
+                                                    build_data.map.set_tile(adj, TerrainType::Floor);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                build_data.map.set_tile(d_pt, TerrainType::Door);
+                            }
+
                             rooms.push(Rect::with_exact(r_min_x, r_min_y, r_max_x, r_max_y));
                             placed += 1;
                             break 'attach;

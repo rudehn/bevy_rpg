@@ -11,6 +11,7 @@ use crate::{
         Map,
         builders::{
             candle_spawner::CandleSpawner,
+            cave_eroder::CaveEroder,
             diagonal_culler::DiagonalCuller,
             exit_points::DistantExit,
             item_spawner::ItemSpawner,
@@ -26,6 +27,7 @@ pub mod algorithms;
 mod brogelike;
 mod bsp_dungeon;
 mod candle_spawner;
+mod cave_eroder;
 mod choke_map;
 mod corridors;
 mod diagonal_culler;
@@ -74,6 +76,7 @@ pub struct BuilderMap {
     pub spawn_list: Vec<SpawnEntry>,
     pub item_spawn_list: Vec<(Point, String, u32)>, // (pos, item_name, count)
     pub prop_spawn_list: Vec<(Point, String)>,       // (pos, prop_name)
+    pub squad_counter: SquadIdCounter,
 }
 
 impl BuilderMap {
@@ -95,23 +98,21 @@ pub struct BuilderChain {
 }
 
 impl BuilderChain {
-    pub fn new<S: ToString>(new_depth: i32, width: i32, height: i32, name: S) -> BuilderChain {
+    pub fn new<S: ToString>(new_depth: i32, width: i32, height: i32, name: S, squad_counter: SquadIdCounter) -> BuilderChain {
         BuilderChain {
             starter: None,
             builders: Vec::new(),
             build_data: BuilderMap {
-                // spawn_list: Vec::new(),
-                // modified_spawn_list: Vec::new(),
                 map: Map::new(new_depth, width, height, name),
                 starting_position: None,
                 rooms: None,
                 corridors: None,
-                // history: Vec::new(),
                 width,
                 height,
                 spawn_list: Vec::new(),
                 item_spawn_list: Vec::new(),
                 prop_spawn_list: Vec::new(),
+                squad_counter,
             },
         }
     }
@@ -151,6 +152,54 @@ impl BuilderChain {
     //         spawns::spawn_entity_with_options(&mut all_storages, &(&entity.0, &entity.1));
     //     }
     // }
+}
+
+/// Controls how organic vs. structured the generated floor feels.
+#[derive(Clone, Copy)]
+pub struct FloorProfile {
+    /// Probability weight for cavern rooms (0-100). Higher = more caves.
+    pub cavern_weight: i32,
+    /// Whether the first room is forced to be a large cavern.
+    pub force_cavern_start: bool,
+    /// Target number of rooms to place.
+    pub target_rooms: i32,
+    /// Hallway attachment chance (0-100).
+    pub hallway_chance: i32,
+    /// Erosion chance per eligible wall tile (0-100).
+    pub erosion_percent: i32,
+    /// Whether cavern rooms can use relaxed (no-padding) fitting.
+    pub relaxed_fitting: bool,
+}
+
+impl FloorProfile {
+    pub fn for_depth(depth: i32) -> Self {
+        match depth {
+            1..=3 => Self {
+                cavern_weight: 20,
+                force_cavern_start: false,
+                target_rooms: 20,
+                hallway_chance: 25,
+                erosion_percent: 20,
+                relaxed_fitting: false,
+            },
+            4..=7 => Self {
+                cavern_weight: 40,
+                force_cavern_start: true,
+                target_rooms: 18,
+                hallway_chance: 40,
+                erosion_percent: 40,
+                relaxed_fitting: true,
+            },
+            _ => Self {
+                cavern_weight: 60,
+                force_cavern_start: true,
+                target_rooms: 14,
+                hallway_chance: 50,
+                erosion_percent: 55,
+                relaxed_fitting: true,
+            },
+        }
+    }
 }
 
 pub trait InitialMapBuilder: Send + 'static {
@@ -196,18 +245,20 @@ pub fn floor_builder(
     if new_depth == 1 {
         map_name = "Entrance".to_owned();
     }
-    let mut builder = BuilderChain::new(new_depth, width, height, map_name);
+    let profile = FloorProfile::for_depth(new_depth);
+    let mut builder = BuilderChain::new(new_depth, width, height, map_name, squad_counter);
 
     // MAP Generation
     builder.start_with(brogelike::BrogueLikeBuilder::dungeon(
-        new_depth, width, height,
+        new_depth, width, height, profile,
     ));
     builder.with(DiagonalCuller::new());
+    builder.with(CaveEroder::with_profile(profile));
     builder.with(StartPointBuilder::new());
     // builder.with(LakeBuilder::new(LiquidType::Water));
-    builder.with(PrefabPlacer::new(prefabs, squad_counter.clone()));
+    builder.with(PrefabPlacer::new(prefabs));
     builder.with(CandleSpawner::new());
-    builder.with(MonsterSpawner::new(spawn_table, squad_counter));
+    builder.with(MonsterSpawner::new(spawn_table));
     builder.with(ItemSpawner::new(item_spawn_table));
     builder.with(UnseenCuller::new());
     builder.with(DistantExit::new());
