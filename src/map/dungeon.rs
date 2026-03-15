@@ -751,6 +751,16 @@ pub fn spawn_dungeon(
 
     log_writer.write(GameLogMessage(format!("Welcome to floor {}!", floor.0)));
 
+    // First floor intro — set the atmosphere.
+    if floor.0 == 1 {
+        log_writer.write(GameLogMessage(
+            "The stone steps descend into darkness. Somewhere far below, the Veiled Tyrant stirs.".to_string(),
+        ));
+        log_writer.write(GameLogMessage(
+            "Its power grows with every passing moment. You must reach the depths before it becomes unstoppable.".to_string(),
+        ));
+    }
+
     // Trigger auto-save after the new floor is fully set up.
     // (Skipped during load since apply_player_load_system hasn't run yet;
     //  auto_save_system checks for the player entity so it will self-correct.)
