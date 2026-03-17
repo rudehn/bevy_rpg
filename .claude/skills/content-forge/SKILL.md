@@ -2,10 +2,11 @@
 name: Content Forge
 description: >
   Use when the user asks to "create a monster", "design an item",
-  "brainstorm a spell", "generate a faction", "what monsters are missing",
+  "brainstorm a spell", "design an ability", "create an on-hit effect",
+  "add a passive", "generate a faction", "what monsters are missing",
   "fill gaps in the bestiary", "add a new enemy type", "design loot",
   or wants to brainstorm, balance, and produce new game content
-  (monsters, items, spells, factions) for The Veiled Tyrant.
+  (monsters, items, spells, abilities, factions) for The Veiled Tyrant.
 ---
 
 # Content Forge
@@ -30,6 +31,7 @@ Read the relevant reference files and live game data before proposing content.
 | Create Item | `assets/items.ron`, `assets/item_spawns.ron` |
 | Create Spell | `assets/spells.ron` |
 | Generate Faction | All of the above + `references/faction-design-guide.md` + `docs/design/BESTIARY.md` |
+| Design Ability | `src/game/abilities.rs`, `src/game/combat.rs`, `assets/monsters.ron`, `references/ability-catalog.md` |
 | Audit Gaps | All of the above + `assets/essence_nodes.ron`, `assets/props.ron`, `assets/structures.ron` |
 
 ## Workflow 1: Create Monster
@@ -199,7 +201,118 @@ Present design summary + RON entry. On approval, append to `spells.ron`.
 If a spellbook item is needed for the player to learn it, chain into
 **Create Item** workflow.
 
-## Workflow 4: Generate Faction
+## Workflow 4: Design Ability
+
+Design passive, reactive, or triggered abilities outside the spell/mana
+system. Abilities are ECS components — some are data-driven through RON,
+others require Rust implementation.
+
+### Ability Categories
+
+There are 4 categories in the ability system. Read
+`references/ability-catalog.md` to see what already exists before
+proposing new abilities.
+
+| Category | How It Works | Configured Via | Examples |
+|----------|-------------|----------------|----------|
+| **On-Hit Effects** | Trigger on successful melee attack | `on_hit_effects` in `monsters.ron`, `ItemBonus` on items | ApplyPoison, LifeDrain, OnHitStun |
+| **Monster Passives** | Always-on or event-triggered components | RON fields on `MonsterAsset` | ExplodeOnDeath, Reanimate, ThornAura, EnrageOnHit |
+| **Auras** | Radius-based buffs/debuffs to allies or enemies | `Aura` component (not yet in RON) | ArmorBonus, DamagePercent, RegenBonus |
+| **Build Passives** | Player-only abilities unlocked via Essence tree | Rust code + Essence node | Cleave, Riposte, BloodRage, Ambush |
+
+### Step 1: Read Current State
+
+Read `src/game/abilities.rs` to see all implemented ability components.
+Read `references/ability-catalog.md` for the full categorized listing.
+Identify what trigger types, effect types, and tactical niches already
+exist.
+
+### Step 2: Ability Fantasy
+
+Ask what this ability should *feel like* in play:
+
+- **Trigger**: When does it activate?
+  - On hit (attacker lands a blow)
+  - On being hit (defender is struck)
+  - On death (entity or target dies)
+  - On kill (attacker kills something)
+  - Passive/aura (always active)
+  - Threshold (HP drops below X%)
+  - Conditional (specific situation like "from outside FOV")
+
+- **Effect**: What happens?
+  - Damage (direct, DoT, AoE)
+  - Status (poison, slow, stun, burn, disarm)
+  - Stat modification (buff/debuff an attribute)
+  - Resource (heal HP, drain mana, restore on kill)
+  - Positional (knockback, teleport, summon)
+  - Defensive (reflect, absorb, reduce)
+
+- **Target**: Who does it affect?
+  - Self, attacker, defender, nearby allies, nearby enemies, killed entity
+
+### Step 3: Determine Implementation Path
+
+Based on the design, determine if this ability:
+
+**A) Uses existing types (RON-only change)**
+- Can be expressed as an existing `OnHitEffect` variant on a monster
+- Can be expressed as an existing `ItemBonus` on-hit variant on an item
+- Can use existing passive fields (`poison_body`, `thorn_aura`, etc.)
+- → Output: RON entries only. Apply to monsters/items as appropriate.
+
+**B) Requires a new Rust component (code change)**
+- New trigger type or effect type not covered by existing components
+- → Output: Design doc with component definition, handler system
+  description, RON field mapping, and which monsters/items should use it.
+  Flag that implementation requires the `rust-expert` skill or manual
+  coding.
+
+Always prefer path A when possible. Only propose path B when the existing
+types genuinely cannot express the ability.
+
+### Step 4: Balance Parameters
+
+For abilities with tunable values, propose balanced parameters:
+
+- **Chance** (on-hit): 15-30% for strong effects (stun, disarm),
+  40-80% for mild effects (poison, slow). 100% for defining abilities.
+- **Duration**: 2-4 turns for strong debuffs, 5-10 for mild ones.
+- **Damage**: On-death explosions: 1d4-2d6 scaling with monster level.
+  Thorns/reflect: 1-5 flat damage. DoT: 1-3 per turn.
+- **Radius** (auras/explosions): 1-2 tiles for strong effects, 3-4 for
+  mild buffs.
+- **Threshold** (enrage-type): 25-50% HP.
+
+Cross-reference similar existing abilities for consistency.
+
+### Step 5: Monster & Item Assignment
+
+Propose which monsters should carry this ability and which items could
+grant it:
+
+- Does this ability define a faction mechanic? (shared across roster)
+- Is it a specialist ability? (elite/boss only)
+- Should items grant a version of this? (via ItemBonus)
+- Should an Essence node unlock a player version?
+
+### Step 6: Approve & Write
+
+**Path A (RON-only):** Present the ability configuration and which
+monster/item entries to modify. On approval, update the relevant RON files.
+
+**Path B (new component):** Present the full design doc including:
+- Component struct definition
+- Handler system description (what events it hooks into)
+- RON field name and type for `MonsterAsset` (if applicable)
+- Spawner changes needed in `src/game/spawner.rs`
+- Which monsters/items use it and with what parameters
+- Note: "Implementation requires Rust changes. Use `rust-expert` skill
+  or implement manually, then return here to assign to monsters/items."
+
+## Workflow 5: Generate Faction
+
+*(Formerly Workflow 4)*
 
 The composite workflow. Designs a cohesive faction as a unit.
 
@@ -260,7 +373,7 @@ Walk through each content piece one at a time:
 
 Approve each before writing. This prevents all-or-nothing commits.
 
-## Workflow 5: Audit Gaps
+## Workflow 6: Audit Gaps
 
 ### Step 1: Read All Data Files
 
@@ -279,6 +392,8 @@ Check for gaps across 7 dimensions:
 5. **Faction roles** — Factions with incomplete role coverage
 6. **Essence synergies** — Essence tree bonuses not represented in items
 7. **Resistance gaps** — Damage types with no corresponding counter-items
+8. **Ability coverage** — Trigger types or effect types underused across
+   monsters (e.g., no on-death effects in a faction, few aura sources)
 
 ### Step 3: Present Prioritized Recommendations
 
@@ -295,10 +410,12 @@ If the user picks a gap, flow into the appropriate creation workflow.
    knowing what exists.
 2. **One question at a time** — Walk through dimensions sequentially.
    Don't overwhelm with multiple questions per message.
-3. **Validate against implemented types** — Only use ability types, bonus
-   types, spell effects, etc. that exist in the Rust source. Refer to
-   `references/ron-schemas.md` for the complete list. No inventing new
-   mechanics.
+3. **Validate against implemented types** — For RON-only changes, only use
+   ability types, bonus types, spell effects, etc. that exist in the Rust
+   source. Refer to `references/ron-schemas.md` and
+   `references/ability-catalog.md` for the complete lists. For the Design
+   Ability workflow, new types may be proposed but must be clearly flagged
+   as requiring Rust implementation.
 4. **Present before writing** — Always show the complete design summary
    and RON entries before modifying any files.
 5. **Append, don't overwrite** — New entries are appended to existing RON
