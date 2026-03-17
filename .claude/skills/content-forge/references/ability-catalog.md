@@ -7,6 +7,14 @@ Abilities are passive, reactive, or triggered mechanics that operate
 outside the spell/mana system. They have no mana cost, no cooldown
 (unless internally managed), and are never "cast" by the player.
 
+**Current state (post-simplification):** The handler systems for Categories
+1-3 are registered in `AbilitiesPlugin` and work correctly. However, the
+`MonsterAsset` struct does not declare ability fields (`on_hit_effects`,
+`poison_body`, etc.), so these fields in `monsters.ron` are silently
+ignored during deserialization. No monsters receive ability components at
+spawn time. The RON data is preserved for future reconnection. Category 5
+(build passives) is fully active via the Essence tree.
+
 ## Category 1: On-Hit Effects (Monster)
 
 Trigger when a monster lands a successful melee attack. Configured via
@@ -47,29 +55,7 @@ on_hit_effects: [
 | Troll | ApplySlow (2 turns, 25%) |
 | Veiled Tyrant | LifeDrain (4, 30%), ApplySlow (3 turns, 25%) |
 
-## Category 2: On-Hit Effects (Item)
-
-Trigger when the player lands an attack (melee or ranged). Configured via
-`bonuses` field in `items.ron` using `ItemBonus` variants.
-
-| Bonus | Parameters | What It Does |
-|-------|-----------|--------------|
-| `OnHitPoison` | `chance`, `damage`, `duration` | Poison target |
-| `OnHitBurn` | `chance`, `damage`, `duration` | Burn target |
-| `OnHitSlow` | `chance`, `duration` | Slow target |
-| `OnHitKnockback` | `chance`, `distance` | Push target |
-| `OnHitStun` | `chance`, `duration` | Stun target |
-
-### RON Format
-
-```ron
-bonuses: [
-    OnHitPoison(chance: 25, damage: 2, duration: 4),
-    OnHitStun(chance: 10, duration: 2),
-],
-```
-
-## Category 3: Monster Passives
+## Category 2: Monster Passives
 
 Always-on or event-triggered abilities. Each is its own ECS component,
 configured via dedicated fields in `monsters.ron`.
@@ -129,7 +115,7 @@ summon_on_death: Some(("Skeleton", 2)),
 | Troll | Regen 4 (via `regen` field, not a passive component) |
 | Goblin Shaman | Summon on Death ("Goblin", 1) |
 
-## Category 4: Aura System
+## Category 3: Aura System
 
 Radius-based passive effects applied to nearby allies or enemies each
 turn. Uses the `Aura` component. Not yet exposed in `monsters.ron` —
@@ -155,7 +141,7 @@ Aura {
 }
 ```
 
-## Category 5: Build-Defining Passives (Player Only)
+## Category 4: Build-Defining Passives (Player Only)
 
 Unlocked via Essence tree nodes. These are marker components on the
 player entity — not configurable via RON. Relevant for understanding

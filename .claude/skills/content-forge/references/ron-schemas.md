@@ -395,7 +395,10 @@ SpellData(
 - `"scatter"` — Members lose target and wander
 - `"enrage"` — Members gain temporary damage bonus
 
-### OnHitEffect Variants (Monster — orphaned, see balance-curves.md)
+### OnHitEffect Variants (Monster)
+**Note:** These are orphaned — handler systems exist but MonsterAsset doesn't
+declare these fields, so they're silently ignored during deserialization.
+Data is preserved in monsters.ron for future reconnection.
 - `ApplyPoison(damage_per_turn: i32, duration: u32, chance: u32)`
 - `ApplySlow(duration: u32, chance: u32)`
 - `ApplyStun(duration: u32, chance: u32)`
@@ -444,5 +447,4 @@ SpellData(
 
 ### Effect Variants (Consumable Items)
 - `HealHp(i32)` — Restore N HP
-- `RestoreMana(i32)` — Restore N mana
-- `LearnSpell(String)` — Learn spell by ID
+- `LearnSpell(String)` — Learn spell by ID (e.g., `LearnSpell("magic_missile")`)
