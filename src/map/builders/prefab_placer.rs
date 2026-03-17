@@ -210,7 +210,8 @@ fn rotate_90_cw(prefab: &PrefabTemplate) -> PrefabTemplate {
 
     let monster_spawns = prefab.monster_spawns.iter().map(|m| {
         let (nx, ny) = transform(m.x, m.y);
-        crate::assets::PrefabMonsterSpawn { x: nx, y: ny, role: m.role.clone(), guard: m.guard }
+        let behavior = transform_behavior(&m.behavior, &transform);
+        crate::assets::PrefabMonsterSpawn { x: nx, y: ny, role: m.role.clone(), behavior }
     }).collect();
 
     let item_spawns = prefab.item_spawns.iter().map(|i| {
@@ -255,7 +256,8 @@ fn flip_prefab_h(prefab: &PrefabTemplate) -> PrefabTemplate {
 
     let monster_spawns = prefab.monster_spawns.iter().map(|m| {
         let (nx, ny) = transform(m.x, m.y);
-        crate::assets::PrefabMonsterSpawn { x: nx, y: ny, role: m.role.clone(), guard: m.guard }
+        let behavior = transform_behavior(&m.behavior, &transform);
+        crate::assets::PrefabMonsterSpawn { x: nx, y: ny, role: m.role.clone(), behavior }
     }).collect();
 
     let item_spawns = prefab.item_spawns.iter().map(|i| {
@@ -278,6 +280,28 @@ fn flip_prefab_h(prefab: &PrefabTemplate) -> PrefabTemplate {
         placement: prefab.placement.clone(),
         allow_rotate: prefab.allow_rotate,
         allow_flip: prefab.allow_flip,
+    }
+}
+
+/// Transform behavior coordinates through the same rotation/flip applied to tiles.
+fn transform_behavior(
+    behavior: &crate::assets::MonsterBehavior,
+    transform: impl Fn(i32, i32) -> (i32, i32),
+) -> crate::assets::MonsterBehavior {
+    use crate::assets::MonsterBehavior;
+    match behavior {
+        MonsterBehavior::Sentry | MonsterBehavior::Wander => behavior.clone(),
+        MonsterBehavior::Patrol(points) => {
+            MonsterBehavior::Patrol(points.iter().map(|(x, y)| transform(*x, *y)).collect())
+        }
+        MonsterBehavior::Roam { min, max } => {
+            let (x1, y1) = transform(min.0, min.1);
+            let (x2, y2) = transform(max.0, max.1);
+            MonsterBehavior::Roam {
+                min: (x1.min(x2), y1.min(y2)),
+                max: (x1.max(x2), y1.max(y2)),
+            }
+        }
     }
 }
 
@@ -690,7 +714,6 @@ impl PrefabPlacer {
                 let wx = offset_x + ms.x;
                 let wy = offset_y + ms.y;
                 let pos = Point::new(wx, wy);
-                let home = if ms.guard { Some(pos) } else { None };
 
                 let mut entry = if let (Some(sid), Some(cfg)) = (squad_id, squad_config.clone()) {
                     let leader = is_first_squad_member;
@@ -699,7 +722,31 @@ impl PrefabPlacer {
                 } else {
                     SpawnEntry::solo(pos, monster_name)
                 };
-                entry.home_position = home;
+
+                entry.patrol_route = match &ms.behavior {
+                    crate::assets::MonsterBehavior::Sentry => {
+                        Some(crate::game::ai::PatrolRoute {
+                            state: crate::game::ai::PatrolState::sentry(pos),
+                        })
+                    }
+                    crate::assets::MonsterBehavior::Patrol(waypoints) => {
+                        let abs_points: Vec<Point> = waypoints.iter()
+                            .map(|(wpx, wpy)| Point::new(offset_x + wpx, offset_y + wpy))
+                            .collect();
+                        Some(crate::game::ai::PatrolRoute {
+                            state: crate::game::ai::PatrolState::waypoint(&abs_points),
+                        })
+                    }
+                    crate::assets::MonsterBehavior::Roam { min, max } => {
+                        Some(crate::game::ai::PatrolRoute {
+                            state: crate::game::ai::PatrolState::area_roam(
+                                Point::new(offset_x + min.0, offset_y + min.1),
+                                Point::new(offset_x + max.0, offset_y + max.1),
+                            ),
+                        })
+                    }
+                    crate::assets::MonsterBehavior::Wander => None,
+                };
                 build_data.spawn_list.push(entry);
             }
         }

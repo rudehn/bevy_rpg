@@ -99,8 +99,8 @@ is aspirational (exists in some RON entries but not yet in the Rust struct).
 Recommend `on_leader_death` and `flee_threshold` based on encounter
 drama. Reference the behavior selection guide in design principles.
 
-Decide which monsters are `guard: true` (defend position) vs
-`guard: false` (roam/flank).
+Assign a `behavior` to each monster: `Sentry` (defend position), `Patrol` (walk waypoints),
+`Roam` (wander within area), or `Wander` (roam freely / flank).
 
 ### Step 6: Loot & Structures
 

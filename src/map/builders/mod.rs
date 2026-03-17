@@ -49,18 +49,18 @@ pub struct SpawnEntry {
     pub squad_id: Option<SquadId>,
     pub squad_config: Option<SquadConfig>,
     pub is_leader: bool,
-    pub home_position: Option<Point>,
+    pub patrol_route: Option<crate::game::ai::PatrolRoute>,
 }
 
 impl SpawnEntry {
     /// Create a solo spawn with no squad affiliation.
     pub fn solo(pos: Point, name: String) -> Self {
-        Self { pos, name, squad_id: None, squad_config: None, is_leader: false, home_position: None }
+        Self { pos, name, squad_id: None, squad_config: None, is_leader: false, patrol_route: None }
     }
 
     /// Create a squad member spawn.
     pub fn squad(pos: Point, name: String, id: SquadId, config: SquadConfig, is_leader: bool) -> Self {
-        Self { pos, name, squad_id: Some(id), squad_config: Some(config), is_leader, home_position: None }
+        Self { pos, name, squad_id: Some(id), squad_config: Some(config), is_leader, patrol_route: None }
     }
 }
 

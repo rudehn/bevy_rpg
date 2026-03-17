@@ -31,13 +31,46 @@ pub trait ActorAI: Send + Sync {
     fn execute(&mut self, entity: Entity, world: &mut World);
 }
 
+/// Patrol behavior attached to monsters at spawn time.
+/// Absence of this component means the monster wanders freely.
+/// Coordinates stored as `(i32, i32)` for serde compatibility (bracket-lib Point
+/// doesn't derive Serialize/Deserialize in this fork).
+#[derive(Component, Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PatrolRoute {
+    pub state: PatrolState,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum PatrolState {
+    /// Hold position, jitter within GUARD_PATROL_RADIUS of home.
+    Sentry { home: (i32, i32) },
+    /// Walk waypoints in order, loop continuously.
+    Waypoint { points: Vec<(i32, i32)>, current_index: usize },
+    /// Random walk constrained to a bounding rectangle.
+    AreaRoam { min: (i32, i32), max: (i32, i32) },
+}
+
+impl PatrolState {
+    pub fn sentry(home: Point) -> Self {
+        PatrolState::Sentry { home: (home.x, home.y) }
+    }
+    pub fn waypoint(points: &[Point]) -> Self {
+        PatrolState::Waypoint {
+            points: points.iter().map(|p| (p.x, p.y)).collect(),
+            current_index: 0,
+        }
+    }
+    pub fn area_roam(min: Point, max: Point) -> Self {
+        PatrolState::AreaRoam { min: (min.x, min.y), max: (max.x, max.y) }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 enum MonsterAIMode {
     #[default]
     Asleep,
     Hunting,
-    Wandering,
-    Guarding,
+    Idle,
 }
 
 pub const GUARD_PATROL_RADIUS: i32 = 3;
@@ -46,32 +79,22 @@ pub const GUARD_PATROL_RADIUS: i32 = 3;
 pub struct MonsterAI {
     mode: MonsterAIMode,
     last_known_player_position: Option<Point>,
-    pub home_position: Option<Point>,
 }
 
 impl MonsterAI {
-    /// Create a guard AI that patrols around `home` and returns there after chasing.
-    pub fn guard(home: Point) -> Self {
-        Self {
-            mode: MonsterAIMode::Guarding,
-            last_known_player_position: None,
-            home_position: Some(home),
-        }
-    }
-
     /// Wake this monster and point it at a target. Transitions from
-    /// Asleep or Guarding → Hunting; has no effect if already hunting/wandering.
+    /// Asleep or Idle → Hunting; has no effect if already hunting.
     pub fn alert_to_position(&mut self, target: Point) {
-        if self.mode == MonsterAIMode::Asleep || self.mode == MonsterAIMode::Guarding {
+        if self.mode == MonsterAIMode::Asleep || self.mode == MonsterAIMode::Idle {
             self.mode = MonsterAIMode::Hunting;
             self.last_known_player_position = Some(target);
         }
     }
 
-    /// Force this monster into Wandering mode, clearing its target.
+    /// Force this monster into Idle mode, clearing its target.
     /// Used for squad scatter on leader death.
     pub fn scatter(&mut self) {
-        self.mode = MonsterAIMode::Wandering;
+        self.mode = MonsterAIMode::Idle;
         self.last_known_player_position = None;
     }
 
@@ -142,21 +165,23 @@ impl MonsterAI {
                     self.last_known_player_position = Some(player_point);
                 }
                 if !is_player_visible && Some(monster_pos) == self.last_known_player_position {
-                    // Guards return to guarding; non-guards wander.
-                    if self.home_position.is_some() {
-                        self.mode = MonsterAIMode::Guarding;
-                    } else {
-                        self.mode = MonsterAIMode::Wandering;
-                    }
+                    self.mode = MonsterAIMode::Idle;
                     self.last_known_player_position = None;
+
+                    // Post-hunt resume: snap waypoint patrols to nearest waypoint.
+                    if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity) {
+                        if let PatrolState::Waypoint { ref points, ref mut current_index } = patrol.state {
+                            if !points.is_empty() {
+                                *current_index = points.iter().enumerate()
+                                    .min_by_key(|(_, p)| (p.0 - monster_pos.x).abs() + (p.1 - monster_pos.y).abs())
+                                    .map(|(i, _)| i)
+                                    .unwrap_or(0);
+                            }
+                        }
+                    }
                 }
             }
-            MonsterAIMode::Wandering => {
-                if is_player_visible {
-                    self.mode = MonsterAIMode::Hunting;
-                }
-            }
-            MonsterAIMode::Guarding => {
+            MonsterAIMode::Idle => {
                 if is_player_visible {
                     self.mode = MonsterAIMode::Hunting;
                 }
@@ -307,8 +332,8 @@ impl MonsterAI {
                         None
                     }
                 }
-                MonsterAIMode::Wandering => {
-                    // Squad followers move toward their leader instead of random walking.
+                MonsterAIMode::Idle => {
+                    // Squad followers move toward their leader.
                     if let Some(target) = leader_leash_target {
                         let path = a_star_search(
                             map.point2d_to_index(monster_pos),
@@ -326,62 +351,9 @@ impl MonsterAI {
                             None
                         }
                     } else {
-                        let mut directions = Direction::ALL.to_vec();
-                        directions.shuffle(&mut rng);
-
-                        let mut chosen_dir = None;
-                        for dir in directions {
-                            let target = monster_pos + dir.offset();
-                            if map.in_bounds(target)
-                                && is_walkable(map.tiles[map.xy_idx(target.x, target.y)])
-                            {
-                                chosen_dir = Some(dir);
-                                break;
-                            }
-                        }
-                        chosen_dir.map(|dir| MovementIntent { entity, dir })
-                    }
-                }
-                MonsterAIMode::Guarding => {
-                    if let Some(home) = self.home_position {
-                        let dist_from_home = DistanceAlg::Pythagoras.distance2d(monster_pos, home);
-                        if dist_from_home > GUARD_PATROL_RADIUS as f32 {
-                            // Too far from home — pathfind back.
-                            let path = a_star_search(
-                                map.point2d_to_index(monster_pos),
-                                map.point2d_to_index(home),
-                                map,
-                            );
-                            if path.success && path.steps.len() > 1 {
-                                let next_step = map.index_to_point2d(path.steps[1]);
-                                let dir = Direction::from_pos(
-                                    &Position::from_point(monster_pos),
-                                    &Position::from_point(next_step),
-                                );
-                                Some(MovementIntent { entity, dir })
-                            } else {
-                                None
-                            }
-                        } else {
-                            // Within patrol radius — random walk constrained to radius.
-                            let mut directions = Direction::ALL.to_vec();
-                            directions.shuffle(&mut rng);
-
-                            let mut chosen_dir = None;
-                            for dir in directions {
-                                let target = monster_pos + dir.offset();
-                                if map.in_bounds(target)
-                                    && is_walkable(map.tiles[map.xy_idx(target.x, target.y)])
-                                    && DistanceAlg::Pythagoras.distance2d(target, home) <= GUARD_PATROL_RADIUS as f32
-                                {
-                                    chosen_dir = Some(dir);
-                                    break;
-                                }
-                            }
-                            chosen_dir.map(|dir| MovementIntent { entity, dir })
-                        }
-                    } else {
-                        None
+                        // Dispatch to PatrolRoute-based idle behavior.
+                        drop(map);
+                        idle_movement(entity, monster_pos, world, &mut rng)
                     }
                 }
                 _ => None,
@@ -429,6 +401,144 @@ fn boss_spell_min_phase(spell_id: &str) -> u8 {
         .find(|(id, _)| *id == spell_id)
         .map(|(_, phase)| *phase)
         .unwrap_or(0) // Ungated spells (fireball, haste, etc.) always available
+}
+
+/// Dispatch idle movement for a monster based on its `PatrolRoute` component.
+/// Sentry: jitter near home. Waypoint: walk route. AreaRoam: bounded random walk. None: free wander.
+fn idle_movement(
+    entity: Entity,
+    monster_pos: Point,
+    world: &mut World,
+    rng: &mut impl rand::Rng,
+) -> Option<MovementIntent> {
+    let patrol = world.get::<PatrolRoute>(entity).cloned();
+    let map = world.resource::<Map>();
+
+    match patrol.as_ref().map(|p| &p.state) {
+        Some(PatrolState::Sentry { home }) => {
+            let home_pt = Point::new(home.0, home.1);
+            let dist = DistanceAlg::Pythagoras.distance2d(monster_pos, home_pt);
+            if dist > GUARD_PATROL_RADIUS as f32 {
+                let path = a_star_search(
+                    map.point2d_to_index(monster_pos),
+                    map.point2d_to_index(home_pt),
+                    map,
+                );
+                if path.success && path.steps.len() > 1 {
+                    let next_step = map.index_to_point2d(path.steps[1]);
+                    let dir = Direction::from_pos(
+                        &Position::from_point(monster_pos),
+                        &Position::from_point(next_step),
+                    );
+                    Some(MovementIntent { entity, dir })
+                } else {
+                    None
+                }
+            } else {
+                let mut directions = Direction::ALL.to_vec();
+                directions.shuffle(rng);
+                directions.into_iter().find_map(|dir| {
+                    let target = monster_pos + dir.offset();
+                    if map.in_bounds(target)
+                        && is_walkable(map.tiles[map.xy_idx(target.x, target.y)])
+                        && DistanceAlg::Pythagoras.distance2d(target, home_pt) <= GUARD_PATROL_RADIUS as f32
+                    {
+                        Some(MovementIntent { entity, dir })
+                    } else {
+                        None
+                    }
+                })
+            }
+        }
+        Some(PatrolState::Waypoint { ref points, current_index }) => {
+            if points.is_empty() { return None; }
+            let target = Point::new(points[*current_index].0, points[*current_index].1);
+            if monster_pos == target {
+                // Arrived — advance index.
+                drop(map);
+                if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity) {
+                    if let PatrolState::Waypoint { ref points, ref mut current_index } = patrol.state {
+                        *current_index = (*current_index + 1) % points.len();
+                    }
+                }
+                // Re-borrow and pathfind to next waypoint.
+                let patrol = world.get::<PatrolRoute>(entity).cloned();
+                let map = world.resource::<Map>();
+                if let Some(PatrolRoute { state: PatrolState::Waypoint { ref points, current_index } }) = patrol {
+                    let next_target = Point::new(points[current_index].0, points[current_index].1);
+                    let path = a_star_search(
+                        map.point2d_to_index(monster_pos),
+                        map.point2d_to_index(next_target),
+                        map,
+                    );
+                    if path.success && path.steps.len() > 1 {
+                        let next_step = map.index_to_point2d(path.steps[1]);
+                        let dir = Direction::from_pos(
+                            &Position::from_point(monster_pos),
+                            &Position::from_point(next_step),
+                        );
+                        return Some(MovementIntent { entity, dir });
+                    }
+                }
+                None
+            } else {
+                let path = a_star_search(
+                    map.point2d_to_index(monster_pos),
+                    map.point2d_to_index(target),
+                    map,
+                );
+                if path.success && path.steps.len() > 1 {
+                    let next_step = map.index_to_point2d(path.steps[1]);
+                    let dir = Direction::from_pos(
+                        &Position::from_point(monster_pos),
+                        &Position::from_point(next_step),
+                    );
+                    Some(MovementIntent { entity, dir })
+                } else {
+                    // Pathfinding failed — skip to next waypoint.
+                    drop(map);
+                    if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity) {
+                        if let PatrolState::Waypoint { ref points, ref mut current_index } = patrol.state {
+                            *current_index = (*current_index + 1) % points.len();
+                        }
+                    }
+                    None
+                }
+            }
+        }
+        Some(PatrolState::AreaRoam { min, max }) => {
+            let (min, max) = (*min, *max);
+            let mut directions = Direction::ALL.to_vec();
+            directions.shuffle(rng);
+            directions.into_iter().find_map(|dir| {
+                let target = monster_pos + dir.offset();
+                if map.in_bounds(target)
+                    && is_walkable(map.tiles[map.xy_idx(target.x, target.y)])
+                    && target.x >= min.0 && target.x <= max.0
+                    && target.y >= min.1 && target.y <= max.1
+                {
+                    Some(MovementIntent { entity, dir })
+                } else {
+                    None
+                }
+            })
+        }
+        None => {
+            // No PatrolRoute — wander freely.
+            let mut directions = Direction::ALL.to_vec();
+            directions.shuffle(rng);
+            directions.into_iter().find_map(|dir| {
+                let target = monster_pos + dir.offset();
+                if map.in_bounds(target)
+                    && is_walkable(map.tiles[map.xy_idx(target.x, target.y)])
+                {
+                    Some(MovementIntent { entity, dir })
+                } else {
+                    None
+                }
+            })
+        }
+    }
 }
 
 /// Evaluates all ready spells for `caster` and returns `(slot_index, target_entity)` for

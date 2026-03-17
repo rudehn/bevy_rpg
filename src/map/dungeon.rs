@@ -86,7 +86,7 @@ pub struct CachedMonster {
     pub squad_id: Option<u64>,
     pub is_leader: bool,
     pub squad_config: Option<crate::game::squad::SquadConfig>,
-    pub home_position: Option<Point>,
+    pub patrol_route: Option<crate::game::ai::PatrolRoute>,
 }
 
 #[derive(Resource, Default)]
@@ -235,19 +235,19 @@ fn find_adjacent_floor(map: &Map, target: Point) -> Option<Point> {
 /// Snapshot the current floor's surviving entities into a `CachedFloor`.
 fn snapshot_floor(
     map: &Map,
-    monster_query: &Query<(&Position, &Name, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, &crate::game::MonsterAI), With<Monster>>,
+    monster_query: &Query<(&Position, &Name, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>), With<Monster>>,
     item_query: &Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     prop_query: &Query<(&Position, &Name), With<Prop>>,
 ) -> CachedFloor {
     let monster_list = monster_query
         .iter()
-        .map(|(pos, name, squad_id, squad_config, is_leader, ai)| CachedMonster {
+        .map(|(pos, name, squad_id, squad_config, is_leader, patrol_route)| CachedMonster {
             pos: pos.to_point(),
             name: name.0.clone(),
             squad_id: squad_id.map(|s| s.0),
             is_leader,
             squad_config: squad_config.cloned(),
-            home_position: ai.home_position,
+            patrol_route: patrol_route.cloned(),
         })
         .collect();
 
@@ -331,7 +331,7 @@ fn map_transition_system(
     q_map_markers: Query<Entity, With<DungeonECSMap>>,
     q_tiles: Query<Entity, With<TileMarker>>,
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
-    q_monsters: Query<(&Position, &Name, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, &crate::game::MonsterAI), With<Monster>>,
+    q_monsters: Query<(&Position, &Name, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>), With<Monster>>,
     q_items: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     q_props: Query<(&Position, &Name), With<Prop>>,
     mut turn_manager: ResMut<TurnManager>,
@@ -364,7 +364,7 @@ fn ascend_stairs_system(
     q_map_markers: Query<Entity, With<DungeonECSMap>>,
     q_tiles: Query<Entity, With<TileMarker>>,
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
-    q_monsters: Query<(&Position, &Name, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, &crate::game::MonsterAI), With<Monster>>,
+    q_monsters: Query<(&Position, &Name, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>), With<Monster>>,
     q_items: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     q_props: Query<(&Position, &Name), With<Prop>>,
     mut turn_manager: ResMut<TurnManager>,
@@ -447,8 +447,8 @@ fn spawn_dungeon_entities(
                 }
             }
             // Guard AI: override default MonsterAI with guard behavior.
-            if let Some(home) = entry.home_position {
-                commands.entity(entity).insert(crate::game::MonsterAI::guard(home));
+            if let Some(patrol_route) = entry.patrol_route.clone() {
+                commands.entity(entity).insert(patrol_route);
             }
         }
     }
@@ -539,9 +539,8 @@ pub fn spawn_dungeon(
                         commands.entity(entity).insert(crate::game::squad::SquadLeader);
                     }
                 }
-                if let Some(home) = entry.home_position {
-                    let home_pt = Point::new(home[0], home[1]);
-                    commands.entity(entity).insert(crate::game::MonsterAI::guard(home_pt));
+                if let Some(patrol_route) = entry.patrol_route.clone() {
+                    commands.entity(entity).insert(patrol_route);
                 }
             }
         }
@@ -623,8 +622,8 @@ pub fn spawn_dungeon(
                         commands.entity(entity).insert(crate::game::squad::SquadLeader);
                     }
                 }
-                if let Some(home) = cached_mon.home_position {
-                    commands.entity(entity).insert(crate::game::MonsterAI::guard(home));
+                if let Some(patrol_route) = cached_mon.patrol_route.clone() {
+                    commands.entity(entity).insert(patrol_route);
                 }
             }
         }

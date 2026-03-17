@@ -280,7 +280,7 @@ pub struct MonsterEntry {
     #[serde(default)]
     pub squad_config: Option<SquadConfig>,
     #[serde(default)]
-    pub home_position: Option<[i32; 2]>,
+    pub patrol_route: Option<crate::game::ai::PatrolRoute>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -315,7 +315,7 @@ pub struct CachedMonsterSave {
     #[serde(default)]
     pub squad_config: Option<SquadConfig>,
     #[serde(default)]
-    pub home_position: Option<[i32; 2]>,
+    pub patrol_route: Option<crate::game::ai::PatrolRoute>,
 }
 
 // ---- Conversion helpers ----
@@ -356,7 +356,7 @@ pub fn cached_floor_to_save(cached: &CachedFloor) -> CachedFloorSave {
                 squad_id: m.squad_id,
                 is_leader: m.is_leader,
                 squad_config: m.squad_config.clone(),
-                home_position: m.home_position.map(|p| [p.x, p.y]),
+                patrol_route: m.patrol_route.clone(),
             })
             .collect(),
         item_list: cached
@@ -387,7 +387,7 @@ pub fn save_to_cached_floor(data: &CachedFloorSave) -> CachedFloor {
                 squad_id: m.squad_id,
                 is_leader: m.is_leader,
                 squad_config: m.squad_config.clone(),
-                home_position: m.home_position.map(|p| Point::new(p[0], p[1])),
+                patrol_route: m.patrol_route.clone(),
             })
             .collect(),
         item_list: data
@@ -449,7 +449,7 @@ pub fn auto_save_system(
         With<Player>,
     >,
     inv_item_query: Query<(&Name, &ItemProperties, Has<Equipped>, Option<&ItemStack>), With<InInventory>>,
-    monster_query: Query<(&Position, &Name, &Health, Option<&SquadId>, Option<&SquadConfig>, Has<SquadLeader>, &crate::game::MonsterAI), With<Monster>>,
+    monster_query: Query<(&Position, &Name, &Health, Option<&SquadId>, Option<&SquadConfig>, Has<SquadLeader>, Option<&crate::game::ai::PatrolRoute>), With<Monster>>,
     squad_counter: Res<SquadIdCounter>,
     floor_item_query: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     prop_query: Query<(&Position, &Name), With<Prop>>,
@@ -490,7 +490,7 @@ pub fn auto_save_system(
     // Floor monsters
     let monsters: Vec<MonsterEntry> = monster_query
         .iter()
-        .map(|(pos, name, health, squad_id, squad_config, is_leader, ai)| MonsterEntry {
+        .map(|(pos, name, health, squad_id, squad_config, is_leader, patrol_route)| MonsterEntry {
             x: pos.x,
             y: pos.y,
             name: name.0.clone(),
@@ -498,7 +498,7 @@ pub fn auto_save_system(
             squad_id: squad_id.map(|s| s.0),
             is_leader,
             squad_config: squad_config.cloned(),
-            home_position: ai.home_position.map(|p| [p.x, p.y]),
+            patrol_route: patrol_route.cloned(),
         })
         .collect();
 

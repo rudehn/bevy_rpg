@@ -162,13 +162,25 @@ pub struct PrefabPropEntry {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone)]
+pub enum MonsterBehavior {
+    Sentry,
+    Patrol(Vec<(i32, i32)>),
+    Roam { min: (i32, i32), max: (i32, i32) },
+    Wander,
+}
+
+impl Default for MonsterBehavior {
+    fn default() -> Self { MonsterBehavior::Wander }
+}
+
 pub struct PrefabMonsterSpawn {
     pub x: i32,
     pub y: i32,
     /// Combat role to resolve via faction table (e.g. "melee_guard", "ranged", "caster", "leader", "brute").
     pub role: String,
     #[serde(default)]
-    pub guard: bool,
+    pub behavior: MonsterBehavior,
 }
 
 #[derive(Deserialize, Debug, Clone)]

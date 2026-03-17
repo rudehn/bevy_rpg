@@ -34,7 +34,10 @@ Source: `src/assets/mod.rs:243-271`
 (x: 3, y: 3, structure: "Goblin Totem")
 
 // PrefabMonsterSpawn — spawn a monster role at (x, y)
-(x: 1, y: 2, role: "melee_guard", guard: true)
+(x: 1, y: 2, role: "melee_guard", behavior: Sentry)
+(x: 3, y: 4, role: "ranged")                          // behavior defaults to Wander
+(x: 5, y: 2, role: "melee_guard", behavior: Patrol([(5,2),(5,8),(10,8),(10,2)]))
+(x: 7, y: 3, role: "melee_guard", behavior: Roam(( min: (0,0), max: (10,6) )))
 
 // PrefabItemSpawn — spawn a specific item or random item at (x, y)
 (x: 4, y: 1, item: Some("Iron Sword"))
@@ -82,6 +85,17 @@ Used in `PrefabMonsterSpawn.role`:
 | `flee` | Squad members attempt to flee |
 
 > **Note:** `fight_on` and `flee` are defined in prefab data but currently fall through to `Nothing` in `squad.rs`. Document as intended vocabulary pending code fix.
+
+### Monster Behavior (`behavior` field, default: Wander)
+
+| Variant | RON Syntax | Description |
+|---------|-----------|-------------|
+| `Sentry` | `behavior: Sentry` | Hold spawn position, jitter within 3 tiles. Returns home after chasing. |
+| `Patrol` | `behavior: Patrol([(x1,y1),(x2,y2),...])` | Walk waypoints in order, loop. Resumes from nearest waypoint after chase. |
+| `Roam` | `behavior: Roam(( min: (x,y), max: (x,y) ))` | Random walk within bounding rectangle. |
+| `Wander` | `behavior: Wander` (or omit field) | Random walk, no constraints. Default if `behavior` is absent. |
+
+Coordinates are relative to prefab `(0, 0)` top-left. Automatically transformed on rotation/flip.
 
 ### Placement Values
 
@@ -165,7 +179,7 @@ The `faction_tag` field appears in some prefab RON entries (e.g., Goblin Shrine 
         (x: 5, y: 1, prop: "chest"),       // reward at edge
     ],
     monster_spawns: [
-        (x: 3, y: 3, role: "melee_guard", guard: true),  // guard behind barricade
+        (x: 3, y: 3, role: "melee_guard", behavior: Sentry),  // holds position behind barricade
     ],
     on_leader_death: "scatter",
     flee_threshold: 0.4,
