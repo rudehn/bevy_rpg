@@ -4,7 +4,7 @@ use bracket_lib::prelude::Point;
 
 use crate::{
     assets::{
-        MonsterAsset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets,
+        AbilityDef, MonsterAsset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets,
         ItemManifest, ItemManifestHandle, ItemSpriteAssets,
         PropManifest, PropManifestHandle, PropSpriteAssets,
     },
@@ -170,6 +170,86 @@ pub fn spawn_monster(
             FinalBoss,
             crate::game::boss::BossAI::default(),
         ));
+    }
+
+    // Abilities — convert AbilityDef entries into ECS components
+    use crate::game::abilities::*;
+    for ability in &monster_asset.abilities {
+        match ability {
+            AbilityDef::BurningStrike { damage_per_turn, duration, chance } => {
+                commands.entity(monster_entity).insert(BurningStrike {
+                    damage_per_turn: *damage_per_turn,
+                    duration: *duration,
+                    chance: *chance,
+                });
+            }
+            AbilityDef::StunningBlow { duration, chance } => {
+                commands.entity(monster_entity).insert(StunningBlow {
+                    duration: *duration,
+                    chance: *chance,
+                });
+            }
+            AbilityDef::SlowStrike { duration, chance } => {
+                commands.entity(monster_entity).insert(SlowStrike {
+                    duration: *duration,
+                    chance: *chance,
+                });
+            }
+            AbilityDef::LifeDrain { percent } => {
+                commands.entity(monster_entity).insert(LifeDrain {
+                    percent: *percent,
+                });
+            }
+            AbilityDef::Knockback { distance, chance } => {
+                commands.entity(monster_entity).insert(Knockback {
+                    distance: *distance,
+                    chance: *chance,
+                });
+            }
+            AbilityDef::RoughBody { damage } => {
+                commands.entity(monster_entity).insert(RoughBody {
+                    damage: *damage,
+                });
+            }
+            AbilityDef::Enrage { threshold_percent } => {
+                commands.entity(monster_entity).insert(Enrage {
+                    threshold_percent: *threshold_percent,
+                });
+            }
+            AbilityDef::ExplodeOnDeath { damage, radius } => {
+                commands.entity(monster_entity).insert(ExplodeOnDeath {
+                    damage: *damage,
+                    radius: *radius,
+                });
+            }
+            AbilityDef::SummonOnDeath { monster, count } => {
+                commands.entity(monster_entity).insert(SummonOnDeath {
+                    monster_name: monster.clone(),
+                    count: *count,
+                });
+            }
+            AbilityDef::PackTactics => {
+                commands.entity(monster_entity).insert(PackTactics);
+            }
+            AbilityDef::WarCry { radius, duration } => {
+                commands.entity(monster_entity).insert(WarCry {
+                    radius: *radius,
+                    duration: *duration,
+                    activated: false,
+                });
+            }
+            AbilityDef::Rally { radius, armor_bonus } => {
+                commands.entity(monster_entity).insert(Rally {
+                    radius: *radius,
+                    armor_bonus: *armor_bonus,
+                });
+            }
+            AbilityDef::Terrify { radius } => {
+                commands.entity(monster_entity).insert(Terrify {
+                    radius: *radius,
+                });
+            }
+        }
     }
 
     turn_manager.add_entity(monster_entity);

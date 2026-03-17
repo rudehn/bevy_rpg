@@ -308,6 +308,36 @@ pub struct MonsterAsset {
     /// Combat role for prefab role resolution (e.g. "melee_guard", "ranged", "caster", "leader", "brute").
     #[serde(default)]
     pub role: String,
+
+    /// Monster abilities — passive, on-hit, on-death, and aura effects.
+    #[serde(default)]
+    pub abilities: Vec<AbilityDef>,
+}
+
+/// Ability definition for RON deserialization.
+/// Variant name encodes the trigger type (on-hit, on-being-hit, on-death, passive).
+#[derive(Debug, Clone, Deserialize)]
+pub enum AbilityDef {
+    // On-hit (trigger when this monster lands an attack)
+    BurningStrike { damage_per_turn: i32, duration: u32, chance: u32 },
+    StunningBlow { duration: u32, chance: u32 },
+    SlowStrike { duration: u32, chance: u32 },
+    LifeDrain { percent: i32 },
+    Knockback { distance: i32, chance: u32 },
+
+    // On-being-hit (trigger when this monster takes melee damage)
+    RoughBody { damage: i32 },
+    Enrage { threshold_percent: u32 },
+
+    // On-death (trigger when this monster dies)
+    ExplodeOnDeath { damage: i32, radius: i32 },
+    SummonOnDeath { monster: String, count: u32 },
+
+    // Passive / aura
+    PackTactics,
+    WarCry { radius: i32, duration: u32 },
+    Rally { radius: i32, armor_bonus: i32 },
+    Terrify { radius: i32 },
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]

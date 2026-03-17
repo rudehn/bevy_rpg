@@ -387,6 +387,8 @@ fn armor_reduction_system(
 fn damage_application_system(
     mut apply_messages: MessageReader<ApplyDamageMessage>,
     mut death_writer: MessageWriter<DeathEvent>,
+    mut on_hit_writer: MessageWriter<crate::game::abilities::OnHitTriggerMessage>,
+    mut on_being_hit_writer: MessageWriter<crate::game::abilities::OnBeingHitTriggerMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut query_health: Query<(
         &mut Health,
@@ -427,6 +429,23 @@ fn damage_application_system(
 
         if remaining_damage > 0 {
             target_health.current -= remaining_damage;
+        }
+
+        // Emit ability trigger messages for on-hit and on-being-hit handlers.
+        // Only for direct attacks (melee/ranged), not environment/spell DoTs.
+        if message.source == DamageSource::Melee || message.source == DamageSource::Ranged {
+            on_hit_writer.write(crate::game::abilities::OnHitTriggerMessage {
+                attacker: message.attacker,
+                defender: message.target,
+                final_damage: message.final_damage,
+                source: message.source,
+            });
+            on_being_hit_writer.write(crate::game::abilities::OnBeingHitTriggerMessage {
+                attacker: message.attacker,
+                defender: message.target,
+                final_damage: message.final_damage,
+                source: message.source,
+            });
         }
 
         let verb = if is_player { "hit" } else { "hits" };

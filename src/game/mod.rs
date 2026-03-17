@@ -1,3 +1,4 @@
+use crate::game::abilities::AbilitiesPlugin;
 use crate::game::boss::BossPlugin;
 use crate::game::squad::SquadPlugin;
 use crate::game::targeting::TargetingPlugin;
@@ -33,6 +34,7 @@ pub struct RunSummary {
     pub cause: String,
     pub victory: bool,
 }
+pub mod abilities;
 pub mod actions;
 pub mod ai;
 pub mod boss;
@@ -99,6 +101,7 @@ impl Plugin for GamePlugin {
                 BossPlugin,
                 SquadPlugin,
                 TargetingPlugin,
+                AbilitiesPlugin,
             ))
             // Position→Transform sync and camera run whenever in-game, including Targeting state.
             // move_camera runs after player_spawn_or_move_system so the camera snaps to the new

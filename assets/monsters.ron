@@ -26,7 +26,7 @@
             sprite: "sprites/monsters/rat.png",
             damage: "1d6",
             base_hp: 12,
-            // Pack Tactics: +50% damage when ally adjacent to target (needs new handler)
+            abilities: [PackTactics],
             faction_tag: "vermin",
             role: "melee_guard",
         ),
@@ -36,10 +36,7 @@
             sprite: "sprites/monsters/rat.png",
             damage: "1d6",
             base_hp: 14,
-            // Slow Strike: ApplySlow 3 turns, 30% chance (orphaned)
-            on_hit_effects: [
-                ApplySlow(duration: 3, chance: 30),
-            ],
+            abilities: [SlowStrike(duration: 3, chance: 30)],
             faction_tag: "vermin",
             role: "melee_guard",
         ),
@@ -52,7 +49,7 @@
             sprite: "sprites/monsters/goblin.png",
             damage: "1d4",
             base_hp: 10,
-            // Pack Tactics: +50% damage when ally adjacent to target (needs new handler)
+            abilities: [PackTactics],
             loot_table: [
                 (item: "Healing Potion", spawn_chance: 0.15),
             ],
@@ -96,9 +93,10 @@
             base_armor: 1,
             mana: 40,
             spells: ["enrage"],
-            // War Cry: allies in radius 3 get +50% damage for 4 turns (needs new handler)
-            // Summon on Death: 2 Goblins (orphaned)
-            summon_on_death: Some(("Goblin", 2)),
+            abilities: [
+                WarCry(radius: 3, duration: 4),
+                SummonOnDeath(monster: "Goblin", count: 2),
+            ],
             loot_table: [
                 (item: "Iron Sword", spawn_chance: 0.20),
                 (item: "Healing Potion", spawn_chance: 0.30),
@@ -117,8 +115,7 @@
             base_hp: 25,
             base_armor: 2,
             regen: 20,
-            // Enrage: +50% damage below 40% HP (orphaned)
-            enrage_on_hit: Some(40),
+            abilities: [Enrage(threshold_percent: 40)],
             loot_table: [
                 (item: "Iron Sword", spawn_chance: 0.15),
                 (item: "Healing Potion", spawn_chance: 0.20),
@@ -163,10 +160,9 @@
             base_armor: 3,
             mana: 50,
             spells: ["enrage"],
-            // Rally: allies in radius 3 get +2 armor (needs new handler)
-            // Stunning Blow: stun 1 turn, 20% chance (orphaned)
-            on_hit_effects: [
-                ApplyStun(duration: 1, chance: 20),
+            abilities: [
+                Rally(radius: 3, armor_bonus: 2),
+                StunningBlow(duration: 1, chance: 20),
             ],
             loot_table: [
                 (item: "Iron Sword", spawn_chance: 0.25),
@@ -185,8 +181,7 @@
             damage: "1d6",
             base_hp: 20,
             base_armor: 1,
-            // Explode on Death: 6 fire damage, radius 1 (orphaned)
-            explode_on_death: Some((6, 1)),
+            abilities: [ExplodeOnDeath(damage: 6, radius: 1)],
             faction_tag: "fungal",
             role: "melee_guard",
         ),
@@ -198,10 +193,7 @@
             base_hp: 30,
             base_armor: 2,
             regen: 2,
-            // Slow Strike: ApplySlow 3 turns, 40% chance (orphaned)
-            on_hit_effects: [
-                ApplySlow(duration: 3, chance: 40),
-            ],
+            abilities: [SlowStrike(duration: 3, chance: 40)],
             faction_tag: "fungal",
             role: "melee_guard",
         ),
@@ -224,9 +216,10 @@
             base_armor: 2,
             mana: 60,
             spells: ["heal_ally", "slow"],
-            // Rally: allies in radius 3 get +2 armor (needs new handler)
-            // Summon on Death: 2 Spore Crawlers (orphaned)
-            summon_on_death: Some(("Spore Crawler", 2)),
+            abilities: [
+                Rally(radius: 3, armor_bonus: 2),
+                SummonOnDeath(monster: "Spore Crawler", count: 2),
+            ],
             faction_tag: "fungal",
             role: "leader",
         ),
@@ -267,10 +260,7 @@
             base_hp: 30,
             base_armor: 1,
             resistances: {"physical": "resistant"},
-            // Slow Strike: ApplySlow 3 turns, 30% chance (orphaned)
-            on_hit_effects: [
-                ApplySlow(duration: 3, chance: 30),
-            ],
+            abilities: [SlowStrike(duration: 3, chance: 30)],
             faction_tag: "undead",
             role: "melee_guard",
         ),
@@ -282,10 +272,9 @@
             damage_type: "necrotic",
             base_hp: 20,
             resistances: {"physical": "resistant", "necrotic": "immune"},
-            // Life Drain: heal % of damage dealt (needs code change)
-            // Terrify: enemies in radius 2 deal -25% damage (needs new handler)
-            on_hit_effects: [
-                LifeDrain(amount: 3, chance: 100),
+            abilities: [
+                LifeDrain(percent: 50),
+                Terrify(radius: 2),
             ],
             faction_tag: "undead",
             role: "melee_guard",
@@ -299,8 +288,7 @@
             base_armor: 1,
             mana: 100,
             resistances: {"physical": "resistant"},
-            // Terrify: enemies in radius 2 deal -25% damage (needs new handler)
-            // Spells: summon_undead + debuff TBD, using existing spells for now
+            abilities: [Terrify(radius: 2)],
             spells: ["shadow_bolt", "slow", "heal_self"],
             faction_tag: "undead",
             role: "caster",
@@ -315,11 +303,9 @@
             damage: "2d6+1",
             base_hp: 45,
             base_armor: 3,
-            // Knockback: 2 tiles, 40% chance (orphaned)
-            // Stunning Blow: stun 1 turn, 20% chance (orphaned)
-            on_hit_effects: [
+            abilities: [
                 Knockback(distance: 2, chance: 40),
-                ApplyStun(duration: 1, chance: 20),
+                StunningBlow(duration: 1, chance: 20),
             ],
             faction_tag: "giant",
             role: "melee_guard",
@@ -333,8 +319,7 @@
             base_armor: 2,
             regen: 3,
             resistances: {"fire": "weak"},
-            // Enrage: +50% damage below 40% HP (orphaned)
-            enrage_on_hit: Some(40),
+            abilities: [Enrage(threshold_percent: 40)],
             faction_tag: "giant",
             role: "melee_guard",
         ),
@@ -357,11 +342,9 @@
             damage: "2d8+2",
             base_hp: 60,
             base_armor: 5,
-            // Rough Body: reflect 2 damage to melee attackers (orphaned)
-            thorn_aura: Some(2),
-            // Rally: allies in radius 3 get +2 armor (needs new handler)
-            // Knockback: 2 tiles, 40% chance (orphaned)
-            on_hit_effects: [
+            abilities: [
+                RoughBody(damage: 2),
+                Rally(radius: 3, armor_bonus: 2),
                 Knockback(distance: 2, chance: 40),
             ],
             faction_tag: "giant",
@@ -378,10 +361,7 @@
             base_hp: 45,
             base_armor: 5,
             resistances: {"fire": "immune"},
-            // Burning Strike: ApplyBurning 2/turn, 3 turns, 40% chance (orphaned)
-            on_hit_effects: [
-                ApplyBurning(damage_per_turn: 2, duration: 3, chance: 40),
-            ],
+            abilities: [BurningStrike(damage_per_turn: 2, duration: 3, chance: 40)],
             faction_tag: "dragon",
             role: "melee_guard",
         ),
@@ -395,10 +375,7 @@
             base_armor: 3,
             ranged_range: 5,
             resistances: {"fire": "immune"},
-            // Burning Strike on melee: ApplyBurning 2/turn, 3 turns, 40% chance (orphaned)
-            on_hit_effects: [
-                ApplyBurning(damage_per_turn: 2, duration: 3, chance: 40),
-            ],
+            abilities: [BurningStrike(damage_per_turn: 2, duration: 3, chance: 40)],
             faction_tag: "dragon",
             role: "ranged",
         ),
@@ -411,7 +388,7 @@
             base_armor: 2,
             mana: 90,
             resistances: {"fire": "immune"},
-            // Terrify: enemies in radius 2 deal -25% damage (needs new handler)
+            abilities: [Terrify(radius: 2)],
             spells: ["fireball", "chain_lightning", "heal_self", "spirit_shield"],
             faction_tag: "dragon",
             role: "caster",
@@ -427,12 +404,10 @@
             ranged_range: 4,
             mana: 60,
             resistances: {"fire": "immune"},
-            // War Cry: allies in radius 3 get +50% damage for 4 turns (needs new handler)
-            // Rough Body: reflect 2 damage (orphaned)
-            thorn_aura: Some(2),
-            // Burning Strike on melee: ApplyBurning 2/turn, 3 turns, 40% (orphaned)
-            on_hit_effects: [
-                ApplyBurning(damage_per_turn: 2, duration: 3, chance: 40),
+            abilities: [
+                WarCry(radius: 3, duration: 4),
+                RoughBody(damage: 2),
+                BurningStrike(damage_per_turn: 2, duration: 3, chance: 40),
             ],
             spells: ["enrage", "fire_dart"],
             faction_tag: "dragon",
