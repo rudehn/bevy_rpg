@@ -70,7 +70,7 @@ pub fn spawn_monster(
             Collider,
             new_grid_pos,
             new_pos,
-            Viewshed::new(monster_asset.perception.max(2)),
+            Viewshed::new(monster_asset.vision.max(2)),
             Faction(FactionKind::Monster),
         ))
         .insert((
@@ -118,8 +118,8 @@ pub fn spawn_monster(
     }
 
     // Caster monsters: add mana pool and regen components.
-    if !monster_asset.spells.is_empty() || monster_asset.intelligence > 0 {
-        let mana_max = monster_asset.intelligence * 5;
+    if !monster_asset.spells.is_empty() || monster_asset.mana > 0 {
+        let mana_max = monster_asset.mana;
         commands.entity(monster_entity).insert((
             Mana {
                 current: mana_max,

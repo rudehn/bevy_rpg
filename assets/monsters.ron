@@ -4,7 +4,7 @@
 
         "Rat": (
             name: "Rat",
-            perception: 8,
+            vision: 8,
             sprite: "sprites/monsters/rat.png",
             damage: "1d4",
             base_hp: 8,
@@ -13,7 +13,7 @@
         ),
         "Giant Bat": (
             name: "Giant Bat",
-            perception: 14,
+            vision: 14,
             sprite: "sprites/monsters/rat.png",
             damage: "1d6",
             base_hp: 12,
@@ -22,7 +22,7 @@
         ),
         "Giant Spider": (
             name: "Giant Spider",
-            perception: 10,
+            vision: 10,
             sprite: "sprites/monsters/rat.png",
             damage: "1d6",
             damage_type: "poison",
@@ -32,7 +32,7 @@
         ),
         "Plague Rat": (
             name: "Plague Rat",
-            perception: 10,
+            vision: 10,
             sprite: "sprites/monsters/rat.png",
             damage: "1d4",
             base_hp: 15,
@@ -45,7 +45,7 @@
 
         "Goblin": (
             name: "Goblin",
-            perception: 10,
+            vision: 10,
             sprite: "sprites/monsters/goblin.png",
             damage: "1d4",
             base_hp: 10,
@@ -57,7 +57,7 @@
         ),
         "Goblin Archer": (
             name: "Goblin Archer",
-            perception: 12,
+            vision: 12,
             sprite: "sprites/monsters/goblin.png",
             damage: "1d6",
             base_hp: 12,
@@ -71,11 +71,11 @@
         ),
         "Goblin Shaman": (
             name: "Goblin Shaman",
-            perception: 12,
+            vision: 12,
             sprite: "sprites/monsters/goblin.png",
             damage: "1d4",
             base_hp: 15,
-            intelligence: 13,
+            mana: 65,
             spells: ["magic_missile", "heal_ally"],
             loot_table: [
                 (item: "Tome of Magic Missile", spawn_chance: 0.20),
@@ -85,11 +85,11 @@
         ),
         "Goblin Warchief": (
             name: "Goblin Warchief",
-            perception: 12,
+            vision: 12,
             sprite: "sprites/monsters/goblin.png",
             damage: "1d8+1",
             base_hp: 30,
-            intelligence: 10,
+            mana: 50,
             base_armor: 1,
             spells: ["enrage"],
             loot_table: [
@@ -104,7 +104,7 @@
 
         "Skeleton": (
             name: "Skeleton",
-            perception: 8,
+            vision: 8,
             sprite: "sprites/monsters/goblin.png",
             damage: "1d6",
             base_hp: 20,
@@ -115,7 +115,7 @@
         ),
         "Bone Archer": (
             name: "Bone Archer",
-            perception: 12,
+            vision: 12,
             sprite: "sprites/monsters/goblin.png",
             damage: "1d8",
             base_hp: 18,
@@ -129,7 +129,7 @@
         ),
         "Zombie": (
             name: "Zombie",
-            perception: 6,
+            vision: 6,
             sprite: "sprites/monsters/orc.png",
             damage: "1d6+1",
             base_hp: 35,
@@ -140,7 +140,7 @@
         ),
         "Wraith": (
             name: "Wraith",
-            perception: 14,
+            vision: 14,
             sprite: "sprites/monsters/goblin.png",
             damage: "1d6",
             damage_type: "necrotic",
@@ -151,11 +151,11 @@
         ),
         "Lich Apprentice": (
             name: "Lich Apprentice",
-            perception: 12,
+            vision: 12,
             sprite: "sprites/monsters/goblin.png",
             damage: "1d4",
             base_hp: 22,
-            intelligence: 14,
+            mana: 70,
             resistances: {"poison": "immune"},
             spells: ["magic_missile", "heal_self"],
             loot_table: [
@@ -169,7 +169,7 @@
 
         "Orc": (
             name: "Orc",
-            perception: 10,
+            vision: 10,
             sprite: "sprites/monsters/orc.png",
             damage: "1d6+1",
             base_hp: 25,
@@ -183,11 +183,11 @@
         ),
         "Orc Berserker": (
             name: "Orc Berserker",
-            perception: 8,
+            vision: 8,
             sprite: "sprites/monsters/orc.png",
             damage: "1d8+2",
             base_hp: 35,
-            intelligence: 8,
+            mana: 40,
             spells: ["enrage"],
             loot_table: [
                 (item: "Iron Sword", spawn_chance: 0.20),
@@ -197,11 +197,11 @@
         ),
         "Orc Shaman": (
             name: "Orc Shaman",
-            perception: 12,
+            vision: 12,
             sprite: "sprites/monsters/orc.png",
             damage: "1d4+1",
             base_hp: 28,
-            intelligence: 14,
+            mana: 70,
             spells: ["ice_shard", "fire_dart", "heal_self"],
             loot_table: [
                 (item: "Healing Potion", spawn_chance: 0.30),
@@ -211,11 +211,11 @@
         ),
         "Orc Warlord": (
             name: "Orc Warlord",
-            perception: 12,
+            vision: 12,
             sprite: "sprites/monsters/orc.png",
             damage: "1d10+2",
             base_hp: 45,
-            intelligence: 10,
+            mana: 50,
             base_armor: 2,
             spells: ["battle_hymn"],
             loot_table: [
@@ -230,12 +230,12 @@
 
         "Imp": (
             name: "Imp",
-            perception: 12,
+            vision: 12,
             sprite: "sprites/monsters/goblin.png",
             damage: "1d4",
             damage_type: "fire",
             base_hp: 18,
-            intelligence: 12,
+            mana: 60,
             resistances: {"fire": "immune"},
             spells: ["fire_dart", "spark"],
             faction_tag: "demon",
@@ -243,7 +243,7 @@
         ),
         "Hell Hound": (
             name: "Hell Hound",
-            perception: 14,
+            vision: 14,
             sprite: "sprites/monsters/rat.png",
             damage: "1d8+1",
             damage_type: "fire",
@@ -254,12 +254,12 @@
         ),
         "Shadow Fiend": (
             name: "Shadow Fiend",
-            perception: 14,
+            vision: 14,
             sprite: "sprites/monsters/goblin.png",
             damage: "1d8",
             damage_type: "necrotic",
             base_hp: 40,
-            intelligence: 14,
+            mana: 70,
             resistances: {"necrotic": "resistant", "physical": "resistant"},
             spells: ["shadow_bolt", "mana_drain"],
             faction_tag: "demon",
@@ -270,7 +270,7 @@
 
         "Ogre": (
             name: "Ogre",
-            perception: 8,
+            vision: 8,
             sprite: "sprites/monsters/orc.png",
             damage: "2d6+2",
             base_hp: 50,
@@ -280,18 +280,18 @@
         ),
         "Ogre Mage": (
             name: "Ogre Mage",
-            perception: 12,
+            vision: 12,
             sprite: "sprites/monsters/orc.png",
             damage: "1d8+1",
             base_hp: 45,
-            intelligence: 14,
+            mana: 70,
             spells: ["lightning_bolt", "fire_dart", "vampiric_strike"],
             faction_tag: "giant",
             role: "caster",
         ),
         "Troll": (
             name: "Troll",
-            perception: 8,
+            vision: 8,
             sprite: "sprites/monsters/orc.png",
             damage: "2d6+1",
             base_hp: 55,
@@ -306,12 +306,12 @@
 
         "Vampire": (
             name: "Vampire",
-            perception: 14,
+            vision: 14,
             sprite: "sprites/monsters/goblin.png",
             damage: "1d8+1",
             damage_type: "necrotic",
             base_hp: 40,
-            intelligence: 12,
+            mana: 60,
             resistances: {"necrotic": "immune", "poison": "immune"},
             on_hit_effects: [
                 LifeDrain(amount: 3, chance: 50),
@@ -322,7 +322,7 @@
         ),
         "Dark Knight": (
             name: "Dark Knight",
-            perception: 10,
+            vision: 10,
             sprite: "sprites/monsters/orc.png",
             damage: "2d6+3",
             base_hp: 55,
@@ -343,12 +343,12 @@
 
         "The Veiled Tyrant": (
             name: "The Veiled Tyrant",
-            perception: 16,
+            vision: 16,
             sprite: "sprites/monsters/orc.png",
             damage: "2d8+4",
             damage_type: "necrotic",
             base_hp: 120,
-            intelligence: 20,
+            mana: 100,
             base_armor: 3,
             regen: 5,
             spells: ["shadow_bolt", "mana_drain", "heal_self", "chain_lightning", "spirit_shield", "death_coil", "enrage"],

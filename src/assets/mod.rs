@@ -253,7 +253,7 @@ pub struct MonsterLootEntry {
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
 pub struct MonsterAsset {
     pub name: String,
-    pub perception: i32,
+    pub vision: i32,
     pub sprite: String,
     #[serde(
         default,
@@ -268,7 +268,7 @@ pub struct MonsterAsset {
 
     pub base_hp: i32,
     #[serde(default)]
-    pub intelligence: i32,
+    pub mana: i32,
     pub damage: String,
 
     #[serde(default, deserialize_with = "serde_helpers::deserialize_i32_as_option")]
