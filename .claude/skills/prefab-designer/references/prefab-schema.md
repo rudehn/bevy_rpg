@@ -99,7 +99,9 @@ Source: `assets/props.ron`
 
 `candle`, `watchfire`, `totem_pole`, `barricade`, `barrel`, `small_chest`, `chest`, `small_red_chest`, `red_chest`, `fountain`, `corrupted_fountain`, `tyrants_offering`
 
-**Blocking props** (impassable): `barricade`, `barrel`, `totem_pole`
+**Blocking props** (impassable): `barricade`, `barrel`, `totem_pole`, `small_chest`, `chest`, `small_red_chest`, `red_chest`, `fountain`, `corrupted_fountain`, `tyrants_offering`
+
+**Non-blocking props:** `candle`, `watchfire`
 
 **Light-emitting props:** `candle`, `watchfire`
 
