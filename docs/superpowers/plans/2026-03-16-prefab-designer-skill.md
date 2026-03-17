@@ -303,11 +303,17 @@ Guided conversation through these steps (one question at a time):
 1. **Read current state** — Parse `assets/prefabs.ron`. Summarize current catalog count by tier, placement distribution, role coverage, depth ranges.
 2. **Encounter fantasy** — Ask what the player experience should feel like. Offer archetypes from the design principles reference if inspiration is needed.
 3. **Tactical geometry** — Sketch 2-3 ASCII layout variants with commentary on sight lines, chokepoints, cover, approach angles. Each variant should play differently.
-4. **Monster composition** — Propose roles, count, faction considerations. Reference valid roles from schema. Consider faction locking via `faction_tag` or leaving open.
+4. **Monster composition** — Propose roles, count, faction considerations. Reference valid roles from schema. Note: `faction_tag` on prefabs is aspirational (the field exists in some RON entries but is not yet in the Rust struct). The role resolver picks factions automatically from `monsters.ron` based on which can fill all required roles at current depth.
 5. **Squad behavior** — Recommend `on_leader_death` and `flee_threshold` using the drama table from design principles. Decide guard vs. roam for each monster.
 6. **Loot & structures** — Propose reward density. Reference valid props and structures from schema. Match risk to reward.
 7. **Placement strategy & size** — Recommend placement type and dimensions. Reference size categories and budget from schema.
-8. **Depth range & difficulty tier** — Place in the 26-floor progression. Reference existing depth coverage to avoid dead zones.
+8. **Depth range & difficulty tier** — Place in the 26-floor progression using this tier guide:
+   - Floors 1-5: Easy (1-2 monsters, simple tactics)
+   - Floors 3-10: Medium (2-3 monsters, combined roles)
+   - Floors 6-15: Hard (3-4 monsters, complex tactics)
+   - Floors 8-20: Landmark (4-6 monsters, major encounters)
+   - Floors 15-26: Late game (toughest configurations)
+   Include this tier table in either SKILL.md or encounter-design-principles.md. Reference existing depth coverage to avoid dead zones.
 9. **Orientation** — Recommend rotate/flip settings based on whether design is directional.
 10. **Output** — Present design summary covering all dimensions, then generate complete RON `PrefabTemplate` entry. Validate that:
     - All field names and types match the schema
