@@ -25,6 +25,8 @@
 
 All content is sourced from the spec and from actual RON data files / Rust source.
 
+**Parallelism:** Tasks 1, 2, and 3 are independent and can run in parallel. Task 4 depends on all three reference files existing. Task 5 depends on Task 4.
+
 ---
 
 ### Task 1: Create `references/ron-schemas.md`
@@ -35,16 +37,19 @@ The foundation — every other file references this for valid types and formats.
 - Create: `.claude/skills/content-forge/references/ron-schemas.md`
 
 **Source data (read but don't modify):**
-- `assets/monsters.ron` — MonsterDef fields and examples
+- `src/assets/mod.rs` — **Primary source**: serde struct definitions for MonsterDef, MonsterSpawnEntry, ItemDef, ItemSpawnEntry, SpellData (these define what the RON format accepts)
+- `assets/monsters.ron` — MonsterDef examples
 - `assets/monster_spawns.ron` — spawn entry format including composite groups
-- `assets/items.ron` — ItemDef fields and examples by kind
+- `assets/items.ron` — ItemDef examples by kind
 - `assets/item_spawns.ron` — spawn entry format
-- `assets/spells.ron` — SpellData fields and examples
+- `assets/spells.ron` — SpellData examples
 - `src/game/items.rs` — ItemBonus enum (all variants)
 - `src/game/abilities.rs` — OnHitEffect, passive ability components, FactionKind
 - `src/game/spells.rs` — SpellEffect enum, SpellTarget enum
 - `src/game/combat.rs` — DamageType enum, ResistanceLevel enum
 - `src/game/effects.rs` — Effect enum (consumable effects)
+- `src/game/squad.rs` — on_leader_death handling, flee behavior values
+- `src/game/ranged.rs` — weapon range constraints
 
 - [ ] **Step 1: Create the ron-schemas.md file**
 
@@ -65,7 +70,7 @@ Write the complete RON schema reference document with these sections:
    - `ArmorSlot`: Chest, Helm, Gloves, Boots, OffHand
    - `Rarity`: Common, Uncommon, Rare, Legendary
    - `SpellTarget`: Castor, Enemy, Ally, AllyOrSelf
-   - `DamageType`: Physical, Fire, Lightning, Necrotic (in RON: Ice, Poison also used in design docs but verify in source)
+   - `DamageType`: Extract the authoritative list from `src/game/combat.rs` — list exactly what the enum contains
    - `ResistanceLevel`: Weak, Normal, Resistant, Immune, Absorb
    - `MonsterRole`: melee_guard, ranged, brute, caster, leader, any
    - `OnLeaderDeath`: scatter, enrage, fight_on
@@ -104,6 +109,7 @@ Power curves and stat budgets the skill uses to assign balanced numbers.
 **Source data (read but don't modify):**
 - `docs/design/BESTIARY.md` — Monster stat formulas, zone breakdown
 - `.claude/skills/game-mechanics-designer/references/balance-parameters.md` — All tunable parameters
+- `src/game/stats.rs` — Stat formulas (HP, mana, speed) — **verify spec formulas match code**
 - `assets/monsters.ron` — Actual monster stats for reference data points
 - `docs/design/ITEMS.md` — Item power budget info
 - `docs/design/MAGIC.md` — Spell cost/power info
@@ -173,6 +179,7 @@ Guidance for the Generate Faction workflow, including analysis of existing facti
 - `docs/design/BESTIARY.md` — Faction design rationale, role synergies, zone breakdown
 - `assets/monsters.ron` — Actual faction rosters
 - `assets/monster_spawns.ron` — Spawn configurations including composite groups
+- `assets/items.ron` — Existing items for themed loot analysis
 
 - [ ] **Step 1: Create the faction-design-guide.md file**
 
@@ -258,7 +265,12 @@ description: >
    - `references/balance-curves.md`
    - `references/ron-schemas.md`
    - `references/faction-design-guide.md` (faction workflow only)
-   - Live game data files to read per workflow
+   - Live game data files by workflow:
+     - Monster: `assets/monsters.ron`, `assets/monster_spawns.ron`
+     - Item: `assets/items.ron`, `assets/item_spawns.ron`
+     - Spell: `assets/spells.ron`
+     - Faction: all of the above + `docs/design/BESTIARY.md`
+     - Audit: all of the above + `assets/essence_nodes.ron`, `assets/props.ron`, `assets/structures.ron`
 
 3. **Workflow 1: Create Monster** — Steps 1-8 from spec:
    - Read current state (monsters.ron, monster_spawns.ron)
@@ -308,6 +320,11 @@ description: >
    - Present before writing
    - Append, don't overwrite
    - Chain when appropriate
+
+9. **Relationship to Other Skills** — From spec lines 329-333:
+   - game-mechanics-designer: for rebalancing *existing* content
+   - content-forge: for *creating new* content
+   - prefab-designer: creates encounters that *use* the content this skill creates
 
 - [ ] **Step 2: Verify the file**
 
@@ -371,7 +388,15 @@ Expected: Multiple matches (at least 3).
 
 - [ ] **Step 4: Verify RON schema examples match actual data**
 
-Spot-check that example RON entries in `ron-schemas.md` match actual entries in the data files. Read a monster from `assets/monsters.ron` and compare against the example in the schema doc.
+Spot-check that example RON entries in `ron-schemas.md` match actual entries in the data files:
+- Read one monster from `assets/monsters.ron` and compare against the monster example in the schema doc
+- Read one item from `assets/items.ron` and compare against the item example
+- Read one spell from `assets/spells.ron` and compare against the spell example
+- Verify that every enum variant listed in ron-schemas.md exists in the corresponding Rust source file
+
+- [ ] **Step 4b: Verify skill description doesn't overlap with game-mechanics-designer**
+
+Read `.claude/skills/game-mechanics-designer/SKILL.md` frontmatter and confirm the trigger phrases are distinct from content-forge's description.
 
 - [ ] **Step 5: Final commit if any fixes needed**
 
