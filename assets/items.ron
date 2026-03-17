@@ -120,26 +120,6 @@
         // ===========================
         // SPELLBOOKS — Zone 2 (6-10)
         // ===========================
-        "Tome of Ice Shard": (
-            name: "Tome of Ice Shard",
-            sprite: "sprites/items/books/light_blue_new.png",
-            tile_size: (32, 32),
-            grid_size: (8, 8),
-
-            item_kind: Spellbook,
-            rarity: Uncommon,
-            effect: Some(LearnSpell("ice_shard")),
-        ),
-        "Tome of Poison Bolt": (
-            name: "Tome of Poison Bolt",
-            sprite: "sprites/items/books/dark_green_new.png",
-            tile_size: (32, 32),
-            grid_size: (8, 8),
-
-            item_kind: Spellbook,
-            rarity: Uncommon,
-            effect: Some(LearnSpell("poison_bolt")),
-        ),
         "Tome of Vampiric Strike": (
             name: "Tome of Vampiric Strike",
             sprite: "sprites/items/books/dark_brown_new.png",

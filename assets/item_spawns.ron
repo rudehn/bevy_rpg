@@ -28,8 +28,6 @@
         // ===========================
         // SPELLBOOKS — Zone 2 (6-10)
         // ===========================
-        (item: "Tome of Ice Shard",        min_floor: 6,  max_floor: 13, weight: 2),
-        (item: "Tome of Poison Bolt",      min_floor: 6,  max_floor: 13, weight: 1),
         (item: "Tome of Vampiric Strike",  min_floor: 6,  max_floor: 13, weight: 1),
         (item: "Tome of Healing",          min_floor: 6,  max_floor: 13, weight: 2),
         (item: "Tome of Heal Ally",        min_floor: 6,  max_floor: 13, weight: 1),

@@ -15,7 +15,7 @@ use crate::{
         essence::Essence,
         items::{Equipment, ItemProperties, ItemStack},
         magic::{
-            ActiveSpells, Hasted, KnownSpells, ManaRegen, Poisoned, Slowed,
+            ActiveSpells, Hasted, KnownSpells, ManaRegen, Slowed,
             SpellCooldowns, Stunned,
         },
         spawner::spawn_item,
@@ -228,8 +228,6 @@ pub struct PlayerSaveData {
     #[serde(default)]
     pub slowed: Option<Slowed>,
     #[serde(default)]
-    pub poisoned: Option<Poisoned>,
-    #[serde(default)]
     pub stunned: Option<Stunned>,
     pub inventory: Vec<InventoryItemSave>,
 }
@@ -419,7 +417,6 @@ pub fn auto_save_system(
             &SpellCooldowns,
             Option<&Hasted>,
             Option<&Slowed>,
-            Option<&Poisoned>,
             Option<&Stunned>,
         ),
         With<Player>,
@@ -490,8 +487,8 @@ pub fn auto_save_system(
         .collect();
 
     // Magic state
-    let (known_spells, active_spells, mana_regen, spell_cooldowns, hasted, slowed, poisoned, stunned) =
-        if let Ok((ks, as_, mr, sc, h, sl, p, st)) = player_magic_query.single() {
+    let (known_spells, active_spells, mana_regen, spell_cooldowns, hasted, slowed, stunned) =
+        if let Ok((ks, as_, mr, sc, h, sl, st)) = player_magic_query.single() {
             (
                 ks.clone(),
                 as_.clone(),
@@ -499,7 +496,6 @@ pub fn auto_save_system(
                 sc.clone(),
                 h.cloned(),
                 sl.cloned(),
-                p.cloned(),
                 st.cloned(),
             )
         } else {
@@ -508,7 +504,7 @@ pub fn auto_save_system(
                 ActiveSpells::default(),
                 ManaRegen::default(),
                 SpellCooldowns::default(),
-                None, None, None, None,
+                None, None, None,
             )
         };
 
@@ -546,7 +542,6 @@ pub fn auto_save_system(
             spell_cooldowns,
             hasted,
             slowed,
-            poisoned,
             stunned,
             inventory: inv_saves,
         },
@@ -649,9 +644,6 @@ pub fn apply_player_load_system(
         }
         if let Some(ref s) = player_data.slowed {
             commands.entity(player_entity).insert(s.clone());
-        }
-        if let Some(ref p) = player_data.poisoned {
-            commands.entity(player_entity).insert(p.clone());
         }
         if let Some(ref st) = player_data.stunned {
             commands.entity(player_entity).insert(st.clone());

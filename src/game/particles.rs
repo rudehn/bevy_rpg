@@ -323,9 +323,7 @@ pub fn damage_type_color(dt: crate::game::combat::DamageType) -> Color {
     match dt {
         DamageType::Fire => Color::srgb(1.0, 0.5, 0.1),
         DamageType::Lightning => Color::srgb(0.5, 0.8, 1.0),
-        DamageType::Ice => Color::srgb(0.4, 0.7, 1.0),
         DamageType::Necrotic => Color::srgb(0.6, 0.1, 0.8),
-        DamageType::Poison => Color::srgb(0.2, 0.9, 0.2),
         DamageType::Physical => Color::srgb(0.9, 0.9, 0.9),
     }
 }

@@ -19,20 +19,16 @@ pub enum DamageType {
     #[default]
     Physical,
     Fire,
-    Ice,
     Lightning,
     Necrotic,
-    Poison,
 }
 
 impl DamageType {
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "fire" => DamageType::Fire,
-            "ice" => DamageType::Ice,
             "lightning" => DamageType::Lightning,
             "necrotic" => DamageType::Necrotic,
-            "poison" => DamageType::Poison,
             _ => DamageType::Physical,
         }
     }
@@ -41,10 +37,8 @@ impl DamageType {
         match self {
             DamageType::Physical => "physical",
             DamageType::Fire => "fire",
-            DamageType::Ice => "ice",
             DamageType::Lightning => "lightning",
             DamageType::Necrotic => "necrotic",
-            DamageType::Poison => "poison",
         }
     }
 }
@@ -107,7 +101,6 @@ pub enum DamageSource {
     Melee,
     Ranged,
     Spell,
-    Poison,
     Environment,
 }
 

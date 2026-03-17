@@ -104,14 +104,6 @@ pub struct Slowed {
     pub turns_remaining: u32,
 }
 
-/// Damage-over-time poison effect.
-#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
-#[reflect(Component)]
-pub struct Poisoned {
-    pub damage_per_turn: i32,
-    pub turns_remaining: u32,
-}
-
 /// Stunned: entity skips its turn.
 #[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
 #[reflect(Component)]
@@ -119,7 +111,7 @@ pub struct Stunned {
     pub turns_remaining: u32,
 }
 
-/// Fire damage-over-time effect (mirrors Poisoned but uses DamageType::Fire).
+/// Fire damage-over-time effect.
 #[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
 #[reflect(Component)]
 pub struct Burning {
@@ -441,16 +433,6 @@ pub fn handle_cast_spell(
                     // Buff/Debuff no longer modifies attributes — log only
                     log_writer.write(GameLogMessage("The magical energy fizzles without effect.".to_string()));
                 }
-                SpellEffect::ApplyPoison {
-                    damage_per_turn,
-                    duration,
-                } => {
-                    commands.entity(target_entity).insert(Poisoned {
-                        damage_per_turn: *damage_per_turn,
-                        turns_remaining: *duration,
-                    });
-                    log_writer.write(GameLogMessage("Target is poisoned!".to_string()));
-                }
                 SpellEffect::ApplyHaste { duration } => {
                     commands
                         .entity(target_entity)
@@ -622,39 +604,6 @@ pub fn apply_speed_effects_system(
     }
 }
 
-/// Process poison damage each turn.
-pub fn process_poison_system(
-    mut turn_end: MessageReader<TurnEndEvent>,
-    mut commands: Commands,
-    mut query: Query<(Entity, &mut Poisoned, &Name)>,
-    mut damage_writer: MessageWriter<ApplyDamageMessage>,
-    mut log_writer: MessageWriter<GameLogMessage>,
-) {
-    for _ in turn_end.read() {
-        for (entity, mut poison, name) in query.iter_mut() {
-            log_writer.write(GameLogMessage(format!(
-                "{} takes {} poison damage!",
-                name.0, poison.damage_per_turn
-            )));
-            damage_writer.write(ApplyDamageMessage {
-                attacker: entity,
-                target: entity,
-                final_damage: poison.damage_per_turn,
-                damage_type: DamageType::Poison,
-                source: DamageSource::Poison,
-            });
-            poison.turns_remaining = poison.turns_remaining.saturating_sub(1);
-            if poison.turns_remaining == 0 {
-                commands.entity(entity).remove::<Poisoned>();
-                log_writer.write(GameLogMessage(format!(
-                    "{} is no longer poisoned.",
-                    name.0
-                )));
-            }
-        }
-    }
-}
-
 /// Tick stun duration: decrement, remove when expired.
 pub fn tick_stunned_system(
     mut turn_end: MessageReader<TurnEndEvent>,
@@ -679,7 +628,7 @@ pub fn tick_stunned_system(
     }
 }
 
-/// Process burning damage each turn (mirrors process_poison_system).
+/// Process burning damage each turn.
 pub fn process_burning_system(
     mut turn_end: MessageReader<TurnEndEvent>,
     mut commands: Commands,
@@ -725,7 +674,6 @@ impl Plugin for MagicPlugin {
             .register_type::<ManaRegen>()
             .register_type::<Hasted>()
             .register_type::<Slowed>()
-            .register_type::<Poisoned>()
             .register_type::<Stunned>()
             .register_type::<Burning>()
             .add_message::<CastSpellMessage>()
@@ -735,7 +683,6 @@ impl Plugin for MagicPlugin {
                     mana_regen_system,
                     tick_cooldowns_system,
                     tick_speed_effects_system,
-                    process_poison_system,
                     tick_stunned_system,
                     process_burning_system,
                     apply_speed_effects_system,

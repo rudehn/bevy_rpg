@@ -7,7 +7,7 @@ use crate::game::actions::SpeedStats;
 use crate::game::camera::{MainCamera, UiCamera};
 use crate::game::combat::{Damage, Health, HealthRegen};
 use crate::game::magic::{
-    Burning, Hasted, KnownSpells, Poisoned, Slowed, Stunned,
+    Burning, Hasted, KnownSpells, Slowed, Stunned,
 };
 use crate::game::stats::Armor;
 use crate::game::spells::SpellRegistry;
@@ -99,7 +99,6 @@ fn update_monster_info_panel(
     q_spells: Query<Option<&KnownSpells>>,
     // Query 3: active status effects (looked up by entity after focus is determined)
     q_statuses: Query<(
-        Option<&Poisoned>,
         Option<&Burning>,
         Option<&Slowed>,
         Option<&Hasted>,
@@ -254,9 +253,9 @@ fn update_monster_info_panel(
     }
 
     // Collect active status effects
-    let status_effects = if let Ok((poisoned, burning, slowed, hasted, stunned)) = q_statuses.get(entity) {
+    let status_effects = if let Ok((burning, slowed, hasted, stunned)) = q_statuses.get(entity) {
         crate::ui::collect_status_effects(
-            poisoned, burning, slowed, hasted, stunned,
+            burning, slowed, hasted, stunned,
         )
     } else {
         Vec::new()

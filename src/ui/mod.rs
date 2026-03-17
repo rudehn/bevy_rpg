@@ -7,7 +7,7 @@ use crate::game::{
     combat::{Health, HealthRegen},
     essence::Essence,
     magic::{
-        ActiveSpells, Burning, Hasted, Poisoned, Slowed, SpellCooldowns,
+        ActiveSpells, Burning, Hasted, Slowed, SpellCooldowns,
         Stunned,
     },
     stats::Mana,
@@ -408,7 +408,6 @@ fn update_spell_slots_ui(
 
 /// Collects active status effects as (label, color) tuples.
 pub fn collect_status_effects(
-    poisoned: Option<&Poisoned>,
     burning: Option<&Burning>,
     slowed: Option<&Slowed>,
     hasted: Option<&Hasted>,
@@ -416,12 +415,6 @@ pub fn collect_status_effects(
 ) -> Vec<(String, Color)> {
     let mut effects = Vec::new();
 
-    if let Some(p) = poisoned {
-        effects.push((
-            format!("Poisoned ({}t)", p.turns_remaining),
-            Color::srgb(0.3, 0.85, 0.3),
-        ));
-    }
     if let Some(b) = burning {
         effects.push((
             format!("Burning ({}t)", b.turns_remaining),
@@ -457,7 +450,6 @@ fn update_player_status_effects_ui(
     mut q_container: Query<(Entity, &mut PlayerStatusEffectsContainer)>,
     player_query: Query<
         (
-            Option<&Poisoned>,
             Option<&Burning>,
             Option<&Slowed>,
             Option<&Hasted>,
@@ -469,14 +461,14 @@ fn update_player_status_effects_ui(
     let Ok((container, mut tracker)) = q_container.single_mut() else {
         return;
     };
-    let Ok((poisoned, burning, slowed, hasted, stunned)) =
+    let Ok((burning, slowed, hasted, stunned)) =
         player_query.single()
     else {
         return;
     };
 
     let effects = collect_status_effects(
-        poisoned, burning, slowed, hasted, stunned,
+        burning, slowed, hasted, stunned,
     );
 
     // Quick hash: combine effect count with sum of turns to detect changes

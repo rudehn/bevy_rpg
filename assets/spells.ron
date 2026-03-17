@@ -40,31 +40,6 @@
             ],
             damage_type: Fire,
         ),
-        "ice_shard": (
-            name: "Ice Shard",
-            mana_cost: 10,
-            cooldown: 4,
-            description: "Launches a razor-sharp shard of ice. Scales with INT.",
-            target: Enemy,
-            range: 8,
-            effects: [
-                Damage(dice: "2d4", int_scaling: true),
-            ],
-            damage_type: Ice,
-        ),
-        "poison_bolt": (
-            name: "Poison Bolt",
-            mana_cost: 12,
-            cooldown: 6,
-            description: "A venomous bolt that deals damage and poisons the target.",
-            target: Enemy,
-            range: 8,
-            effects: [
-                Damage(dice: "1d4", int_scaling: false),
-                ApplyPoison(damage_per_turn: 2, duration: 4),
-            ],
-            damage_type: Poison,
-        ),
         "vampiric_strike": (
             name: "Vampiric Strike",
             mana_cost: 12,

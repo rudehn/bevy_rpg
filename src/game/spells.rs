@@ -35,8 +35,6 @@ pub enum SpellEffect {
     Buff { attribute: String, amount: i32, duration: u32 },
     /// Temporarily reduce a target's attribute.
     Debuff { attribute: String, amount: i32, duration: u32 },
-    /// Apply damage-over-time poison status.
-    ApplyPoison { damage_per_turn: i32, duration: u32 },
     /// Grant +50% speed for N turns.
     ApplyHaste { duration: u32 },
     /// Inflict -50% speed for N turns.

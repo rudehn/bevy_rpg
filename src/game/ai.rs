@@ -5,7 +5,7 @@ use crate::{
         actions::{Direction, MovementIntent, RangedAttackIntent, WaitIntent},
         boss::BossAI,
         combat::Health,
-        magic::{ActiveSpells, CastSpellMessage, Hasted, Poisoned, Slowed, SpellCooldowns},
+        magic::{ActiveSpells, CastSpellMessage, Hasted, Slowed, SpellCooldowns},
         ranged::RangedCapable,
         spells::{SpellEffect, SpellRegistry, SpellTarget},
         stats::Mana,
@@ -322,7 +322,6 @@ struct NearbyEntity {
     hp_current: i32,
     hp_max: i32,
     mana_current: i32,
-    has_poison: bool,
     has_slow: bool,
     has_haste: bool,
 }
@@ -521,8 +520,8 @@ fn choose_spell(
     // Collect all nearby entities with faction info for targeting decisions.
     let nearby: Vec<NearbyEntity> = {
         let mut result = Vec::new();
-        let mut query = world.query::<(Entity, &Position, &Faction, &Health, Option<&Mana>, Option<&Poisoned>, Option<&Slowed>, Option<&Hasted>)>();
-        for (ent, pos, faction, health, mana, poisoned, slowed, hasted) in query.iter(world) {
+        let mut query = world.query::<(Entity, &Position, &Faction, &Health, Option<&Mana>, Option<&Slowed>, Option<&Hasted>)>();
+        for (ent, pos, faction, health, mana, slowed, hasted) in query.iter(world) {
             if ent == caster {
                 continue;
             }
@@ -533,7 +532,6 @@ fn choose_spell(
                 hp_current: health.current,
                 hp_max: health.max,
                 mana_current: mana.map(|m| m.current).unwrap_or(0),
-                has_poison: poisoned.is_some(),
                 has_slow: slowed.is_some(),
                 has_haste: hasted.is_some(),
             });
@@ -765,16 +763,6 @@ fn choose_spell(
                     if let Some(enemy) = primary_target.filter(|e| caster_faction.is_hostile_to(&e.faction)) {
                         let score = *amount * (*duration as i32) / 4;
                         raw += score;
-                        target = target.or(Some(enemy.entity));
-                    }
-                }
-                SpellEffect::ApplyPoison {
-                    damage_per_turn,
-                    duration,
-                } => {
-                    if let Some(enemy) = primary_target.filter(|e| caster_faction.is_hostile_to(&e.faction)) {
-                        if enemy.has_poison { continue; }
-                        raw += damage_per_turn * (*duration as i32);
                         target = target.or(Some(enemy.entity));
                     }
                 }
