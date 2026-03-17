@@ -51,12 +51,13 @@ Ask what this creature feels like to encounter. If the user wants inspiration, s
 
 Using the balance curves reference, propose stats based on target floor range:
 
-- **Base HP**: Scale from ~10 (floor 1) to ~120 (floor 20), following the curve: `base_hp ≈ floor * 6` (±30% for role — brutes high, glass cannons low)
-- **Attributes**: Start from 10 baseline, adjust ±1 per 3 floors from baseline, ±4 max for role emphasis
+- **Base HP**: The `base_hp` RON field feeds into final HP via `final_hp = base_hp + (CON_bonus * level)`. Target final HP from ~10 (floor 1) to ~120 (floor 20). Set `base_hp` accounting for CON scaling — e.g., a level 10 monster with CON 14 gets +20 from CON, so `base_hp` should be ~40 to hit ~60 final HP.
+- **Attributes**: Start from 10 baseline for combat-relevant stats. Adjust ±1 per 3 floors, ±4 max for role emphasis. **INT should be 0 for non-casters** (matching existing monsters). PER varies 6-14 based on awareness level.
 - **Damage dice**: Scale so monsters deal 15-25% of expected player HP per hit in early game, 30-50% in late game
+- **Damage type**: Ask what damage type the monster deals (Physical, Fire, Ice, Lightning, Necrotic, Poison). This affects player resistance builds.
 - **Defense/armor**: 0-2 early, 3-5 mid, 5-8 late, 7-12 endgame
-- **Speed delay**: 1.0 default, faster for skirmishers (0.8), slower for brutes (1.3)
-- **Experience reward**: Roughly `floor * 12 + difficulty_modifier`
+- **AGI (speed)**: AGI determines turn speed via `delay = 1.0 - (AGI - 10) * 0.025`. Fast skirmishers: AGI 16-18 (delay 0.85-0.80). Normal: AGI 10 (delay 1.0). Slow brutes: AGI 4-6 (delay 1.15-1.10). AGI is the RON field — not delay directly.
+- **Experience reward**: Formula is `10 + (level * 5) + (base_hp / 2)`. This is the implemented BESTIARY formula — do not use ad-hoc approximations.
 
 Present the stat block with reasoning for each value.
 
@@ -70,11 +71,23 @@ Validate that abilities use only implemented ability types from `abilities.rs`.
 
 Recommend the monster's role in group encounters: `melee_guard`, `ranged`, `brute`, `caster`, `leader`, or `any`. Propose whether it should typically be a squad leader or follower, and suggest spawn group sizes (min/max).
 
+Also determine behavioral traits:
+- **Cowardly**: Should this monster flee when wounded? Set `is_cowardly` and recommend a `flee_threshold` (0.25-0.50 of group HP).
+- **On leader death**: If this monster appears in squads, what happens when its leader dies? (`scatter`, `enrage`, `fight_on`)
+
 ### Step 6: Spawn Configuration
 
-Propose floor range, spawn weight, and group sizes for `monster_spawns.ron`. Cross-reference existing spawns to avoid overcrowding floor ranges.
+Propose floor range and group sizes (min/max) for `monster_spawns.ron`. The spawn format supports both single-monster entries and composite `group` entries with multiple monster types (e.g., a war party with mixed roles). Cross-reference existing spawns to avoid overcrowding floor ranges.
 
-### Step 7: Approve & Write
+For faction monsters, consider whether they should have composite group entries that combine different roster members.
+
+### Step 7: Sprite Assignment
+
+Ask about the monster's visual. Either:
+- Assign an existing sprite from `assets/sprites/monsters/`
+- Note that a placeholder sprite is needed (per project convention, create placeholders when no asset exists)
+
+### Step 8: Approve & Write
 
 Present the complete design summary, then the RON entries for both `monsters.ron` and `monster_spawns.ron`. On approval, append to both files.
 
@@ -106,7 +119,7 @@ For Uncommon+, propose bonuses from the valid set (28+ types). Prioritize themat
 
 ### Step 5: Spawn Configuration
 
-Propose floor range and rarity weight for `item_spawns.ron`. Ensure the item appears at floors where its power level is appropriate.
+Propose floor range for `item_spawns.ron`. Ensure the item appears at floors where its power level is appropriate. Include required rendering fields (`sprite`, `tile_size`, `grid_size`) — most items use `(32, 32)` tile size with `(8, 8)` grid, but read existing items at the same kind for the correct values.
 
 ### Step 6: Approve & Write
 
@@ -159,7 +172,7 @@ Read all data files (`monsters.ron`, `items.ron`, `spells.ron`, and spawn files)
 Guided questions:
 
 - **Theme**: What unifies this faction visually and mechanically? (e.g., "fungal creatures that spread spores")
-- **Floor range**: Where in the 26-floor dungeon does this faction appear?
+- **Floor range**: Where in the dungeon does this faction appear? (Current content spans floors 1-20; the OVERVIEW doc describes 26 floors but floors 21-26 are future content. Design for floors 1-20 unless explicitly targeting late-game expansion.)
 - **Personality**: How do they fight as a group? (aggressive, defensive, tricky, swarming)
 
 ### Step 3: Roster Design
@@ -197,7 +210,7 @@ Walk through each content piece (monsters → spells → items → spawn configs
 
 ### Step 1: Read All Data Files
 
-Parse `monsters.ron`, `items.ron`, `spells.ron`, and all spawn files.
+Parse `monsters.ron`, `items.ron`, `spells.ron`, `essence_nodes.ron`, and all spawn files. Also reference `docs/design/BESTIARY.md` for faction design rationale.
 
 ### Step 2: Analyze Coverage
 
@@ -208,6 +221,8 @@ Check for gaps across:
 - Missing item kinds at certain rarities
 - Spell roles with few options (e.g., few debuff spells, no AoE healing)
 - Factions with incomplete role coverage
+- Essence tree bonus types not represented in available items
+- Damage types or resistances with no corresponding items or spells
 
 ### Step 3: Present Prioritized Recommendations
 
@@ -235,11 +250,25 @@ Floor-by-floor power targets used to assign balanced stats.
 
 **Monster Stat Budgets** (target ranges by floor):
 
-- **HP formula**: `base_hp ≈ floor * 6` (±30% for role)
+- **HP**: Two-stage calculation. `base_hp` is the RON field; `final_hp = base_hp + (CON_bonus * level)`. Set `base_hp` to target the desired final HP after CON scaling.
 - **Damage target**: 15-25% of expected player HP per hit (early), 30-50% (late)
-- **Attribute baseline**: 10 all, ±1 per 3 floors, ±4 max for role emphasis
-- **Armor**: 0-2 (floors 1-5), 3-5 (6-12), 5-8 (13-18), 7-12 (19-26)
-- **Experience reward**: `floor * 12 + role_modifier` (brute +15, fodder -10, caster +10)
+- **Attribute baseline**: 10 for combat-relevant stats. INT = 0 for non-casters. PER varies 6-14. Adjust ±1 per 3 floors, ±4 max for role emphasis.
+- **AGI (speed)**: Determines delay via `delay = 1.0 - (AGI - 10) * 0.025`. Fast: AGI 16-18. Normal: AGI 10. Slow: AGI 4-6.
+- **Armor**: 0-2 (floors 1-5), 3-5 (6-12), 5-8 (13-18), 7-12 (19-20)
+- **Experience reward**: `10 + (level * 5) + (base_hp / 2)` — this is the BESTIARY formula.
+
+**Reference data points from existing monsters:**
+
+| Monster | Floor | base_hp | Damage | AGI | Final HP (approx) |
+|---------|-------|---------|--------|-----|-------------------|
+| Rat | 1 | 8 | 1d3 | 14 | ~8 |
+| Goblin | 2 | 15 | 1d4 | 12 | ~17 |
+| Skeleton | 6 | 20 | 1d6 | 10 | ~20 |
+| Orc | 9 | 35 | 1d8 | 10 | ~35 |
+| Orc Berserker | 11 | 45 | 1d10+2 | 10 | ~56 |
+| Shadow Fiend | 16 | 55 | 2d6 | 14 | ~67 |
+| Dark Knight | 18 | 75 | 2d8+2 | 10 | ~87 |
+| Veiled Tyrant | 20 | 200 | 2d8+4 | 12 | ~220 |
 
 **Item Power Budgets** by rarity:
 
@@ -258,19 +287,21 @@ Floor-by-floor power targets used to assign balanced stats.
 
 - Early floors (1-5): 8-12 monsters, 2-4 items
 - Mid floors (6-15): 12-18 monsters, 3-5 items
-- Late floors (16-26): 15-22 monsters, 4-6 items
+- Late floors (16-20): 15-22 monsters, 4-6 items
 
 ### `references/ron-schemas.md`
 
-Annotated RON format for every data file the skill writes to:
+Annotated RON format for every data file the skill writes to. **Must be populated from actual current RON files and Rust enum definitions** — not approximated. When the RON data and design docs disagree, the RON files are the source of truth for implementation.
 
-- `MonsterDef` schema with all fields, types, and valid enum values
-- `MonsterSpawnEntry` schema with floor range, group sizes, squad config
-- `ItemDef` schema with all item kinds, armor slots, bonus types
-- `ItemSpawnEntry` schema with rarity weights and floor ranges
+Contents:
+
+- `MonsterDef` schema with all fields (including `sprite`, `is_cowardly`, `damage_type`), types, and valid enum values
+- `MonsterSpawnEntry` schema with floor range, group sizes, squad config, and composite `group` format for mixed-type spawn entries
+- `ItemDef` schema with all item kinds, armor slots, bonus types, and rendering fields (`sprite`, `tile_size`, `grid_size`)
+- `ItemSpawnEntry` schema with floor ranges
 - `SpellData` schema with effect types, targeting modes, damage types
 - Valid enum values for: `FactionKind`, `MonsterRole`, `DamageType`, `ResistanceLevel`, `ItemBonus`, `SpellEffect`, `SpellTarget`, `OnLeaderDeath`
-- Annotated example entries for each type
+- Annotated example entries for each type, sourced from existing data files
 
 ### `references/faction-design-guide.md`
 
@@ -282,7 +313,7 @@ Guidance for the Generate Faction workflow:
 - **Ability distribution**: Shared traits vs. specialist abilities
 - **Themed loot principles**: Items should reflect faction identity
 - **Floor range sizing**: A faction should span 6-10 floors
-- **Existing faction analysis**: Summary of how current factions are built, as exemplars
+- **Existing faction analysis**: Summary of how current factions are built, as exemplars. Source from both `monsters.ron` data and `docs/design/BESTIARY.md` design rationale (which contains role synergies, mechanic introduction cadence, and squad composition reasoning)
 
 ## Cross-Cutting Rules
 
@@ -293,10 +324,15 @@ Guidance for the Generate Faction workflow:
 5. **Append, don't overwrite** — New entries are appended to existing RON files, never replacing content.
 6. **Chain when appropriate** — Creating a monster that casts spells → chain into Create Spell. Creating faction loot → chain into Create Item. Creating a spell the player can learn → chain into Create Item for the spellbook.
 
+## Relationship to Other Skills
+
+- **game-mechanics-designer**: Covers rebalancing *existing* content, analyzing the game loop, and writing design docs. Content-forge is for *creating new* content. If the user wants to tune existing monster stats, use game-mechanics-designer. If they want to brainstorm a new monster, use content-forge.
+- **prefab-designer**: Creates encounter layouts (prefabs) that reference monsters and props. Content-forge creates the monsters and items that prefabs use. The two skills complement each other — design content first, then design encounters that feature it.
+
 ## Implementation Notes
 
 - This is a pure skill (`.claude/skills/` files only) — no Rust code changes needed.
-- The skill reads `assets/monsters.ron`, `assets/items.ron`, `assets/spells.ron`, `assets/monster_spawns.ron`, `assets/item_spawns.ron`, `assets/props.ron`, and `assets/structures.ron` at runtime.
+- The skill reads `assets/monsters.ron`, `assets/items.ron`, `assets/spells.ron`, `assets/monster_spawns.ron`, `assets/item_spawns.ron`, `assets/essence_nodes.ron`, `assets/props.ron`, and `assets/structures.ron` at runtime. It also references `docs/design/BESTIARY.md` for faction design context.
 - Reference docs (`balance-curves.md`, `ron-schemas.md`, `faction-design-guide.md`) should be updated when balance changes ship or RON schemas change.
 - The skill lives at `.claude/skills/content-forge/` alongside the existing `game-mechanics-designer/` and `prefab-designer/` skills.
 - The `ron-schemas.md` reference must be populated from the actual current RON files and Rust enum definitions to ensure validity.
