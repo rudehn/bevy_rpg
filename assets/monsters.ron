@@ -1,23 +1,33 @@
 (
     monsters: {
-        // ==================== VERMIN (Floors 1-8) ====================
+        // ==================== VERMIN (Floors 1-6) ====================
 
         "Rat": (
             name: "Rat",
             vision: 8,
             sprite: "sprites/monsters/rat.png",
-            damage: "1d4",
-            base_hp: 8,
-            faction_tag: "beast",
+            damage: "1d3",
+            base_hp: 6,
+            faction_tag: "vermin",
             role: "melee_guard",
         ),
         "Giant Bat": (
             name: "Giant Bat",
-            vision: 14,
+            vision: 12,
+            sprite: "sprites/monsters/rat.png",
+            damage: "1d4",
+            base_hp: 8,
+            faction_tag: "vermin",
+            role: "melee_guard",
+        ),
+        "Wolf": (
+            name: "Wolf",
+            vision: 12,
             sprite: "sprites/monsters/rat.png",
             damage: "1d6",
             base_hp: 12,
-            faction_tag: "beast",
+            // Pack Tactics: +50% damage when ally adjacent to target (needs new handler)
+            faction_tag: "vermin",
             role: "melee_guard",
         ),
         "Giant Spider": (
@@ -25,22 +35,16 @@
             vision: 10,
             sprite: "sprites/monsters/rat.png",
             damage: "1d6",
-            damage_type: "physical",
-            base_hp: 18,
-            faction_tag: "beast",
-            role: "brute",
-        ),
-        "Plague Rat": (
-            name: "Plague Rat",
-            vision: 10,
-            sprite: "sprites/monsters/rat.png",
-            damage: "1d4",
-            base_hp: 15,
-            faction_tag: "beast",
+            base_hp: 14,
+            // Slow Strike: ApplySlow 3 turns, 30% chance (orphaned)
+            on_hit_effects: [
+                ApplySlow(duration: 3, chance: 30),
+            ],
+            faction_tag: "vermin",
             role: "melee_guard",
         ),
 
-        // ==================== GOBLINOID (Floors 1-10) ====================
+        // ==================== GOBLINS (Floors 2-8) ====================
 
         "Goblin": (
             name: "Goblin",
@@ -48,8 +52,9 @@
             sprite: "sprites/monsters/goblin.png",
             damage: "1d4",
             base_hp: 10,
+            // Pack Tactics: +50% damage when ally adjacent to target (needs new handler)
             loot_table: [
-                (item: "Healing Potion", spawn_chance: 0.2),
+                (item: "Healing Potion", spawn_chance: 0.15),
             ],
             faction_tag: "goblin",
             role: "melee_guard",
@@ -58,8 +63,8 @@
             name: "Goblin Archer",
             vision: 12,
             sprite: "sprites/monsters/goblin.png",
-            damage: "1d6",
-            base_hp: 12,
+            damage: "1d4",
+            base_hp: 8,
             ranged_range: 6,
             loot_table: [
                 (item: "Short Bow", spawn_chance: 0.15),
@@ -70,11 +75,11 @@
         ),
         "Goblin Shaman": (
             name: "Goblin Shaman",
-            vision: 12,
+            vision: 10,
             sprite: "sprites/monsters/goblin.png",
             damage: "1d4",
-            base_hp: 15,
-            mana: 65,
+            base_hp: 12,
+            mana: 60,
             spells: ["magic_missile", "heal_ally"],
             loot_table: [
                 (item: "Tome of Magic Missile", spawn_chance: 0.20),
@@ -86,11 +91,14 @@
             name: "Goblin Warchief",
             vision: 12,
             sprite: "sprites/monsters/goblin.png",
-            damage: "1d8+1",
-            base_hp: 30,
-            mana: 50,
+            damage: "1d6+1",
+            base_hp: 22,
             base_armor: 1,
+            mana: 40,
             spells: ["enrage"],
+            // War Cry: allies in radius 3 get +50% damage for 4 turns (needs new handler)
+            // Summon on Death: 2 Goblins (orphaned)
+            summon_on_death: Some(("Goblin", 2)),
             loot_table: [
                 (item: "Iron Sword", spawn_chance: 0.20),
                 (item: "Healing Potion", spawn_chance: 0.30),
@@ -99,15 +107,140 @@
             role: "leader",
         ),
 
-        // ==================== UNDEAD (Floors 5-16) ====================
+        // ==================== ORCS (Floors 6-12) ====================
+
+        "Orc Warrior": (
+            name: "Orc Warrior",
+            vision: 10,
+            sprite: "sprites/monsters/orc.png",
+            damage: "1d6+1",
+            base_hp: 25,
+            base_armor: 2,
+            regen: 20,
+            // Enrage: +50% damage below 40% HP (orphaned)
+            enrage_on_hit: Some(40),
+            loot_table: [
+                (item: "Iron Sword", spawn_chance: 0.15),
+                (item: "Healing Potion", spawn_chance: 0.20),
+            ],
+            faction_tag: "orc",
+            role: "melee_guard",
+        ),
+        "Orc Archer": (
+            name: "Orc Archer",
+            vision: 12,
+            sprite: "sprites/monsters/orc.png",
+            damage: "1d6",
+            base_hp: 20,
+            base_armor: 1,
+            ranged_range: 8,
+            loot_table: [
+                (item: "Arrow", spawn_chance: 0.80, count_min: 5, count_max: 12),
+            ],
+            faction_tag: "orc",
+            role: "ranged",
+        ),
+        "Orc Shaman": (
+            name: "Orc Shaman",
+            vision: 12,
+            sprite: "sprites/monsters/orc.png",
+            damage: "1d4",
+            base_hp: 22,
+            mana: 70,
+            spells: ["fire_dart", "heal_self", "heal_ally"],
+            loot_table: [
+                (item: "Healing Potion", spawn_chance: 0.30),
+            ],
+            faction_tag: "orc",
+            role: "caster",
+        ),
+        "Orc Warlord": (
+            name: "Orc Warlord",
+            vision: 12,
+            sprite: "sprites/monsters/orc.png",
+            damage: "1d8+2",
+            base_hp: 35,
+            base_armor: 3,
+            mana: 50,
+            spells: ["enrage"],
+            // Rally: allies in radius 3 get +2 armor (needs new handler)
+            // Stunning Blow: stun 1 turn, 20% chance (orphaned)
+            on_hit_effects: [
+                ApplyStun(duration: 1, chance: 20),
+            ],
+            loot_table: [
+                (item: "Iron Sword", spawn_chance: 0.25),
+                (item: "Healing Potion", spawn_chance: 0.40),
+            ],
+            faction_tag: "orc",
+            role: "leader",
+        ),
+
+        // ==================== FUNGAL (Floors 8-13) ====================
+
+        "Spore Crawler": (
+            name: "Spore Crawler",
+            vision: 8,
+            sprite: "sprites/monsters/rat.png",
+            damage: "1d6",
+            base_hp: 20,
+            base_armor: 1,
+            // Explode on Death: 6 fire damage, radius 1 (orphaned)
+            explode_on_death: Some((6, 1)),
+            faction_tag: "fungal",
+            role: "melee_guard",
+        ),
+        "Fungal Shambler": (
+            name: "Fungal Shambler",
+            vision: 6,
+            sprite: "sprites/monsters/orc.png",
+            damage: "1d8+1",
+            base_hp: 30,
+            base_armor: 2,
+            regen: 2,
+            // Slow Strike: ApplySlow 3 turns, 40% chance (orphaned)
+            on_hit_effects: [
+                ApplySlow(duration: 3, chance: 40),
+            ],
+            faction_tag: "fungal",
+            role: "melee_guard",
+        ),
+        "Shrieking Mushroom": (
+            name: "Shrieking Mushroom",
+            vision: 14,
+            sprite: "sprites/monsters/goblin.png",
+            damage: "1d6",
+            base_hp: 15,
+            ranged_range: 5,
+            faction_tag: "fungal",
+            role: "ranged",
+        ),
+        "Mycoid Sovereign": (
+            name: "Mycoid Sovereign",
+            vision: 12,
+            sprite: "sprites/monsters/orc.png",
+            damage: "1d6",
+            base_hp: 35,
+            base_armor: 2,
+            mana: 60,
+            spells: ["heal_ally", "slow"],
+            // Rally: allies in radius 3 get +2 armor (needs new handler)
+            // Summon on Death: 2 Spore Crawlers (orphaned)
+            summon_on_death: Some(("Spore Crawler", 2)),
+            faction_tag: "fungal",
+            role: "leader",
+        ),
+
+        // ==================== UNDEAD (Floors 7-14) ====================
 
         "Skeleton": (
             name: "Skeleton",
             vision: 8,
             sprite: "sprites/monsters/goblin.png",
             damage: "1d6",
-            base_hp: 20,
+            base_hp: 18,
             base_armor: 2,
+            resistances: {"physical": "resistant"},
             faction_tag: "undead",
             role: "melee_guard",
         ),
@@ -115,9 +248,11 @@
             name: "Bone Archer",
             vision: 12,
             sprite: "sprites/monsters/goblin.png",
-            damage: "1d8",
-            base_hp: 18,
+            damage: "1d6",
+            base_hp: 15,
+            base_armor: 1,
             ranged_range: 7,
+            resistances: {"physical": "resistant"},
             loot_table: [
                 (item: "Arrow", spawn_chance: 0.85, count_min: 5, count_max: 12),
             ],
@@ -129,209 +264,179 @@
             vision: 6,
             sprite: "sprites/monsters/orc.png",
             damage: "1d6+1",
-            base_hp: 35,
+            base_hp: 30,
             base_armor: 1,
+            resistances: {"physical": "resistant"},
+            // Slow Strike: ApplySlow 3 turns, 30% chance (orphaned)
+            on_hit_effects: [
+                ApplySlow(duration: 3, chance: 30),
+            ],
             faction_tag: "undead",
-            role: "brute",
+            role: "melee_guard",
         ),
         "Wraith": (
             name: "Wraith",
             vision: 14,
             sprite: "sprites/monsters/goblin.png",
-            damage: "1d6",
-            damage_type: "necrotic",
-            base_hp: 25,
-            resistances: {"physical": "resistant"},
-            faction_tag: "undead",
-            role: "melee_guard",
-        ),
-        "Lich Apprentice": (
-            name: "Lich Apprentice",
-            vision: 12,
-            sprite: "sprites/monsters/goblin.png",
-            damage: "1d4",
-            base_hp: 22,
-            mana: 70,
-            spells: ["magic_missile", "heal_self"],
-            loot_table: [
-                (item: "Tome of Magic Missile", spawn_chance: 0.30),
-            ],
-            faction_tag: "undead",
-            role: "caster",
-        ),
-
-        // ==================== ORCISH (Floors 8-16) ====================
-
-        "Orc": (
-            name: "Orc",
-            vision: 10,
-            sprite: "sprites/monsters/orc.png",
-            damage: "1d6+1",
-            base_hp: 25,
-            regen: 20,
-            loot_table: [
-                (item: "Iron Sword", spawn_chance: 0.15),
-                (item: "Healing Potion", spawn_chance: 0.25),
-            ],
-            faction_tag: "orc",
-            role: "melee_guard",
-        ),
-        "Orc Berserker": (
-            name: "Orc Berserker",
-            vision: 8,
-            sprite: "sprites/monsters/orc.png",
-            damage: "1d8+2",
-            base_hp: 35,
-            mana: 40,
-            spells: ["enrage"],
-            loot_table: [
-                (item: "Iron Sword", spawn_chance: 0.20),
-            ],
-            faction_tag: "orc",
-            role: "brute",
-        ),
-        "Orc Shaman": (
-            name: "Orc Shaman",
-            vision: 12,
-            sprite: "sprites/monsters/orc.png",
-            damage: "1d4+1",
-            base_hp: 28,
-            mana: 70,
-            spells: ["magic_missile", "fire_dart", "heal_self"],
-            loot_table: [
-                (item: "Healing Potion", spawn_chance: 0.30),
-            ],
-            faction_tag: "orc",
-            role: "caster",
-        ),
-        "Orc Warlord": (
-            name: "Orc Warlord",
-            vision: 12,
-            sprite: "sprites/monsters/orc.png",
-            damage: "1d10+2",
-            base_hp: 45,
-            mana: 50,
-            base_armor: 2,
-            spells: ["battle_hymn"],
-            loot_table: [
-                (item: "Iron Sword", spawn_chance: 0.25),
-                (item: "Healing Potion", spawn_chance: 0.40),
-            ],
-            faction_tag: "orc",
-            role: "leader",
-        ),
-
-        // ==================== DEMONIC (Floors 12-20) ====================
-
-        "Imp": (
-            name: "Imp",
-            vision: 12,
-            sprite: "sprites/monsters/goblin.png",
-            damage: "1d4",
-            damage_type: "fire",
-            base_hp: 18,
-            mana: 60,
-            resistances: {"fire": "immune"},
-            spells: ["fire_dart", "spark"],
-            faction_tag: "demon",
-            role: "caster",
-        ),
-        "Hell Hound": (
-            name: "Hell Hound",
-            vision: 14,
-            sprite: "sprites/monsters/rat.png",
-            damage: "1d8+1",
-            damage_type: "fire",
-            base_hp: 35,
-            resistances: {"fire": "immune"},
-            faction_tag: "demon",
-            role: "brute",
-        ),
-        "Shadow Fiend": (
-            name: "Shadow Fiend",
-            vision: 14,
-            sprite: "sprites/monsters/goblin.png",
             damage: "1d8",
             damage_type: "necrotic",
-            base_hp: 40,
-            mana: 70,
-            resistances: {"necrotic": "resistant", "physical": "resistant"},
-            spells: ["shadow_bolt", "mana_drain"],
-            faction_tag: "demon",
+            base_hp: 20,
+            resistances: {"physical": "resistant", "necrotic": "immune"},
+            // Life Drain: heal % of damage dealt (needs code change)
+            // Terrify: enemies in radius 2 deal -25% damage (needs new handler)
+            on_hit_effects: [
+                LifeDrain(amount: 3, chance: 100),
+            ],
+            faction_tag: "undead",
             role: "melee_guard",
         ),
+        "Necromancer": (
+            name: "Necromancer",
+            vision: 12,
+            sprite: "sprites/monsters/goblin.png",
+            damage: "1d4",
+            base_hp: 28,
+            base_armor: 1,
+            mana: 100,
+            resistances: {"physical": "resistant"},
+            // Terrify: enemies in radius 2 deal -25% damage (needs new handler)
+            // Spells: summon_undead + debuff TBD, using existing spells for now
+            spells: ["shadow_bolt", "slow", "heal_self"],
+            faction_tag: "undead",
+            role: "caster",
+        ),
 
-        // ==================== GIANT (Floors 14-22) ====================
+        // ==================== GIANTS (Floors 11-17) ====================
 
         "Ogre": (
             name: "Ogre",
             vision: 8,
             sprite: "sprites/monsters/orc.png",
-            damage: "2d6+2",
-            base_hp: 50,
-            base_armor: 1,
-            faction_tag: "giant",
-            role: "brute",
-        ),
-        "Ogre Mage": (
-            name: "Ogre Mage",
-            vision: 12,
-            sprite: "sprites/monsters/orc.png",
-            damage: "1d8+1",
+            damage: "2d6+1",
             base_hp: 45,
-            mana: 70,
-            spells: ["lightning_bolt", "fire_dart", "vampiric_strike"],
+            base_armor: 3,
+            // Knockback: 2 tiles, 40% chance (orphaned)
+            // Stunning Blow: stun 1 turn, 20% chance (orphaned)
+            on_hit_effects: [
+                Knockback(distance: 2, chance: 40),
+                ApplyStun(duration: 1, chance: 20),
+            ],
             faction_tag: "giant",
-            role: "caster",
+            role: "melee_guard",
         ),
         "Troll": (
             name: "Troll",
             vision: 8,
             sprite: "sprites/monsters/orc.png",
-            damage: "2d6+1",
-            base_hp: 55,
-            regen: 3,
-            base_armor: 1,
-            resistances: {"fire": "weak"},
-            faction_tag: "giant",
-            role: "brute",
-        ),
-
-        // ==================== DARK (Floors 18-26) ====================
-
-        "Vampire": (
-            name: "Vampire",
-            vision: 14,
-            sprite: "sprites/monsters/goblin.png",
-            damage: "1d8+1",
-            damage_type: "necrotic",
+            damage: "1d8+2",
             base_hp: 40,
-            mana: 60,
-            resistances: {"necrotic": "immune"},
-            on_hit_effects: [
-                LifeDrain(amount: 3, chance: 50),
-            ],
-            spells: ["vampiric_strike", "heal_self"],
-            faction_tag: "dark",
-            role: "leader",
+            base_armor: 2,
+            regen: 3,
+            resistances: {"fire": "weak"},
+            // Enrage: +50% damage below 40% HP (orphaned)
+            enrage_on_hit: Some(40),
+            faction_tag: "giant",
+            role: "melee_guard",
         ),
-        "Dark Knight": (
-            name: "Dark Knight",
+        "Ogre Mage": (
+            name: "Ogre Mage",
+            vision: 12,
+            sprite: "sprites/monsters/orc.png",
+            damage: "1d6",
+            base_hp: 35,
+            base_armor: 1,
+            mana: 80,
+            spells: ["lightning_bolt", "fireball", "heal_self"],
+            faction_tag: "giant",
+            role: "caster",
+        ),
+        "Hill Giant": (
+            name: "Hill Giant",
             vision: 10,
             sprite: "sprites/monsters/orc.png",
-            damage: "2d6+3",
-            base_hp: 55,
-            base_armor: 4,
-            resistances: {"necrotic": "resistant"},
-            loot_table: [
-                (item: "Iron Sword", spawn_chance: 0.30),
-            ],
-            on_hit_effects: [
-                Disarm(duration: 3, chance: 25),
-            ],
+            damage: "2d8+2",
+            base_hp: 60,
+            base_armor: 5,
+            // Rough Body: reflect 2 damage to melee attackers (orphaned)
             thorn_aura: Some(2),
-            faction_tag: "dark",
-            role: "brute",
+            // Rally: allies in radius 3 get +2 armor (needs new handler)
+            // Knockback: 2 tiles, 40% chance (orphaned)
+            on_hit_effects: [
+                Knockback(distance: 2, chance: 40),
+            ],
+            faction_tag: "giant",
+            role: "leader",
+        ),
+
+        // ==================== DRAGONS (Floors 15-20) ====================
+
+        "Drake": (
+            name: "Drake",
+            vision: 12,
+            sprite: "sprites/monsters/orc.png",
+            damage: "1d10+2",
+            base_hp: 45,
+            base_armor: 5,
+            resistances: {"fire": "immune"},
+            // Burning Strike: ApplyBurning 2/turn, 3 turns, 40% chance (orphaned)
+            on_hit_effects: [
+                ApplyBurning(damage_per_turn: 2, duration: 3, chance: 40),
+            ],
+            faction_tag: "dragon",
+            role: "melee_guard",
+        ),
+        "Wyrm": (
+            name: "Wyrm",
+            vision: 14,
+            sprite: "sprites/monsters/orc.png",
+            damage: "1d8+1",
+            damage_type: "fire",
+            base_hp: 35,
+            base_armor: 3,
+            ranged_range: 5,
+            resistances: {"fire": "immune"},
+            // Burning Strike on melee: ApplyBurning 2/turn, 3 turns, 40% chance (orphaned)
+            on_hit_effects: [
+                ApplyBurning(damage_per_turn: 2, duration: 3, chance: 40),
+            ],
+            faction_tag: "dragon",
+            role: "ranged",
+        ),
+        "Dragon Priest": (
+            name: "Dragon Priest",
+            vision: 14,
+            sprite: "sprites/monsters/goblin.png",
+            damage: "1d6",
+            base_hp: 30,
+            base_armor: 2,
+            mana: 90,
+            resistances: {"fire": "immune"},
+            // Terrify: enemies in radius 2 deal -25% damage (needs new handler)
+            spells: ["fireball", "chain_lightning", "heal_self", "spirit_shield"],
+            faction_tag: "dragon",
+            role: "caster",
+        ),
+        "Elder Drake": (
+            name: "Elder Drake",
+            vision: 14,
+            sprite: "sprites/monsters/orc.png",
+            damage: "2d8+3",
+            damage_type: "fire",
+            base_hp: 70,
+            base_armor: 7,
+            ranged_range: 4,
+            mana: 60,
+            resistances: {"fire": "immune"},
+            // War Cry: allies in radius 3 get +50% damage for 4 turns (needs new handler)
+            // Rough Body: reflect 2 damage (orphaned)
+            thorn_aura: Some(2),
+            // Burning Strike on melee: ApplyBurning 2/turn, 3 turns, 40% (orphaned)
+            on_hit_effects: [
+                ApplyBurning(damage_per_turn: 2, duration: 3, chance: 40),
+            ],
+            spells: ["enrage", "fire_dart"],
+            faction_tag: "dragon",
+            role: "leader",
         ),
 
         // ==================== BOSS ====================
@@ -347,7 +452,6 @@
             base_armor: 3,
             regen: 5,
             spells: ["shadow_bolt", "mana_drain", "heal_self", "chain_lightning", "spirit_shield", "death_coil", "enrage"],
-            summon_on_death: Some(("Wraith", 2)),
             is_boss: true,
         ),
     }
