@@ -9,19 +9,17 @@ use crate::{
         PropManifest, PropManifestHandle, PropSpriteAssets,
     },
     components::{
-        Ammo, Collider, FinalBoss, FloorEntityMarker, GameEntityMarker, Monster, Name, Position, Prop, Viewshed, Item,
+        Ammo, Collider, Faction, FactionKind, FinalBoss, FloorEntityMarker, GameEntityMarker, Monster, Name, Position, Prop, Viewshed, Item,
     },
     constants::{TILE_SIZE_X, TILE_SIZE_Y, Z_MONSTER, Z_ITEM},
     game::{
         MonsterAI, TurnManager,
-        abilities::{BaseArmor, Cowardly, Faction, FactionKind, OnHitEffects},
         actions::SpeedStats,
         combat::{Damage, DamageType, DamageTypeTag, Health, HealthRegen, Resistances, ResistanceLevel},
         items::{ItemProperties, ItemStack, LootEntry, LootTable},
-        level::ExperienceReward,
         magic::{ActiveSpells, KnownSpells, ManaRegen, SpellCooldowns, MAX_SPELL_SLOTS},
         ranged::RangedCapable,
-        stats::{AttributeModifiers, Attributes, CombatStats, Level, Mana, MonsterBaseHealth},
+        stats::{Armor, Dodge, Mana},
     },
     map::map::GRID_SIZE,
 };
@@ -43,7 +41,7 @@ pub fn spawn_monster(
             spawn_point.y as f32 * GRID_SIZE.y,
             Z_MONSTER,
         ),
-        scale: Vec3::new(scale_x, scale_y, 1.0), // Use calculated scale
+        scale: Vec3::new(scale_x, scale_y, 1.0),
         ..Default::default()
     };
     let new_grid_pos = Position {
@@ -62,10 +60,6 @@ pub fn spawn_monster(
         return None;
     };
 
-    // Calculate XP reward: Base 10 + (Level * 5) + (Base HP / 2)
-    let xp_reward = 10 + (monster_asset.level * 5) + (monster_asset.base_hp / 2);
-
-    // Use multiple insert calls to avoid large tuple bundle limit (15)
     let monster_entity = commands
         .spawn((
             Monster,
@@ -76,33 +70,18 @@ pub fn spawn_monster(
             Collider,
             new_grid_pos,
             new_pos,
-            Viewshed::new(8), // Initial range; recalculated by stat_recalculation_system via PER
+            Viewshed::new(monster_asset.perception.max(2)),
             Faction(FactionKind::Monster),
         ))
         .insert((
             Health {
-                current: 10, // Initial value, recalculated by stats system
-                max: 10,
+                current: monster_asset.base_hp,
+                max: monster_asset.base_hp,
             },
             Damage(monster_asset.damage.clone()),
             SpeedStats::default(),
-            Attributes {
-                strength: monster_asset.strength,
-                dexterity: monster_asset.dexterity,
-                constitution: monster_asset.constitution,
-                agility: monster_asset.agility,
-                intelligence: monster_asset.intelligence,
-                perception: monster_asset.perception,
-            },
-            AttributeModifiers::default(),
-            Level {
-                value: monster_asset.level,
-            },
-            MonsterBaseHealth {
-                value: monster_asset.base_hp,
-            },
-            CombatStats::default(),
-            ExperienceReward(xp_reward),
+            Armor(monster_asset.base_armor),
+            Dodge(0),
         ))
         .insert((
             Sprite::from_atlas_image(
@@ -183,73 +162,6 @@ pub fn spawn_monster(
             map.insert(DamageType::from_str(dt_str), ResistanceLevel::from_str(rl_str));
         }
         commands.entity(monster_entity).insert(Resistances(map));
-    }
-
-    // Base armor
-    if monster_asset.base_armor > 0 {
-        commands.entity(monster_entity).insert(BaseArmor(monster_asset.base_armor));
-    }
-
-    // Cowardly flee behavior
-    if monster_asset.is_cowardly {
-        commands.entity(monster_entity).insert(Cowardly);
-    }
-
-    // On-hit effects
-    if !monster_asset.on_hit_effects.is_empty() {
-        commands.entity(monster_entity).insert(OnHitEffects(monster_asset.on_hit_effects.clone()));
-    }
-
-    // Explode on death
-    if let Some((radius, damage)) = monster_asset.explode_on_death {
-        commands.entity(monster_entity).insert(
-            crate::game::abilities::ExplodeOnDeath { radius, damage },
-        );
-    }
-
-    // Reanimate
-    if let Some(revive_hp) = monster_asset.reanimate_hp {
-        commands.entity(monster_entity).insert(
-            crate::game::abilities::Reanimate { revive_hp },
-        );
-    }
-
-    // Poison body
-    if let Some(stacks) = monster_asset.poison_body {
-        commands.entity(monster_entity).insert(
-            crate::game::abilities::PoisonBody { stacks },
-        );
-    }
-
-    // Thorn aura
-    if let Some(damage) = monster_asset.thorn_aura {
-        commands.entity(monster_entity).insert(
-            crate::game::abilities::ThornAura { damage },
-        );
-    }
-
-    // Enrage on hit
-    if let Some(threshold_percent) = monster_asset.enrage_on_hit {
-        commands.entity(monster_entity).insert(
-            crate::game::abilities::EnrageOnHit { threshold_percent },
-        );
-    }
-
-    // Death curse
-    if let Some(ref effect) = monster_asset.death_curse {
-        commands.entity(monster_entity).insert(
-            crate::game::abilities::DeathCurse { effect: effect.clone() },
-        );
-    }
-
-    // Summon on death
-    if let Some((ref monster_name, count)) = monster_asset.summon_on_death {
-        commands.entity(monster_entity).insert(
-            crate::game::abilities::SummonOnDeath {
-                monster_name: monster_name.clone(),
-                count,
-            },
-        );
     }
 
     // Boss marker + AI
@@ -356,12 +268,6 @@ pub fn spawn_item(
         damage: asset.damage.clone(),
         defense: asset.defense,
         rarity: asset.rarity.clone(),
-        str_bonus: asset.str_bonus,
-        dex_bonus: asset.dex_bonus,
-        con_bonus: asset.con_bonus,
-        agi_bonus: asset.agi_bonus,
-        int_bonus: asset.int_bonus,
-        per_bonus: asset.per_bonus,
         effect: asset.effect.clone(),
         weapon_range: asset.weapon_range,
     });

@@ -3,17 +3,13 @@ use bevy::prelude::*;
 use crate::assets::SpellRegistryHandle;
 use crate::components::{GameEntityMarker, Monster, Name, Position};
 use crate::constants::TILE_SIZE_X;
-use crate::game::abilities::{
-    BaseArmor, Cowardly, DeathCurse, DeathCurseEffect, EnrageOnHit, ExplodeOnDeath, OnHitEffect,
-    OnHitEffects, PoisonBody, Reanimate, SummonOnDeath, ThornAura,
-};
 use crate::game::actions::SpeedStats;
 use crate::game::camera::{MainCamera, UiCamera};
 use crate::game::combat::{Damage, Health, HealthRegen};
 use crate::game::magic::{
-    Burning, Disarmed, Enraged, Hasted, KnownSpells, Poisoned, Slowed, SpiritShielded, Stunned,
-    TimedModifiers,
+    Burning, Hasted, KnownSpells, Poisoned, Slowed, Stunned,
 };
+use crate::game::stats::Armor;
 use crate::game::spells::SpellRegistry;
 use crate::game::AppState;
 use crate::player::Player;
@@ -73,74 +69,7 @@ fn spawn_monster_info_panel(mut commands: Commands, q_ui_camera: Query<Entity, W
 
 }
 
-// --- Ability/Spell Description Helpers ---
-
-fn on_hit_effect_name(effect: &OnHitEffect) -> &'static str {
-    match effect {
-        OnHitEffect::ApplyPoison { .. } => "Poison on Hit",
-        OnHitEffect::ApplySlow { .. } => "Slow on Hit",
-        OnHitEffect::ApplyStun { .. } => "Stun on Hit",
-        OnHitEffect::AttributeDrain { .. } => "Attribute Drain",
-        OnHitEffect::LifeDrain { .. } => "Life Drain",
-        OnHitEffect::Knockback { .. } => "Knockback",
-        OnHitEffect::ApplyBurning { .. } => "Burning on Hit",
-        OnHitEffect::Disarm { .. } => "Disarm",
-    }
-}
-
-fn on_hit_effect_description(effect: &OnHitEffect) -> String {
-    match effect {
-        OnHitEffect::ApplyPoison {
-            damage_per_turn,
-            duration,
-            chance,
-        } => format!(
-            "{}% chance: Poison ({}/turn, {} turns)",
-            chance, damage_per_turn, duration
-        ),
-        OnHitEffect::ApplySlow { duration, chance } => {
-            format!("{}% chance: Slow for {} turns", chance, duration)
-        }
-        OnHitEffect::ApplyStun { duration, chance } => {
-            format!("{}% chance: Stun for {} turns", chance, duration)
-        }
-        OnHitEffect::AttributeDrain {
-            attribute,
-            amount,
-            duration,
-            chance,
-        } => format!(
-            "{}% chance: Drain {} {} for {} turns",
-            chance, attribute, amount, duration
-        ),
-        OnHitEffect::LifeDrain { amount, chance } => {
-            format!("{}% chance: Drain {} HP", chance, amount)
-        }
-        OnHitEffect::Knockback { distance, chance } => {
-            format!("{}% chance: Knockback {} tiles", chance, distance)
-        }
-        OnHitEffect::ApplyBurning {
-            damage_per_turn,
-            duration,
-            chance,
-        } => format!(
-            "{}% chance: Burn ({} fire/turn, {} turns)",
-            chance, damage_per_turn, duration
-        ),
-        OnHitEffect::Disarm { duration, chance } => {
-            format!("{}% chance: Disarm for {} turns", chance, duration)
-        }
-    }
-}
-
 // --- Update System ---
-
-/// Collected ability info for display.
-#[allow(dead_code)]
-struct AbilityEntry {
-    name: String,
-    description: String,
-}
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_monster_info_panel(
@@ -152,7 +81,6 @@ fn update_monster_info_panel(
         With<MonsterInfoPanel>,
     >,
     q_content: Query<Entity, With<MonsterInfoContent>>,
-    // Split into two queries to stay under Bevy's 15-element tuple limit:
     // Query 1: base stats + hover detection
     q_base: Query<
         (
@@ -162,24 +90,13 @@ fn update_monster_info_panel(
             Option<&HealthRegen>,
             &Damage,
             Option<&SpeedStats>,
-            Option<&BaseArmor>,
+            Option<&Armor>,
             &InheritedVisibility,
         ),
         Or<(With<Monster>, With<Player>)>,
     >,
-    // Query 2: ability components (looked up by entity after focus is determined)
-    q_abilities: Query<(
-        Option<&Cowardly>,
-        Option<&OnHitEffects>,
-        Option<&ExplodeOnDeath>,
-        Option<&Reanimate>,
-        Option<&PoisonBody>,
-        Option<&ThornAura>,
-        Option<&EnrageOnHit>,
-        Option<&DeathCurse>,
-        Option<&SummonOnDeath>,
-        Option<&KnownSpells>,
-    )>,
+    // Query 2: spells (looked up by entity after focus is determined)
+    q_spells: Query<Option<&KnownSpells>>,
     // Query 3: active status effects (looked up by entity after focus is determined)
     q_statuses: Query<(
         Option<&Poisoned>,
@@ -187,10 +104,6 @@ fn update_monster_info_panel(
         Option<&Slowed>,
         Option<&Hasted>,
         Option<&Stunned>,
-        Option<&Enraged>,
-        Option<&Disarmed>,
-        Option<&SpiritShielded>,
-        Option<&TimedModifiers>,
     )>,
     nearby_state: Res<NearbyState>,
     pos_query: Query<(Entity, &Position), Or<(With<Monster>, With<Player>)>>,
@@ -275,7 +188,7 @@ fn update_monster_info_panel(
         return;
     };
 
-    let Ok((_, name, health, regen, damage, speed_stats, base_armor, _)) = q_base.get(entity)
+    let Ok((_, name, health, regen, damage, speed_stats, armor, _)) = q_base.get(entity)
     else {
         *panel_visibility = Visibility::Hidden;
         panel_node.display = Display::None;
@@ -314,102 +227,12 @@ fn update_monster_info_panel(
     let regen_rate = regen.map(|r| r.regen_rate);
     let damage_str = damage.0.clone();
     let speed_delay = speed_stats.map(|s| s.delay);
-    let armor_val = base_armor.map(|a| a.0).unwrap_or(0);
+    let armor_val = armor.map(|a| a.0).unwrap_or(0);
 
-    // Collect abilities
-    let mut ability_entries: Vec<AbilityEntry> = Vec::new();
+    // Collect spells
     let mut spell_entries: Vec<(String, String)> = Vec::new();
 
-    if let Ok((
-        cowardly,
-        on_hit_effects,
-        explode_on_death,
-        reanimate,
-        poison_body,
-        thorn_aura,
-        enrage_on_hit,
-        death_curse,
-        summon_on_death,
-        known_spells,
-    )) = q_abilities.get(entity)
-    {
-        if cowardly.is_some() {
-            ability_entries.push(AbilityEntry {
-                name: "Cowardly".into(),
-                description: "Flees when below 50% HP".into(),
-            });
-        }
-        if let Some(effects) = on_hit_effects {
-            for effect in &effects.0 {
-                ability_entries.push(AbilityEntry {
-                    name: on_hit_effect_name(effect).to_string(),
-                    description: on_hit_effect_description(effect),
-                });
-            }
-        }
-        if let Some(e) = explode_on_death {
-            ability_entries.push(AbilityEntry {
-                name: "Explode on Death".into(),
-                description: format!(
-                    "Deals {} fire damage in {}-tile radius on death",
-                    e.damage, e.radius
-                ),
-            });
-        }
-        if let Some(r) = reanimate {
-            ability_entries.push(AbilityEntry {
-                name: "Reanimate".into(),
-                description: format!("Revives once with {} HP after death", r.revive_hp),
-            });
-        }
-        if let Some(p) = poison_body {
-            ability_entries.push(AbilityEntry {
-                name: "Poison Body".into(),
-                description: format!("Poisons melee attackers ({} dmg/turn)", p.stacks),
-            });
-        }
-        if let Some(t) = thorn_aura {
-            ability_entries.push(AbilityEntry {
-                name: "Thorn Aura".into(),
-                description: format!("Reflects {} damage to melee attackers", t.damage),
-            });
-        }
-        if let Some(e) = enrage_on_hit {
-            ability_entries.push(AbilityEntry {
-                name: "Berserk".into(),
-                description: format!("Enrages at {}% HP (+50% damage)", e.threshold_percent),
-            });
-        }
-        if let Some(dc) = death_curse {
-            let desc = match &dc.effect {
-                DeathCurseEffect::Slow { duration } => {
-                    format!("Curses killer with Slow for {} turns on death", duration)
-                }
-                DeathCurseEffect::Poison {
-                    damage_per_turn,
-                    duration,
-                } => format!(
-                    "Curses killer with Poison ({}/turn, {} turns) on death",
-                    damage_per_turn, duration
-                ),
-                DeathCurseEffect::WeakenStr { amount, duration } => format!(
-                    "Weakens killer's strength by {} for {} turns on death",
-                    amount, duration
-                ),
-            };
-            ability_entries.push(AbilityEntry {
-                name: "Death Curse".into(),
-                description: desc,
-            });
-        }
-        if let Some(s) = summon_on_death {
-            ability_entries.push(AbilityEntry {
-                name: "Summon on Death".into(),
-                description: format!("Summons {} {} on death", s.count, s.monster_name),
-            });
-        }
-
-        // Spells
+    if let Ok(known_spells) = q_spells.get(entity) {
         if let Some(spells) = known_spells {
             let registry = spell_registry_handle
                 .as_ref()
@@ -431,9 +254,9 @@ fn update_monster_info_panel(
     }
 
     // Collect active status effects
-    let status_effects = if let Ok((poisoned, burning, slowed, hasted, stunned, enraged, disarmed, spirit_shielded, timed_modifiers)) = q_statuses.get(entity) {
+    let status_effects = if let Ok((poisoned, burning, slowed, hasted, stunned)) = q_statuses.get(entity) {
         crate::ui::collect_status_effects(
-            poisoned, burning, slowed, hasted, stunned, enraged, disarmed, spirit_shielded, timed_modifiers,
+            poisoned, burning, slowed, hasted, stunned,
         )
     } else {
         Vec::new()
@@ -510,38 +333,6 @@ fn update_monster_info_panel(
                 },
                 TextColor(Color::srgb(0.7, 0.7, 0.9)),
             ));
-        }
-
-        // Abilities
-        if !ability_entries.is_empty() {
-            parent.spawn((
-                Text::new("Abilities:"),
-                TextFont {
-                    font: font.clone(),
-                    font_size: 13.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(1.0, 0.85, 0.3)),
-                Node {
-                    margin: UiRect::top(Val::Px(4.0)),
-                    ..default()
-                },
-            ));
-            for entry in &ability_entries {
-                parent.spawn((
-                    Text::new(format!("- {}", entry.description)),
-                    TextFont {
-                        font: font.clone(),
-                        font_size: 11.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.85, 0.85, 0.85)),
-                    Node {
-                        padding: UiRect::left(Val::Px(8.0)),
-                        ..default()
-                    },
-                ));
-            }
         }
 
         // Spells

@@ -10,7 +10,7 @@ use bevy::{
 };
 use bracket_lib::prelude::{Algorithm2D, Point, field_of_view};
 
-use crate::game::magic::{Enraged, Stunned};
+use crate::game::magic::Stunned;
 use crate::map::map::GRID_SIZE;
 use crate::{
     components::{InInventory, Item, Monster, Position, Prop, Viewshed},
@@ -86,14 +86,12 @@ pub fn update_item_visibility(
 }
 
 /// Tints monster sprites based on active status effects.
-/// Priority: Enraged (red) > Stunned (yellow) > default (white).
+/// Priority: Stunned (yellow) > default (white).
 pub fn update_status_visuals(
-    mut query: Query<(Option<&Enraged>, Option<&Stunned>, &mut Sprite), With<Monster>>,
+    mut query: Query<(Option<&Stunned>, &mut Sprite), With<Monster>>,
 ) {
-    for (enraged, stunned, mut sprite) in &mut query {
-        if enraged.is_some() {
-            sprite.color = bevy::prelude::Color::srgba(1.0, 0.4, 0.4, 1.0);
-        } else if stunned.is_some() {
+    for (stunned, mut sprite) in &mut query {
+        if stunned.is_some() {
             sprite.color = bevy::prelude::Color::srgba(1.0, 1.0, 0.3, 1.0);
         } else {
             sprite.color = bevy::prelude::Color::WHITE;

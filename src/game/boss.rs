@@ -4,10 +4,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     components::FinalBoss,
     game::{
-        abilities::{BaseArmor, ThornAura},
         combat::{DamageType, Health, Resistances, ResistanceLevel},
         magic::{ActiveSpells, KnownSpells},
-        stats::{Attributes, MonsterBaseHealth},
+        stats::Armor,
         turns::TurnEndEvent,
         TurnManager,
     },
@@ -67,15 +66,14 @@ impl Plugin for BossPlugin {
 // --- Systems ---
 
 /// When a FinalBoss entity is first spawned, apply all accumulated TyrantPower
-/// tier boosts. Modifies MonsterBaseHealth and Attributes so that the existing
-/// stat_recalculation_system handles HP/mana properly.
+/// tier boosts. Modifies Health and Armor directly.
 fn apply_tyrant_power_on_spawn(
     tyrant_power: Res<TyrantPower>,
     mut query: Query<
         (
             Entity,
-            &mut MonsterBaseHealth,
-            &mut Attributes,
+            &mut Health,
+            &mut Armor,
             Option<&mut Resistances>,
             Option<&mut KnownSpells>,
             Option<&mut ActiveSpells>,
@@ -84,7 +82,7 @@ fn apply_tyrant_power_on_spawn(
     >,
     mut commands: Commands,
 ) {
-    for (entity, mut base_hp, mut attrs, resistances, mut known_spells, mut active_spells) in
+    for (entity, mut health, mut armor, resistances, mut known_spells, mut active_spells) in
         query.iter_mut()
     {
         if tyrant_power.tier == 0 {
@@ -93,21 +91,17 @@ fn apply_tyrant_power_on_spawn(
 
         let mut cumulative_hp = 0;
         let mut cumulative_armor_bonus = 0;
-        let mut has_thorn = false;
         let mut spells_to_add: Vec<&str> = Vec::new();
         let mut resistance_map: std::collections::HashMap<DamageType, ResistanceLevel> =
             std::collections::HashMap::new();
 
         for tier in 1..=tyrant_power.tier {
-            // +1 INT per tier
-            attrs.intelligence += 1;
-
             // HP boost
             cumulative_hp += if tier == 5 { 20 } else { 15 };
 
             match tier {
                 1 => {
-                    has_thorn = true;
+                    // Tier 1: just HP boost
                 }
                 2 => {
                     spells_to_add.push("fireball");
@@ -129,20 +123,13 @@ fn apply_tyrant_power_on_spawn(
             }
         }
 
-        // Apply HP boost to base health (stat recalc will compute final max)
-        base_hp.value += cumulative_hp;
-
-        // Apply thorn aura
-        if has_thorn {
-            commands.entity(entity).insert(ThornAura { damage: 3 });
-        }
+        // Apply HP boost directly
+        health.max += cumulative_hp;
+        health.current += cumulative_hp;
 
         // Apply armor boost
         if cumulative_armor_bonus > 0 {
-            // Base armor from monsters.ron is 3, add the tier bonus
-            commands
-                .entity(entity)
-                .insert(BaseArmor(3 + cumulative_armor_bonus));
+            armor.0 += cumulative_armor_bonus;
         }
 
         // Apply resistances
@@ -174,10 +161,9 @@ fn apply_tyrant_power_on_spawn(
         }
 
         info!(
-            "Applied TyrantPower tier {} to The Veiled Tyrant: +{} base HP, +{} INT, +{} armor",
+            "Applied TyrantPower tier {} to The Veiled Tyrant: +{} base HP, +{} armor",
             tyrant_power.tier,
             cumulative_hp,
-            tyrant_power.tier,
             cumulative_armor_bonus,
         );
     }
@@ -194,7 +180,7 @@ fn tyrant_escalation_system(
         (
             Entity,
             &mut Health,
-            &mut Attributes,
+            &mut Armor,
             Option<&mut Resistances>,
             Option<&mut KnownSpells>,
             Option<&mut ActiveSpells>,
@@ -228,20 +214,17 @@ fn tyrant_escalation_system(
         log_writer.write(GameLogMessage(warning.to_string()));
 
         // If the boss is already spawned on the current floor, apply the single tier now
-        if let Ok((entity, mut health, mut attrs, resistances, known_spells, active_spells)) =
+        if let Ok((entity, mut health, mut armor, resistances, known_spells, active_spells)) =
             boss_query.single_mut()
         {
-            // +1 INT
-            attrs.intelligence += 1;
-
-            // HP boost (direct, since stat recalc already ran)
+            // HP boost
             let hp_boost = if tier == 5 { 20 } else { 15 };
             health.max += hp_boost;
             health.current += hp_boost;
 
             match tier {
                 1 => {
-                    commands.entity(entity).insert(ThornAura { damage: 3 });
+                    // Tier 1: just HP boost
                 }
                 2 => {
                     add_spell("fireball", known_spells, active_spells);
@@ -259,7 +242,7 @@ fn tyrant_escalation_system(
                     add_spell("haste", known_spells, active_spells);
                 }
                 5 => {
-                    commands.entity(entity).insert(BaseArmor(5));
+                    armor.0 += 2;
                     if let Some(mut res) = resistances {
                         res.0.insert(DamageType::Necrotic, ResistanceLevel::Resistant);
                     } else {
@@ -269,9 +252,7 @@ fn tyrant_escalation_system(
                     }
                 }
                 t if t >= 6 => {
-                    commands
-                        .entity(entity)
-                        .insert(BaseArmor(3 + 2 + (t - 5) as i32));
+                    armor.0 += 1;
                 }
                 _ => {}
             }

@@ -1,15 +1,14 @@
 use crate::{
     assets::SpellRegistryHandle,
-    components::{Position, Viewshed},
+    components::{Faction, FactionKind, Position, Viewshed},
     game::{
-        abilities::{Faction, FactionKind},
         actions::{Direction, MovementIntent, RangedAttackIntent, WaitIntent},
         boss::BossAI,
         combat::Health,
         magic::{ActiveSpells, CastSpellMessage, Hasted, Poisoned, Slowed, SpellCooldowns},
         ranged::RangedCapable,
         spells::{SpellEffect, SpellRegistry, SpellTarget},
-        stats::{CombatStats, Mana},
+        stats::Mana,
     },
     map::{Map, tile::is_walkable},
     player::Player,
@@ -185,59 +184,6 @@ impl MonsterAI {
                 if is_player_visible {
                     self.mode = MonsterAIMode::Hunting;
                 }
-            }
-        }
-
-        // --- STEP 2.4: COWARDLY FLEE ---
-        // Cowardly monsters flee when hurt. Squad members use the group's collective
-        // HP ratio against the squad's flee_threshold; solo monsters flee below 50%.
-        if world.get::<crate::game::abilities::Cowardly>(entity).is_some() {
-            let should_flee = if let Some(squad_id) = world.get::<crate::game::squad::SquadId>(entity) {
-                let threshold = world
-                    .get::<crate::game::squad::SquadConfig>(entity)
-                    .map(|c| c.flee_threshold)
-                    .unwrap_or(0.5);
-                let (current, max) = crate::game::squad::compute_squad_hp(*squad_id, world);
-                max > 0 && (current as f32 / max as f32) < threshold
-            } else {
-                let health = world.get::<Health>(entity);
-                health.map_or(false, |h| h.current < h.max / 2)
-            };
-            if should_flee {
-                // Greedy flee: pick adjacent walkable tile furthest from player
-                let map = world.resource::<Map>();
-                let mut best_dir: Option<Direction> = None;
-                let mut best_dist: f32 = -1.0;
-
-                for dir in Direction::ALL {
-                    let target_pos = monster_pos + dir.offset();
-                    if map.in_bounds(target_pos)
-                        && is_walkable(map.tiles[map.xy_idx(target_pos.x, target_pos.y)])
-                    {
-                        let dist = DistanceAlg::Pythagoras.distance2d(target_pos, player_point);
-                        if dist > best_dist {
-                            best_dist = dist;
-                            best_dir = Some(dir);
-                        }
-                    }
-                }
-
-                if let Some(dir) = best_dir {
-                    let current_dist = DistanceAlg::Pythagoras.distance2d(monster_pos, player_point);
-                    // Only flee if the best tile is actually further away
-                    if best_dist > current_dist {
-                        let name = world
-                            .get::<crate::components::Name>(entity)
-                            .map(|n| n.0.clone())
-                            .unwrap_or_else(|| "Something".to_string());
-                        world.write_message(crate::ui::game_log::GameLogMessage(format!(
-                            "{} squeaks in fear and flees!", name
-                        )));
-                        world.write_message(MovementIntent { entity, dir });
-                        return;
-                    }
-                }
-                // Cornered: fall through to normal attack logic
             }
         }
 
@@ -561,16 +507,12 @@ fn choose_spell(
     // Boss phase filtering: if the caster has BossAI, only allow spells up to the current phase.
     let boss_phase = world.get::<BossAI>(caster).map(|b| b.phase);
 
-    let (active_slots, cooldowns, mana_current, caster_hp, caster_max_hp, int_bonus) = {
+    let (active_slots, cooldowns, mana_current, caster_hp, caster_max_hp) = {
         let active = world.get::<ActiveSpells>(caster)?;
         let cooldowns = world.get::<SpellCooldowns>(caster).cloned().unwrap_or_default();
         let mana = world.get::<Mana>(caster).map(|m| m.current).unwrap_or(0);
         let hp = world.get::<Health>(caster).map(|h| (h.current, h.max)).unwrap_or((1, 1));
-        let int_bonus = world
-            .get::<CombatStats>(caster)
-            .map(|s| s.intelligence_bonus)
-            .unwrap_or(0);
-        (active.slots.clone(), cooldowns, mana, hp.0, hp.1, int_bonus)
+        (active.slots.clone(), cooldowns, mana, hp.0, hp.1)
     };
 
     let caster_has_haste = world.get::<Hasted>(caster).is_some();
@@ -718,7 +660,7 @@ fn choose_spell(
                 SpellEffect::Damage { dice, int_scaling } => {
                     if let Some(enemy) = primary_target.filter(|e| caster_faction.is_hostile_to(&e.faction)) {
                         let avg = avg_dice(dice);
-                        let bonus = if *int_scaling { int_bonus } else { 0 };
+                        let bonus = 0;
                         let damage = (avg + bonus).max(1).min(enemy.hp_current);
                         raw += damage;
                         target = target.or(Some(enemy.entity));
@@ -726,7 +668,7 @@ fn choose_spell(
                 }
                 SpellEffect::Heal { dice, int_scaling } => {
                     let avg = avg_dice(dice);
-                    let bonus = if *int_scaling { int_bonus } else { 0 };
+                    let bonus = 0;
                     let heal = (avg + bonus).max(1);
 
                     // Score depends on who we're healing
@@ -753,7 +695,7 @@ fn choose_spell(
                     if let Some(enemy) = primary_target.filter(|e| caster_faction.is_hostile_to(&e.faction)) {
                         let center = enemy.pos;
                         let avg = avg_dice(dice);
-                        let bonus = if *int_scaling { int_bonus } else { 0 };
+                        let bonus = 0;
                         let single_damage = (avg + bonus).max(1);
 
                         let mut enemy_count = 1i32; // The target enemy itself
@@ -792,7 +734,7 @@ fn choose_spell(
                 } => {
                     if let Some(enemy) = primary_target.filter(|e| caster_faction.is_hostile_to(&e.faction)) {
                         let avg = avg_dice(dice);
-                        let bonus = if *int_scaling { int_bonus } else { 0 };
+                        let bonus = 0;
                         let primary_damage = (avg + bonus).max(1).min(enemy.hp_current);
                         let jump_damage = 4; // ~1d6 average
                         let mut jump_targets = 0i32;
@@ -853,11 +795,10 @@ fn choose_spell(
                         target = target.or(Some(enemy.entity));
                     }
                 }
-                SpellEffect::DrainMana { amount, int_scaling } => {
+                SpellEffect::DrainMana { amount, .. } => {
                     if let Some(enemy) = primary_target.filter(|e| caster_faction.is_hostile_to(&e.faction)) {
                         if enemy.mana_current <= 0 { continue; }
-                        let bonus = if *int_scaling { int_bonus } else { 0 };
-                        let drain = (*amount + bonus).max(0).min(enemy.mana_current);
+                        let drain = (*amount).max(0).min(enemy.mana_current);
                         raw += drain;
                         target = target.or(Some(enemy.entity));
                     }

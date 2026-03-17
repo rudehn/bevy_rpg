@@ -11,7 +11,7 @@ use crate::{
         combat::{ApplyDamageMessage, DamageSource, DamageType, GameRng, HealMessage},
         particles::{ParticleRequest, damage_type_color, grid_to_world_center},
         spells::{SpellEffect, SpellRegistry, roll_dice_expr},
-        stats::{AttributeModifiers, CombatStats, Mana, sync_action_speed_system},
+        stats::Mana,
         turns::TurnEndEvent,
         AppState,
     },
@@ -30,7 +30,7 @@ pub struct KnownSpells {
     pub spells: Vec<String>,
 }
 
-/// Active spell slot assignments (index 0 = key 1, …, 5 = key 6).
+/// Active spell slot assignments (index 0 = key 1, ..., 5 = key 6).
 /// Always `MAX_SPELL_SLOTS` long; unused entries are None.
 #[derive(Component, Debug, Clone, Reflect, Default, Serialize, Deserialize)]
 #[reflect(Component)]
@@ -49,7 +49,7 @@ impl ActiveSpells {
 }
 
 /// Counter-based mana regeneration. Every `turns_between_regen` turns, the entity
-/// regenerates `1 + (INT_bonus / 5)` mana. INT breakpoints at 15 and 20.
+/// regenerates 1 mana.
 #[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
 #[reflect(Component)]
 pub struct ManaRegen {
@@ -90,30 +90,14 @@ impl SpellCooldowns {
     }
 }
 
-/// A single timed attribute modifier applied by a Buff or Debuff spell.
-/// Positive amount = buff, negative = debuff.
-#[derive(Debug, Clone, Reflect, Serialize, Deserialize)]
-pub struct TimedModifierEntry {
-    pub attribute: String,
-    pub amount: i32,
-    pub turns_remaining: u32,
-}
-
-/// Collection of all active timed modifiers on an entity.
-#[derive(Component, Debug, Clone, Reflect, Default, Serialize, Deserialize)]
-#[reflect(Component)]
-pub struct TimedModifiers {
-    pub entries: Vec<TimedModifierEntry>,
-}
-
-/// +50% speed (delay × 0.5) for N turns.
+/// +50% speed (delay x 0.5) for N turns.
 #[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
 #[reflect(Component)]
 pub struct Hasted {
     pub turns_remaining: u32,
 }
 
-/// -50% speed (delay × 1.5) for N turns.
+/// -50% speed (delay x 1.5) for N turns.
 #[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
 #[reflect(Component)]
 pub struct Slowed {
@@ -125,20 +109,6 @@ pub struct Slowed {
 #[reflect(Component)]
 pub struct Poisoned {
     pub damage_per_turn: i32,
-    pub turns_remaining: u32,
-}
-
-/// Damage taken from mana instead of HP for N turns.
-#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
-#[reflect(Component)]
-pub struct SpiritShielded {
-    pub turns_remaining: u32,
-}
-
-/// +50% damage multiplier for N turns. Applied by "enrage" spell.
-#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
-#[reflect(Component)]
-pub struct Enraged {
     pub turns_remaining: u32,
 }
 
@@ -157,23 +127,11 @@ pub struct Burning {
     pub turns_remaining: u32,
 }
 
-/// Disarmed: entity's damage bonus is zeroed for N turns.
-#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
-#[reflect(Component)]
-pub struct Disarmed {
-    pub turns_remaining: u32,
-}
-
 // =====================================================================
 // Messages
 // =====================================================================
 
-/// Cast the spell assigned to `slot` (0-based, maps to keys 1–6).
-/// `target` is always fully resolved by the caller before sending:
-/// - Damage spells → the enemy entity
-/// - Heal spells   → the resolved target (caster for Castor, ally for Ally, etc.)
-/// `target_pos` is used for tile-targeted spells (blink, AoE) where
-/// the effect is centered on a tile rather than an entity.
+/// Cast the spell assigned to `slot` (0-based, maps to keys 1-6).
 #[derive(Message, Debug)]
 pub struct CastSpellMessage {
     pub caster: Entity,
@@ -186,14 +144,13 @@ pub struct CastSpellMessage {
 // Spell Effect Handler
 // =====================================================================
 
-/// Pure effect executor — applies spell effects for any entity (player or monster).
-/// Target resolution is the caller's responsibility; this system just applies effects.
+/// Pure effect executor -- applies spell effects for any entity (player or monster).
 pub fn handle_cast_spell(
     mut commands: Commands,
     mut messages: MessageReader<CastSpellMessage>,
     spell_registry_handle: Res<SpellRegistryHandle>,
     spell_registries: Res<Assets<SpellRegistry>>,
-    caster_ro: Query<(&CombatStats, &ActiveSpells, Option<&Name>)>,
+    caster_ro: Query<(&ActiveSpells, Option<&Name>)>,
     mut caster_resources: Query<(&mut Mana, &mut SpellCooldowns)>,
     positions: Query<&Position>,
     mut log_writer: MessageWriter<GameLogMessage>,
@@ -215,7 +172,7 @@ pub fn handle_cast_spell(
         .collect();
 
     for (caster_entity, slot, target_entity, target_pos) in messages {
-        let Ok((stats, active_spells, caster_name)) = caster_ro.get(caster_entity) else {
+        let Ok((active_spells, caster_name)) = caster_ro.get(caster_entity) else {
             continue;
         };
 
@@ -241,7 +198,6 @@ pub fn handle_cast_spell(
         };
 
         let spell = spell.clone();
-        let int_bonus = stats.intelligence_bonus;
         let caster_label = caster_name
             .map(|n| n.0.clone())
             .unwrap_or_else(|| "Someone".to_string());
@@ -288,10 +244,9 @@ pub fn handle_cast_spell(
         // Apply each effect.
         for effect in &spell.effects {
             match effect {
-                SpellEffect::Damage { dice, int_scaling } => {
+                SpellEffect::Damage { dice, .. } => {
                     let roll = roll_dice_expr(&mut game_rng.0, dice);
-                    let bonus = if *int_scaling { int_bonus } else { 0 };
-                    let damage = (roll + bonus).max(1);
+                    let damage = roll.max(1);
                     damage_writer.write(ApplyDamageMessage {
                         attacker: caster_entity,
                         target: target_entity,
@@ -299,12 +254,11 @@ pub fn handle_cast_spell(
                         damage_type: spell_damage_type,
                         source: DamageSource::Spell,
                     });
-                    // Emit spell projectile particle
-                    if let (Ok(caster_pos), Ok(target_pos)) =
+                    if let (Ok(caster_pos), Ok(target_pos_c)) =
                         (positions.get(caster_entity), positions.get(target_entity))
                     {
                         let src = (caster_pos.x, caster_pos.y);
-                        let dst = (target_pos.x, target_pos.y);
+                        let dst = (target_pos_c.x, target_pos_c.y);
                         match spell_damage_type {
                             DamageType::Fire => { particle_writer.write(ParticleRequest::fire_bolt(src, dst)); },
                             DamageType::Lightning => { particle_writer.write(ParticleRequest::lightning(src, dst)); },
@@ -316,10 +270,9 @@ pub fn handle_cast_spell(
                         }
                     }
                 }
-                SpellEffect::Heal { dice, int_scaling } => {
+                SpellEffect::Heal { dice, .. } => {
                     let roll = roll_dice_expr(&mut game_rng.0, dice);
-                    let bonus = if *int_scaling { int_bonus } else { 0 };
-                    let amount = (roll + bonus).max(1);
+                    let amount = roll.max(1);
                     heal_writer.write(HealMessage {
                         entity: target_entity,
                         amount,
@@ -328,17 +281,16 @@ pub fn handle_cast_spell(
                 SpellEffect::AoeDamage {
                     dice,
                     radius,
-                    int_scaling,
+                    ..
                 } => {
-                    let target_pos = positions.get(target_entity).map(|p| (p.x, p.y));
-                    if let Ok((cx, cy)) = target_pos {
+                    let target_pos_result = positions.get(target_entity).map(|p| (p.x, p.y));
+                    if let Ok((cx, cy)) = target_pos_result {
                         let mut hit_count = 0;
                         for (ent, pos) in all_positions.iter() {
                             let dist = (pos.x - cx).abs() + (pos.y - cy).abs();
                             if dist <= *radius {
                                 let roll = roll_dice_expr(&mut game_rng.0, dice);
-                                let bonus = if *int_scaling { int_bonus } else { 0 };
-                                let damage = (roll + bonus).max(1);
+                                let damage = roll.max(1);
                                 damage_writer.write(ApplyDamageMessage {
                                     attacker: caster_entity,
                                     target: ent,
@@ -349,8 +301,6 @@ pub fn handle_cast_spell(
                                 hit_count += 1;
                             }
                         }
-                        // Check for doors in the blast area (log for now; actual
-                        // destruction requires a TileEffectMessage system — future work)
                         for dx in -radius..=*radius {
                             for dy in -radius..=*radius {
                                 if dx.abs() + dy.abs() <= *radius {
@@ -380,7 +330,6 @@ pub fn handle_cast_spell(
                             )));
                         }
 
-                        // Emit projectile from caster to center + impact sprites at AoE tiles
                         if let Ok(caster_pos) = positions.get(caster_entity) {
                             let src = (caster_pos.x, caster_pos.y);
                             let center = (cx, cy);
@@ -421,12 +370,10 @@ pub fn handle_cast_spell(
                     dice,
                     max_jumps,
                     jump_range,
-                    int_scaling,
+                    ..
                 } => {
-                    // Primary target
                     let roll = roll_dice_expr(&mut game_rng.0, dice);
-                    let bonus = if *int_scaling { int_bonus } else { 0 };
-                    let primary_damage = (roll + bonus).max(1);
+                    let primary_damage = roll.max(1);
                     damage_writer.write(ApplyDamageMessage {
                         attacker: caster_entity,
                         target: target_entity,
@@ -435,17 +382,15 @@ pub fn handle_cast_spell(
                         source: DamageSource::Spell,
                     });
 
-                    // Emit lightning from caster to primary target
-                    if let (Ok(caster_pos), Ok(target_pos)) =
+                    if let (Ok(caster_pos), Ok(target_pos_c)) =
                         (positions.get(caster_entity), positions.get(target_entity))
                     {
                         particle_writer.write(ParticleRequest::lightning(
                             (caster_pos.x, caster_pos.y),
-                            (target_pos.x, target_pos.y),
+                            (target_pos_c.x, target_pos_c.y),
                         ));
                     }
 
-                    // Chain jumps
                     let mut hit_entities = vec![target_entity, caster_entity];
                     let mut last_pos = positions
                         .get(target_entity)
@@ -453,7 +398,6 @@ pub fn handle_cast_spell(
                         .unwrap_or((0, 0));
 
                     for _ in 0..*max_jumps {
-                        // Find nearest unhit entity within jump_range
                         let mut best: Option<(Entity, i32)> = None;
                         for (ent, pos) in all_positions.iter() {
                             if hit_entities.contains(&ent) {
@@ -468,17 +412,14 @@ pub fn handle_cast_spell(
                             }
                         }
                         if let Some((next_ent, _)) = best {
-                            // Emit lightning particle from last position to next target
                             let next_pos = positions
                                 .get(next_ent)
                                 .map(|p| (p.x, p.y))
                                 .unwrap_or(last_pos);
                             particle_writer.write(ParticleRequest::lightning(last_pos, next_pos));
 
-                            // Secondary targets use halved dice (1dM instead of NdM)
                             let jump_roll = game_rng.0.roll_dice(1, 6);
-                            let jump_bonus = if *int_scaling { int_bonus } else { 0 };
-                            let jump_damage = (jump_roll + jump_bonus).max(1);
+                            let jump_damage = jump_roll.max(1);
                             damage_writer.write(ApplyDamageMessage {
                                 attacker: caster_entity,
                                 target: next_ent,
@@ -496,39 +437,9 @@ pub fn handle_cast_spell(
                         }
                     }
                 }
-                SpellEffect::Buff {
-                    attribute,
-                    amount,
-                    duration,
-                } => {
-                    apply_timed_modifier(
-                        &mut commands,
-                        target_entity,
-                        attribute.clone(),
-                        *amount,
-                        *duration,
-                    );
-                    log_writer.write(GameLogMessage(format!(
-                        "{} +{} for {} turns!",
-                        attribute, amount, duration
-                    )));
-                }
-                SpellEffect::Debuff {
-                    attribute,
-                    amount,
-                    duration,
-                } => {
-                    apply_timed_modifier(
-                        &mut commands,
-                        target_entity,
-                        attribute.clone(),
-                        -(*amount),
-                        *duration,
-                    );
-                    log_writer.write(GameLogMessage(format!(
-                        "Target's {} reduced by {} for {} turns!",
-                        attribute, amount, duration
-                    )));
+                SpellEffect::Buff { .. } | SpellEffect::Debuff { .. } => {
+                    // Buff/Debuff no longer modifies attributes — log only
+                    log_writer.write(GameLogMessage("The magical energy fizzles without effect.".to_string()));
                 }
                 SpellEffect::ApplyPoison {
                     damage_per_turn,
@@ -560,15 +471,13 @@ pub fn handle_cast_spell(
                 }
                 SpellEffect::DrainMana {
                     amount,
-                    int_scaling,
+                    ..
                 } => {
-                    let bonus = if *int_scaling { int_bonus } else { 0 };
-                    let drain = (*amount + bonus).max(0);
+                    let drain = (*amount).max(0);
                     let caster_e = caster_entity;
                     let target_e = target_entity;
                     let label = caster_label.clone();
                     commands.queue(move |world: &mut World| {
-                        // Drain mana from target (capped by what they have).
                         let actual_drain = {
                             if let Some(mut target_mana) = world.get_mut::<Mana>(target_e) {
                                 let actual = drain.min(target_mana.current);
@@ -578,7 +487,6 @@ pub fn handle_cast_spell(
                                 0
                             }
                         };
-                        // Give drained mana to caster (capped by max).
                         if actual_drain > 0 {
                             if let Some(mut caster_mana) = world.get_mut::<Mana>(caster_e) {
                                 caster_mana.current =
@@ -591,19 +499,12 @@ pub fn handle_cast_spell(
                         )));
                     });
                 }
-                SpellEffect::SpiritShield { duration } => {
-                    commands
-                        .entity(target_entity)
-                        .insert(SpiritShielded {
-                            turns_remaining: *duration,
-                        });
-                    log_writer.write(GameLogMessage(
-                        "A spirit shield surrounds you! Damage absorbed by mana.".to_string(),
-                    ));
+                SpellEffect::SpiritShield { .. } => {
+                    // Spirit Shield removed — log only
+                    log_writer.write(GameLogMessage("The spirit shield spell has no effect.".to_string()));
                 }
                 SpellEffect::Teleport { range } => {
                     if *range == 0 {
-                        // Random teleport — pick a random walkable tile
                         let walkable: Vec<usize> = (0..map.tiles.len())
                             .filter(|&idx| crate::map::tile::is_walkable(map.tiles[idx]))
                             .collect();
@@ -620,7 +521,6 @@ pub fn handle_cast_spell(
                             )));
                         }
                     } else if let Some((tx, ty)) = target_pos {
-                        // Controlled teleport (blink) — move caster to target tile.
                         commands
                             .entity(caster_entity)
                             .insert(Position { x: tx, y: ty });
@@ -630,16 +530,9 @@ pub fn handle_cast_spell(
                         )));
                     }
                 }
-                SpellEffect::ApplyEnrage { duration } => {
-                    commands
-                        .entity(target_entity)
-                        .insert(Enraged {
-                            turns_remaining: *duration,
-                        });
-                    log_writer.write(GameLogMessage(format!(
-                        "{} enters a fury! (+50% damage for {} turns)",
-                        caster_label, duration
-                    )));
+                SpellEffect::ApplyEnrage { .. } => {
+                    // Enrage removed — just log
+                    log_writer.write(GameLogMessage("The enrage spell fizzles.".to_string()));
                 }
             }
         }
@@ -651,74 +544,22 @@ pub fn handle_cast_spell(
     }
 }
 
-/// Helper: add or update a timed modifier on an entity.
-fn apply_timed_modifier(
-    commands: &mut Commands,
-    entity: Entity,
-    attribute: String,
-    amount: i32,
-    duration: u32,
-) {
-    commands.queue(move |world: &mut World| {
-        let mut modifiers = world
-            .get_mut::<TimedModifiers>(entity)
-            .map(|m| m.clone())
-            .unwrap_or_default();
-
-        modifiers.entries.push(TimedModifierEntry {
-            attribute: attribute.clone(),
-            amount,
-            turns_remaining: duration,
-        });
-
-        // Recalculate AttributeModifiers from all active timed modifiers
-        recalc_attribute_modifiers(world, entity, &modifiers);
-
-        world.entity_mut(entity).insert(modifiers);
-    });
-}
-
-/// Recalculate AttributeModifiers from the current set of TimedModifiers.
-fn recalc_attribute_modifiers(
-    world: &mut World,
-    entity: Entity,
-    timed: &TimedModifiers,
-) {
-    let mut mods = AttributeModifiers::default();
-    for entry in &timed.entries {
-        match entry.attribute.as_str() {
-            "strength" => mods.strength += entry.amount,
-            "dexterity" => mods.dexterity += entry.amount,
-            "constitution" => mods.constitution += entry.amount,
-            "agility" => mods.agility += entry.amount,
-            "intelligence" => mods.intelligence += entry.amount,
-            "perception" => mods.perception += entry.amount,
-            "armor" => mods.armor += entry.amount,
-            _ => warn!("Unknown attribute for modifier: {}", entry.attribute),
-        }
-    }
-    if let Ok(mut ec) = world.get_entity_mut(entity) {
-        ec.insert(mods);
-    }
-}
-
 // =====================================================================
 // Tick Systems (run on TurnEndEvent)
 // =====================================================================
 
-/// Counter-based mana regen: every `turns_between_regen` turns, recover
-/// `1 + (INT_bonus / 5)` mana. Breakpoints at INT 15 (+1) and INT 20 (+1).
+/// Counter-based mana regen: every `turns_between_regen` turns, recover 1 mana.
 pub fn mana_regen_system(
     mut turn_end: MessageReader<TurnEndEvent>,
-    mut query: Query<(&mut Mana, &mut ManaRegen, &CombatStats)>,
+    mut query: Query<(&mut Mana, &mut ManaRegen)>,
 ) {
     for _ in turn_end.read() {
-        for (mut mana, mut regen, stats) in query.iter_mut() {
+        for (mut mana, mut regen) in query.iter_mut() {
             regen.turns_since_last += 1;
             if regen.turns_since_last >= regen.turns_between_regen {
                 regen.turns_since_last = 0;
-                let amount = 1 + (stats.intelligence_bonus / 5);
-                mana.current = (mana.current + amount.max(0)).min(mana.max);
+                let amount = 1;
+                mana.current = (mana.current + amount).min(mana.max);
             }
         }
     }
@@ -732,32 +573,6 @@ pub fn tick_cooldowns_system(
     for _ in turn_end.read() {
         for mut cooldowns in cooldown_query.iter_mut() {
             cooldowns.tick();
-        }
-    }
-}
-
-/// Tick timed modifiers: decrement durations, remove expired, recalculate AttributeModifiers.
-pub fn tick_timed_modifiers_system(
-    mut turn_end: MessageReader<TurnEndEvent>,
-    mut query: Query<(Entity, &mut TimedModifiers)>,
-    mut commands: Commands,
-) {
-    for _ in turn_end.read() {
-        for (entity, mut modifiers) in query.iter_mut() {
-            let had_entries = !modifiers.entries.is_empty();
-            modifiers
-                .entries
-                .iter_mut()
-                .for_each(|e| e.turns_remaining = e.turns_remaining.saturating_sub(1));
-            modifiers.entries.retain(|e| e.turns_remaining > 0);
-
-            if had_entries {
-                // Recalculate via deferred command since we need world access
-                let mods_clone = modifiers.clone();
-                commands.queue(move |world: &mut World| {
-                    recalc_attribute_modifiers(world, entity, &mods_clone);
-                });
-            }
         }
     }
 }
@@ -785,22 +600,18 @@ pub fn tick_speed_effects_system(
     }
 }
 
-/// Apply haste/slow speed multipliers AFTER sync_action_speed_system.
-/// This runs every frame on Changed<Hasted>/Changed<Slowed> or when they are added/removed.
+/// Apply haste/slow speed multipliers.
 pub fn apply_speed_effects_system(
     mut query: Query<
         (
             &mut crate::game::actions::SpeedStats,
-            &CombatStats,
             Option<&Hasted>,
             Option<&Slowed>,
         ),
     >,
 ) {
-    for (mut speed, stats, hasted, slowed) in query.iter_mut() {
-        // Recalculate base delay from AGI (same formula as sync_action_speed_system)
-        let base = 1.0 - (stats.agility_bonus as f32 * 0.025);
-        let mut delay = base;
+    for (mut speed, hasted, slowed) in query.iter_mut() {
+        let mut delay = 1.0f32;
         if hasted.is_some() {
             delay *= 0.5;
         }
@@ -826,7 +637,7 @@ pub fn process_poison_system(
                 name.0, poison.damage_per_turn
             )));
             damage_writer.write(ApplyDamageMessage {
-                attacker: entity, // self-inflicted for death tracking
+                attacker: entity,
                 target: entity,
                 final_damage: poison.damage_per_turn,
                 damage_type: DamageType::Poison,
@@ -839,54 +650,6 @@ pub fn process_poison_system(
                     "{} is no longer poisoned.",
                     name.0
                 )));
-            }
-        }
-    }
-}
-
-/// Tick spirit shield duration.
-pub fn tick_spirit_shield_system(
-    mut turn_end: MessageReader<TurnEndEvent>,
-    mut commands: Commands,
-    mut query: Query<(Entity, &mut SpiritShielded)>,
-    mut log_writer: MessageWriter<GameLogMessage>,
-    names: Query<&Name>,
-) {
-    for _ in turn_end.read() {
-        for (entity, mut shield) in query.iter_mut() {
-            shield.turns_remaining = shield.turns_remaining.saturating_sub(1);
-            if shield.turns_remaining == 0 {
-                commands.entity(entity).remove::<SpiritShielded>();
-                if let Ok(name) = names.get(entity) {
-                    log_writer.write(GameLogMessage(format!(
-                        "{}'s spirit shield fades.",
-                        name.0
-                    )));
-                }
-            }
-        }
-    }
-}
-
-/// Tick enrage duration: decrement, remove when expired.
-pub fn tick_enraged_system(
-    mut turn_end: MessageReader<TurnEndEvent>,
-    mut commands: Commands,
-    mut query: Query<(Entity, &mut Enraged)>,
-    mut log_writer: MessageWriter<GameLogMessage>,
-    names: Query<&Name>,
-) {
-    for _ in turn_end.read() {
-        for (entity, mut enraged) in query.iter_mut() {
-            enraged.turns_remaining = enraged.turns_remaining.saturating_sub(1);
-            if enraged.turns_remaining == 0 {
-                commands.entity(entity).remove::<Enraged>();
-                if let Ok(name) = names.get(entity) {
-                    log_writer.write(GameLogMessage(format!(
-                        "{}'s fury subsides.",
-                        name.0
-                    )));
-                }
             }
         }
     }
@@ -949,30 +712,6 @@ pub fn process_burning_system(
     }
 }
 
-/// Tick disarmed duration: decrement, remove when expired.
-pub fn tick_disarmed_system(
-    mut turn_end: MessageReader<TurnEndEvent>,
-    mut commands: Commands,
-    mut query: Query<(Entity, &mut Disarmed)>,
-    mut log_writer: MessageWriter<GameLogMessage>,
-    names: Query<&Name>,
-) {
-    for _ in turn_end.read() {
-        for (entity, mut disarmed) in query.iter_mut() {
-            disarmed.turns_remaining = disarmed.turns_remaining.saturating_sub(1);
-            if disarmed.turns_remaining == 0 {
-                commands.entity(entity).remove::<Disarmed>();
-                if let Ok(name) = names.get(entity) {
-                    log_writer.write(GameLogMessage(format!(
-                        "{} is no longer disarmed.",
-                        name.0
-                    )));
-                }
-            }
-        }
-    }
-}
-
 // =====================================================================
 // Plugin
 // =====================================================================
@@ -984,30 +723,22 @@ impl Plugin for MagicPlugin {
         app.register_type::<KnownSpells>()
             .register_type::<ActiveSpells>()
             .register_type::<ManaRegen>()
-            .register_type::<TimedModifiers>()
             .register_type::<Hasted>()
             .register_type::<Slowed>()
             .register_type::<Poisoned>()
-            .register_type::<SpiritShielded>()
-            .register_type::<Enraged>()
             .register_type::<Stunned>()
             .register_type::<Burning>()
-            .register_type::<Disarmed>()
             .add_message::<CastSpellMessage>()
             .add_systems(
                 Update,
                 (
                     mana_regen_system,
                     tick_cooldowns_system,
-                    tick_timed_modifiers_system,
                     tick_speed_effects_system,
                     process_poison_system,
-                    tick_spirit_shield_system,
-                    tick_enraged_system,
                     tick_stunned_system,
                     process_burning_system,
-                    tick_disarmed_system,
-                    apply_speed_effects_system.after(sync_action_speed_system),
+                    apply_speed_effects_system,
                 )
                     .run_if(in_state(AppState::InGame)),
             );

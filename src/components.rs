@@ -104,3 +104,27 @@ pub struct Prop;
 /// despawns and spawns level-appropriate items at its position.
 #[derive(Component, Debug, Default)]
 pub struct Chest;
+
+// --- Faction ---
+
+/// Determines how this entity relates to others for AI targeting and spell scoring.
+#[derive(Component, Clone, PartialEq, Eq, Debug)]
+pub struct Faction(pub FactionKind);
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum FactionKind {
+    Player,
+    Monster,
+}
+
+impl FactionKind {
+    /// Returns true if `other` is a valid hostile target for `self`.
+    pub fn is_hostile_to(&self, other: &FactionKind) -> bool {
+        self != other
+    }
+
+    /// Returns true if `other` is on the same side as `self`.
+    pub fn is_allied_to(&self, other: &FactionKind) -> bool {
+        self == other
+    }
+}

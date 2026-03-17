@@ -56,7 +56,6 @@ use crate::{
     game::{
         MonsterAI,
         combat::{CombatDamageSet, Health},
-        magic::Enraged,
     },
     player::Player,
     ui::game_log::GameLogMessage,
@@ -272,11 +271,9 @@ fn squad_leader_death_system(
                 log_writer.write(GameLogMessage("The group scatters!".to_string()));
             }
             LeaderDeathBehavior::Enrage => {
-                for (entity, sid, _ai) in members.iter_mut() {
-                    if sid == squad_id && entity != leader_entity {
-                        commands.entity(entity).insert(Enraged { turns_remaining: 10 });
-                    }
-                }
+                // Enraged status effect was removed in the mechanics simplification.
+                // Log the flavor text but no mechanical effect.
+                let _ = (&mut members, &commands); // suppress unused warnings
                 log_writer.write(GameLogMessage(
                     "The group flies into a rage!".to_string(),
                 ));

@@ -1,4 +1,3 @@
-use crate::game::abilities::AbilitiesPlugin;
 use crate::game::boss::BossPlugin;
 use crate::game::squad::SquadPlugin;
 use crate::game::targeting::TargetingPlugin;
@@ -10,7 +9,6 @@ use crate::{
         camera::{move_camera, toggle_main_camera_visibility},
         combat::{CombatDamageSet, CombatPlugin, DeathEvent, GameRng, death_system},
         items::{ItemsPlugin, LootTable},
-        level::LevelPlugin,
         magic::MagicPlugin,
         particles::ParticlesPlugin,
         stats::StatsPlugin,
@@ -32,20 +30,17 @@ use bevy::prelude::*;
 #[derive(Resource, Default, Clone)]
 pub struct RunSummary {
     pub floor_reached: u32,
-    pub level: i32,
-    pub xp_earned: i32,
     pub cause: String,
     pub victory: bool,
 }
-pub mod abilities;
 pub mod actions;
 pub mod ai;
 pub mod boss;
 pub mod camera;
 pub mod combat;
 pub mod effects;
+pub mod essence;
 pub mod items;
-pub mod level;
 pub mod magic;
 pub mod particles;
 pub mod ranged;
@@ -98,11 +93,9 @@ impl Plugin for GamePlugin {
                 TurnOrderPlugin,
                 CombatPlugin,
                 StatsPlugin,
-                LevelPlugin,
                 ItemsPlugin,
                 MagicPlugin,
                 ParticlesPlugin,
-                AbilitiesPlugin,
                 BossPlugin,
                 SquadPlugin,
                 TargetingPlugin,
@@ -136,6 +129,7 @@ impl Plugin for GamePlugin {
                         .after(fov_update_system),
                     loot_drop_system.after(CombatDamageSet),
                     death_system.after(loot_drop_system),
+                    essence::essence_award_system.after(CombatDamageSet),
                 )
                     .run_if(in_state(InGameState::Running)),
             )
@@ -221,7 +215,7 @@ fn despawn_game_entities(
 }
 
 fn despawn_map(
-    mut commands: Commands, 
+    mut commands: Commands,
     q_map: Query<Entity, With<DungeonECSMap>>,
     q_tiles: Query<Entity, With<TileMarker>>,
 ) {

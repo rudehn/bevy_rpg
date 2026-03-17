@@ -4,9 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::components::{FinalBoss, Monster, Name, GodMode};
-use crate::game::level::{Experience, ExperienceReward};
-use crate::game::magic::{Disarmed, Enraged, SpiritShielded};
-use crate::game::stats::{CombatStats, Level, Mana};
+use crate::game::stats::{Armor, Dodge};
 use crate::game::turns::TurnEndEvent;
 use crate::game::{AppState, RunSummary, TurnManager};
 use crate::map::dungeon::Floor;
@@ -193,23 +191,6 @@ pub struct MissMessage {
     pub target: Entity,
 }
 
-/// Message emitted after a successful melee hit to trigger on-hit effects.
-#[derive(Message, Debug)]
-pub struct OnHitTriggerMessage {
-    pub attacker: Entity,
-    pub defender: Entity,
-}
-
-/// Message emitted when an entity takes damage, for on-being-hit passive abilities.
-#[allow(dead_code)]
-#[derive(Message, Debug)]
-pub struct OnBeingHitTriggerMessage {
-    pub attacker: Entity,
-    pub defender: Entity,
-    pub damage: i32,
-    pub source: DamageSource,
-}
-
 /// Message sent to toggle GodMode on an entity.
 #[derive(Message, Debug)]
 pub struct ToggleGodModeMessage {
@@ -266,28 +247,28 @@ fn regen_system(
     }
 }
 
-/// 1. Hit Chance Calculation: Roll 1d20 + attacker.hit_chance vs 10 + target.dodge_chance.
+/// 1. Hit Chance: 1d20 >= 2 + target_dodge
 fn hit_check_system(
     mut intents: MessageReader<AttackIntentMessage>,
     mut roll_writer: MessageWriter<DamageRollMessage>,
     mut miss_writer: MessageWriter<MissMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut game_rng: ResMut<GameRng>,
-    query: Query<(&Name, &CombatStats, Has<Player>)>,
+    query: Query<(&Name, Option<&Dodge>, Has<Player>)>,
 ) {
     for intent in intents.read() {
-        let Ok((attacker_name, attacker_stats, is_player)) = query.get(intent.attacker) else {
+        let Ok((attacker_name, _, is_player)) = query.get(intent.attacker) else {
             continue;
         };
-        let Ok((target_name, target_stats, _)) = query.get(intent.target) else {
+        let Ok((target_name, target_dodge, _)) = query.get(intent.target) else {
             continue;
         };
 
         let hit_roll = game_rng.0.roll_dice(1, 20);
-        let hit_target = 10 + target_stats.dodge_chance;
-        let final_hit_score = hit_roll + attacker_stats.hit_chance;
+        let dodge_val = target_dodge.map(|d| d.0).unwrap_or(0);
+        let hit_target = 2 + dodge_val;
 
-        if final_hit_score >= hit_target {
+        if hit_roll >= hit_target {
             roll_writer.write(DamageRollMessage {
                 attacker: intent.attacker,
                 target: intent.target,
@@ -308,25 +289,24 @@ fn hit_check_system(
     }
 }
 
-/// 2. Damage Calculation: Roll attacker damage dice and add damage bonus.
-/// Enraged attackers deal 150% damage.
+/// 2. Damage Calculation: Roll attacker damage dice. 5% flat crit (150% damage).
 fn damage_roll_system(
     mut roll_messages: MessageReader<DamageRollMessage>,
     mut reduction_writer: MessageWriter<DamageReductionMessage>,
     mut game_rng: ResMut<GameRng>,
-    query: Query<(&Damage, &CombatStats, Has<Enraged>, Has<Disarmed>)>,
+    query: Query<&Damage>,
 ) {
     for message in roll_messages.read() {
-        let Ok((damage_dice, attacker_stats, is_enraged, is_disarmed)) = query.get(message.attacker) else {
+        let Ok(damage_dice) = query.get(message.attacker) else {
             continue;
         };
 
         let rolled_damage = roll_dice(&damage_dice.0, &mut game_rng.0);
-        let damage_bonus = if is_disarmed { 0 } else { attacker_stats.damage_bonus };
-        let mut raw_damage = rolled_damage + damage_bonus;
+        let mut raw_damage = rolled_damage;
 
-        // Enraged: +50% damage
-        if is_enraged {
+        // 5% flat crit: 150% damage
+        let crit_roll = game_rng.0.roll_dice(1, 20);
+        if crit_roll == 20 {
             raw_damage = raw_damage * 3 / 2;
         }
 
@@ -345,15 +325,16 @@ fn armor_reduction_system(
     mut reduction_messages: MessageReader<DamageReductionMessage>,
     mut apply_writer: MessageWriter<ApplyDamageMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
-    query: Query<(&CombatStats, Option<&Resistances>, &Name)>,
+    query: Query<(Option<&Armor>, Option<&Resistances>, &Name)>,
 ) {
     for message in reduction_messages.read() {
-        let Ok((target_stats, resistances, target_name)) = query.get(message.target) else {
+        let Ok((armor, resistances, target_name)) = query.get(message.target) else {
             continue;
         };
 
         // Armor reduction (physical mitigation)
-        let after_armor = (message.raw_damage - target_stats.armor).max(1);
+        let armor_val = armor.map(|a| a.0).unwrap_or(0);
+        let after_armor = (message.raw_damage - armor_val).max(1);
 
         // Resistance multiplier
         let resistance = resistances
@@ -409,26 +390,20 @@ fn armor_reduction_system(
 }
 
 /// 4. Damage Application: Update health and log the result.
-/// Spirit Shield: if the target has `SpiritShielded`, damage is absorbed by mana first.
 /// Absorb resistance: negative final_damage means heal instead.
 fn damage_application_system(
     mut apply_messages: MessageReader<ApplyDamageMessage>,
     mut death_writer: MessageWriter<DeathEvent>,
-    mut on_hit_writer: MessageWriter<OnHitTriggerMessage>,
-    mut on_being_hit_writer: MessageWriter<OnBeingHitTriggerMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut query_health: Query<(
         &mut Health,
         &Name,
-        Option<&ExperienceReward>,
         Has<GodMode>,
-        Has<SpiritShielded>,
     )>,
-    mut mana_query: Query<&mut Mana>,
     query_names: Query<(&Name, Has<Player>)>,
 ) {
     for message in apply_messages.read() {
-        let Ok((mut target_health, target_name, xp_reward, has_god_mode, has_spirit_shield)) =
+        let Ok((mut target_health, target_name, has_god_mode)) =
             query_health.get_mut(message.target)
         else {
             continue;
@@ -455,22 +430,7 @@ fn damage_application_system(
             continue;
         };
 
-        let mut remaining_damage = message.final_damage;
-
-        // Spirit Shield: absorb damage from mana first
-        if has_spirit_shield {
-            if let Ok(mut mana) = mana_query.get_mut(message.target) {
-                let absorbed = remaining_damage.min(mana.current);
-                mana.current -= absorbed;
-                remaining_damage -= absorbed;
-                if absorbed > 0 {
-                    log_writer.write(GameLogMessage(format!(
-                        "{}'s spirit shield absorbs {} damage! (Mana: {}/{})",
-                        target_name.0, absorbed, mana.current, mana.max
-                    )));
-                }
-            }
-        }
+        let remaining_damage = message.final_damage;
 
         if remaining_damage > 0 {
             target_health.current -= remaining_damage;
@@ -482,29 +442,13 @@ fn damage_application_system(
             attacker_name.0, verb, target_name.0, message.final_damage
         )));
 
-        // Trigger on-hit effects for melee attacks that dealt damage
-        if message.source == DamageSource::Melee && remaining_damage > 0 {
-            on_hit_writer.write(OnHitTriggerMessage {
-                attacker: message.attacker,
-                defender: message.target,
-            });
-        }
-
-        // Trigger on-being-hit effects for all damage that landed
-        if remaining_damage > 0 {
-            on_being_hit_writer.write(OnBeingHitTriggerMessage {
-                attacker: message.attacker,
-                defender: message.target,
-                damage: remaining_damage,
-                source: message.source,
-            });
-        }
-
         if target_health.current <= 0 {
+            // XP reward: use a flat value based on max HP
+            let xp = target_health.max / 2 + 5;
             death_writer.write(DeathEvent {
                 attacker: message.attacker,
                 target: message.target,
-                xp: xp_reward.map(|r| r.0).unwrap_or(0),
+                xp,
             });
         }
 
@@ -560,15 +504,14 @@ pub fn handle_toggle_god_mode_system(
 /// System that checks for entities with Health <= 0 and handles death.
 pub fn death_system(
     mut commands: Commands,
-    query_dead: Query<(Entity, &Health, &Name, Option<&Player>, Option<&Monster>, Has<FinalBoss>, Option<&Experience>, Option<&Level>)>,
+    query_dead: Query<(Entity, &Health, &Name, Option<&Player>, Option<&Monster>, Has<FinalBoss>)>,
     mut next_state: ResMut<NextState<AppState>>,
     mut turn_manager: ResMut<TurnManager>,
     mut log_writer: MessageWriter<GameLogMessage>,
     floor: Res<Floor>,
     mut run_summary: ResMut<RunSummary>,
-    player_stats_query: Query<(Option<&Experience>, Option<&Level>), With<Player>>,
 ) {
-    for (entity, health, name, is_player, is_monster, is_final_boss, exp, level) in query_dead.iter() {
+    for (entity, health, name, is_player, is_monster, is_final_boss) in query_dead.iter() {
         if health.current <= 0 {
             if is_player.is_some() {
                 // Player died — permadeath: erase the save
@@ -576,8 +519,6 @@ pub fn death_system(
                 log_writer.write(GameLogMessage("You have died!".to_string()));
                 *run_summary = RunSummary {
                     floor_reached: floor.0,
-                    level: level.map(|l| l.value).unwrap_or(1),
-                    xp_earned: exp.map(|e| e.current).unwrap_or(0),
                     cause: "Unknown".to_string(),
                     victory: false,
                 };
@@ -590,11 +531,8 @@ pub fn death_system(
                 commands.entity(entity).despawn();
                 turn_manager.turn_queue.retain(|&(e, _)| e != entity);
 
-                let (p_exp, p_level) = player_stats_query.single().unwrap_or((None, None));
                 *run_summary = RunSummary {
                     floor_reached: floor.0,
-                    level: p_level.map(|l| l.value).unwrap_or(1),
-                    xp_earned: p_exp.map(|e| e.current).unwrap_or(0),
                     cause: String::new(),
                     victory: true,
                 };
@@ -632,8 +570,6 @@ impl Plugin for CombatPlugin {
             .add_message::<HealMessage>()
             .add_message::<MissMessage>()
             .add_message::<ToggleGodModeMessage>()
-            .add_message::<OnHitTriggerMessage>()
-            .add_message::<OnBeingHitTriggerMessage>()
             .add_message::<DeathEvent>()
             .register_type::<Health>()
             .register_type::<HealthRegen>()

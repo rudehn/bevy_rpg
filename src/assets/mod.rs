@@ -310,42 +310,6 @@ pub struct MonsterAsset {
     #[serde(default)]
     pub base_armor: i32,
 
-    /// Whether this monster flees when below 50% HP.
-    #[serde(default)]
-    pub is_cowardly: bool,
-
-    /// On-hit effects applied when this monster lands melee damage.
-    #[serde(default)]
-    pub on_hit_effects: Vec<crate::game::abilities::OnHitEffect>,
-
-    /// Explode on death: (radius, damage). Deals fire AoE when this entity dies.
-    #[serde(default)]
-    pub explode_on_death: Option<(i32, i32)>,
-
-    /// Reanimate: HP to revive with (one-time). None = no reanimate.
-    #[serde(default)]
-    pub reanimate_hp: Option<i32>,
-
-    /// Poison body: stacks of poison applied to melee attackers.
-    #[serde(default)]
-    pub poison_body: Option<i32>,
-
-    /// Thorn aura: flat damage reflected to melee attackers.
-    #[serde(default)]
-    pub thorn_aura: Option<i32>,
-
-    /// Enrage on hit: threshold HP percentage to trigger Enraged.
-    #[serde(default)]
-    pub enrage_on_hit: Option<u32>,
-
-    /// Death curse applied to the killer.
-    #[serde(default)]
-    pub death_curse: Option<crate::game::abilities::DeathCurseEffect>,
-
-    /// Summon on death: (monster_name, count).
-    #[serde(default)]
-    pub summon_on_death: Option<(String, u32)>,
-
     /// Whether this monster is a boss (gets FinalBoss + BossAI components).
     #[serde(default)]
     pub is_boss: bool,

@@ -10,20 +10,19 @@ use crate::{
         TileSpriteAssets,
     },
     components::{
-        Collider, FloorEntityMarker, GameEntityMarker, InInventory, Inventory, Name, Position,
+        Collider, Faction, FactionKind, FloorEntityMarker, GameEntityMarker, InInventory, Inventory, Name, Position,
         Viewshed,
     },
     constants::Z_PLAYER,
     game::{
         TurnManager,
-        abilities::{Faction, FactionKind},
         actions::SpeedStats,
         combat::{Damage, Health, HealthRegen},
+        essence::Essence,
         items::Equipment,
-        level::{AvailableStatPoints, Experience},
         magic::{ActiveSpells, KnownSpells, ManaRegen, SpellCooldowns},
         spawn_item,
-        stats::{AttributeModifiers, Attributes, CombatStats, Level, Mana, RolledHp},
+        stats::{Armor, Dodge, Mana},
     },
     map::dungeon::{PlayerSpawnPoint, SpawnDungeonMessage, SpawnDungeonSet},
     map::map::GRID_SIZE,
@@ -165,7 +164,7 @@ pub fn player_spawn_or_move_system(
                 GameEntityMarker,
                 Collider,
                 new_grid_pos,
-                Viewshed::new(8), // Initial range; recalculated by stat_recalculation_system via PER
+                Viewshed::new(8),
                 Inventory {
                     items: starting_items,
                     capacity: 20,
@@ -174,40 +173,23 @@ pub fn player_spawn_or_move_system(
             ))
             .insert((
                 Health {
-                    current: player_asset.base_hp,
-                    max: player_asset.base_hp,
+                    current: 25,
+                    max: 25,
                 },
                 HealthRegen {
                     regen_rate: 10,
                     regen_accumulator: 0,
                 },
                 Damage(player_asset.damage.clone()),
-                Attributes {
-                    strength: player_asset.strength,
-                    dexterity: player_asset.dexterity,
-                    constitution: player_asset.constitution,
-                    agility: player_asset.agility,
-                    intelligence: player_asset.intelligence,
-                    perception: player_asset.perception,
-                },
-                AttributeModifiers::default(),
-                Level {
-                    value: player_asset.level,
-                },
-                CombatStats::default(),
+                Armor(0),
+                Dodge(0),
                 SpeedStats::default(),
-                Experience {
-                    current: 0,
-                    next_level: 100,
-                    spell_slots_unlocked: 1,
-                },
-                AvailableStatPoints(0),
-                RolledHp(0),
                 Mana {
-                    current: player_asset.intelligence * 5,
-                    max: player_asset.intelligence * 5,
+                    current: 0,
+                    max: 0,
                 },
                 ManaRegen::default(),
+                Essence::default(),
             ))
             .insert((
                 KnownSpells::default(),

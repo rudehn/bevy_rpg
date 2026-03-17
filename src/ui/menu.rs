@@ -213,8 +213,6 @@ fn game_over_setup(
 ) {
     let font = asset_server.load("fonts/Macondo-Regular.ttf");
     let floor = run_summary.floor_reached;
-    let level = run_summary.level;
-    let xp = run_summary.xp_earned;
 
     commands
         .spawn((
@@ -256,18 +254,12 @@ fn game_over_setup(
                 BackgroundColor(Color::srgba(0.1, 0.0, 0.0, 0.6)),
             ))
             .with_children(|panel| {
-                for line in [
-                    format!("Floor reached:  {}", floor),
-                    format!("Level:          {}", level),
-                    format!("XP earned:      {}", xp),
-                ] {
-                    panel.spawn((
-                        Text::new(line),
-                        TextFont { font: font.clone(), font_size: 18.0, ..default() },
-                        TextColor(Color::srgb(0.75, 0.65, 0.65)),
-                        Node { margin: UiRect::vertical(Val::Px(3.0)), ..default() },
-                    ));
-                }
+                panel.spawn((
+                    Text::new(format!("Floor reached:  {}", floor)),
+                    TextFont { font: font.clone(), font_size: 18.0, ..default() },
+                    TextColor(Color::srgb(0.75, 0.65, 0.65)),
+                    Node { margin: UiRect::vertical(Val::Px(3.0)), ..default() },
+                ));
             });
 
             root.spawn(Node { height: Val::Px(32.0), ..default() });
@@ -326,8 +318,6 @@ fn victory_setup(
 ) {
     let font = asset_server.load("fonts/Macondo-Regular.ttf");
     let floor = run_summary.floor_reached;
-    let level = run_summary.level;
-    let xp = run_summary.xp_earned;
 
     commands
         .spawn((
@@ -375,18 +365,12 @@ fn victory_setup(
                 BackgroundColor(Color::srgba(0.08, 0.06, 0.0, 0.7)),
             ))
             .with_children(|panel| {
-                for line in [
-                    format!("Floor reached:  {}", floor),
-                    format!("Level:          {}", level),
-                    format!("XP earned:      {}", xp),
-                ] {
-                    panel.spawn((
-                        Text::new(line),
-                        TextFont { font: font.clone(), font_size: 18.0, ..default() },
-                        TextColor(Color::srgb(0.9, 0.82, 0.5)),
-                        Node { margin: UiRect::vertical(Val::Px(3.0)), ..default() },
-                    ));
-                }
+                panel.spawn((
+                    Text::new(format!("Floor reached:  {}", floor)),
+                    TextFont { font: font.clone(), font_size: 18.0, ..default() },
+                    TextColor(Color::srgb(0.9, 0.82, 0.5)),
+                    Node { margin: UiRect::vertical(Val::Px(3.0)), ..default() },
+                ));
             });
 
             root.spawn(Node { height: Val::Px(32.0), ..default() });

@@ -11,7 +11,6 @@ use crate::{
         items::{ItemProperties, ItemStack},
         magic::{ActiveSpells, KnownSpells},
         spells::SpellRegistry,
-        stats::AttributeModifiers,
     },
     player::Player,
     ui::game_log::GameLogMessage,
@@ -24,8 +23,6 @@ use crate::{
 pub enum Effect {
     /// Restore N hit points to the user (clamped to max HP).
     HealHp(i32),
-    /// Permanently add N to the user's strength modifier.
-    GainStr(i32),
     /// Teach the player a new spell (spellbook). Value is the spell ID from spells.ron.
     LearnSpell(String),
 }
@@ -50,7 +47,6 @@ pub fn handle_use_item(
             Entity,
             &mut Inventory,
             &mut Health,
-            &mut AttributeModifiers,
             &mut KnownSpells,
             &mut ActiveSpells,
         ),
@@ -62,7 +58,7 @@ pub fn handle_use_item(
     mut log_writer: MessageWriter<GameLogMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
 ) {
-    let Ok((player_entity, mut inv, mut health, mut attr_mods, mut known_spells, mut active_spells)) =
+    let Ok((player_entity, mut inv, mut health, mut known_spells, mut active_spells)) =
         player_query.single_mut()
     else {
         return;
@@ -102,13 +98,6 @@ pub fn handle_use_item(
                 log_writer.write(GameLogMessage(format!(
                     "You drink the {} and recover {} HP.",
                     item_name, healed
-                )));
-            }
-            Effect::GainStr(amount) => {
-                attr_mods.strength += amount;
-                log_writer.write(GameLogMessage(format!(
-                    "You drink the {}. You feel stronger!",
-                    item_name
                 )));
             }
             Effect::LearnSpell(spell_id) => {

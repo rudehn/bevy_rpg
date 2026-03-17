@@ -6,7 +6,7 @@ use crate::components::{Equipped, FloorEntityMarker, GameEntityMarker, InInvento
 use crate::constants::{BASE_ACTION_COST, UNARMED_DAMAGE, Z_ITEM};
 use crate::game::actions::ActionFinishedEvent;
 use crate::game::effects::Effect;
-use crate::game::stats::{AttributeModifiers, CombatStats};
+use crate::game::stats::Armor;
 use crate::player::Player;
 use crate::ui::game_log::GameLogMessage;
 
@@ -121,30 +121,10 @@ pub struct ItemProperties {
     /// Flat armor value for armor pieces.
     pub defense: i32,
     pub rarity: Rarity,
-    // Stat bonuses applied when equipped (wired to AttributeModifiers in M3)
-    pub str_bonus: i32,
-    pub dex_bonus: i32,
-    pub con_bonus: i32,
-    pub agi_bonus: i32,
-    pub int_bonus: i32,
-    pub per_bonus: i32,
     /// One-shot effect applied when the item is consumed (Consumables only).
     pub effect: Option<Effect>,
     /// Range for ranged weapons (> 1 = ranged; 0 or 1 = melee).
     pub weapon_range: u32,
-}
-
-impl ItemProperties {
-    pub fn bonus_summary(&self) -> String {
-        let mut parts = Vec::new();
-        if self.str_bonus != 0 { parts.push(format!("STR {:+}", self.str_bonus)); }
-        if self.dex_bonus != 0 { parts.push(format!("DEX {:+}", self.dex_bonus)); }
-        if self.con_bonus != 0 { parts.push(format!("CON {:+}", self.con_bonus)); }
-        if self.agi_bonus != 0 { parts.push(format!("AGI {:+}", self.agi_bonus)); }
-        if self.int_bonus != 0 { parts.push(format!("INT {:+}", self.int_bonus)); }
-        if self.per_bonus != 0 { parts.push(format!("PER {:+}", self.per_bonus)); }
-        parts.join("  ")
-    }
 }
 
 // --- Equipment Component ---
@@ -257,39 +237,25 @@ pub struct UnequipItemMessage {
 
 // --- Systems ---
 
-/// Helper: reverses the stat/armor/damage effects of an equipped item.
+/// Helper: reverses the armor/damage effects of an equipped item.
 fn unapply_item_effects(
     props: &ItemProperties,
-    attr_mods: &mut AttributeModifiers,
-    combat_stats: &mut CombatStats,
+    armor: &mut Armor,
     damage: &mut crate::game::combat::Damage,
 ) {
-    attr_mods.strength     -= props.str_bonus;
-    attr_mods.dexterity    -= props.dex_bonus;
-    attr_mods.constitution -= props.con_bonus;
-    attr_mods.agility      -= props.agi_bonus;
-    attr_mods.intelligence -= props.int_bonus;
-    attr_mods.perception   -= props.per_bonus;
-    combat_stats.armor     -= props.defense;
+    armor.0 -= props.defense;
     if props.kind == ItemKind::Weapon {
         damage.0 = UNARMED_DAMAGE.to_string();
     }
 }
 
-/// Helper: applies the stat/armor/damage effects of an equipped item.
+/// Helper: applies the armor/damage effects of an equipped item.
 fn apply_item_effects(
     props: &ItemProperties,
-    attr_mods: &mut AttributeModifiers,
-    combat_stats: &mut CombatStats,
+    armor: &mut Armor,
     damage: &mut crate::game::combat::Damage,
 ) {
-    attr_mods.strength     += props.str_bonus;
-    attr_mods.dexterity    += props.dex_bonus;
-    attr_mods.constitution += props.con_bonus;
-    attr_mods.agility      += props.agi_bonus;
-    attr_mods.intelligence += props.int_bonus;
-    attr_mods.perception   += props.per_bonus;
-    combat_stats.armor     += props.defense;
+    armor.0 += props.defense;
     if props.kind == ItemKind::Weapon {
         if let Some(dmg) = &props.damage {
             damage.0 = dmg.clone();
@@ -303,14 +269,14 @@ pub fn handle_equip_item(
     mut commands: Commands,
     mut messages: MessageReader<EquipItemMessage>,
     mut player_query: Query<
-        (Entity, &mut Equipment, &Inventory, &mut AttributeModifiers, &mut CombatStats, &mut crate::game::combat::Damage),
+        (Entity, &mut Equipment, &Inventory, &mut Armor, &mut crate::game::combat::Damage),
         With<Player>,
     >,
     item_query: Query<(&ItemProperties, &Name)>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
 ) {
-    let Ok((player_entity, mut equipment, inventory, mut attr_mods, mut combat_stats, mut damage)) =
+    let Ok((player_entity, mut equipment, inventory, mut armor, mut damage)) =
         player_query.single_mut()
     else {
         return;
@@ -348,7 +314,7 @@ pub fn handle_equip_item(
         // Unequip whatever is currently in that slot
         if let Some(old_entity) = equipment.get_entity(slot) {
             if let Ok((old_props, _)) = item_query.get(old_entity) {
-                unapply_item_effects(old_props, &mut attr_mods, &mut combat_stats, &mut damage);
+                unapply_item_effects(old_props, &mut armor, &mut damage);
                 commands.entity(old_entity).remove::<Equipped>();
             } else {
                 warn!("Equipped item entity {:?} in slot '{}' no longer exists; clearing slot.", old_entity, slot);
@@ -359,7 +325,7 @@ pub fn handle_equip_item(
         // Equip the new item
         equipment.set_slot(slot, Some(msg.item_entity));
         commands.entity(msg.item_entity).insert(Equipped);
-        apply_item_effects(props, &mut attr_mods, &mut combat_stats, &mut damage);
+        apply_item_effects(props, &mut armor, &mut damage);
 
         log_writer.write(GameLogMessage(format!("You equip the {}.", name.0)));
         finish_writer.write(ActionFinishedEvent { entity: player_entity, base_cost: BASE_ACTION_COST });
@@ -371,14 +337,14 @@ pub fn handle_unequip_item(
     mut commands: Commands,
     mut messages: MessageReader<UnequipItemMessage>,
     mut player_query: Query<
-        (Entity, &mut Equipment, &mut AttributeModifiers, &mut CombatStats, &mut crate::game::combat::Damage),
+        (Entity, &mut Equipment, &mut Armor, &mut crate::game::combat::Damage),
         With<Player>,
     >,
     item_query: Query<(&ItemProperties, &Name)>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
 ) {
-    let Ok((player_entity, mut equipment, mut attr_mods, mut combat_stats, mut damage)) =
+    let Ok((player_entity, mut equipment, mut armor, mut damage)) =
         player_query.single_mut()
     else {
         return;
@@ -396,7 +362,7 @@ pub fn handle_unequip_item(
 
         equipment.set_slot(slot, None);
         commands.entity(msg.item_entity).remove::<Equipped>();
-        unapply_item_effects(props, &mut attr_mods, &mut combat_stats, &mut damage);
+        unapply_item_effects(props, &mut armor, &mut damage);
 
         log_writer.write(GameLogMessage(format!("You unequip the {}.", name.0)));
         finish_writer.write(ActionFinishedEvent { entity: player_entity, base_cost: BASE_ACTION_COST });
@@ -410,14 +376,14 @@ pub fn handle_drop_item(
     mut commands: Commands,
     mut messages: MessageReader<DropItemMessage>,
     mut player_query: Query<
-        (Entity, &mut Equipment, &mut Inventory, &Position, &mut AttributeModifiers, &mut CombatStats, &mut crate::game::combat::Damage),
+        (Entity, &mut Equipment, &mut Inventory, &Position, &mut Armor, &mut crate::game::combat::Damage),
         With<Player>,
     >,
     item_query: Query<(&Name, &ItemProperties, Option<&ItemStack>, &Sprite, &Transform)>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
 ) {
-    let Ok((player_entity, mut equipment, mut inv, player_pos, mut attr_mods, mut combat_stats, mut damage)) =
+    let Ok((player_entity, mut equipment, mut inv, player_pos, mut armor, mut damage)) =
         player_query.single_mut()
     else {
         return;
@@ -429,7 +395,7 @@ pub fn handle_drop_item(
             equipment.set_slot(slot, None);
             commands.entity(msg.item_entity).remove::<Equipped>();
             if let Ok((_, props, _, _, _)) = item_query.get(msg.item_entity) {
-                unapply_item_effects(props, &mut attr_mods, &mut combat_stats, &mut damage);
+                unapply_item_effects(props, &mut armor, &mut damage);
             }
         }
 

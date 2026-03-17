@@ -12,15 +12,15 @@ use crate::{
     game::{
         AppState,
         combat::{Damage, Health},
+        essence::Essence,
         items::{Equipment, ItemProperties, ItemStack},
-        level::{AvailableStatPoints, Experience},
         magic::{
-            ActiveSpells, Enraged, Hasted, KnownSpells, ManaRegen, Poisoned, Slowed,
-            SpellCooldowns, SpiritShielded, Stunned, TimedModifiers,
+            ActiveSpells, Hasted, KnownSpells, ManaRegen, Poisoned, Slowed,
+            SpellCooldowns, Stunned,
         },
         spawner::spawn_item,
         squad::{SquadConfig, SquadId, SquadIdCounter, SquadLeader},
-        stats::{AttributeModifiers, Attributes, Level, Mana},
+        stats::{Armor, Dodge, Mana},
     },
     map::{
         dungeon::{CachedFloor, FloorCache, Floor, PendingGameLoad, PendingPlayerLoad, AutoSavePending},
@@ -208,23 +208,10 @@ pub struct PlayerSaveData {
     pub x: i32,
     pub y: i32,
     pub hp: i32,
-    pub level: i32,
-    pub xp: i32,
-    pub xp_to_next: i32,
-    pub spell_slots_unlocked: u8,
-    pub stat_points: u32,
-    pub str: i32,
-    pub dex: i32,
-    pub con: i32,
-    pub agi: i32,
-    pub int: i32,
-    pub per: i32,
-    pub str_mod: i32,
-    pub dex_mod: i32,
-    pub con_mod: i32,
-    pub agi_mod: i32,
-    pub int_mod: i32,
-    pub per_mod: i32,
+    pub armor: i32,
+    pub dodge: i32,
+    pub essence_current: i32,
+    pub essence_lifetime: i32,
     pub viewshed_range: i32,
     pub damage: String,
     pub mana_current: i32,
@@ -237,19 +224,13 @@ pub struct PlayerSaveData {
     #[serde(default)]
     pub spell_cooldowns: SpellCooldowns,
     #[serde(default)]
-    pub timed_modifiers: TimedModifiers,
-    #[serde(default)]
     pub hasted: Option<Hasted>,
     #[serde(default)]
     pub slowed: Option<Slowed>,
     #[serde(default)]
     pub poisoned: Option<Poisoned>,
     #[serde(default)]
-    pub spirit_shielded: Option<SpiritShielded>,
-    #[serde(default)]
     pub stunned: Option<Stunned>,
-    #[serde(default)]
-    pub enraged: Option<Enraged>,
     pub inventory: Vec<InventoryItemSave>,
 }
 
@@ -419,11 +400,9 @@ pub fn auto_save_system(
         (
             &Position,
             &Health,
-            &Level,
-            &Experience,
-            &AvailableStatPoints,
-            &Attributes,
-            &AttributeModifiers,
+            &Armor,
+            &Dodge,
+            &Essence,
             &Inventory,
             &Equipment,
             &Damage,
@@ -438,13 +417,10 @@ pub fn auto_save_system(
             &ActiveSpells,
             &ManaRegen,
             &SpellCooldowns,
-            Option<&TimedModifiers>,
             Option<&Hasted>,
             Option<&Slowed>,
             Option<&Poisoned>,
-            Option<&SpiritShielded>,
             Option<&Stunned>,
-            Option<&Enraged>,
         ),
         With<Player>,
     >,
@@ -456,7 +432,7 @@ pub fn auto_save_system(
 ) {
     auto_save_pending.0 = false;
 
-    let Ok((pos, health, level, exp, stat_points, attrs, attr_mods, inventory, equipment, damage, viewshed, mana)) =
+    let Ok((pos, health, armor, dodge, essence, inventory, equipment, damage, viewshed, mana)) =
         player_query.single()
     else {
         warn!("Auto-save skipped: no player entity found.");
@@ -514,20 +490,17 @@ pub fn auto_save_system(
         .collect();
 
     // Magic state
-    let (known_spells, active_spells, mana_regen, spell_cooldowns, timed_modifiers, hasted, slowed, poisoned, spirit_shielded, stunned, enraged) =
-        if let Ok((ks, as_, mr, sc, tm, h, sl, p, ss, st, en)) = player_magic_query.single() {
+    let (known_spells, active_spells, mana_regen, spell_cooldowns, hasted, slowed, poisoned, stunned) =
+        if let Ok((ks, as_, mr, sc, h, sl, p, st)) = player_magic_query.single() {
             (
                 ks.clone(),
                 as_.clone(),
                 mr.clone(),
                 sc.clone(),
-                tm.cloned().unwrap_or_default(),
                 h.cloned(),
                 sl.cloned(),
                 p.cloned(),
-                ss.cloned(),
                 st.cloned(),
-                en.cloned(),
             )
         } else {
             (
@@ -535,8 +508,7 @@ pub fn auto_save_system(
                 ActiveSpells::default(),
                 ManaRegen::default(),
                 SpellCooldowns::default(),
-                TimedModifiers::default(),
-                None, None, None, None, None, None,
+                None, None, None, None,
             )
         };
 
@@ -561,23 +533,10 @@ pub fn auto_save_system(
             x: pos.x,
             y: pos.y,
             hp: health.current,
-            level: level.value,
-            xp: exp.current,
-            xp_to_next: exp.next_level,
-            spell_slots_unlocked: exp.spell_slots_unlocked,
-            stat_points: stat_points.0,
-            str: attrs.strength,
-            dex: attrs.dexterity,
-            con: attrs.constitution,
-            agi: attrs.agility,
-            int: attrs.intelligence,
-            per: attrs.perception,
-            str_mod: attr_mods.strength,
-            dex_mod: attr_mods.dexterity,
-            con_mod: attr_mods.constitution,
-            agi_mod: attr_mods.agility,
-            int_mod: attr_mods.intelligence,
-            per_mod: attr_mods.perception,
+            armor: armor.0,
+            dodge: dodge.0,
+            essence_current: essence.current,
+            essence_lifetime: essence.lifetime,
             viewshed_range: viewshed.range,
             damage: damage.0.clone(),
             mana_current: mana.current,
@@ -585,13 +544,10 @@ pub fn auto_save_system(
             active_spells,
             mana_regen,
             spell_cooldowns,
-            timed_modifiers,
             hasted,
             slowed,
             poisoned,
-            spirit_shielded,
             stunned,
-            enraged,
             inventory: inv_saves,
         },
         monsters,
@@ -622,11 +578,9 @@ pub fn apply_player_load_system(
         (
             &mut Position,
             &mut Health,
-            &mut Level,
-            &mut Experience,
-            &mut AvailableStatPoints,
-            &mut Attributes,
-            &mut AttributeModifiers,
+            &mut Armor,
+            &mut Dodge,
+            &mut Essence,
             &mut Inventory,
             &mut Equipment,
             &mut Damage,
@@ -648,11 +602,9 @@ pub fn apply_player_load_system(
     let Ok((
         mut pos,
         mut health,
-        mut level,
-        mut exp,
-        mut stat_points,
-        mut attrs,
-        mut attr_mods,
+        mut armor,
+        mut dodge,
+        mut essence,
         mut inventory,
         mut equipment,
         mut damage,
@@ -672,28 +624,11 @@ pub fn apply_player_load_system(
     // --- Health ---
     health.current = player_data.hp;
 
-    // --- Level / XP ---
-    level.value = player_data.level;
-    exp.current = player_data.xp;
-    exp.next_level = player_data.xp_to_next;
-    exp.spell_slots_unlocked = player_data.spell_slots_unlocked;
-    stat_points.0 = player_data.stat_points;
-
-    // --- Attributes ---
-    attrs.strength = player_data.str;
-    attrs.dexterity = player_data.dex;
-    attrs.constitution = player_data.con;
-    attrs.agility = player_data.agi;
-    attrs.intelligence = player_data.int;
-    attrs.perception = player_data.per;
-
-    // --- Attribute modifiers (from equipment) ---
-    attr_mods.strength = player_data.str_mod;
-    attr_mods.dexterity = player_data.dex_mod;
-    attr_mods.constitution = player_data.con_mod;
-    attr_mods.agility = player_data.agi_mod;
-    attr_mods.intelligence = player_data.int_mod;
-    attr_mods.perception = player_data.per_mod;
+    // --- Armor / Dodge / Essence ---
+    armor.0 = player_data.armor;
+    dodge.0 = player_data.dodge;
+    essence.current = player_data.essence_current;
+    essence.lifetime = player_data.essence_lifetime;
 
     // --- Damage / Viewshed / Mana ---
     damage.0 = player_data.damage.clone();
@@ -707,8 +642,7 @@ pub fn apply_player_load_system(
             .insert(player_data.known_spells.clone())
             .insert(player_data.active_spells.clone())
             .insert(player_data.mana_regen.clone())
-            .insert(player_data.spell_cooldowns.clone())
-            .insert(player_data.timed_modifiers.clone());
+            .insert(player_data.spell_cooldowns.clone());
 
         if let Some(ref h) = player_data.hasted {
             commands.entity(player_entity).insert(h.clone());
@@ -719,14 +653,8 @@ pub fn apply_player_load_system(
         if let Some(ref p) = player_data.poisoned {
             commands.entity(player_entity).insert(p.clone());
         }
-        if let Some(ref ss) = player_data.spirit_shielded {
-            commands.entity(player_entity).insert(ss.clone());
-        }
         if let Some(ref st) = player_data.stunned {
             commands.entity(player_entity).insert(st.clone());
-        }
-        if let Some(ref en) = player_data.enraged {
-            commands.entity(player_entity).insert(en.clone());
         }
     }
 

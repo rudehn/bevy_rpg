@@ -297,10 +297,6 @@ fn update_inventory_ui(
                 if props.defense > 0 {
                     lines.push(format!("Defense: +{}", props.defense));
                 }
-                let bonuses = props.bonus_summary();
-                if !bonuses.is_empty() {
-                    lines.push(bonuses);
-                }
 
                 lines.push(String::new());
                 let is_equippable = Equipment::slot_for(props).is_some()

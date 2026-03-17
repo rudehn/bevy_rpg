@@ -3,9 +3,8 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::{
-    components::{GameEntityMarker, Monster, Position, Viewshed},
+    components::{Faction, GameEntityMarker, Monster, Position, Viewshed},
     game::{
-        abilities::Faction,
         actions::Action,
         actions::PendingPlayerAction,
         combat::Health,

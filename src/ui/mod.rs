@@ -5,12 +5,12 @@ use crate::game::camera::UiCamera;
 use crate::game::{
     AppState,
     combat::{Health, HealthRegen},
-    level::Experience,
+    essence::Essence,
     magic::{
-        ActiveSpells, Burning, Disarmed, Enraged, Hasted, Poisoned, Slowed, SpellCooldowns,
-        SpiritShielded, Stunned, TimedModifiers,
+        ActiveSpells, Burning, Hasted, Poisoned, Slowed, SpellCooldowns,
+        Stunned,
     },
-    stats::{Level, Mana},
+    stats::Mana,
 };
 use crate::map::dungeon::Floor;
 use crate::player::Player;
@@ -59,9 +59,7 @@ pub struct PlayerManaBar;
 #[derive(Component)]
 pub struct FloorDepthText;
 #[derive(Component)]
-pub struct PlayerXpText;
-#[derive(Component)]
-pub struct PlayerXpBar;
+pub struct PlayerEssenceText;
 /// Marker for a spell slot label in the HUD. Contains 0-based slot index.
 #[derive(Component)]
 pub struct SpellSlotHudLabel(pub usize);
@@ -207,9 +205,9 @@ fn spawn_player_stats_ui(
                 FloorDepthText,
             ));
 
-            // XP text
+            // Essence text
             parent.spawn((
-                Text::new("XP: 0 / 100"),
+                Text::new("Essence: 0"),
                 TextFont {
                     font: asset_server.load("fonts/Macondo-Regular.ttf"),
                     font_size: 16.0,
@@ -217,33 +215,8 @@ fn spawn_player_stats_ui(
                 },
                 TextColor(Color::srgb(0.6, 0.9, 0.6)),
                 Node { margin: UiRect::top(Val::Px(8.0)), ..default() },
-                PlayerXpText,
+                PlayerEssenceText,
             ));
-
-            // XP Bar
-            parent
-                .spawn((
-                    Node {
-                        width: Val::Percent(100.0),
-                        height: Val::Px(10.0),
-                        border: UiRect::all(Val::Px(1.0)),
-                        margin: UiRect::top(Val::Px(3.0)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.1, 0.2, 0.1)),
-                    BorderColor::all(Color::WHITE),
-                ))
-                .with_children(|parent| {
-                    parent.spawn((
-                        Node {
-                            width: Val::Percent(0.0),
-                            height: Val::Percent(100.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.3, 0.85, 0.3)),
-                        PlayerXpBar,
-                    ));
-                });
 
             // Status effects container (dynamically populated)
             parent.spawn((
@@ -386,18 +359,13 @@ fn update_floor_ui(
     }
 }
 
-fn update_xp_ui(
-    player_query: Query<(&Experience, &Level), (With<Player>, Changed<Experience>)>,
-    mut xp_text_query: Query<&mut Text, With<PlayerXpText>>,
-    mut xp_bar_query: Query<&mut Node, With<PlayerXpBar>>,
+fn update_essence_ui(
+    player_query: Query<&Essence, (With<Player>, Changed<Essence>)>,
+    mut text_query: Query<&mut Text, With<PlayerEssenceText>>,
 ) {
-    let Ok((exp, level)) = player_query.single() else { return };
-    let pct = if exp.next_level > 0 { exp.current as f32 / exp.next_level as f32 } else { 1.0 };
-    if let Ok(mut text) = xp_text_query.single_mut() {
-        text.0 = format!("Lv{}  XP: {}/{}", level.value, exp.current, exp.next_level);
-    }
-    if let Ok(mut node) = xp_bar_query.single_mut() {
-        node.width = Val::Percent(pct.clamp(0.0, 1.0) * 100.0);
+    let Ok(essence) = player_query.single() else { return };
+    if let Ok(mut text) = text_query.single_mut() {
+        text.0 = format!("Essence: {}", essence.current);
     }
 }
 
@@ -445,10 +413,6 @@ pub fn collect_status_effects(
     slowed: Option<&Slowed>,
     hasted: Option<&Hasted>,
     stunned: Option<&Stunned>,
-    enraged: Option<&Enraged>,
-    disarmed: Option<&Disarmed>,
-    spirit_shielded: Option<&SpiritShielded>,
-    timed_modifiers: Option<&TimedModifiers>,
 ) -> Vec<(String, Color)> {
     let mut effects = Vec::new();
 
@@ -482,48 +446,6 @@ pub fn collect_status_effects(
             Color::srgb(1.0, 1.0, 0.0),
         ));
     }
-    if let Some(e) = enraged {
-        effects.push((
-            format!("Enraged ({}t)", e.turns_remaining),
-            Color::srgb(1.0, 0.2, 0.2),
-        ));
-    }
-    if let Some(d) = disarmed {
-        effects.push((
-            format!("Disarmed ({}t)", d.turns_remaining),
-            Color::srgb(0.7, 0.4, 0.4),
-        ));
-    }
-    if let Some(ss) = spirit_shielded {
-        effects.push((
-            format!("Spirit Shield ({}t)", ss.turns_remaining),
-            Color::srgb(0.6, 0.8, 1.0),
-        ));
-    }
-    if let Some(tm) = timed_modifiers {
-        for entry in &tm.entries {
-            let sign = if entry.amount > 0 { "+" } else { "" };
-            let attr_short = match entry.attribute.as_str() {
-                "strength" => "STR",
-                "dexterity" => "DEX",
-                "constitution" => "CON",
-                "agility" => "AGI",
-                "intelligence" => "INT",
-                "perception" => "PER",
-                "armor" => "ARM",
-                other => other,
-            };
-            let color = if entry.amount > 0 {
-                Color::srgb(0.3, 0.9, 0.3)
-            } else {
-                Color::srgb(0.9, 0.3, 0.3)
-            };
-            effects.push((
-                format!("{}{} {} ({}t)", sign, entry.amount, attr_short, entry.turns_remaining),
-                color,
-            ));
-        }
-    }
 
     effects
 }
@@ -540,10 +462,6 @@ fn update_player_status_effects_ui(
             Option<&Slowed>,
             Option<&Hasted>,
             Option<&Stunned>,
-            Option<&Enraged>,
-            Option<&Disarmed>,
-            Option<&SpiritShielded>,
-            Option<&TimedModifiers>,
         ),
         With<Player>,
     >,
@@ -551,14 +469,14 @@ fn update_player_status_effects_ui(
     let Ok((container, mut tracker)) = q_container.single_mut() else {
         return;
     };
-    let Ok((poisoned, burning, slowed, hasted, stunned, enraged, disarmed, spirit_shielded, timed_modifiers)) =
+    let Ok((poisoned, burning, slowed, hasted, stunned)) =
         player_query.single()
     else {
         return;
     };
 
     let effects = collect_status_effects(
-        poisoned, burning, slowed, hasted, stunned, enraged, disarmed, spirit_shielded, timed_modifiers,
+        poisoned, burning, slowed, hasted, stunned,
     );
 
     // Quick hash: combine effect count with sum of turns to detect changes
@@ -656,7 +574,7 @@ impl Plugin for UiPlugin {
                     update_player_stats_ui,
                     update_player_mana_ui,
                     update_floor_ui,
-                    update_xp_ui,
+                    update_essence_ui,
                     update_spell_slots_ui,
                     update_player_status_effects_ui,
                     add_log_message_system,
