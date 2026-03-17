@@ -71,6 +71,8 @@ Propose roles, count, and faction considerations based on the encounter fantasy.
 
 Consider depth-appropriate difficulty and how roles interact tactically (e.g., ranged + melee_guard creates cover-and-fire, caster + brute creates priority dilemma).
 
+**Faction locking:** Decide whether the prefab should be locked to a specific faction via `faction_tag` (e.g., `"goblin"` for a goblin shrine) or left empty to allow the role resolver to pick any eligible faction. Faction-locking is best for thematic encounters tied to a specific creature type; leaving it open maximizes reuse across depth ranges.
+
 ### Step 5: Squad Behavior
 
 Recommend `on_leader_death` and `flee_threshold` based on encounter drama:
@@ -94,7 +96,7 @@ Propose reward density appropriate to difficulty:
 - High-risk: 2-3 chests, guaranteed structure or rare item spawn
 - Landmark: Significant rewards matching the commitment to clear
 
-Reference valid props and structures from `assets/props.ron` and `assets/structures.ron`.
+Reference valid props and structures from `assets/props.ron` and `assets/structures.ron`. Read `assets/monsters.ron` when validating faction and role availability.
 
 ### Step 7: Placement Strategy & Size
 
@@ -103,7 +105,8 @@ Recommend placement based on geometry:
 - **room** — Overlays into existing rooms. Best for encounters that fit within natural spaces.
 - **wall** — Carves into solid wall. Best for hidden rooms, vaults, dens.
 - **chokepoint** — Placed at corridor bottlenecks. Best for gatekeeping encounters.
-- No explicit placement — system tries both room and wall.
+- **landmark** — Large set-piece structures stamped before room generation. Best for major encounters (fortresses, arenas, crypts).
+- **any** (default) — System tries both room and wall placement.
 
 Set width/height. Reference size categories:
 
@@ -139,7 +142,8 @@ Present a design summary covering all 8 dimensions, then generate the complete R
 - Use only valid field names and value types per the schema reference
 - Use only monster roles, prop names, and structure names that exist in the game
 - Have correct coordinate math for the tile layout dimensions
-- Place spawns only on floor tiles (`.`), not walls (`#`) or unchanged (` `)
+- Place spawns only on floor tiles (`.`) or door tiles (`+`), not walls (`#`) or unchanged (` `)
+- Use the correct tile characters: `#` (wall), `.` (floor), `+` (door), ` ` (unchanged/passthrough)
 
 ## Workflow 2: Audit Catalog
 
@@ -191,7 +195,7 @@ If the user wants to act on a gap, flow into Workflow 1 to design a prefab that 
 Contains:
 
 - All `PrefabTemplate` fields with types, defaults, and descriptions
-- Valid enum values: placement types (`room`, `wall`), monster roles (`melee_guard`, `ranged`, `brute`, `caster`, `leader`, `any`), on_leader_death behaviors (`scatter`, `enrage`, `fight_on`, `flee`)
+- Valid enum values: placement types (`room`, `wall`, `chokepoint`, `landmark`, `any`), monster roles (`melee_guard`, `ranged`, `brute`, `caster`, `leader`, `any`), on_leader_death behaviors (`scatter`, `enrage`, `fight_on`, `flee`)
 - Valid prop names and structure names (sourced from `props.ron` and `structures.ron`)
 - Size category definitions and budget system explanation (350 tile budget, 2-tile padding, 3-pass ordering)
 - Annotated example RON entry
@@ -210,6 +214,6 @@ Contains:
 ## Implementation Notes
 
 - This is a pure skill (`.claude/skills/` files only) — no Rust code changes needed.
-- The skill reads `assets/prefabs.ron`, `assets/props.ron`, and `assets/structures.ron` at runtime.
+- The skill reads `assets/prefabs.ron`, `assets/props.ron`, `assets/structures.ron`, and `assets/monsters.ron` at runtime.
 - Reference docs should be updated when the RON schema changes (new fields, new valid values).
 - The skill lives at `.claude/skills/prefab-designer/` alongside the existing `game-mechanics-designer/` skill.
