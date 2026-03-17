@@ -234,15 +234,7 @@ pub struct PrefabManifestHandle(pub Handle<PrefabManifest>);
 #[derive(Asset, TypePath, Deserialize, Resource, Debug, Clone)]
 pub struct PlayerAsset {
     pub name: String,
-    pub perception: i32,
     pub sprite: String,
-    pub level: i32,
-    pub base_hp: i32,
-    pub strength: i32,
-    pub dexterity: i32,
-    pub constitution: i32,
-    pub agility: i32,
-    pub intelligence: i32,
     pub damage: String,
 }
 
@@ -274,12 +266,7 @@ pub struct MonsterAsset {
     )]
     pub tile_size: Option<UVec2>,
 
-    pub level: i32,
     pub base_hp: i32,
-    pub strength: i32,
-    pub dexterity: i32,
-    pub constitution: i32,
-    pub agility: i32,
     #[serde(default)]
     pub intelligence: i32,
     pub damage: String,
@@ -446,18 +433,6 @@ pub struct ItemAsset {
     pub defense: i32,
     #[serde(default)]
     pub rarity: Rarity,
-    #[serde(default)]
-    pub str_bonus: i32,
-    #[serde(default)]
-    pub dex_bonus: i32,
-    #[serde(default)]
-    pub con_bonus: i32,
-    #[serde(default)]
-    pub agi_bonus: i32,
-    #[serde(default)]
-    pub int_bonus: i32,
-    #[serde(default)]
-    pub per_bonus: i32,
     #[serde(default)]
     pub effect: Option<Effect>,
     /// Range for ranged weapons (> 1 = ranged; 0 or 1 = melee/default).

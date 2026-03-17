@@ -19,7 +19,6 @@
             item_kind: Weapon,
             damage: Some("1d8+1"),
             rarity: Uncommon,
-            str_bonus: 1,
         ),
         "Leather Armor": (
             name: "Leather Armor",
@@ -73,7 +72,6 @@
 
             item_kind: Ring,
             rarity: Uncommon,
-            per_bonus: 2,
         ),
         // ===========================
         // SPELLBOOKS — Zone 1 (1-5)

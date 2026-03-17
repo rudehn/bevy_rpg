@@ -59,35 +59,47 @@ inspiration, suggest archetypes:
 
 ### Step 3: Stat Assignment
 
-Using `references/balance-curves.md`, propose stats based on target floor range:
+Using `references/balance-curves.md`, propose stats based on target floor range.
+The system uses **direct values** — no attribute-to-stat conversion.
 
-- **Base HP**: `final_hp = base_hp + (CON_bonus * level)`. Set `base_hp`
-  accounting for CON scaling. Example: level 10, CON 14 → +40 from CON,
-  so `base_hp = 45` yields ~85 final HP.
-- **Attributes**: Baseline 10. INT = 0 for non-casters. PER 6-14. Adjust
-  ±1 per 3 floors, ±4 max for role emphasis.
-- **Damage dice**: Scale so monsters deal 15-25% of player HP (early) to
-  30-50% (late) per hit.
-- **Damage type**: Physical, Fire, Lightning, or Necrotic. Ask what fits
-  the monster's fantasy.
-- **Armor**: 0-2 (floors 1-5), 3-5 (6-12), 5-8 (13-18), 7-12 (19-20).
-- **AGI**: Determines delay via `1.0 - (AGI_bonus * 0.025)`. Fast: 14-18,
-  Normal: 10, Slow: 4-6.
+- **Base HP** (`base_hp`): Used directly as `Health.max`. No scaling.
+  See balance-curves.md reference data for floor-appropriate values.
+- **Damage dice** (`damage`): Scale so monsters deal 15-25% of player HP
+  (early) to 30-50% (late) per hit.
+- **Damage type** (`damage_type`): Physical, Fire, Lightning, or Necrotic.
+- **Armor** (`base_armor`): 0-2 (floors 1-5), 3-5 (6-12), 5-8 (13-18),
+  7-12 (19-20).
+- **Perception** (`perception`): Vision range = `8 + (perception - 10)`.
+  Low (6-8) = poor detection, high (12-14) = wide vision.
+- **Intelligence** (`intelligence`): Casters only. Mana pool = `INT * 5`.
+  Set to 0 for non-casters. Casters: 14-22.
+- **Level** (`level`): Used in essence reward formula.
 - **Experience**: `10 + (level * 5) + (base_hp / 2)`.
+
+**Legacy fields** (`strength`, `dexterity`, `constitution`, `agility`):
+Still present in the MonsterAsset struct but not used by the spawner.
+Set to 10 (baseline) for consistency — they may be reconnected later.
 
 Present the stat block with reasoning for each value.
 
 ### Step 4: Abilities & Resistances
 
-Propose 0-3 special abilities from the implemented set. Each must
-reinforce the monster fantasy. Validate against `references/ron-schemas.md`:
+**Note on current state:** Ability fields (`on_hit_effects`, `poison_body`,
+`thorn_aura`, etc.) exist in `monsters.ron` data but are **orphaned** — the
+`MonsterAsset` struct doesn't declare them, so they're silently ignored.
+The handler systems exist in `abilities.rs` and are registered, but no
+monsters receive these components at spawn time. This is WIP — the data
+is preserved for future reconnection.
 
-- **On-hit effects**: ApplyPoison, ApplySlow, ApplyBurning, AttributeDrain,
-  Knockback, LifeDrain, Disarm
+Still propose abilities to include in the RON data for when the pipeline is
+reconnected. Reference `references/ability-catalog.md` for the full list:
+
+- **On-hit effects**: ApplyPoison, ApplySlow, ApplyStun, ApplyBurning,
+  AttributeDrain, Knockback, LifeDrain, Disarm
 - **Passives**: poison_body, thorn_aura, reanimate_hp, enrage_on_hit,
   explode_on_death, death_curse, summon_on_death
-- **Resistances**: Map of damage_type → ResistanceLevel
-- **Spells**: List of spell IDs from `assets/spells.ron` (casters only)
+- **Resistances**: Map of damage_type → ResistanceLevel (this IS active)
+- **Spells**: List of spell IDs from `assets/spells.ron` (this IS active)
 
 ### Step 5: Squad Role & Behavior
 
@@ -122,15 +134,19 @@ Present the complete design summary, then the RON entries for both
 ### Step 1: Read Current State
 
 Read `assets/items.ron` and `assets/item_spawns.ron`. Note existing items
-by kind, rarity, and bonus coverage.
+by kind, rarity, and stat coverage.
 
 ### Step 2: Item Fantasy
 
 Ask what finding this item should feel like:
 
 - **Kind**: Weapon, Armor (which slot?), Ring, Amulet, Consumable, Spellbook?
-- **Rarity**: Common (0 bonuses), Uncommon (1), Rare (2), Legendary (3)?
+- **Rarity**: Common, Uncommon, Rare, Legendary?
 - **Identity**: What makes this item memorable? A Legendary should be run-defining.
+
+**Note:** The ItemBonus system has been removed. Items differentiate by
+their direct `damage`/`defense` values and rarity tier. Legacy attribute
+bonus fields exist on ItemAsset but are not used by the spawner.
 
 ### Step 3: Core Stats
 
@@ -141,20 +157,14 @@ Based on kind and rarity, propose:
 - **Consumables**: Effect type and magnitude
 - **Spellbooks**: LearnSpell effect with spell ID
 
-### Step 4: Bonus Selection
-
-For Uncommon+, propose bonuses from `references/ron-schemas.md`. Prioritize
-thematic coherence — a fire sword should have OnHitBurn, not OnHitSlow.
-Validate values against existing items at the same rarity tier.
-
-### Step 5: Spawn Configuration
+### Step 4: Spawn Configuration
 
 Propose floor range, rarity, and weight for `item_spawns.ron`. Include
 rendering fields (`sprite`, `tile_size`, `grid_size`). For stackable items,
 set `min_count`/`max_count`. Read existing items at the same kind for
 correct rendering values.
 
-### Step 6: Approve & Write
+### Step 5: Approve & Write
 
 Present design summary + RON entries. On approval, append to `items.ron`
 and `item_spawns.ron`.
@@ -213,12 +223,18 @@ There are 4 categories in the ability system. Read
 `references/ability-catalog.md` to see what already exists before
 proposing new abilities.
 
-| Category | How It Works | Configured Via | Examples |
-|----------|-------------|----------------|----------|
-| **On-Hit Effects** | Trigger on successful melee attack | `on_hit_effects` in `monsters.ron`, `ItemBonus` on items | ApplyPoison, LifeDrain, OnHitStun |
-| **Monster Passives** | Always-on or event-triggered components | RON fields on `MonsterAsset` | ExplodeOnDeath, Reanimate, ThornAura, EnrageOnHit |
-| **Auras** | Radius-based buffs/debuffs to allies or enemies | `Aura` component (not yet in RON) | ArmorBonus, DamagePercent, RegenBonus |
-| **Build Passives** | Player-only abilities unlocked via Essence tree | Rust code + Essence node | Cleave, Riposte, BloodRage, Ambush |
+**Current state:** Ability handler systems are registered in `abilities.rs`
+but the `MonsterAsset` struct does not declare ability fields. Ability data
+in `monsters.ron` is orphaned (silently ignored during deserialization).
+Designing abilities is still valuable — the data and handlers are preserved
+for future reconnection.
+
+| Category | How It Works | Status | Examples |
+|----------|-------------|--------|----------|
+| **On-Hit Effects** | Trigger on successful melee attack | Handlers active, data orphaned | ApplyPoison, LifeDrain, ApplyStun |
+| **Monster Passives** | Always-on or event-triggered components | Handlers active, data orphaned | ExplodeOnDeath, Reanimate, ThornAura |
+| **Auras** | Radius-based buffs/debuffs to allies or enemies | Code-only, not in RON | ArmorBonus, DamagePercent, RegenBonus |
+| **Build Passives** | Player-only abilities unlocked via Essence tree | Active | Cleave, Riposte, BloodRage, Ambush |
 
 ### Step 1: Read Current State
 
@@ -255,11 +271,13 @@ Ask what this ability should *feel like* in play:
 
 Based on the design, determine if this ability:
 
-**A) Uses existing types (RON-only change)**
+**A) Uses existing types (RON data change)**
 - Can be expressed as an existing `OnHitEffect` variant on a monster
-- Can be expressed as an existing `ItemBonus` on-hit variant on an item
 - Can use existing passive fields (`poison_body`, `thorn_aura`, etc.)
-- → Output: RON entries only. Apply to monsters/items as appropriate.
+- Note: These fields are currently orphaned (not on `MonsterAsset` struct),
+  so data will be preserved in RON but won't take effect until the struct
+  and spawner are reconnected.
+- → Output: RON entries for monsters. Note reconnection requirement.
 
 **B) Requires a new Rust component (code change)**
 - New trigger type or effect type not covered by existing components
@@ -293,7 +311,7 @@ grant it:
 
 - Does this ability define a faction mechanic? (shared across roster)
 - Is it a specialist ability? (elite/boss only)
-- Should items grant a version of this? (via ItemBonus)
+- Should items grant a version of this? (future — no item ability system currently)
 - Should an Essence node unlock a player version?
 
 ### Step 6: Approve & Write
@@ -352,10 +370,12 @@ between shared traits (all members) and specialist abilities (elite only).
 
 ### Step 5: Themed Loot
 
-Propose 2-4 faction-themed items:
+Propose 2-4 faction-themed items. Note that items currently only
+differentiate by `damage`/`defense` values and rarity — no bonus system.
+Focus on appropriate power level and thematic naming/description:
 
-- A weapon that plays into the faction's mechanic
-- An armor piece or accessory with thematic bonuses
+- A weapon with damage dice fitting the faction's floor range
+- An armor piece for an underserved slot
 - A consumable or spellbook if appropriate
 
 ### Step 6: Faction Spells
@@ -411,11 +431,11 @@ If the user picks a gap, flow into the appropriate creation workflow.
 2. **One question at a time** — Walk through dimensions sequentially.
    Don't overwhelm with multiple questions per message.
 3. **Validate against implemented types** — For RON-only changes, only use
-   ability types, bonus types, spell effects, etc. that exist in the Rust
-   source. Refer to `references/ron-schemas.md` and
-   `references/ability-catalog.md` for the complete lists. For the Design
-   Ability workflow, new types may be proposed but must be clearly flagged
-   as requiring Rust implementation.
+   ability types, spell effects, etc. that exist in the Rust source. Refer
+   to `references/ron-schemas.md` and `references/ability-catalog.md` for
+   the complete lists. For the Design Ability workflow, new types may be
+   proposed but must be clearly flagged as requiring Rust implementation.
+   Note that many ability fields are currently orphaned (see balance-curves.md).
 4. **Present before writing** — Always show the complete design summary
    and RON entries before modifying any files.
 5. **Append, don't overwrite** — New entries are appended to existing RON
