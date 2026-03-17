@@ -27,8 +27,8 @@ fields affect gameplay:
 | `base_hp` | Spawner → `Health` | Direct HP value |
 | `base_armor` | Spawner → `Armor` | Flat damage reduction |
 | `damage` | Spawner → `Damage` | Dice expression (e.g., "1d6+1") |
-| `perception` | Spawner → `Viewshed` | Vision range: `8 + (perception - 10)` |
-| `intelligence` | Spawner → `Mana` | Mana pool: `intelligence * 5` (casters only) |
+| `vision` | Spawner → `Viewshed` | Vision range directly |
+| `mana` | Spawner → `Mana` | Mana pool directly (casters only) |
 | `level` | Spawner | Used for essence reward formula |
 | `spells` | Spawner → `KnownSpells`/`ActiveSpells` | Spell IDs from spells.ron |
 | `regen` | Spawner → `HpRegen` | HP regen per turn |

@@ -32,7 +32,7 @@
             rarity: Common,
         ),
         "Studded Leather Armor": (
-            name: "Leather Armor",
+            name: "Studded Leather Armor",
             sprite: "sprites/items/armor/torso/studded_leather_armor.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
@@ -53,15 +53,15 @@
             effect: Some(HealHp(15)),
             max_stack: 5,
         ),
-        "Strength Potion": (
-            name: "Strength Potion",
+        "Greater Healing Potion": (
+            name: "Greater Healing Potion",
             sprite: "sprites/items/potions/sky_blue.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
 
             item_kind: Consumable,
             rarity: Uncommon,
-            effect: Some(GainStr(2)),
+            effect: Some(HealHp(30)),
             max_stack: 3,
         ),
         "Ring of Perception": (
@@ -425,7 +425,7 @@
             rarity: Common,
         ),
         "Long Bow": (
-            name: "Short Bow",
+            name: "Long Bow",
             sprite: "sprites/items/weapons/longbow_1.png",
             tile_size: (32, 32),
             grid_size: (8, 8),

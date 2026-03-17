@@ -2,7 +2,7 @@
     spawns: [
         // Consumables — common across all floors
         (item: "Healing Potion",     min_floor: 1,  max_floor: 10, weight: 5),
-        (item: "Strength Potion",    min_floor: 2,  max_floor: 10, weight: 2),
+        (item: "Greater Healing Potion", min_floor: 4, max_floor: 10, weight: 2),
         (item: "Arrow",              min_floor: 1,  max_floor: 10, weight: 4, min_count: 5, max_count: 12),
 
         // Weapons — early tiers fade out as depth increases
