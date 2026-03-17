@@ -287,10 +287,10 @@ fn damage_roll_system(
     mut roll_messages: MessageReader<DamageRollMessage>,
     mut reduction_writer: MessageWriter<DamageReductionMessage>,
     mut game_rng: ResMut<GameRng>,
-    query: Query<&Damage>,
+    query: Query<(&Damage, Has<crate::game::abilities::Enraged>, Has<crate::game::abilities::Terrified>)>,
 ) {
     for message in roll_messages.read() {
-        let Ok(damage_dice) = query.get(message.attacker) else {
+        let Ok((damage_dice, is_enraged, is_terrified)) = query.get(message.attacker) else {
             continue;
         };
 
@@ -301,6 +301,16 @@ fn damage_roll_system(
         let crit_roll = game_rng.0.roll_dice(1, 20);
         if crit_roll == 20 {
             raw_damage = raw_damage * 3 / 2;
+        }
+
+        // Enraged: +50% damage
+        if is_enraged {
+            raw_damage = raw_damage * 3 / 2;
+        }
+
+        // Terrified: -25% damage
+        if is_terrified {
+            raw_damage = raw_damage * 3 / 4;
         }
 
         reduction_writer.write(DamageReductionMessage {
@@ -318,15 +328,16 @@ fn armor_reduction_system(
     mut reduction_messages: MessageReader<DamageReductionMessage>,
     mut apply_writer: MessageWriter<ApplyDamageMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
-    query: Query<(Option<&Armor>, Option<&Resistances>, &Name)>,
+    query: Query<(Option<&Armor>, Option<&crate::game::abilities::RallyBuff>, Option<&Resistances>, &Name)>,
 ) {
     for message in reduction_messages.read() {
-        let Ok((armor, resistances, target_name)) = query.get(message.target) else {
+        let Ok((armor, rally_buff, resistances, target_name)) = query.get(message.target) else {
             continue;
         };
 
-        // Armor reduction (physical mitigation)
-        let armor_val = armor.map(|a| a.0).unwrap_or(0);
+        // Armor reduction (physical mitigation) + Rally aura bonus
+        let armor_val = armor.map(|a| a.0).unwrap_or(0)
+            + rally_buff.map(|r| r.armor_bonus).unwrap_or(0);
         let after_armor = (message.raw_damage - armor_val).max(1);
 
         // Resistance multiplier

@@ -19,12 +19,12 @@
         "magic_missile": (
             name: "Magic Missile",
             mana_cost: 5,
-            cooldown: 4,
-            description: "A bolt of pure force that strikes unerringly. Scales with INT.",
+            cooldown: 3,
+            description: "A bolt of pure force. Scales with INT.",
             target: Enemy,
             range: 8,
             effects: [
-                Damage(dice: "1d4", int_scaling: true),
+                Damage(dice: "1d6", int_scaling: true),
             ],
             damage_type: Physical,
         ),
@@ -40,34 +40,21 @@
             ],
             damage_type: Fire,
         ),
-        "vampiric_strike": (
-            name: "Vampiric Strike",
-            mana_cost: 12,
-            cooldown: 4,
-            description: "Drains life from the target, healing you for a portion.",
-            target: Enemy,
-            range: 6,
-            effects: [
-                Damage(dice: "2d4", int_scaling: false),
-                Heal(dice: "1d4", int_scaling: false),
-            ],
-            damage_type: Necrotic,
-        ),
         "shadow_bolt": (
             name: "Shadow Bolt",
-            mana_cost: 18,
-            cooldown: 5,
+            mana_cost: 12,
+            cooldown: 4,
             description: "A bolt of necrotic shadow energy. Scales with INT.",
             target: Enemy,
             range: 8,
             effects: [
-                Damage(dice: "2d8", int_scaling: true),
+                Damage(dice: "2d6", int_scaling: true),
             ],
             damage_type: Necrotic,
         ),
         "lightning_bolt": (
             name: "Lightning Bolt",
-            mana_cost: 20,
+            mana_cost: 18,
             cooldown: 6,
             description: "Calls down a devastating bolt of lightning. Scales with INT.",
             target: Enemy,
@@ -81,7 +68,7 @@
             name: "Fireball",
             mana_cost: 22,
             cooldown: 8,
-            description: "A ball of fire that explodes in a 3x3 area. Destroys wooden doors.",
+            description: "A ball of fire that explodes in a 3x3 area.",
             target: Enemy,
             range: 8,
             effects: [
@@ -89,21 +76,9 @@
             ],
             damage_type: Fire,
         ),
-        "chain_lightning": (
-            name: "Chain Lightning",
-            mana_cost: 25,
-            cooldown: 8,
-            description: "Lightning that arcs between enemies. Scales with INT.",
-            target: Enemy,
-            range: 8,
-            effects: [
-                ChainDamage(dice: "2d6", max_jumps: 2, jump_range: 2, int_scaling: true),
-            ],
-            damage_type: Lightning,
-        ),
         "death_coil": (
             name: "Death Coil",
-            mana_cost: 30,
+            mana_cost: 28,
             cooldown: 8,
             description: "A devastating blast of necrotic energy. Scales with INT.",
             target: Enemy,
@@ -113,76 +88,31 @@
             ],
             damage_type: Necrotic,
         ),
-        "meteor": (
-            name: "Meteor",
-            mana_cost: 35,
-            cooldown: 10,
-            description: "Calls down a meteor that devastates a 3x3 area.",
-            target: Enemy,
-            range: 10,
-            effects: [
-                AoeDamage(dice: "3d8", radius: 1, int_scaling: false),
-            ],
-            damage_type: Fire,
-        ),
 
         // ==============
         // HEALING SPELLS
         // ==============
 
-        "minor_heal": (
-            name: "Minor Heal",
-            mana_cost: 4,
-            cooldown: 2,
-            description: "A quick patch of healing energy.",
-            target: Castor,
-            range: 0,
-            effects: [
-                Heal(dice: "1d4", int_scaling: false),
-            ],
-        ),
-        "heal_self": (
-            name: "Heal Self",
-            mana_cost: 8,
-            cooldown: 8,
-            description: "Restores hit points to yourself. Scales with INT.",
-            target: Castor,
-            range: 0,
+        "heal": (
+            name: "Heal",
+            mana_cost: 6,
+            cooldown: 5,
+            description: "Restores health to yourself or an ally. Scales with INT.",
+            target: AllyOrSelf,
+            range: 8,
             effects: [
                 Heal(dice: "1d6", int_scaling: true),
             ],
         ),
-        "heal_ally": (
-            name: "Heal Ally",
-            mana_cost: 12,
-            cooldown: 5,
-            description: "Heals the most-wounded visible ally. Scales with INT.",
-            target: Ally,
-            range: 8,
-            effects: [
-                Heal(dice: "2d4", int_scaling: true),
-            ],
-        ),
-        "cure_wounds": (
-            name: "Cure Wounds",
-            mana_cost: 15,
-            cooldown: 6,
-            description: "Heals whoever needs it most — ally or self. Scales with INT.",
-            target: AllyOrSelf,
-            range: 8,
-            effects: [
-                Heal(dice: "2d6", int_scaling: true),
-            ],
-        ),
         "greater_heal": (
             name: "Greater Heal",
-            mana_cost: 25,
+            mana_cost: 18,
             cooldown: 8,
             description: "A powerful burst of restorative energy. Scales with INT.",
             target: AllyOrSelf,
             range: 8,
             effects: [
-                Heal(dice: "3d8", int_scaling: true),
+                Heal(dice: "3d6", int_scaling: true),
             ],
         ),
 
@@ -201,77 +131,21 @@
                 ApplyEnrage(duration: 6),
             ],
         ),
-        "fortify": (
-            name: "Fortify",
-            mana_cost: 8,
-            cooldown: 12,
-            description: "Boosts CON by 3 for 10 turns.",
-            target: Castor,
-            range: 0,
-            effects: [
-                Buff(attribute: "constitution", amount: 3, duration: 10),
-            ],
-        ),
         "haste": (
             name: "Haste",
             mana_cost: 10,
-            cooldown: 12,
-            description: "Doubles your action speed for 8 turns.",
-            target: Castor,
-            range: 0,
-            effects: [
-                ApplyHaste(duration: 8),
-            ],
-        ),
-        "haste_ally": (
-            name: "Haste Ally",
-            mana_cost: 12,
             cooldown: 10,
-            description: "Doubles an ally's action speed for 8 turns.",
-            target: Ally,
-            range: 8,
-            effects: [
-                ApplyHaste(duration: 8),
-            ],
-        ),
-        "iron_skin": (
-            name: "Iron Skin",
-            mana_cost: 12,
-            cooldown: 15,
-            description: "Hardens your skin, granting +3 armor for 10 turns.",
-            target: Castor,
-            range: 0,
-            effects: [
-                Buff(attribute: "armor", amount: 3, duration: 10),
-            ],
-        ),
-        "battle_hymn": (
-            name: "Battle Hymn",
-            mana_cost: 15,
-            cooldown: 15,
-            description: "Inspires with +2 STR and +2 AGI for 8 turns.",
+            description: "Doubles action speed for 8 turns. Targets an ally or self.",
             target: AllyOrSelf,
             range: 8,
             effects: [
-                Buff(attribute: "strength", amount: 2, duration: 8),
-                Buff(attribute: "agility", amount: 2, duration: 8),
-            ],
-        ),
-        "arcane_surge": (
-            name: "Arcane Surge",
-            mana_cost: 20,
-            cooldown: 20,
-            description: "Floods your mind with arcane power. +6 INT for 8 turns.",
-            target: Castor,
-            range: 0,
-            effects: [
-                Buff(attribute: "intelligence", amount: 6, duration: 8),
+                ApplyHaste(duration: 8),
             ],
         ),
         "spirit_shield": (
             name: "Spirit Shield",
-            mana_cost: 20,
-            cooldown: 25,
+            mana_cost: 18,
+            cooldown: 20,
             description: "Damage is absorbed by your mana pool for 10 turns.",
             target: Castor,
             range: 0,
@@ -284,44 +158,20 @@
         // DEBUFF SPELLS
         // ==============
 
-        "weaken": (
-            name: "Weaken",
-            mana_cost: 8,
-            cooldown: 10,
-            description: "Saps the target's strength. -3 STR for 8 turns.",
-            target: Enemy,
-            range: 8,
-            effects: [
-                Debuff(attribute: "strength", amount: 3, duration: 8),
-            ],
-        ),
         "slow": (
             name: "Slow",
-            mana_cost: 10,
-            cooldown: 10,
-            description: "Halves the target's action speed for 8 turns.",
+            mana_cost: 8,
+            cooldown: 8,
+            description: "Halves the target's action speed for 6 turns.",
             target: Enemy,
             range: 8,
             effects: [
-                ApplySlow(duration: 8),
-            ],
-        ),
-        "curse": (
-            name: "Curse",
-            mana_cost: 18,
-            cooldown: 15,
-            description: "A terrible curse. -2 STR, -2 DEX, -2 CON for 10 turns.",
-            target: Enemy,
-            range: 8,
-            effects: [
-                Debuff(attribute: "strength", amount: 2, duration: 10),
-                Debuff(attribute: "dexterity", amount: 2, duration: 10),
-                Debuff(attribute: "constitution", amount: 2, duration: 10),
+                ApplySlow(duration: 6),
             ],
         ),
         "mana_drain": (
             name: "Mana Drain",
-            mana_cost: 10,
+            mana_cost: 12,
             cooldown: 8,
             description: "Siphons mana from the target. Scales with INT.",
             target: Enemy,
@@ -332,30 +182,20 @@
         ),
 
         // ===============
-        // UTILITY SPELLS
+        // SUMMON SPELLS
         // ===============
 
-        "blink": (
-            name: "Blink",
-            mana_cost: 8,
-            cooldown: 6,
-            description: "Teleport up to 3 tiles in any direction.",
-            target: Castor,
-            range: 0,
-            effects: [
-                Teleport(range: 3),
-            ],
-        ),
-        "teleport": (
-            name: "Teleport",
+        "raise_dead": (
+            name: "Raise Dead",
             mana_cost: 15,
-            cooldown: 20,
-            description: "Teleport to a random location on the floor. Risky but effective.",
+            cooldown: 12,
+            description: "Raises skeletal warriors from the ground to fight for you.",
             target: Castor,
             range: 0,
             effects: [
-                Teleport(range: 0),
+                SummonAlly(monster: "Skeleton", count: 2),
             ],
+            damage_type: Necrotic,
         ),
     }
 )

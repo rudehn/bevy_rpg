@@ -1,69 +1,60 @@
 (
     spawns: [
-        // Consumables — common across all floors
-        (item: "Healing Potion",     min_floor: 1,  max_floor: 10, weight: 5),
-        (item: "Greater Healing Potion", min_floor: 4, max_floor: 10, weight: 2),
-        (item: "Arrow",              min_floor: 1,  max_floor: 10, weight: 4, min_count: 5, max_count: 12),
-
-        // Weapons — early tiers fade out as depth increases
-        (item: "Iron Sword",         min_floor: 1,  max_floor: 5,  weight: 3),
-        (item: "Steel Sword",        min_floor: 3,  max_floor: 10, weight: 2),
-        (item: "Short Bow",          min_floor: 1,  max_floor: 5,  weight: 2),
-        (item: "Long Bow",           min_floor: 3,  max_floor: 10, weight: 2),
-
-        // Armor
-        (item: "Leather Armor",      min_floor: 1,  max_floor: 6,  weight: 3),
-
-        // Accessories
-        (item: "Ring of Perception",      min_floor: 3,  max_floor: 10, weight: 1),
+        // ===========================
+        // CONSUMABLES
+        // ===========================
+        (item: "Healing Potion",          min_floor: 1,  max_floor: 12, weight: 5),
+        (item: "Greater Healing Potion",  min_floor: 6,  max_floor: 20, weight: 2),
+        (item: "Arrow",                   min_floor: 1,  max_floor: 20, weight: 4, min_count: 5, max_count: 12),
 
         // ===========================
-        // SPELLBOOKS — Zone 1 (1-5)
+        // WEAPONS
         // ===========================
-        (item: "Tome of Spark",            min_floor: 1,  max_floor: 5,  weight: 2),
-        (item: "Tome of Magic Missile",    min_floor: 1,  max_floor: 8,  weight: 2),
-        (item: "Tome of Minor Heal",       min_floor: 1,  max_floor: 5,  weight: 2),
-        (item: "Tome of Fire Dart",        min_floor: 2,  max_floor: 8,  weight: 1),
+        (item: "Iron Sword",              min_floor: 1,  max_floor: 8,  weight: 3),
+        (item: "Steel Sword",             min_floor: 5,  max_floor: 14, weight: 2),
+        (item: "Short Bow",               min_floor: 1,  max_floor: 8,  weight: 2),
+        (item: "Long Bow",                min_floor: 5,  max_floor: 14, weight: 2),
 
         // ===========================
-        // SPELLBOOKS — Zone 2 (6-10)
+        // ARMOR
         // ===========================
-        (item: "Tome of Vampiric Strike",  min_floor: 6,  max_floor: 13, weight: 1),
-        (item: "Tome of Healing",          min_floor: 6,  max_floor: 13, weight: 2),
-        (item: "Tome of Heal Ally",        min_floor: 6,  max_floor: 13, weight: 1),
-        (item: "Tome of Enrage",           min_floor: 6,  max_floor: 13, weight: 1),
-        (item: "Tome of Fortify",          min_floor: 6,  max_floor: 13, weight: 1),
-        (item: "Tome of Weaken",           min_floor: 6,  max_floor: 13, weight: 1),
-        (item: "Tome of Haste",            min_floor: 7,  max_floor: 14, weight: 1),
-        (item: "Tome of Blink",            min_floor: 7,  max_floor: 14, weight: 1),
+        (item: "Leather Armor",           min_floor: 1,  max_floor: 8,  weight: 3),
+        (item: "Studded Leather Armor",   min_floor: 4,  max_floor: 12, weight: 2),
 
-        // ============================
-        // SPELLBOOKS — Zone 3 (11-16)
-        // ============================
-        (item: "Tome of Shadow Bolt",      min_floor: 11, max_floor: 19, weight: 1),
-        (item: "Tome of Lightning Bolt",   min_floor: 11, max_floor: 19, weight: 1),
-        (item: "Tome of Fireball",         min_floor: 12, max_floor: 19, weight: 1),
-        (item: "Tome of Chain Lightning",  min_floor: 12, max_floor: 19, weight: 1),
-        (item: "Tome of Cure Wounds",      min_floor: 11, max_floor: 19, weight: 1),
-        (item: "Tome of Haste Ally",       min_floor: 11, max_floor: 19, weight: 1),
-        (item: "Tome of Iron Skin",        min_floor: 11, max_floor: 19, weight: 1),
-        (item: "Tome of Battle Hymn",      min_floor: 12, max_floor: 19, weight: 1),
-        (item: "Tome of Slow",             min_floor: 11, max_floor: 19, weight: 1),
+        // ===========================
+        // ACCESSORIES
+        // ===========================
+        (item: "Ring of Perception",      min_floor: 3,  max_floor: 12, weight: 1),
 
-        // ============================
-        // SPELLBOOKS — Zone 4 (17-21)
-        // ============================
-        (item: "Tome of Death Coil",       min_floor: 17, max_floor: 24, weight: 1),
-        (item: "Tome of Greater Heal",     min_floor: 17, max_floor: 24, weight: 1),
-        (item: "Tome of Arcane Surge",     min_floor: 17, max_floor: 24, weight: 1),
-        (item: "Tome of Spirit Shield",    min_floor: 17, max_floor: 24, weight: 1),
-        (item: "Tome of Curse",            min_floor: 17, max_floor: 24, weight: 1),
-        (item: "Tome of Mana Drain",       min_floor: 17, max_floor: 24, weight: 1),
-        (item: "Tome of Teleport",         min_floor: 18, max_floor: 25, weight: 1),
+        // ===========================
+        // SPELLBOOKS — Zone 1 (Floors 1-5)
+        // ===========================
+        (item: "Tome of Spark",           min_floor: 1,  max_floor: 6,  weight: 2),
+        (item: "Tome of Magic Missile",   min_floor: 1,  max_floor: 8,  weight: 2),
+        (item: "Tome of Heal",            min_floor: 1,  max_floor: 8,  weight: 2),
 
-        // ============================
-        // SPELLBOOKS — Zone 5 (22-26)
-        // ============================
-        (item: "Tome of Meteor",           min_floor: 22, max_floor: 26, weight: 1),
+        // ===========================
+        // SPELLBOOKS — Zone 2 (Floors 6-10)
+        // ===========================
+        (item: "Tome of Fire Dart",       min_floor: 5,  max_floor: 12, weight: 1),
+        (item: "Tome of Shadow Bolt",     min_floor: 6,  max_floor: 14, weight: 1),
+        (item: "Tome of Enrage",          min_floor: 6,  max_floor: 14, weight: 1),
+        (item: "Tome of Haste",           min_floor: 6,  max_floor: 14, weight: 1),
+        (item: "Tome of Slow",            min_floor: 6,  max_floor: 14, weight: 1),
+
+        // ===========================
+        // SPELLBOOKS — Zone 3 (Floors 11-15)
+        // ===========================
+        (item: "Tome of Lightning Bolt",  min_floor: 10, max_floor: 18, weight: 1),
+        (item: "Tome of Fireball",        min_floor: 11, max_floor: 18, weight: 1),
+        (item: "Tome of Greater Heal",    min_floor: 10, max_floor: 18, weight: 1),
+        (item: "Tome of Spirit Shield",   min_floor: 11, max_floor: 18, weight: 1),
+        (item: "Tome of Mana Drain",      min_floor: 10, max_floor: 18, weight: 1),
+        (item: "Tome of Raise Dead",      min_floor: 11, max_floor: 18, weight: 1),
+
+        // ===========================
+        // SPELLBOOKS — Zone 4 (Floors 16-20)
+        // ===========================
+        (item: "Tome of Death Coil",      min_floor: 16, max_floor: 20, weight: 1),
     ]
 )

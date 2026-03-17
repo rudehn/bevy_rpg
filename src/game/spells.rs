@@ -47,6 +47,8 @@ pub enum SpellEffect {
     Teleport { range: i32 },
     /// Apply +50% damage multiplier for N turns.
     ApplyEnrage { duration: u32 },
+    /// Summon allied monsters at adjacent tiles.
+    SummonAlly { monster: String, count: u32 },
 }
 
 // --- Spell Data ---

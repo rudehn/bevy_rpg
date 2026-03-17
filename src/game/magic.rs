@@ -512,9 +512,29 @@ pub fn handle_cast_spell(
                         )));
                     }
                 }
-                SpellEffect::ApplyEnrage { .. } => {
-                    // Enrage removed — just log
-                    log_writer.write(GameLogMessage("The enrage spell fizzles.".to_string()));
+                SpellEffect::ApplyEnrage { duration } => {
+                    commands.entity(target_entity).insert(
+                        crate::game::abilities::Enraged { turns_remaining: *duration }
+                    );
+                    log_writer.write(GameLogMessage(format!(
+                        "{} enters a rage! (+50% damage for {} turns)",
+                        caster_label, duration
+                    )));
+                }
+                SpellEffect::SummonAlly { monster, count } => {
+                    // Queue a pending summon — processed by a separate system
+                    // to avoid exceeding the system parameter limit.
+                    let caster_pos = if let Ok(pos) = positions.get(caster_entity) {
+                        *pos
+                    } else {
+                        continue;
+                    };
+                    commands.insert_resource(PendingSummon {
+                        caster_pos,
+                        caster_label: caster_label.clone(),
+                        monster_name: monster.clone(),
+                        count: *count,
+                    });
                 }
             }
         }
@@ -662,6 +682,77 @@ pub fn process_burning_system(
 }
 
 // =====================================================================
+// =====================================================================
+// Pending Summon — deferred from handle_cast_spell to avoid param limit
+// =====================================================================
+
+/// Resource written by handle_cast_spell, consumed by process_pending_summon.
+#[derive(Resource)]
+pub struct PendingSummon {
+    pub caster_pos: Position,
+    pub caster_label: String,
+    pub monster_name: String,
+    pub count: u32,
+}
+
+pub fn process_pending_summon(
+    mut commands: Commands,
+    pending: Option<Res<PendingSummon>>,
+    mut turn_manager: ResMut<crate::game::TurnManager>,
+    monster_manifests: Res<Assets<crate::assets::MonsterManifest>>,
+    monster_manifest_handle: Res<crate::assets::MonsterManifestHandle>,
+    monster_sprite_assets: Res<crate::assets::MonsterSpriteAssets>,
+    map: Res<Map>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+    positions: Query<&Position>,
+) {
+    let Some(summon) = pending else { return; };
+
+    let occupied: std::collections::HashSet<(i32, i32)> = positions
+        .iter()
+        .map(|p| (p.x, p.y))
+        .collect();
+
+    let directions = [(0, -1), (0, 1), (-1, 0), (1, 0), (-1, -1), (1, -1), (-1, 1), (1, 1)];
+    let mut spawn_points = Vec::new();
+    for (dx, dy) in &directions {
+        let nx = summon.caster_pos.x + dx;
+        let ny = summon.caster_pos.y + dy;
+        let idx = map.xy_idx(nx, ny);
+        if idx < map.tiles.len()
+            && crate::map::tile::is_walkable(map.tiles[idx])
+            && !occupied.contains(&(nx, ny))
+        {
+            spawn_points.push(bracket_lib::prelude::Point::new(nx, ny));
+            if spawn_points.len() >= summon.count as usize {
+                break;
+            }
+        }
+    }
+
+    if !spawn_points.is_empty() {
+        let spawned = spawn_points.len();
+        for point in spawn_points {
+            crate::game::spawner::spawn_monster_by_name(
+                &mut commands,
+                &summon.monster_name,
+                &point,
+                &mut turn_manager,
+                &monster_manifests,
+                &monster_manifest_handle,
+                &monster_sprite_assets,
+            );
+        }
+        log_writer.write(GameLogMessage(format!(
+            "{} raises {} {}!",
+            summon.caster_label, spawned, summon.monster_name
+        )));
+    }
+
+    commands.remove_resource::<PendingSummon>();
+}
+
+// =====================================================================
 // Plugin
 // =====================================================================
 
@@ -686,6 +777,7 @@ impl Plugin for MagicPlugin {
                     tick_stunned_system,
                     process_burning_system,
                     apply_speed_effects_system,
+                    process_pending_summon,
                 )
                     .run_if(in_state(AppState::InGame)),
             );

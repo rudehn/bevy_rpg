@@ -804,6 +804,11 @@ fn choose_spell(
                     raw += 20;
                     target = target.or(Some(resolved_entity));
                 }
+                SpellEffect::SummonAlly { count, .. } => {
+                    // Summoning is valuable — more allies = more targets for the player
+                    raw += 15 * (*count as i32);
+                    target = target.or(Some(caster));
+                }
             }
         }
 
