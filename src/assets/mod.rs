@@ -162,7 +162,6 @@ pub struct PrefabPropEntry {
 }
 
 #[derive(Deserialize, Debug, Clone)]
-#[derive(Deserialize, Debug, Clone)]
 pub enum MonsterBehavior {
     Sentry,
     Patrol(Vec<(i32, i32)>),
@@ -174,6 +173,7 @@ impl Default for MonsterBehavior {
     fn default() -> Self { MonsterBehavior::Wander }
 }
 
+#[derive(Deserialize, Debug, Clone)]
 pub struct PrefabMonsterSpawn {
     pub x: i32,
     pub y: i32,

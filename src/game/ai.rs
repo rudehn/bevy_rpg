@@ -450,7 +450,7 @@ fn idle_movement(
                 })
             }
         }
-        Some(PatrolState::Waypoint { ref points, current_index }) => {
+        Some(PatrolState::Waypoint { points, current_index }) => {
             if points.is_empty() { return None; }
             let target = Point::new(points[*current_index].0, points[*current_index].1);
             if monster_pos == target {
