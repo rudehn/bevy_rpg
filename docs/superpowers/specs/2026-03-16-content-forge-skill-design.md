@@ -259,16 +259,18 @@ Floor-by-floor power targets used to assign balanced stats.
 
 **Reference data points from existing monsters:**
 
-| Monster | Floor | base_hp | Damage | AGI | Final HP (approx) |
+| Monster | Level | base_hp | Damage | AGI | Final HP (approx) |
 |---------|-------|---------|--------|-----|-------------------|
-| Rat | 1 | 8 | 1d3 | 14 | ~8 |
-| Goblin | 2 | 15 | 1d4 | 12 | ~17 |
-| Skeleton | 6 | 20 | 1d6 | 10 | ~20 |
-| Orc | 9 | 35 | 1d8 | 10 | ~35 |
-| Orc Berserker | 11 | 45 | 1d10+2 | 10 | ~56 |
-| Shadow Fiend | 16 | 55 | 2d6 | 14 | ~67 |
-| Dark Knight | 18 | 75 | 2d8+2 | 10 | ~87 |
-| Veiled Tyrant | 20 | 200 | 2d8+4 | 12 | ~220 |
+| Rat | 1 | 8 | 1d4 | 14 | ~6 |
+| Goblin | 1 | 10 | 1d4 | 10 | ~10 |
+| Skeleton | 5 | 22 | 1d6 | 8 | ~22 |
+| Orc | 8 | 32 | 1d8+1 | 10 | ~48 |
+| Orc Berserker | 10 | 45 | 1d10+2 | 10 | ~85 |
+| Shadow Fiend | 14 | 55 | 1d10+2 | 12 | ~83 |
+| Dark Knight | 18 | 75 | 2d8+4 | 8 | ~183 |
+| Veiled Tyrant | 20 | 200 | 2d8+4 | 12 | ~440 |
+
+*Level = the monster's `level` field from `monsters.ron`. Final HP = `base_hp + (CON_bonus * level)`.*
 
 **Item Power Budgets** by rarity:
 
