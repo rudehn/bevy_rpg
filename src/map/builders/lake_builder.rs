@@ -57,15 +57,17 @@ impl LakeBuilder {
         &self,
         max_width: i32,
         max_height: i32,
-        rng: &mut impl Rng,
+        _rng: &mut impl Rng,
     ) -> Option<Vec<(i32, i32)>> {
+        // Match Brogue's createBlobOnGrid parameters exactly:
+        // rounds=5, minW=4, minH=4, seed%=55, birth at 5+, survive at 4+
         let config = BlobGenConfig {
             round_count: 5,
-            min_blob_width: max_width / 3,
-            min_blob_height: max_height / 3,
+            min_blob_width: 4,
+            min_blob_height: 4,
             max_blob_width: max_width,
             max_blob_height: max_height,
-            initial_alive_percent: rng.random_range(45..55),
+            initial_alive_percent: 55,
             birth_threshold: 5,
             survival_threshold: 4,
         };
