@@ -8,8 +8,8 @@
             tile_size: (32, 32),
             grid_size: (1, 1),
             ascii_char: ".",
-            ascii_fg: "#808080",
-            ascii_bg: "#141414",
+            ascii_fg: "#BFBFBF",
+            ascii_bg: "#23232B",
         ),
         "Wall": (
             name: "Wall",
@@ -19,8 +19,8 @@
             tile_size: (32, 32),
             grid_size: (1, 1),
             ascii_char: "#",
-            ascii_fg: "#A0A0A0",
-            ascii_bg: "#282828",
+            ascii_fg: "#504A3C",
+            ascii_bg: "#777463",
         ),
         "DownStairs": (
             name: "DownStairs",
@@ -31,7 +31,7 @@
             grid_size: (1, 1),
             ascii_char: ">",
             ascii_fg: "#FFFFFF",
-            ascii_bg: "#141414",
+            ascii_bg: "#23232B",
         ),
         "UpStairs": (
             name: "UpStairs",
@@ -42,7 +42,7 @@
             grid_size: (1, 1),
             ascii_char: "<",
             ascii_fg: "#FFFFFF",
-            ascii_bg: "#141414",
+            ascii_bg: "#23232B",
         ),
         "Empty": (
             name: "Empty",
@@ -63,8 +63,8 @@
             tile_size: (32, 32),
             grid_size: (1, 1),
             ascii_char: "+",
-            ascii_fg: "#B4783C",
-            ascii_bg: "#141414",
+            ascii_fg: "#D4A060",
+            ascii_bg: "#583B30",
         ),
         "OpenDoor": (
             name: "OpenDoor",
@@ -74,8 +74,8 @@
             tile_size: (32, 32),
             grid_size: (1, 1),
             ascii_char: "'",
-            ascii_fg: "#B4783C",
-            ascii_bg: "#141414",
+            ascii_fg: "#D4A060",
+            ascii_bg: "#3A2820",
         ),
         "Water": (
             name: "Water",
@@ -85,8 +85,8 @@
             tile_size: (32, 32),
             grid_size: (1, 1),
             ascii_char: "~",
-            ascii_fg: "#508CDC",
-            ascii_bg: "#0A143C",
+            ascii_fg: "#8080FF",
+            ascii_bg: "#5E5ECA",
         ),
         "ShallowWater": (
             name: "ShallowWater",
@@ -96,8 +96,8 @@
             tile_size: (32, 32),
             grid_size: (1, 1),
             ascii_char: "~",
-            ascii_fg: "#6496C8",
-            ascii_bg: "#141E3C",
+            ascii_fg: "#A0C0FF",
+            ascii_bg: "#70A0ED",
         ),
         "Lava": (
             name: "Lava",
