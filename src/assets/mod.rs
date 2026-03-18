@@ -35,6 +35,27 @@ mod serde_helpers {
     {
         Ok(Some(UVec2::deserialize(deserializer)?))
     }
+
+    /// Parse "#RRGGBB" hex string into a Bevy Color. Returns WHITE on failure.
+    pub fn parse_hex_color(s: &str) -> bevy::prelude::Color {
+        let s = s.trim_start_matches('#');
+        if s.len() != 6 {
+            return bevy::prelude::Color::WHITE;
+        }
+        let r = u8::from_str_radix(&s[0..2], 16).unwrap_or(255);
+        let g = u8::from_str_radix(&s[2..4], 16).unwrap_or(255);
+        let b = u8::from_str_radix(&s[4..6], 16).unwrap_or(255);
+        bevy::prelude::Color::srgb(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0)
+    }
+
+    /// Deserialize a "#RRGGBB" hex string into a Bevy Color.
+    pub fn deserialize_hex_color<'de, D>(deserializer: D) -> Result<bevy::prelude::Color, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(parse_hex_color(&s))
+    }
 }
 
 pub struct AssetsPlugin;
@@ -144,6 +165,10 @@ pub struct PropAsset {
     pub grid_size: Option<UVec2>,
     #[serde(default)]
     pub tile_size: Option<UVec2>,
+    #[serde(default)]
+    pub ascii_char: String,
+    #[serde(default = "default_white_hex", deserialize_with = "serde_helpers::deserialize_hex_color")]
+    pub ascii_fg: Color,
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
@@ -221,6 +246,8 @@ pub struct PrefabTemplate {
 }
 
 fn default_placement() -> String { "any".to_string() }
+fn default_white_hex() -> Color { Color::WHITE }
+fn default_black_hex() -> Color { Color::BLACK }
 fn default_true() -> bool { true }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
@@ -236,6 +263,10 @@ pub struct PlayerAsset {
     pub name: String,
     pub sprite: String,
     pub damage: String,
+    #[serde(default)]
+    pub ascii_char: String,
+    #[serde(default = "default_white_hex", deserialize_with = "serde_helpers::deserialize_hex_color")]
+    pub ascii_fg: Color,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -312,6 +343,10 @@ pub struct MonsterAsset {
     /// Monster abilities — passive, on-hit, on-death, and aura effects.
     #[serde(default)]
     pub abilities: Vec<AbilityDef>,
+    #[serde(default)]
+    pub ascii_char: String,
+    #[serde(default = "default_white_hex", deserialize_with = "serde_helpers::deserialize_hex_color")]
+    pub ascii_fg: Color,
 }
 
 /// Ability definition for RON deserialization.
@@ -431,6 +466,12 @@ pub struct TileAsset {
         deserialize_with = "serde_helpers::deserialize_uvec2_as_option"
     )]
     pub tile_size: Option<UVec2>,
+    #[serde(default)]
+    pub ascii_char: String,
+    #[serde(default = "default_white_hex", deserialize_with = "serde_helpers::deserialize_hex_color")]
+    pub ascii_fg: Color,
+    #[serde(default = "default_black_hex", deserialize_with = "serde_helpers::deserialize_hex_color")]
+    pub ascii_bg: Color,
 }
 
 #[derive(Asset, TypePath, Deserialize, Resource, Debug, Clone)]
@@ -474,6 +515,10 @@ pub struct ItemAsset {
     /// Whether this item is ammunition (consumed by ranged attacks).
     #[serde(default)]
     pub is_ammo: bool,
+    #[serde(default)]
+    pub ascii_char: String,
+    #[serde(default = "default_white_hex", deserialize_with = "serde_helpers::deserialize_hex_color")]
+    pub ascii_fg: Color,
 }
 
 fn default_max_stack() -> u32 {
