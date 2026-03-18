@@ -124,6 +124,7 @@ pub fn update_tile_visibility(
         &mut Visibility,
         Option<&Children>,
     )>,
+    mut ascii_bg_query: Query<&mut Sprite, (With<crate::game::ascii_mode::AsciiBackground>, Without<TileMarker>)>,
     mut ascii_glyph_query: Query<&mut TextColor, With<crate::game::ascii_mode::AsciiGlyph>>,
 ) {
     let Ok(player_viewshed) = player_query.single() else {
@@ -134,6 +135,9 @@ pub fn update_tile_visibility(
     let is_ascii = *mode == crate::game::ascii_mode::GraphicsMode::Ascii;
 
     let mut newly_explored = Vec::new();
+    // Deferred updates for ASCII children (avoids Sprite query conflict with tile query).
+    let mut ascii_bg_updates: Vec<(Entity, Color)> = Vec::new();
+    let mut ascii_glyph_updates: Vec<(Entity, Color)> = Vec::new();
 
     for (tile_pos, mut tile_visibility, mut tile_explored, mut sprite, mut visibility, children) in
         tile_render_query.iter_mut()
@@ -157,6 +161,13 @@ pub fn update_tile_visibility(
 
             if is_ascii {
                 sprite.color = Color::NONE;
+                // Apply light brightness to ASCII children
+                if let Some(children) = children {
+                    for child in children.iter() {
+                        ascii_bg_updates.push((child, Color::srgb(light, light, light)));
+                        ascii_glyph_updates.push((child, Color::srgb(light, light, light)));
+                    }
+                }
             } else {
                 sprite.color = Color::srgb(light, light * 0.95, light * 0.8);
             }
@@ -166,12 +177,10 @@ pub fn update_tile_visibility(
                 *visibility = Visibility::Visible;
                 if is_ascii {
                     sprite.color = Color::NONE;
-                    // Dim ASCII glyph for explored-not-visible
                     if let Some(children) = children {
                         for child in children.iter() {
-                            if let Ok(mut text_color) = ascii_glyph_query.get_mut(child) {
-                                *text_color = TextColor(Color::srgb(0.5, 0.5, 0.5));
-                            }
+                            ascii_bg_updates.push((child, Color::srgb(0.3, 0.3, 0.3)));
+                            ascii_glyph_updates.push((child, Color::srgb(0.4, 0.4, 0.4)));
                         }
                     }
                 } else {
@@ -181,6 +190,20 @@ pub fn update_tile_visibility(
                 *visibility = Visibility::Hidden;
                 sprite.color = Color::BLACK;
             }
+        }
+    }
+
+    // Apply deferred ASCII child color updates (background sprites + text glyphs).
+    // Using separate queries avoids the Sprite borrow conflict with the tile query.
+    for (entity, tint) in ascii_bg_updates {
+        if let Ok(mut bg_sprite) = ascii_bg_query.get_mut(entity) {
+            // Multiply the baked bg color by the light tint
+            bg_sprite.color = tint;
+        }
+    }
+    for (entity, tint) in ascii_glyph_updates {
+        if let Ok(mut text_color) = ascii_glyph_query.get_mut(entity) {
+            *text_color = TextColor(tint);
         }
     }
 

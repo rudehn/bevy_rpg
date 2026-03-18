@@ -87,12 +87,15 @@ fn tile_distance(a: &Position, b: &Position) -> i32 {
 fn update_nearby_panel(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    mode: Res<crate::game::ascii_mode::GraphicsMode>,
+    ascii_font_res: Option<Res<crate::game::ascii_mode::AsciiFont>>,
     player_query: Query<(&Viewshed, &Position), (With<Player>, Changed<Viewshed>)>,
-    monster_query: Query<(Entity, &Position, &Name, &Sprite), With<Monster>>,
+    monster_query: Query<(Entity, &Position, &Name, &Sprite, Option<&Children>), With<Monster>>,
     item_query: Query<
-        (Entity, &Position, &Name, &ItemProperties, &Sprite),
+        (Entity, &Position, &Name, &ItemProperties, &Sprite, Option<&Children>),
         (With<Item>, Without<InInventory>),
     >,
+    glyph_query: Query<(&Text2d, &TextColor), With<crate::game::ascii_mode::AsciiGlyph>>,
     root_query: Query<Entity, With<NearbyListRoot>>,
     row_query: Query<Entity, With<NearbyRow>>,
     mut nearby_state: ResMut<NearbyState>,
@@ -107,25 +110,44 @@ fn update_nearby_panel(
         .map(|p| (p.x, p.y))
         .collect();
 
+    let is_ascii = *mode == crate::game::ascii_mode::GraphicsMode::Ascii;
+
+    // Helper: find ASCII glyph info from children
+    let get_ascii_info = |children: Option<&Children>| -> Option<(String, Color)> {
+        children.and_then(|ch| {
+            for child in ch.iter() {
+                if let Ok((text, color)) = glyph_query.get(child) {
+                    return Some((text.0.clone(), color.0));
+                }
+            }
+            None
+        })
+    };
+
+    // (entity, dist, name, image, atlas, ascii_char, ascii_color)
+    type NearbyEntry = (Entity, i32, String, Handle<Image>, Option<TextureAtlas>, Option<String>, Option<Color>);
+
     // Collect visible monsters
-    let mut monsters: Vec<(Entity, i32, String, Handle<Image>, Option<TextureAtlas>)> =
+    let mut monsters: Vec<NearbyEntry> =
         monster_query
             .iter()
             .filter(|(_, pos, ..)| visible.contains(&(pos.x, pos.y)))
-            .map(|(entity, pos, name, sprite)| {
+            .map(|(entity, pos, name, sprite, children)| {
                 let dist = tile_distance(player_pos, pos);
-                (entity, dist, name.0.clone(), sprite.image.clone(), sprite.texture_atlas.clone())
+                let (ac, acol) = get_ascii_info(children).unzip();
+                (entity, dist, name.0.clone(), sprite.image.clone(), sprite.texture_atlas.clone(), ac, acol)
             })
             .collect();
     monsters.sort_by_key(|(_, d, ..)| *d);
 
     // Collect visible items
-    let mut items: Vec<(Entity, i32, String, Handle<Image>, Option<TextureAtlas>)> = item_query
+    let mut items: Vec<NearbyEntry> = item_query
         .iter()
         .filter(|(_, pos, ..)| visible.contains(&(pos.x, pos.y)))
-        .map(|(entity, pos, name, _props, sprite)| {
+        .map(|(entity, pos, name, _props, sprite, children)| {
             let dist = tile_distance(player_pos, pos);
-            (entity, dist, name.0.clone(), sprite.image.clone(), sprite.texture_atlas.clone())
+            let (ac, acol) = get_ascii_info(children).unzip();
+            (entity, dist, name.0.clone(), sprite.image.clone(), sprite.texture_atlas.clone(), ac, acol)
         })
         .collect();
     items.sort_by_key(|(_, d, ..)| *d);
@@ -180,7 +202,7 @@ fn update_nearby_panel(
                 Node { margin: UiRect::top(Val::Px(4.0)), ..default() },
                 NearbyRow { entity: Entity::PLACEHOLDER },
             ));
-            for (i, (entity, dist, name, image, atlas)) in monsters.iter().enumerate() {
+            for (i, (entity, dist, name, image, atlas, ascii_char, ascii_color)) in monsters.iter().enumerate() {
                 let is_selected = sel == Some(i);
                 let bg = if is_selected {
                     BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15))
@@ -188,8 +210,6 @@ fn update_nearby_panel(
                     BackgroundColor(Color::NONE)
                 };
                 let truncated = truncate_name(name);
-                let mut img = ImageNode::new(image.clone());
-                img.texture_atlas = atlas.clone();
                 parent
                     .spawn((
                         Node {
@@ -204,16 +224,34 @@ fn update_nearby_panel(
                         NearbyRow { entity: *entity },
                     ))
                     .with_children(|row| {
-                        row.spawn((
-                            Node {
-                                width: Val::Px(14.0),
-                                height: Val::Px(14.0),
-                                margin: UiRect::right(Val::Px(4.0)),
-                                flex_shrink: 0.0,
-                                ..default()
-                            },
-                            img,
-                        ));
+                        if is_ascii {
+                            if let (Some(ch), Some(col)) = (ascii_char, ascii_color) {
+                                let afont = ascii_font_res.as_ref().map(|f| f.0.clone()).unwrap_or_else(|| font.clone());
+                                row.spawn((
+                                    Text::new(ch.clone()),
+                                    TextFont { font: afont, font_size: 14.0, ..default() },
+                                    TextColor(*col),
+                                    Node {
+                                        width: Val::Px(14.0),
+                                        margin: UiRect::right(Val::Px(4.0)),
+                                        ..default()
+                                    },
+                                ));
+                            }
+                        } else {
+                            let mut img = ImageNode::new(image.clone());
+                            img.texture_atlas = atlas.clone();
+                            row.spawn((
+                                Node {
+                                    width: Val::Px(14.0),
+                                    height: Val::Px(14.0),
+                                    margin: UiRect::right(Val::Px(4.0)),
+                                    flex_shrink: 0.0,
+                                    ..default()
+                                },
+                                img,
+                            ));
+                        }
                         row.spawn((
                             Text::new(format!("{} {}", truncated, dist)),
                             TextFont { font: font.clone(), font_size: 12.0, ..default() },
@@ -233,7 +271,7 @@ fn update_nearby_panel(
                 Node { margin: UiRect::top(Val::Px(4.0)), ..default() },
                 NearbyRow { entity: Entity::PLACEHOLDER },
             ));
-            for (i, (entity, dist, name, image, atlas)) in items.iter().enumerate() {
+            for (i, (entity, dist, name, image, atlas, ascii_char, ascii_color)) in items.iter().enumerate() {
                 let global_idx = monsters.len() + i;
                 let is_selected = sel == Some(global_idx);
                 let bg = if is_selected {
@@ -242,8 +280,6 @@ fn update_nearby_panel(
                     BackgroundColor(Color::NONE)
                 };
                 let truncated = truncate_name(name);
-                let mut img = ImageNode::new(image.clone());
-                img.texture_atlas = atlas.clone();
                 parent
                     .spawn((
                         Node {
@@ -258,16 +294,34 @@ fn update_nearby_panel(
                         NearbyRow { entity: *entity },
                     ))
                     .with_children(|row| {
-                        row.spawn((
-                            Node {
-                                width: Val::Px(14.0),
-                                height: Val::Px(14.0),
-                                margin: UiRect::right(Val::Px(4.0)),
-                                flex_shrink: 0.0,
-                                ..default()
-                            },
-                            img,
-                        ));
+                        if is_ascii {
+                            if let (Some(ch), Some(col)) = (ascii_char, ascii_color) {
+                                let afont = ascii_font_res.as_ref().map(|f| f.0.clone()).unwrap_or_else(|| font.clone());
+                                row.spawn((
+                                    Text::new(ch.clone()),
+                                    TextFont { font: afont, font_size: 14.0, ..default() },
+                                    TextColor(*col),
+                                    Node {
+                                        width: Val::Px(14.0),
+                                        margin: UiRect::right(Val::Px(4.0)),
+                                        ..default()
+                                    },
+                                ));
+                            }
+                        } else {
+                            let mut img = ImageNode::new(image.clone());
+                            img.texture_atlas = atlas.clone();
+                            row.spawn((
+                                Node {
+                                    width: Val::Px(14.0),
+                                    height: Val::Px(14.0),
+                                    margin: UiRect::right(Val::Px(4.0)),
+                                    flex_shrink: 0.0,
+                                    ..default()
+                                },
+                                img,
+                            ));
+                        }
                         row.spawn((
                             Text::new(format!("{} {}", truncated, dist)),
                             TextFont { font: font.clone(), font_size: 12.0, ..default() },

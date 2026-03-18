@@ -482,7 +482,8 @@ pub fn handle_door_open(
     mut intents: MessageReader<OpenDoorIntent>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut map: ResMut<Map>,
-    mut tile_query: Query<(Entity, &Position, &mut TerrainType, &mut Sprite)>,
+    mut tile_query: Query<(Entity, &Position, &mut TerrainType, &mut Sprite, Option<&Children>)>,
+    mut glyph_query: Query<&mut Text2d, With<crate::game::ascii_mode::AsciiGlyph>>,
     mut viewshed_query: Query<&mut Viewshed>,
     tile_manifests: Res<Assets<TileManifest>>,
     tile_manifest_handle: Res<TileManifestHandle>,
@@ -499,13 +500,13 @@ pub fn handle_door_open(
         map.tiles[idx].terrain = TerrainType::OpenDoor;
 
         // Visual Update by querying for the tile entity at the correct position
-        for (tile_entity, pos, mut terrain_type, mut sprite) in tile_query.iter_mut() {
+        for (tile_entity, pos, mut terrain_type, mut sprite, children) in tile_query.iter_mut() {
             if pos.x == intent.door_pos.x && pos.y == intent.door_pos.y {
                 *terrain_type = TerrainType::OpenDoor;
-                
+
                 if let Some(asset) = tile_manifest.tiles.get(TerrainType::OpenDoor.name()) {
                     let (texture_path, index) = crate::assets::parse_sprite_path(&asset.sprite);
-                    
+
                     // Update Sprite image, index, and layout
                     if let Some(texture_handle) = tile_sprite_assets.handles.get(texture_path) {
                         sprite.image = texture_handle.clone();
@@ -514,6 +515,16 @@ pub fn handle_door_open(
                         if let Some(ref mut texture_atlas) = sprite.texture_atlas {
                             texture_atlas.index = index;
                             texture_atlas.layout = layout_handle.clone();
+                        }
+                    }
+
+                    // Update ASCII glyph to open door character
+                    if let Some(children) = children {
+                        let new_char = if asset.ascii_char.is_empty() { "'" } else { &asset.ascii_char };
+                        for child in children.iter() {
+                            if let Ok(mut text) = glyph_query.get_mut(child) {
+                                **text = new_char.to_string();
+                            }
                         }
                     }
                 }
