@@ -5,7 +5,6 @@ use crate::{
     components::FinalBoss,
     game::{
         combat::{DamageType, Health, Resistances, ResistanceLevel},
-        magic::{ActiveSpells, KnownSpells},
         stats::Armor,
         turns::TurnEndEvent,
         TurnManager,
@@ -67,127 +66,56 @@ impl Plugin for BossPlugin {
 
 /// When a FinalBoss entity is first spawned, apply all accumulated TyrantPower
 /// tier boosts. Modifies Health and Armor directly.
+/// When a FinalBoss entity is first spawned, apply all accumulated TyrantPower
+/// tier boosts. Each tier adds +15 HP. Higher tiers add armor and resistances.
 fn apply_tyrant_power_on_spawn(
     tyrant_power: Res<TyrantPower>,
-    mut query: Query<
-        (
-            Entity,
-            &mut Health,
-            &mut Armor,
-            Option<&mut Resistances>,
-            Option<&mut KnownSpells>,
-            Option<&mut ActiveSpells>,
-        ),
-        Added<FinalBoss>,
-    >,
+    mut query: Query<(Entity, &mut Health, &mut Armor, Option<&mut Resistances>), Added<FinalBoss>>,
     mut commands: Commands,
 ) {
-    for (entity, mut health, mut armor, resistances, mut known_spells, mut active_spells) in
-        query.iter_mut()
-    {
+    for (entity, mut health, mut armor, resistances) in query.iter_mut() {
         if tyrant_power.tier == 0 {
             return;
         }
 
-        let mut cumulative_hp = 0;
-        let mut cumulative_armor_bonus = 0;
-        let mut spells_to_add: Vec<&str> = Vec::new();
-        let mut resistance_map: std::collections::HashMap<DamageType, ResistanceLevel> =
-            std::collections::HashMap::new();
+        // Each tier: +15 HP. Tier 3+: physical resistant. Tier 5+: +2 armor, necrotic resistant.
+        let hp_boost = tyrant_power.tier as i32 * 15;
+        health.max += hp_boost;
+        health.current += hp_boost;
 
-        for tier in 1..=tyrant_power.tier {
-            // HP boost
-            cumulative_hp += if tier == 5 { 20 } else { 15 };
-
-            match tier {
-                1 => {
-                    // Tier 1: just HP boost
-                }
-                2 => {
-                    spells_to_add.push("fireball");
-                }
-                3 => {
-                    resistance_map.insert(DamageType::Physical, ResistanceLevel::Resistant);
-                }
-                4 => {
-                    spells_to_add.push("haste");
-                }
-                5 => {
-                    cumulative_armor_bonus = 2;
-                    resistance_map.insert(DamageType::Necrotic, ResistanceLevel::Resistant);
-                }
-                t if t >= 6 => {
-                    cumulative_armor_bonus = 2 + (t - 5) as i32;
-                }
-                _ => {}
-            }
+        if tyrant_power.tier >= 5 {
+            armor.0 += 2;
         }
 
-        // Apply HP boost directly
-        health.max += cumulative_hp;
-        health.current += cumulative_hp;
-
-        // Apply armor boost
-        if cumulative_armor_bonus > 0 {
-            armor.0 += cumulative_armor_bonus;
-        }
-
-        // Apply resistances
-        if !resistance_map.is_empty() {
-            if let Some(mut res) = resistances {
-                for (dt, rl) in &resistance_map {
-                    res.0.insert(*dt, *rl);
-                }
-            } else {
-                commands.entity(entity).insert(Resistances(resistance_map));
+        if tyrant_power.tier >= 3 {
+            let mut map = resistances
+                .map(|r| r.0.clone())
+                .unwrap_or_default();
+            map.insert(DamageType::Physical, ResistanceLevel::Resistant);
+            if tyrant_power.tier >= 5 {
+                map.insert(DamageType::Necrotic, ResistanceLevel::Resistant);
             }
-        }
-
-        // Apply spells
-        for spell_id in &spells_to_add {
-            if let Some(ref mut known) = known_spells {
-                if !known.spells.contains(&spell_id.to_string()) {
-                    known.spells.push(spell_id.to_string());
-                }
-            }
-            if let Some(ref mut active) = active_spells {
-                for slot in active.slots.iter_mut() {
-                    if slot.is_none() {
-                        *slot = Some(spell_id.to_string());
-                        break;
-                    }
-                }
-            }
+            commands.entity(entity).insert(Resistances(map));
         }
 
         info!(
-            "Applied TyrantPower tier {} to The Veiled Tyrant: +{} base HP, +{} armor",
-            tyrant_power.tier,
-            cumulative_hp,
-            cumulative_armor_bonus,
+            "Applied TyrantPower tier {} to The Veiled Tyrant: +{} HP, +{} armor",
+            tyrant_power.tier, hp_boost, if tyrant_power.tier >= 5 { 2 } else { 0 },
         );
     }
 }
 
 /// Checks the global game time and increments the Tyrant's power tier
 /// when the escalation interval is crossed. Logs warnings to the player.
+/// Checks the global game time and increments the Tyrant's power tier
+/// when the escalation interval is crossed. Logs warnings to the player.
+/// If the boss is already spawned, applies the stat boost immediately.
 fn tyrant_escalation_system(
     mut turn_end_events: MessageReader<TurnEndEvent>,
     turn_manager: Res<TurnManager>,
     mut tyrant_power: ResMut<TyrantPower>,
     mut log_writer: MessageWriter<GameLogMessage>,
-    mut boss_query: Query<
-        (
-            Entity,
-            &mut Health,
-            &mut Armor,
-            Option<&mut Resistances>,
-            Option<&mut KnownSpells>,
-            Option<&mut ActiveSpells>,
-        ),
-        With<FinalBoss>,
-    >,
-    mut commands: Commands,
+    mut boss_query: Query<(&mut Health, &mut Armor), With<FinalBoss>>,
 ) {
     for _ in turn_end_events.read() {
         let current_time = turn_manager.current_time;
@@ -197,12 +125,10 @@ fn tyrant_escalation_system(
             continue;
         }
 
-        // Increment tier
         tyrant_power.tier += 1;
         tyrant_power.last_escalation_time = current_time;
         let tier = tyrant_power.tier;
 
-        // Log escalating warnings
         let warning = match tier {
             1 => "You feel a dark power growing in the depths below...",
             2 => "The dungeon trembles. The Tyrant grows stronger.",
@@ -213,48 +139,12 @@ fn tyrant_escalation_system(
         };
         log_writer.write(GameLogMessage(warning.to_string()));
 
-        // If the boss is already spawned on the current floor, apply the single tier now
-        if let Ok((entity, mut health, mut armor, resistances, known_spells, active_spells)) =
-            boss_query.single_mut()
-        {
-            // HP boost
-            let hp_boost = if tier == 5 { 20 } else { 15 };
-            health.max += hp_boost;
-            health.current += hp_boost;
-
-            match tier {
-                1 => {
-                    // Tier 1: just HP boost
-                }
-                2 => {
-                    add_spell("fireball", known_spells, active_spells);
-                }
-                3 => {
-                    if let Some(mut res) = resistances {
-                        res.0.insert(DamageType::Physical, ResistanceLevel::Resistant);
-                    } else {
-                        let mut map = std::collections::HashMap::new();
-                        map.insert(DamageType::Physical, ResistanceLevel::Resistant);
-                        commands.entity(entity).insert(Resistances(map));
-                    }
-                }
-                4 => {
-                    add_spell("haste", known_spells, active_spells);
-                }
-                5 => {
-                    armor.0 += 2;
-                    if let Some(mut res) = resistances {
-                        res.0.insert(DamageType::Necrotic, ResistanceLevel::Resistant);
-                    } else {
-                        let mut map = std::collections::HashMap::new();
-                        map.insert(DamageType::Necrotic, ResistanceLevel::Resistant);
-                        commands.entity(entity).insert(Resistances(map));
-                    }
-                }
-                t if t >= 6 => {
-                    armor.0 += 1;
-                }
-                _ => {}
+        // If the boss is already spawned, apply single-tier boost now
+        if let Ok((mut health, mut armor)) = boss_query.single_mut() {
+            health.max += 15;
+            health.current += 15;
+            if tier >= 5 {
+                armor.0 += 1;
             }
         }
     }
@@ -278,24 +168,3 @@ fn boss_phase_system(mut query: Query<(&Health, &mut BossAI), With<FinalBoss>>) 
     }
 }
 
-// --- Helpers ---
-
-fn add_spell(
-    spell_id: &str,
-    known_spells: Option<Mut<KnownSpells>>,
-    active_spells: Option<Mut<ActiveSpells>>,
-) {
-    if let Some(mut known) = known_spells {
-        if !known.spells.contains(&spell_id.to_string()) {
-            known.spells.push(spell_id.to_string());
-        }
-    }
-    if let Some(mut active) = active_spells {
-        for slot in active.slots.iter_mut() {
-            if slot.is_none() {
-                *slot = Some(spell_id.to_string());
-                return;
-            }
-        }
-    }
-}
