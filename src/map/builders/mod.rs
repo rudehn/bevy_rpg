@@ -17,6 +17,7 @@ use crate::{
             diagonal_culler::DiagonalCuller,
             exit_points::DistantExit,
             item_spawner::ItemSpawner,
+            lake_builder::LakeBuilder,
             monster_spawner::MonsterSpawner,
             prefab_placer::{MonsterRoleTable, PrefabPlacer},
             start_point::{StartPointBuilder, XStart, YStart},
@@ -258,9 +259,8 @@ pub fn floor_builder(
         new_depth, width, height, profile,
     ));
     builder.with(DiagonalCuller::new());
-    // CaveEroder removed — it was expanding hallways and damaging door placement.
     builder.with(StartPointBuilder::new());
-    // builder.with(LakeBuilder::new(LiquidType::Water));
+    builder.with(LakeBuilder::new(new_depth));
     builder.with(PrefabPlacer::new(prefabs, role_table));
     builder.with(CandleSpawner::new());
     builder.with(MonsterSpawner::new(spawn_table));
