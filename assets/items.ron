@@ -11,6 +11,8 @@
             item_kind: Weapon,
             damage: Some("1d6"),
             rarity: Common,
+            ascii_char: "/",
+            ascii_fg: "#A0A0A0",
         ),
         "Steel Sword": (
             name: "Steel Sword",
@@ -20,6 +22,8 @@
             item_kind: Weapon,
             damage: Some("1d8+1"),
             rarity: Uncommon,
+            ascii_char: "/",
+            ascii_fg: "#50C850",
         ),
         "Short Bow": (
             name: "Short Bow",
@@ -30,6 +34,8 @@
             damage: Some("1d4"),
             weapon_range: 8,
             rarity: Common,
+            ascii_char: "}",
+            ascii_fg: "#A0A0A0",
         ),
         "Long Bow": (
             name: "Long Bow",
@@ -40,6 +46,8 @@
             damage: Some("1d6"),
             weapon_range: 8,
             rarity: Common,
+            ascii_char: "}",
+            ascii_fg: "#A0A0A0",
         ),
 
         // ===========================
@@ -54,6 +62,8 @@
             armor_slot: Some(Chest),
             defense: 1,
             rarity: Common,
+            ascii_char: "[",
+            ascii_fg: "#A0A0A0",
         ),
         "Studded Leather Armor": (
             name: "Studded Leather Armor",
@@ -64,6 +74,8 @@
             armor_slot: Some(Chest),
             defense: 2,
             rarity: Common,
+            ascii_char: "[",
+            ascii_fg: "#A0A0A0",
         ),
 
         // ===========================
@@ -78,6 +90,8 @@
             rarity: Common,
             effect: Some(HealHp(15)),
             max_stack: 5,
+            ascii_char: "!",
+            ascii_fg: "#DC3232",
         ),
         "Greater Healing Potion": (
             name: "Greater Healing Potion",
@@ -88,6 +102,8 @@
             rarity: Uncommon,
             effect: Some(HealHp(30)),
             max_stack: 3,
+            ascii_char: "!",
+            ascii_fg: "#DC3232",
         ),
 
         // ===========================
@@ -100,6 +116,8 @@
             grid_size: (8, 8),
             item_kind: Ring,
             rarity: Uncommon,
+            ascii_char: "=",
+            ascii_fg: "#50C850",
         ),
 
         // ===========================
@@ -114,6 +132,8 @@
             rarity: Common,
             max_stack: 30,
             is_ammo: true,
+            ascii_char: "|",
+            ascii_fg: "#B49664",
         ),
 
         // ===========================
@@ -127,6 +147,8 @@
             item_kind: Spellbook,
             rarity: Common,
             effect: Some(LearnSpell("spark")),
+            ascii_char: "?",
+            ascii_fg: "#9696FF",
         ),
         "Tome of Magic Missile": (
             name: "Tome of Magic Missile",
@@ -136,6 +158,8 @@
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("magic_missile")),
+            ascii_char: "?",
+            ascii_fg: "#9696FF",
         ),
         "Tome of Heal": (
             name: "Tome of Heal",
@@ -145,6 +169,8 @@
             item_kind: Spellbook,
             rarity: Common,
             effect: Some(LearnSpell("heal")),
+            ascii_char: "?",
+            ascii_fg: "#9696FF",
         ),
 
         // ===========================
@@ -158,6 +184,8 @@
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("fire_dart")),
+            ascii_char: "?",
+            ascii_fg: "#9696FF",
         ),
         "Tome of Shadow Bolt": (
             name: "Tome of Shadow Bolt",
@@ -167,6 +195,8 @@
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("shadow_bolt")),
+            ascii_char: "?",
+            ascii_fg: "#9696FF",
         ),
         "Tome of Enrage": (
             name: "Tome of Enrage",
@@ -176,6 +206,8 @@
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("enrage")),
+            ascii_char: "?",
+            ascii_fg: "#9696FF",
         ),
         "Tome of Haste": (
             name: "Tome of Haste",
@@ -185,6 +217,8 @@
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("haste")),
+            ascii_char: "?",
+            ascii_fg: "#9696FF",
         ),
         "Tome of Slow": (
             name: "Tome of Slow",
@@ -194,6 +228,8 @@
             item_kind: Spellbook,
             rarity: Uncommon,
             effect: Some(LearnSpell("slow")),
+            ascii_char: "?",
+            ascii_fg: "#9696FF",
         ),
 
         // ===========================
@@ -207,6 +243,8 @@
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("lightning_bolt")),
+            ascii_char: "?",
+            ascii_fg: "#9696FF",
         ),
         "Tome of Fireball": (
             name: "Tome of Fireball",
@@ -216,6 +254,8 @@
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("fireball")),
+            ascii_char: "?",
+            ascii_fg: "#9696FF",
         ),
         "Tome of Greater Heal": (
             name: "Tome of Greater Heal",
@@ -225,6 +265,8 @@
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("greater_heal")),
+            ascii_char: "?",
+            ascii_fg: "#9696FF",
         ),
         "Tome of Spirit Shield": (
             name: "Tome of Spirit Shield",
@@ -234,6 +276,8 @@
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("spirit_shield")),
+            ascii_char: "?",
+            ascii_fg: "#9696FF",
         ),
         "Tome of Mana Drain": (
             name: "Tome of Mana Drain",
@@ -243,6 +287,8 @@
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("mana_drain")),
+            ascii_char: "?",
+            ascii_fg: "#9696FF",
         ),
         "Tome of Raise Dead": (
             name: "Tome of Raise Dead",
@@ -252,6 +298,8 @@
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("raise_dead")),
+            ascii_char: "?",
+            ascii_fg: "#9696FF",
         ),
 
         // ===========================
@@ -265,6 +313,8 @@
             item_kind: Spellbook,
             rarity: Rare,
             effect: Some(LearnSpell("death_coil")),
+            ascii_char: "?",
+            ascii_fg: "#9696FF",
         ),
     }
 )

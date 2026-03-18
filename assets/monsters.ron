@@ -10,6 +10,8 @@
             base_hp: 6,
             faction_tag: "vermin",
             role: "melee_guard",
+            ascii_char: "r",
+            ascii_fg: "#8C6432",
         ),
         "Giant Bat": (
             name: "Giant Bat",
@@ -19,6 +21,8 @@
             base_hp: 8,
             faction_tag: "vermin",
             role: "melee_guard",
+            ascii_char: "b",
+            ascii_fg: "#504050",
         ),
         "Wolf": (
             name: "Wolf",
@@ -29,6 +33,8 @@
             abilities: [PackTactics],
             faction_tag: "vermin",
             role: "melee_guard",
+            ascii_char: "w",
+            ascii_fg: "#786450",
         ),
         "Giant Spider": (
             name: "Giant Spider",
@@ -39,6 +45,8 @@
             abilities: [SlowStrike(duration: 3, chance: 30)],
             faction_tag: "vermin",
             role: "melee_guard",
+            ascii_char: "s",
+            ascii_fg: "#8C6432",
         ),
 
         // ==================== GOBLINS (Floors 2-8) ====================
@@ -55,6 +63,8 @@
             ],
             faction_tag: "goblin",
             role: "melee_guard",
+            ascii_char: "g",
+            ascii_fg: "#3CB43C",
         ),
         "Goblin Archer": (
             name: "Goblin Archer",
@@ -69,6 +79,8 @@
             ],
             faction_tag: "goblin",
             role: "ranged",
+            ascii_char: "g",
+            ascii_fg: "#44BC44",
         ),
         "Goblin Shaman": (
             name: "Goblin Shaman",
@@ -83,6 +95,8 @@
             ],
             faction_tag: "goblin",
             role: "caster",
+            ascii_char: "g",
+            ascii_fg: "#48C048",
         ),
         "Goblin Warchief": (
             name: "Goblin Warchief",
@@ -103,6 +117,8 @@
             ],
             faction_tag: "goblin",
             role: "leader",
+            ascii_char: "G",
+            ascii_fg: "#FFD700",
         ),
 
         // ==================== ORCS (Floors 6-12) ====================
@@ -122,6 +138,8 @@
             ],
             faction_tag: "orc",
             role: "melee_guard",
+            ascii_char: "o",
+            ascii_fg: "#8CB450",
         ),
         "Orc Archer": (
             name: "Orc Archer",
@@ -136,6 +154,8 @@
             ],
             faction_tag: "orc",
             role: "ranged",
+            ascii_char: "o",
+            ascii_fg: "#96B44A",
         ),
         "Orc Shaman": (
             name: "Orc Shaman",
@@ -150,6 +170,8 @@
             ],
             faction_tag: "orc",
             role: "caster",
+            ascii_char: "o",
+            ascii_fg: "#9AAA48",
         ),
         "Orc Warlord": (
             name: "Orc Warlord",
@@ -170,6 +192,8 @@
             ],
             faction_tag: "orc",
             role: "leader",
+            ascii_char: "O",
+            ascii_fg: "#FFD700",
         ),
 
         // ==================== FUNGAL (Floors 8-13) ====================
@@ -184,6 +208,8 @@
             abilities: [ExplodeOnDeath(damage: 6, radius: 1)],
             faction_tag: "fungal",
             role: "melee_guard",
+            ascii_char: "s",
+            ascii_fg: "#8050A0",
         ),
         "Fungal Shambler": (
             name: "Fungal Shambler",
@@ -196,6 +222,8 @@
             abilities: [SlowStrike(duration: 3, chance: 40)],
             faction_tag: "fungal",
             role: "melee_guard",
+            ascii_char: "f",
+            ascii_fg: "#6E8C3C",
         ),
         "Shrieking Mushroom": (
             name: "Shrieking Mushroom",
@@ -206,6 +234,8 @@
             ranged_range: 5,
             faction_tag: "fungal",
             role: "ranged",
+            ascii_char: "m",
+            ascii_fg: "#9050A0",
         ),
         "Mycoid Sovereign": (
             name: "Mycoid Sovereign",
@@ -222,6 +252,8 @@
             ],
             faction_tag: "fungal",
             role: "leader",
+            ascii_char: "M",
+            ascii_fg: "#C864DC",
         ),
 
         // ==================== UNDEAD (Floors 7-14) ====================
@@ -236,6 +268,8 @@
             resistances: {"physical": "resistant"},
             faction_tag: "undead",
             role: "melee_guard",
+            ascii_char: "s",
+            ascii_fg: "#A0A0B4",
         ),
         "Bone Archer": (
             name: "Bone Archer",
@@ -251,6 +285,8 @@
             ],
             faction_tag: "undead",
             role: "ranged",
+            ascii_char: "b",
+            ascii_fg: "#AAAABA",
         ),
         "Zombie": (
             name: "Zombie",
@@ -263,6 +299,8 @@
             abilities: [SlowStrike(duration: 3, chance: 30)],
             faction_tag: "undead",
             role: "melee_guard",
+            ascii_char: "z",
+            ascii_fg: "#B4B4C8",
         ),
         "Wraith": (
             name: "Wraith",
@@ -278,6 +316,8 @@
             ],
             faction_tag: "undead",
             role: "melee_guard",
+            ascii_char: "w",
+            ascii_fg: "#C8C8D2",
         ),
         "Necromancer": (
             name: "Necromancer",
@@ -292,6 +332,8 @@
             spells: ["shadow_bolt", "raise_dead", "slow"],
             faction_tag: "undead",
             role: "caster",
+            ascii_char: "N",
+            ascii_fg: "#C8A0D2",
         ),
 
         // ==================== GIANTS (Floors 11-17) ====================
@@ -309,6 +351,8 @@
             ],
             faction_tag: "giant",
             role: "melee_guard",
+            ascii_char: "o",
+            ascii_fg: "#A08060",
         ),
         "Troll": (
             name: "Troll",
@@ -322,6 +366,8 @@
             abilities: [Enrage(threshold_percent: 40)],
             faction_tag: "giant",
             role: "melee_guard",
+            ascii_char: "t",
+            ascii_fg: "#6A9050",
         ),
         "Ogre Mage": (
             name: "Ogre Mage",
@@ -334,6 +380,8 @@
             spells: ["lightning_bolt", "fireball", "heal"],
             faction_tag: "giant",
             role: "caster",
+            ascii_char: "o",
+            ascii_fg: "#B07890",
         ),
         "Hill Giant": (
             name: "Hill Giant",
@@ -349,6 +397,8 @@
             ],
             faction_tag: "giant",
             role: "leader",
+            ascii_char: "H",
+            ascii_fg: "#FFD700",
         ),
 
         // ==================== DRAGONS (Floors 15-20) ====================
@@ -364,6 +414,8 @@
             abilities: [BurningStrike(damage_per_turn: 2, duration: 3, chance: 40)],
             faction_tag: "dragon",
             role: "melee_guard",
+            ascii_char: "d",
+            ascii_fg: "#C86420",
         ),
         "Wyrm": (
             name: "Wyrm",
@@ -378,6 +430,8 @@
             abilities: [BurningStrike(damage_per_turn: 2, duration: 3, chance: 40)],
             faction_tag: "dragon",
             role: "ranged",
+            ascii_char: "w",
+            ascii_fg: "#DC8C32",
         ),
         "Dragon Priest": (
             name: "Dragon Priest",
@@ -392,6 +446,8 @@
             spells: ["fireball", "spirit_shield", "heal"],
             faction_tag: "dragon",
             role: "caster",
+            ascii_char: "d",
+            ascii_fg: "#C83232",
         ),
         "Elder Drake": (
             name: "Elder Drake",
@@ -412,6 +468,8 @@
             spells: ["enrage", "fire_dart"],
             faction_tag: "dragon",
             role: "leader",
+            ascii_char: "D",
+            ascii_fg: "#FF5050",
         ),
 
         // ==================== BOSS ====================
@@ -428,6 +486,8 @@
             regen: 5,
             spells: ["shadow_bolt", "death_coil", "mana_drain", "spirit_shield", "enrage", "heal"],
             is_boss: true,
+            ascii_char: "V",
+            ascii_fg: "#FFD700",
         ),
     }
 )

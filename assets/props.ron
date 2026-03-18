@@ -9,6 +9,8 @@ PropManifest(
             animated_frames: Some(4),
             grid_size: Some((4, 1)),
             tile_size: Some((16, 16)),
+            ascii_char: "*",
+            ascii_fg: "#FFDC64",
         ),
         "watchfire": PropAsset(
             name: "Watchfire",
@@ -20,6 +22,8 @@ PropManifest(
             animated_frames: Some(8),
             grid_size: Some((4, 2)),
             tile_size: Some((256, 338)),
+            ascii_char: "*",
+            ascii_fg: "#FF9632",
         ),
         "totem_pole": PropAsset(
             name: "Totem Pole",
@@ -28,6 +32,8 @@ PropManifest(
             is_opaque: false,
             grid_size: Some((1, 1)),
             tile_size: Some((447, 447)),
+            ascii_char: "T",
+            ascii_fg: "#B46E3C",
         ),
         "barricade": PropAsset(
             name: "Barricade",
@@ -36,6 +42,8 @@ PropManifest(
             is_opaque: false,
             grid_size: Some((1, 1)),
             tile_size: Some((256, 256)),
+            ascii_char: "=",
+            ascii_fg: "#A0783C",
         ),
         "barrel": PropAsset(
             name: "Barrel",
@@ -44,6 +52,8 @@ PropManifest(
             is_opaque: false,
             grid_size: Some((1, 1)),
             tile_size: Some((399, 399)),
+            ascii_char: "o",
+            ascii_fg: "#96783C",
         ),
         "chest": PropAsset(
             name: "Chest",
@@ -52,6 +62,8 @@ PropManifest(
             is_opaque: false,
             grid_size: Some((1, 1)),
             tile_size: Some((256, 256)),
+            ascii_char: "$",
+            ascii_fg: "#DCB428",
         ),
     },
 )
