@@ -1,6 +1,6 @@
 use crate::{
     assets::ItemSpawnInfo,
-    map::{builders::{BuilderMap, MetaMapBuilder}, map::Map, tile::is_walkable},
+    map::{builders::{BuilderMap, MetaMapBuilder}, map::Map, tile::{is_walkable, LiquidType}},
 };
 use bracket_lib::prelude::{Point, RandomNumberGenerator, Rect};
 
@@ -77,7 +77,7 @@ fn walkable_room_point(room: &Rect, map: &Map, rng: &mut RandomNumberGenerator) 
             room.y1 + 1
         };
         let idx = map.xy_idx(x, y);
-        if is_walkable(map.tiles[idx]) {
+        if is_walkable(map.tiles[idx]) && map.tiles[idx].liquid == LiquidType::None {
             return Some(Point::new(x, y));
         }
     }

@@ -3,7 +3,7 @@ use std::collections::{HashSet, VecDeque};
 use crate::{
     assets::MonsterSpawnInfo,
     game::squad::{LeaderDeathBehavior, SquadConfig},
-    map::{builders::{BuilderMap, MetaMapBuilder, SpawnEntry}, map::Map, tile::is_walkable},
+    map::{builders::{BuilderMap, MetaMapBuilder, SpawnEntry}, map::Map, tile::{is_walkable, LiquidType}},
 };
 use bevy::prelude::*;
 use bracket_lib::prelude::{Point, RandomNumberGenerator, Rect};
@@ -157,7 +157,7 @@ impl MonsterSpawner {
                 room.y1 + 1
             };
             let idx = map.xy_idx(x, y);
-            if is_walkable(map.tiles[idx]) {
+            if is_walkable(map.tiles[idx]) && map.tiles[idx].liquid == LiquidType::None {
                 return Some(Point::new(x, y));
             }
         }
@@ -185,7 +185,7 @@ fn find_cluster_points(
 
     while let Some(pt) = queue.pop_front() {
         let idx = map.xy_idx(pt.x, pt.y);
-        if is_walkable(map.tiles[idx]) && !occupied.contains(&idx) {
+        if is_walkable(map.tiles[idx]) && map.tiles[idx].liquid == LiquidType::None && !occupied.contains(&idx) {
             result.push(pt);
             if result.len() >= count {
                 break;

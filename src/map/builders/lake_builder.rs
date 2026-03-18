@@ -6,6 +6,11 @@ use bracket_lib::prelude::{Point, Algorithm2D, BaseMap, SmallVec};
 use rand::prelude::*;
 use std::collections::{HashSet, VecDeque};
 
+enum WreathType {
+    Liquid(LiquidType),
+    Decoration(Decoration),
+}
+
 /// Lake sizes to try, from largest to smallest (matching Brogue's designLakes).
 const LAKE_SIZES: [(i32, i32); 4] = [
     (30, 15),  // large lake
@@ -104,9 +109,9 @@ impl LakeBuilder {
         false
     }
 
-    /// Stamp a lake onto the map. Only overwrites floor tiles (not walls/stairs).
-    /// Doors that fall within the lake are converted to floor + liquid.
-    /// Returns the set of affected tile indices.
+    /// Stamp a lake onto the map. Like Brogue, lakes overwrite walls AND floor,
+    /// carving through terrain to create large open water features. Stairs and
+    /// empty tiles are protected. Doors are absorbed.
     fn stamp_lake(
         &self,
         build_data: &mut BuilderMap,
@@ -125,15 +130,15 @@ impl LakeBuilder {
             let idx = build_data.map.xy_idx(wx, wy);
             let terrain = build_data.map.tiles[idx].terrain;
 
-            // Only place lake on floor or door tiles — never on walls, stairs, or empty
+            // Lakes carve through walls and floor (like Brogue). Only protect stairs and empty.
             match terrain {
-                TerrainType::Floor | TerrainType::Door | TerrainType::OpenDoor => {
-                    // Doors become floor (lake absorbs them, like Brogue)
+                TerrainType::DownStairs | TerrainType::UpStairs | TerrainType::Empty => {}
+                _ => {
                     build_data.map.tiles[idx].terrain = TerrainType::Floor;
                     build_data.map.tiles[idx].liquid = liquid;
+                    build_data.map.tiles[idx].decoration = Decoration::None;
                     affected.push(idx);
                 }
-                _ => {}
             }
         }
         affected
@@ -151,93 +156,64 @@ impl LakeBuilder {
         }
     }
 
-    /// Add a wreath (shallow liquid border) around lake tiles.
+    /// Add a wreath (shallow liquid border) around lake tiles using Euclidean
+    /// distance for circular shorelines (matches Brogue's createWreath).
     fn add_wreath(
         &self,
         build_data: &mut BuilderMap,
         lake_indices: &HashSet<usize>,
         liquid: LiquidType,
     ) {
+        // Wreath width by liquid type (from Brogue: Water=2, Lava=0, Chasm=1)
+        let (wreath_width, wreath_type) = match liquid {
+            LiquidType::Water => (2, WreathType::Liquid(LiquidType::ShallowWater)),
+            LiquidType::Lava => (1, WreathType::Decoration(Decoration::ScorchedEarth)),
+            LiquidType::Chasm => return, // no wreath
+            _ => return,
+        };
+
         let width = build_data.map.width;
         let height = build_data.map.height;
+        let mut wreath_tiles = Vec::new();
 
-        match liquid {
-            LiquidType::Water => {
-                // ShallowWater wreath around deep water
-                let mut wreath = Vec::new();
-                for y in 1..height - 1 {
-                    for x in 1..width - 1 {
-                        let idx = build_data.map.xy_idx(x, y);
-                        if build_data.map.tiles[idx].terrain == TerrainType::Floor
-                            && build_data.map.tiles[idx].liquid == LiquidType::None
-                        {
-                            // Check if adjacent to a lake tile
-                            let mut near_lake = false;
-                            for dy in -1..=1i32 {
-                                for dx in -1..=1i32 {
-                                    if dx == 0 && dy == 0 { continue; }
-                                    let nx = x + dx;
-                                    let ny = y + dy;
-                                    if nx >= 0 && nx < width && ny >= 0 && ny < height {
-                                        let n_idx = build_data.map.xy_idx(nx, ny);
-                                        if lake_indices.contains(&n_idx) {
-                                            near_lake = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                                if near_lake { break; }
-                            }
-                            if near_lake {
-                                wreath.push(idx);
-                            }
-                        }
+        // For each lake tile, check all tiles within wreath_width radius
+        for &lake_idx in lake_indices {
+            let (lx, ly) = build_data.map.idx_xy(lake_idx);
+            for dy in -wreath_width..=wreath_width {
+                for dx in -wreath_width..=wreath_width {
+                    let nx = lx + dx;
+                    let ny = ly + dy;
+                    if nx < 1 || ny < 1 || nx >= width - 1 || ny >= height - 1 { continue; }
+                    // Euclidean distance check (circular wreath)
+                    if dx * dx + dy * dy > wreath_width * wreath_width { continue; }
+
+                    let n_idx = build_data.map.xy_idx(nx, ny);
+                    if lake_indices.contains(&n_idx) { continue; } // skip lake tiles
+                    if build_data.map.tiles[n_idx].terrain != TerrainType::Floor { continue; }
+                    if build_data.map.tiles[n_idx].liquid != LiquidType::None { continue; }
+
+                    wreath_tiles.push(n_idx);
+                }
+            }
+        }
+
+        // Apply wreath (deduplicate via HashSet)
+        let unique_wreath: HashSet<usize> = wreath_tiles.into_iter().collect();
+        for idx in unique_wreath {
+            match wreath_type {
+                WreathType::Liquid(liq) => {
+                    build_data.map.tiles[idx].liquid = liq;
+                    // Brogue converts doors in the wreath to floor
+                    if build_data.map.tiles[idx].terrain == TerrainType::Door {
+                        build_data.map.tiles[idx].terrain = TerrainType::Floor;
                     }
                 }
-                for idx in wreath {
-                    build_data.map.tiles[idx].liquid = LiquidType::ShallowWater;
-                }
-            }
-            LiquidType::Lava => {
-                // ScorchedEarth decoration wreath (no liquid layer)
-                let mut wreath = Vec::new();
-                for y in 1..height - 1 {
-                    for x in 1..width - 1 {
-                        let idx = build_data.map.xy_idx(x, y);
-                        if build_data.map.tiles[idx].terrain == TerrainType::Floor
-                            && build_data.map.tiles[idx].liquid == LiquidType::None
-                            && build_data.map.tiles[idx].decoration == Decoration::None
-                        {
-                            let mut near_lake = false;
-                            for dy in -1..=1i32 {
-                                for dx in -1..=1i32 {
-                                    if dx == 0 && dy == 0 { continue; }
-                                    let nx = x + dx;
-                                    let ny = y + dy;
-                                    if nx >= 0 && nx < width && ny >= 0 && ny < height {
-                                        let n_idx = build_data.map.xy_idx(nx, ny);
-                                        if lake_indices.contains(&n_idx) {
-                                            near_lake = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                                if near_lake { break; }
-                            }
-                            if near_lake {
-                                wreath.push(idx);
-                            }
-                        }
+                WreathType::Decoration(dec) => {
+                    if build_data.map.tiles[idx].decoration == Decoration::None {
+                        build_data.map.tiles[idx].decoration = dec;
                     }
                 }
-                for idx in wreath {
-                    build_data.map.tiles[idx].decoration = Decoration::ScorchedEarth;
-                }
             }
-            LiquidType::Chasm => {
-                // No wreath for chasms
-            }
-            _ => {}
         }
     }
 
@@ -288,12 +264,20 @@ impl LakeBuilder {
     }
 }
 
-/// Flood-fill from start, counting all reachable walkable tiles.
-fn count_reachable(map: &Map, start_idx: usize) -> usize {
+/// Brogue-style connectivity check: flood-fill from start and verify all
+/// non-lake walkable tiles are reachable. Returns true if any dry passable
+/// tile is disconnected (lake disrupts passability).
+fn lake_disrupts_passability(map: &Map, start_idx: usize) -> bool {
+    use crate::map::tile::is_passable;
+
     let mut visited = HashSet::new();
     let mut queue = VecDeque::new();
-    queue.push_back(start_idx);
-    visited.insert(start_idx);
+
+    // Start flood-fill from player position
+    if is_walkable(map.tiles[start_idx]) {
+        queue.push_back(start_idx);
+        visited.insert(start_idx);
+    }
 
     while let Some(idx) = queue.pop_front() {
         let (x, y) = map.idx_xy(idx);
@@ -303,18 +287,23 @@ fn count_reachable(map: &Map, start_idx: usize) -> usize {
             let np = Point::new(nx, ny);
             if !map.in_bounds(np) { continue; }
             let n_idx = map.xy_idx(nx, ny);
-            if !visited.contains(&n_idx) && is_walkable(map.tiles[n_idx]) {
+            if !visited.contains(&n_idx) && is_passable(map.tiles[n_idx]) {
                 visited.insert(n_idx);
                 queue.push_back(n_idx);
             }
         }
     }
-    visited.len()
-}
 
-/// Count total walkable tiles on the map.
-fn total_walkable(map: &Map) -> usize {
-    map.tiles.iter().filter(|t| is_walkable(**t)).count()
+    // Check: any passable non-liquid tile that wasn't reached?
+    for (idx, tile) in map.tiles.iter().enumerate() {
+        if is_passable(*tile)
+            && tile.liquid == LiquidType::None
+            && !visited.contains(&idx)
+        {
+            return true; // disconnected dry tile found
+        }
+    }
+    false
 }
 
 impl MetaMapBuilder for LakeBuilder {
@@ -323,13 +312,11 @@ impl MetaMapBuilder for LakeBuilder {
         let num_lakes = rng.random_range(2..5);
         let mut lakes_placed = 0;
 
-        // Pre-count walkable tiles for connectivity validation
         let start_pos = match &build_data.starting_position {
             Some(p) => *p,
             None => return,
         };
         let start_idx = build_data.map.xy_idx(start_pos.x, start_pos.y);
-        let initial_reachable = count_reachable(&build_data.map, start_idx);
 
         // Try each lake size from largest to smallest (Brogue pattern)
         for &(lake_w, lake_h) in &LAKE_SIZES {
@@ -372,10 +359,9 @@ impl MetaMapBuilder for LakeBuilder {
                 let affected = self.stamp_lake(build_data, &blob_tiles, ox, oy, liquid);
                 if affected.is_empty() { continue; }
 
-                // Connectivity check: can we still reach the same number of tiles?
-                let new_reachable = count_reachable(&build_data.map, start_idx);
-                if new_reachable < initial_reachable - affected.len() {
-                    // Lake disconnected part of the map — revert
+                // Connectivity check (Brogue-style): all non-lake passable tiles
+                // must be reachable from the player start.
+                if lake_disrupts_passability(&build_data.map, start_idx) {
                     self.revert_lake(build_data, &affected, &backup);
                     continue;
                 }

@@ -129,7 +129,8 @@ fn dim_color(base: Color, factor: f32) -> Color {
 }
 
 pub fn update_tile_visibility(
-    player_query: Query<&Viewshed, (With<Player>, Changed<Viewshed>)>,
+    player_query: Query<&Viewshed, With<Player>>,
+    viewshed_changed: Query<(), (With<Player>, Changed<Viewshed>)>,
     mut map: ResMut<Map>,
     light_map: Res<LightMap>,
     mode: Res<crate::game::ascii_mode::GraphicsMode>,
@@ -146,6 +147,13 @@ pub fn update_tile_visibility(
     )>,
     mut ascii_glyph_query: Query<(&mut TextColor, &crate::game::ascii_mode::AsciiGlyphColor), With<crate::game::ascii_mode::AsciiGlyph>>,
 ) {
+    // Run when viewshed changes OR graphics mode changes
+    let viewshed_dirty = !viewshed_changed.is_empty();
+    let mode_dirty = mode.is_changed();
+    if !viewshed_dirty && !mode_dirty {
+        return;
+    }
+
     let Ok(player_viewshed) = player_query.single() else {
         return;
     };
