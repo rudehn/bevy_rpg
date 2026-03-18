@@ -430,6 +430,7 @@ fn spawn_dungeon_entities(
     build_data: &BuilderMap,
     turn_manager: &mut ResMut<TurnManager>,
     assets: &EntityAssets,
+    ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
 ) {
     for entry in build_data.spawn_list.iter() {
         if let Some(entity) = spawn_monster_by_name(
@@ -440,7 +441,7 @@ fn spawn_dungeon_entities(
             &assets.monster_manifests,
             &assets.monster_manifest_handle,
             &assets.monster_sprite_assets,
-            None,
+            ascii_font,
         ) {
             // Attach squad components if this monster is part of a squad.
             if let (Some(squad_id), Some(squad_config)) = (entry.squad_id, entry.squad_config.clone()) {
@@ -464,7 +465,7 @@ fn spawn_dungeon_entities(
             &assets.item_manifests,
             &assets.item_manifest_handle,
             &assets.item_sprite_assets,
-            None,
+            ascii_font,
         ) {
             if *count > 1 {
                 let max_stack = assets.item_manifests
@@ -485,7 +486,7 @@ fn spawn_dungeon_entities(
             &assets.prop_manifests,
             &assets.prop_manifest_handle,
             &assets.prop_sprite_assets,
-            None,
+            ascii_font,
         );
     }
 }
@@ -728,6 +729,7 @@ pub fn spawn_dungeon(
             &builder.build_data,
             &mut turn_manager,
             &assets,
+            ascii_font.as_deref(),
         );
 
         let starting_pos = builder.build_data.starting_position.unwrap_or_else(|| {

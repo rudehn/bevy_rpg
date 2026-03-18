@@ -47,7 +47,7 @@ fn load_ascii_font(mut commands: Commands, asset_server: Res<AssetServer>) {
 
 /// F5 toggles between Sprites and ASCII mode.
 fn toggle_graphics_mode(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<GraphicsMode>) {
-    if keys.just_pressed(KeyCode::F5) {
+    if keys.just_pressed(KeyCode::Equal) {
         *mode = match *mode {
             GraphicsMode::Sprites => GraphicsMode::Ascii,
             GraphicsMode::Ascii => GraphicsMode::Sprites,
@@ -58,18 +58,31 @@ fn toggle_graphics_mode(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<Graphi
 /// When GraphicsMode changes, swap visibility of sprite vs ASCII children.
 fn apply_graphics_mode_swap(
     mode: Res<GraphicsMode>,
+    mut clear_color: ResMut<ClearColor>,
     mut tile_sprites: Query<&mut Sprite, With<TileMarker>>,
     mut ascii_bgs: Query<
         &mut Visibility,
-        (With<AsciiBackground>, Without<AsciiGlyph>, Without<LiquidOverlay>),
+        (
+            With<AsciiBackground>,
+            Without<AsciiGlyph>,
+            Without<LiquidOverlay>,
+        ),
     >,
     mut ascii_glyphs: Query<
         &mut Visibility,
-        (With<AsciiGlyph>, Without<AsciiBackground>, Without<LiquidOverlay>),
+        (
+            With<AsciiGlyph>,
+            Without<AsciiBackground>,
+            Without<LiquidOverlay>,
+        ),
     >,
     mut liquids: Query<
         &mut Visibility,
-        (With<LiquidOverlay>, Without<AsciiBackground>, Without<AsciiGlyph>),
+        (
+            With<LiquidOverlay>,
+            Without<AsciiBackground>,
+            Without<AsciiGlyph>,
+        ),
     >,
     mut entity_sprites: Query<&mut Sprite, (Without<TileMarker>, Without<AsciiBackground>)>,
 ) {
@@ -78,6 +91,13 @@ fn apply_graphics_mode_swap(
     }
 
     let is_ascii = *mode == GraphicsMode::Ascii;
+
+    // Set clear color to black in ASCII mode, restore original in Sprites mode
+    clear_color.0 = if is_ascii {
+        Color::BLACK
+    } else {
+        Color::srgb_u8(37, 19, 26)
+    };
 
     for mut sprite in tile_sprites.iter_mut() {
         sprite.color = if is_ascii { Color::NONE } else { Color::WHITE };

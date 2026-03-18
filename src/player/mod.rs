@@ -62,6 +62,7 @@ pub fn player_spawn_or_move_system(
     spawn_point: Res<PlayerSpawnPoint>,
     mut q_player: Query<(Entity, &mut Transform, &mut Position), With<Player>>,
     mut turn_manager: ResMut<TurnManager>,
+    ascii_font: Option<Res<crate::game::ascii_mode::AsciiFont>>,
 ) {
     let player_asset = player_assets
         .get(&player_asset_handle.0)
@@ -216,6 +217,18 @@ pub fn player_spawn_or_move_system(
                 RenderLayers::layer(1),
             ))
             .id();
+
+        // ASCII glyph child: white @ symbol
+        if let Some(ref font) = ascii_font {
+            crate::game::spawner::attach_ascii_glyph(
+                &mut commands,
+                player_entity,
+                &player_asset.ascii_char,
+                player_asset.ascii_fg,
+                &font.0,
+            );
+        }
+
         turn_manager.add_entity(player_entity);
     }
 }
