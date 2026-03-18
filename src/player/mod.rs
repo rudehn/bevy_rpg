@@ -109,6 +109,7 @@ pub fn player_spawn_or_move_system(
                 &item_manifests,
                 &item_manifest_handle,
                 &item_sprite_assets,
+                None,
             ) {
                 commands
                     .entity(bow_entity)
@@ -124,6 +125,7 @@ pub fn player_spawn_or_move_system(
                 &item_manifests,
                 &item_manifest_handle,
                 &item_sprite_assets,
+                None,
             ) {
                 commands
                     .entity(arrow_entity)
@@ -145,6 +147,7 @@ pub fn player_spawn_or_move_system(
                     &item_manifests,
                     &item_manifest_handle,
                     &item_sprite_assets,
+                    None,
                 ) {
                     commands
                         .entity(tome_entity)

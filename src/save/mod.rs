@@ -668,6 +668,7 @@ pub fn apply_player_load_system(
             &item_manifests,
             &item_manifest_handle,
             &item_sprite_assets,
+            None,
         ) else {
             continue;
         };

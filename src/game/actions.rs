@@ -685,6 +685,7 @@ pub fn handle_open_chest(
                     &item_manifests,
                     &item_manifest_handle,
                     &item_sprite_assets,
+                    None,
                 ) {
                     log_writer.write(GameLogMessage(format!("  Found: {}", spawn_info.item)));
                 }

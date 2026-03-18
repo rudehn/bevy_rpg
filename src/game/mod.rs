@@ -179,6 +179,7 @@ fn loot_drop_system(
                     &item_manifests,
                     &item_manifest_handle,
                     &item_sprite_assets,
+                    None,
                 ) {
                     if count > 1 {
                         let max_stack = item_manifests

@@ -434,6 +434,7 @@ pub fn handle_summon_on_death(
                 &monster_manifests,
                 &monster_manifest_handle,
                 &monster_sprite_assets,
+                None,
             );
         }
 

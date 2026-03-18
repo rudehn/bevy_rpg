@@ -1,5 +1,7 @@
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
+use bevy::prelude::Text2d;
+use bevy::text::{TextFont, TextColor};
 use bracket_lib::prelude::Point;
 
 use crate::{
@@ -24,12 +26,41 @@ use crate::{
     map::map::GRID_SIZE,
 };
 
+/// Attach an AsciiGlyph child entity to a parent for ASCII rendering mode.
+/// The glyph starts hidden and becomes visible when GraphicsMode switches to Ascii.
+pub fn attach_ascii_glyph(
+    commands: &mut Commands,
+    parent: Entity,
+    ascii_char: &str,
+    ascii_fg: Color,
+    font: &Handle<Font>,
+) {
+    let display = if ascii_char.is_empty() { "?" } else { ascii_char };
+    let glyph = commands
+        .spawn((
+            Text2d::new(display.to_string()),
+            TextFont {
+                font: font.clone(),
+                font_size: 14.0,
+                ..default()
+            },
+            TextColor(ascii_fg),
+            Transform::from_translation(Vec3::ZERO),
+            Visibility::Hidden,
+            crate::game::ascii_mode::AsciiGlyph,
+            RenderLayers::layer(1),
+        ))
+        .id();
+    commands.entity(parent).add_child(glyph);
+}
+
 pub fn spawn_monster(
     commands: &mut Commands,
     spawn_point: &Point,
     turn_manager: &mut ResMut<TurnManager>,
     monster_asset: &MonsterAsset,
     monster_sprite_assets: &Res<MonsterSpriteAssets>,
+    ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
 ) -> Option<Entity> {
     let tile_size = monster_asset.tile_size.unwrap_or(UVec2::new(32, 32));
     let scale_x = TILE_SIZE_X as f32 / tile_size.x as f32;
@@ -252,6 +283,11 @@ pub fn spawn_monster(
         }
     }
 
+    // ASCII glyph child
+    if let Some(font) = ascii_font {
+        attach_ascii_glyph(commands, monster_entity, &monster_asset.ascii_char, monster_asset.ascii_fg, &font.0);
+    }
+
     turn_manager.add_entity(monster_entity);
     Some(monster_entity)
 }
@@ -264,6 +300,7 @@ pub fn spawn_monster_by_name(
     monster_manifests: &Res<Assets<MonsterManifest>>,
     monster_manifest_handle: &Res<MonsterManifestHandle>,
     monster_sprite_assets: &Res<MonsterSpriteAssets>,
+    ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
 ) -> Option<Entity> {
     if let Some(manifest) = monster_manifests.get(&monster_manifest_handle.0) {
         if let Some(monster_asset) = manifest.monsters.get(monster_name) {
@@ -273,6 +310,7 @@ pub fn spawn_monster_by_name(
                 turn_manager,
                 monster_asset,
                 monster_sprite_assets,
+                ascii_font,
             )
         } else {
             warn!("Monster '{}' not found in manifest.", monster_name);
@@ -291,6 +329,7 @@ pub fn spawn_item(
     item_manifests: &Res<Assets<ItemManifest>>,
     item_manifest_handle: &Res<ItemManifestHandle>,
     item_sprite_assets: &Res<ItemSpriteAssets>,
+    ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
 ) -> Option<Entity> {
     let Some(manifest) = item_manifests.get(&item_manifest_handle.0) else {
         return None;
@@ -358,7 +397,14 @@ pub fn spawn_item(
         entity.insert(Ammo);
     }
 
-    Some(entity.id())
+    let item_entity = entity.id();
+
+    // ASCII glyph child
+    if let Some(font) = ascii_font {
+        attach_ascii_glyph(commands, item_entity, &asset.ascii_char, asset.ascii_fg, &font.0);
+    }
+
+    Some(item_entity)
 }
 
 pub fn spawn_prop(
@@ -368,6 +414,7 @@ pub fn spawn_prop(
     prop_manifests: &Res<Assets<PropManifest>>,
     prop_manifest_handle: &Res<PropManifestHandle>,
     prop_sprite_assets: &Res<PropSpriteAssets>,
+    ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
 ) -> Option<Entity> {
     let manifest = prop_manifests.get(&prop_manifest_handle.0)?;
     let asset = manifest.props.get(prop_name).or_else(|| {
@@ -433,5 +480,12 @@ pub fn spawn_prop(
         entity.insert(crate::components::Chest);
     }
 
-    Some(entity.id())
+    let prop_entity = entity.id();
+
+    // ASCII glyph child
+    if let Some(font) = ascii_font {
+        attach_ascii_glyph(commands, prop_entity, &asset.ascii_char, asset.ascii_fg, &font.0);
+    }
+
+    Some(prop_entity)
 }

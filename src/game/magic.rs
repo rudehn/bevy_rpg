@@ -772,6 +772,7 @@ pub fn process_pending_summon(
                 &monster_manifests,
                 &monster_manifest_handle,
                 &monster_sprite_assets,
+                None,
             );
         }
         log_writer.write(GameLogMessage(format!(

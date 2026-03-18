@@ -440,6 +440,7 @@ fn spawn_dungeon_entities(
             &assets.monster_manifests,
             &assets.monster_manifest_handle,
             &assets.monster_sprite_assets,
+            None,
         ) {
             // Attach squad components if this monster is part of a squad.
             if let (Some(squad_id), Some(squad_config)) = (entry.squad_id, entry.squad_config.clone()) {
@@ -463,6 +464,7 @@ fn spawn_dungeon_entities(
             &assets.item_manifests,
             &assets.item_manifest_handle,
             &assets.item_sprite_assets,
+            None,
         ) {
             if *count > 1 {
                 let max_stack = assets.item_manifests
@@ -483,6 +485,7 @@ fn spawn_dungeon_entities(
             &assets.prop_manifests,
             &assets.prop_manifest_handle,
             &assets.prop_sprite_assets,
+            None,
         );
     }
 }
@@ -534,6 +537,7 @@ pub fn spawn_dungeon(
                 &assets.monster_manifests,
                 &assets.monster_manifest_handle,
                 &assets.monster_sprite_assets,
+                ascii_font.as_deref(),
             ) {
                 commands.entity(entity).insert(SavedHp(entry.hp_current));
                 if let (Some(sid), Some(cfg)) = (entry.squad_id, entry.squad_config.clone()) {
@@ -561,6 +565,7 @@ pub fn spawn_dungeon(
                 &assets.item_manifests,
                 &assets.item_manifest_handle,
                 &assets.item_sprite_assets,
+                ascii_font.as_deref(),
             ) {
                 if entry.count > 1 {
                     let max_stack = assets.item_manifests
@@ -583,6 +588,7 @@ pub fn spawn_dungeon(
                 &assets.prop_manifests,
                 &assets.prop_manifest_handle,
                 &assets.prop_sprite_assets,
+                ascii_font.as_deref(),
             );
         }
         // Pass the floor cache save data to apply_player_load_system
@@ -618,6 +624,7 @@ pub fn spawn_dungeon(
                 &assets.monster_manifests,
                 &assets.monster_manifest_handle,
                 &assets.monster_sprite_assets,
+                ascii_font.as_deref(),
             ) {
                 if let (Some(sid), Some(cfg)) = (cached_mon.squad_id, cached_mon.squad_config.clone()) {
                     commands.entity(entity).insert((
@@ -642,6 +649,7 @@ pub fn spawn_dungeon(
                 &assets.item_manifests,
                 &assets.item_manifest_handle,
                 &assets.item_sprite_assets,
+                ascii_font.as_deref(),
             ) {
                 if *count > 1 {
                     let max_stack = assets.item_manifests
@@ -662,6 +670,7 @@ pub fn spawn_dungeon(
                 &assets.prop_manifests,
                 &assets.prop_manifest_handle,
                 &assets.prop_sprite_assets,
+                ascii_font.as_deref(),
             );
         }
 
