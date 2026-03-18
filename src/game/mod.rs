@@ -37,6 +37,7 @@ pub struct RunSummary {
 pub mod abilities;
 pub mod actions;
 pub mod ai;
+pub mod ascii_mode;
 pub mod boss;
 pub mod camera;
 pub mod combat;
@@ -102,6 +103,7 @@ impl Plugin for GamePlugin {
                 SquadPlugin,
                 TargetingPlugin,
                 AbilitiesPlugin,
+                ascii_mode::AsciiModePlugin,
             ))
             // Position→Transform sync and camera run whenever in-game, including Targeting state.
             // move_camera runs after player_spawn_or_move_system so the camera snaps to the new
