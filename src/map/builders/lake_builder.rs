@@ -1,26 +1,30 @@
 use super::{BuilderMap, MetaMapBuilder};
 use crate::map::tile::{Decoration, TerrainType, LiquidType, Tile, is_walkable};
-use crate::map::map::Map;
 use crate::map::builders::algorithms::{Grid, BlobGenConfig, create_blob, BlobType};
-use bracket_lib::prelude::{Point, Algorithm2D, BaseMap, SmallVec};
+use bracket_lib::prelude::{Point, Algorithm2D};
 use rand::prelude::*;
 use std::collections::{HashSet, VecDeque};
 
 enum WreathType {
     Liquid(LiquidType),
+    #[allow(dead_code)]
     Decoration(Decoration),
 }
 
-/// Lake sizes to try, from largest to smallest (matching Brogue's designLakes).
-const LAKE_SIZES: [(i32, i32); 4] = [
-    (30, 15),  // large lake
-    (28, 13),  // medium-large
-    (26, 11),  // medium
-    (24, 9),   // small
+/// Lake sizes to try, from largest to smallest (Brogue uses 30×15 down to 20×10).
+const LAKE_SIZES: [(i32, i32); 6] = [
+    (30, 15),
+    (28, 14),
+    (26, 13),
+    (24, 12),
+    (22, 11),
+    (20, 10),
 ];
 
-/// Max random placement attempts per lake size.
 const MAX_PLACEMENT_ATTEMPTS: i32 = 20;
+
+/// Brogue's fillLake scanWidth — lake tiles within this radius merge.
+const LAKE_SCAN_WIDTH: i32 = 4;
 
 pub struct LakeBuilder {
     depth: i32,
@@ -66,12 +70,10 @@ impl LakeBuilder {
             survival_threshold: 4,
         };
 
-        // Generate on a local grid sized to the lake
         let local_grid = Grid::new(max_width + 4, max_height + 4, BlobType::Wall);
         let (blob_grid, min_x, min_y, _w, _h) =
             create_blob(&local_grid, &config, BlobType::Floor, BlobType::Wall);
 
-        // Extract blob tile positions relative to min corner
         let mut tiles = Vec::new();
         for y in 0..blob_grid.height {
             for x in 0..blob_grid.width {
@@ -109,16 +111,15 @@ impl LakeBuilder {
         false
     }
 
-    /// Stamp a lake onto the map. Like Brogue, lakes overwrite walls AND floor,
-    /// carving through terrain to create large open water features. Stairs and
-    /// empty tiles are protected. Doors are absorbed.
-    fn stamp_lake(
+    /// Phase 1: Design — stamp lake tiles as Floor terrain and mark in lake_map.
+    /// Does NOT assign liquid yet (matching Brogue's designLakes).
+    fn design_lake(
         &self,
         build_data: &mut BuilderMap,
+        lake_map: &mut Vec<bool>,
         blob_tiles: &[(i32, i32)],
         ox: i32,
         oy: i32,
-        liquid: LiquidType,
     ) -> Vec<usize> {
         let mut affected = Vec::new();
         for &(bx, by) in blob_tiles {
@@ -130,13 +131,13 @@ impl LakeBuilder {
             let idx = build_data.map.xy_idx(wx, wy);
             let terrain = build_data.map.tiles[idx].terrain;
 
-            // Lakes carve through walls and floor (like Brogue). Only protect stairs and empty.
+            // Lakes carve through walls and floor. Protect stairs and empty.
             match terrain {
                 TerrainType::DownStairs | TerrainType::UpStairs | TerrainType::Empty => {}
                 _ => {
                     build_data.map.tiles[idx].terrain = TerrainType::Floor;
-                    build_data.map.tiles[idx].liquid = liquid;
                     build_data.map.tiles[idx].decoration = Decoration::None;
+                    lake_map[idx] = true;
                     affected.push(idx);
                 }
             }
@@ -144,31 +145,63 @@ impl LakeBuilder {
         affected
     }
 
-    /// Revert stamped lake tiles.
+    /// Revert designed lake tiles.
     fn revert_lake(
         &self,
         build_data: &mut BuilderMap,
-        affected: &[usize],
+        lake_map: &mut Vec<bool>,
         backup: &[(usize, Tile)],
     ) {
         for &(idx, tile) in backup {
             build_data.map.tiles[idx] = tile;
+            lake_map[idx] = false;
         }
     }
 
-    /// Add a wreath (shallow liquid border) around lake tiles using Euclidean
-    /// distance for circular shorelines (matches Brogue's createWreath).
-    fn add_wreath(
+    /// Phase 2: Fill — Brogue's fillLake. Recursive flood-fill from a lake tile,
+    /// scanning within LAKE_SCAN_WIDTH to merge nearby lake tiles into the same
+    /// liquid type.
+    fn fill_lake(
         &self,
         build_data: &mut BuilderMap,
-        lake_indices: &HashSet<usize>,
+        lake_map: &mut Vec<bool>,
+        wreath_set: &mut HashSet<usize>,
+        x: i32,
+        y: i32,
         liquid: LiquidType,
     ) {
-        // Wreath width by liquid type (from Brogue: Water=2, Lava=0, Chasm=1)
+        let width = build_data.map.width;
+        let height = build_data.map.height;
+
+        for dy in -LAKE_SCAN_WIDTH..=LAKE_SCAN_WIDTH {
+            for dx in -LAKE_SCAN_WIDTH..=LAKE_SCAN_WIDTH {
+                let nx = x + dx;
+                let ny = y + dy;
+                if nx < 0 || ny < 0 || nx >= width || ny >= height { continue; }
+                let idx = build_data.map.xy_idx(nx, ny);
+                if lake_map[idx] {
+                    lake_map[idx] = false; // mark as filled
+                    build_data.map.tiles[idx].liquid = liquid;
+                    wreath_set.insert(idx);
+                    // Recurse to merge nearby lake tiles
+                    self.fill_lake(build_data, lake_map, wreath_set, nx, ny, liquid);
+                }
+            }
+        }
+    }
+
+    /// Create wreath around filled lake tiles (Brogue's createWreath).
+    fn create_wreath(
+        &self,
+        build_data: &mut BuilderMap,
+        wreath_set: &HashSet<usize>,
+        liquid: LiquidType,
+    ) {
+        // Wreath width by liquid type (Brogue: Water=2, Lava=0, Chasm=1)
         let (wreath_width, wreath_type) = match liquid {
             LiquidType::Water => (2, WreathType::Liquid(LiquidType::ShallowWater)),
-            LiquidType::Lava => return, // Brogue: no lava wreath (width=0)
-            LiquidType::Chasm => return, // no chasm wreath for now (TODO: add chasm edge)
+            LiquidType::Lava => return, // Brogue: no lava wreath
+            LiquidType::Chasm => return, // TODO: chasm edge
             _ => return,
         };
 
@@ -176,9 +209,7 @@ impl LakeBuilder {
         let height = build_data.map.height;
         let mut wreath_tiles = Vec::new();
 
-        // For each lake tile, check all tiles within wreath_width radius.
-        // Wreaths carve through walls to create smooth shorelines.
-        for &lake_idx in lake_indices {
+        for &lake_idx in wreath_set {
             let (lx, ly) = build_data.map.idx_xy(lake_idx);
             for dy in -wreath_width..=wreath_width {
                 for dx in -wreath_width..=wreath_width {
@@ -188,10 +219,9 @@ impl LakeBuilder {
                     if dx * dx + dy * dy > wreath_width * wreath_width { continue; }
 
                     let n_idx = build_data.map.xy_idx(nx, ny);
-                    if lake_indices.contains(&n_idx) { continue; }
+                    if wreath_set.contains(&n_idx) { continue; }
                     if build_data.map.tiles[n_idx].liquid != LiquidType::None { continue; }
-                    // Wreath only places on floor/door tiles (Brogue sets LIQUID layer
-                    // without carving walls — we approximate by skipping non-floor)
+                    // Wreath only places on floor/door (doesn't carve walls)
                     let terrain = build_data.map.tiles[n_idx].terrain;
                     if terrain != TerrainType::Floor && terrain != TerrainType::Door
                         && terrain != TerrainType::OpenDoor { continue; }
@@ -220,65 +250,21 @@ impl LakeBuilder {
             }
         }
     }
-
-    /// Merge adjacent lakes by converting walls sandwiched between same-liquid tiles.
-    fn merge_lakes(&self, build_data: &mut BuilderMap, liquid: LiquidType) {
-        let width = build_data.map.width;
-        let height = build_data.map.height;
-
-        let mut changed = true;
-        let mut failsafe = 5;
-        while changed && failsafe > 0 {
-            changed = false;
-            failsafe -= 1;
-            let mut changes = Vec::new();
-
-            for y in 1..height - 1 {
-                for x in 1..width - 1 {
-                    let idx = build_data.map.xy_idx(x, y);
-                    if build_data.map.tiles[idx].terrain == TerrainType::Wall {
-                        // Check horizontal: same liquid on both sides
-                        let left = build_data.map.xy_idx(x - 1, y);
-                        let right = build_data.map.xy_idx(x + 1, y);
-                        if build_data.map.tiles[left].liquid == liquid
-                            && build_data.map.tiles[right].liquid == liquid
-                        {
-                            changes.push(idx);
-                            changed = true;
-                            continue;
-                        }
-                        // Check vertical
-                        let up = build_data.map.xy_idx(x, y - 1);
-                        let down = build_data.map.xy_idx(x, y + 1);
-                        if build_data.map.tiles[up].liquid == liquid
-                            && build_data.map.tiles[down].liquid == liquid
-                        {
-                            changes.push(idx);
-                            changed = true;
-                        }
-                    }
-                }
-            }
-
-            for idx in changes {
-                build_data.map.tiles[idx].terrain = TerrainType::Floor;
-                build_data.map.tiles[idx].liquid = liquid;
-            }
-        }
-    }
 }
 
 /// Brogue-style connectivity check: flood-fill from start and verify all
-/// non-lake walkable tiles are reachable. Returns true if any dry passable
-/// tile is disconnected (lake disrupts passability).
-fn lake_disrupts_passability(map: &Map, start_idx: usize) -> bool {
+/// non-lake passable tiles are reachable.
+fn lake_disrupts_passability(
+    map: &crate::map::map::Map,
+    lake_map: &[bool],
+    start_idx: usize,
+) -> bool {
     use crate::map::tile::is_passable;
 
     let mut visited = HashSet::new();
     let mut queue = VecDeque::new();
 
-    // Start flood-fill from player position
-    if is_walkable(map.tiles[start_idx]) {
+    if is_passable(map.tiles[start_idx]) && !lake_map[start_idx] {
         queue.push_back(start_idx);
         visited.insert(start_idx);
     }
@@ -291,20 +277,17 @@ fn lake_disrupts_passability(map: &Map, start_idx: usize) -> bool {
             let np = Point::new(nx, ny);
             if !map.in_bounds(np) { continue; }
             let n_idx = map.xy_idx(nx, ny);
-            if !visited.contains(&n_idx) && is_passable(map.tiles[n_idx]) {
+            if !visited.contains(&n_idx) && is_passable(map.tiles[n_idx]) && !lake_map[n_idx] {
                 visited.insert(n_idx);
                 queue.push_back(n_idx);
             }
         }
     }
 
-    // Check: any passable non-liquid tile that wasn't reached?
+    // Any passable non-lake tile that wasn't reached?
     for (idx, tile) in map.tiles.iter().enumerate() {
-        if is_passable(*tile)
-            && tile.liquid == LiquidType::None
-            && !visited.contains(&idx)
-        {
-            return true; // disconnected dry tile found
+        if is_passable(*tile) && !lake_map[idx] && !visited.contains(&idx) {
+            return true;
         }
     }
     false
@@ -313,39 +296,31 @@ fn lake_disrupts_passability(map: &Map, start_idx: usize) -> bool {
 impl MetaMapBuilder for LakeBuilder {
     fn build_map(&mut self, build_data: &mut BuilderMap) {
         let mut rng = rand::rng();
-        let num_lakes = rng.random_range(2..5);
-        let mut lakes_placed = 0;
 
         let start_pos = match &build_data.starting_position {
             Some(p) => *p,
             None => return,
         };
         let start_idx = build_data.map.xy_idx(start_pos.x, start_pos.y);
+        let tile_count = (build_data.map.width * build_data.map.height) as usize;
 
-        // Try each lake size from largest to smallest (Brogue pattern)
+        // === PHASE 1: DESIGN LAKES (mark positions, carve terrain, no liquid) ===
+        let mut lake_map = vec![false; tile_count];
+
         for &(lake_w, lake_h) in &LAKE_SIZES {
-            if lakes_placed >= num_lakes { break; }
-
-            let liquid = self.pick_liquid_type(&mut rng);
-
-            // Generate a blob for this lake size
             let Some(blob_tiles) = self.generate_lake_blob(lake_w, lake_h, &mut rng) else {
                 continue;
             };
 
-            // Try random placements
             for _ in 0..MAX_PLACEMENT_ATTEMPTS {
-                if lakes_placed >= num_lakes { break; }
-
                 let ox = rng.random_range(2..build_data.map.width - lake_w - 2);
                 let oy = rng.random_range(2..build_data.map.height - lake_h - 2);
 
-                // Must overlap at least one existing floor tile
                 if !self.lake_overlaps_floor(build_data, &blob_tiles, ox, oy) {
                     continue;
                 }
 
-                // Backup tiles for rollback
+                // Backup for rollback
                 let backup: Vec<(usize, Tile)> = blob_tiles.iter()
                     .filter_map(|&(bx, by)| {
                         let wx = ox + bx;
@@ -359,25 +334,38 @@ impl MetaMapBuilder for LakeBuilder {
                     })
                     .collect();
 
-                // Stamp the lake
-                let affected = self.stamp_lake(build_data, &blob_tiles, ox, oy, liquid);
+                // Design (stamp as floor, mark in lake_map)
+                let affected = self.design_lake(build_data, &mut lake_map, &blob_tiles, ox, oy);
                 if affected.is_empty() { continue; }
 
-                // Connectivity check (Brogue-style): all non-lake passable tiles
-                // must be reachable from the player start.
-                if lake_disrupts_passability(&build_data.map, start_idx) {
-                    self.revert_lake(build_data, &affected, &backup);
+                // Connectivity check BEFORE committing (Brogue checks hypothetically)
+                if lake_disrupts_passability(&build_data.map, &lake_map, start_idx) {
+                    self.revert_lake(build_data, &mut lake_map, &backup);
                     continue;
                 }
 
-                // Lake placed successfully
-                let lake_set: HashSet<usize> = affected.iter().copied().collect();
-                self.add_wreath(build_data, &lake_set, liquid);
-                self.merge_lakes(build_data, liquid);
-                lakes_placed += 1;
+                // Lake designed successfully
                 break;
             }
         }
 
+        // === PHASE 2: FILL LAKES (assign liquid types, merge via scanWidth) ===
+        // Iterate lake_map. When we find an unfilled lake tile, pick a liquid
+        // type and flood-fill all connected lake tiles (within LAKE_SCAN_WIDTH)
+        // with that same liquid. This merges nearby blobs into the same type.
+        let width = build_data.map.width;
+        let height = build_data.map.height;
+
+        for y in 0..height {
+            for x in 0..width {
+                let idx = build_data.map.xy_idx(x, y);
+                if lake_map[idx] {
+                    let liquid = self.pick_liquid_type(&mut rng);
+                    let mut wreath_set = HashSet::new();
+                    self.fill_lake(build_data, &mut lake_map, &mut wreath_set, x, y, liquid);
+                    self.create_wreath(build_data, &wreath_set, liquid);
+                }
+            }
+        }
     }
 }
