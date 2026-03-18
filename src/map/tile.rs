@@ -262,7 +262,7 @@ pub fn spawn_tile_entity(
                     ..default()
                 },
                 Visibility::Hidden,
-                crate::game::ascii_mode::AsciiBackground,
+                crate::game::ascii_mode::AsciiBackground { base_color: bg_color },
                 RenderLayers::layer(1),
             ))
             .id();
@@ -285,6 +285,7 @@ pub fn spawn_tile_entity(
                 },
                 Visibility::Hidden,
                 crate::game::ascii_mode::AsciiGlyph,
+                crate::game::ascii_mode::AsciiGlyphColor(fg_color),
                 RenderLayers::layer(1),
             ))
             .id();

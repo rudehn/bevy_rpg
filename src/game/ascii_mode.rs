@@ -11,8 +11,15 @@ pub enum GraphicsMode {
 }
 
 /// Marker for the solid-color background quad on tile entities (ASCII mode).
+/// Stores the original baked color so visibility tinting can multiply against it.
 #[derive(Component)]
-pub struct AsciiBackground;
+pub struct AsciiBackground {
+    pub base_color: Color,
+}
+
+/// Stores the original foreground color for an ASCII glyph.
+#[derive(Component)]
+pub struct AsciiGlyphColor(pub Color);
 
 /// Marker for the Text2d character glyph on any entity (ASCII mode).
 #[derive(Component)]
