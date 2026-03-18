@@ -6,7 +6,7 @@ use crate::{
     game::AppState,
     map::{
         light::LightMap,
-        tile::{TileExplored, Tile, TerrainType, LiquidType, TileVisibility, is_opaque},
+        tile::{TileExplored, TileMarker, Tile, TerrainType, LiquidType, TileVisibility, is_opaque},
     },
     player::Player,
     ui::game_log::GameLogMessage,
@@ -115,25 +115,30 @@ pub fn update_tile_visibility(
     player_query: Query<&Viewshed, (With<Player>, Changed<Viewshed>)>,
     mut map: ResMut<Map>,
     light_map: Res<LightMap>,
+    mode: Res<crate::game::ascii_mode::GraphicsMode>,
     mut tile_render_query: Query<(
         &Position,
         &mut TileVisibility,
         &mut TileExplored,
         &mut Sprite,
         &mut Visibility,
+        Option<&Children>,
     )>,
+    mut ascii_bg_query: Query<&mut Sprite, (With<crate::game::ascii_mode::AsciiBackground>, Without<TileMarker>)>,
+    mut ascii_glyph_query: Query<&mut TextColor, With<crate::game::ascii_mode::AsciiGlyph>>,
 ) {
     let Ok(player_viewshed) = player_query.single() else {
         return;
     };
 
     let fov_tiles = &player_viewshed.visible_tiles;
+    let is_ascii = *mode == crate::game::ascii_mode::GraphicsMode::Ascii;
 
     // Collect newly-explored tile indices so we only trigger map change detection
     // when there is actually something new to mark (avoids 23ms/frame light map rebuild).
     let mut newly_explored = Vec::new();
 
-    for (tile_pos, mut tile_visibility, mut tile_explored, mut sprite, mut visibility) in
+    for (tile_pos, mut tile_visibility, mut tile_explored, mut sprite, mut visibility, children) in
         tile_render_query.iter_mut()
     {
         let current_point = Point::new(tile_pos.x, tile_pos.y);
@@ -153,14 +158,44 @@ pub fn update_tile_visibility(
                 AMBIENT
             };
 
-            // Warm candlelight tint: srgb(1.0, 0.95, 0.8) at full brightness,
-            // srgb(0.2, 0.19, 0.16) at ambient minimum.
-            sprite.color = Color::srgb(light, light * 0.95, light * 0.8);
+            if is_ascii {
+                sprite.color = Color::NONE;
+                // ASCII children get full color (no light-map tinting)
+                if let Some(children) = children {
+                    for child in children.iter() {
+                        if let Ok(mut bg_sprite) = ascii_bg_query.get_mut(child) {
+                            bg_sprite.color = Color::WHITE; // bg color is baked at spawn
+                        }
+                        if let Ok(mut text_color) = ascii_glyph_query.get_mut(child) {
+                            *text_color = TextColor(Color::WHITE); // fg color is baked at spawn
+                        }
+                    }
+                }
+            } else {
+                // Warm candlelight tint: srgb(1.0, 0.95, 0.8) at full brightness,
+                // srgb(0.2, 0.19, 0.16) at ambient minimum.
+                sprite.color = Color::srgb(light, light * 0.95, light * 0.8);
+            }
         } else {
             *tile_visibility = TileVisibility::Hidden;
             if *tile_explored == TileExplored::Explored {
                 *visibility = Visibility::Visible;
-                sprite.color = Color::srgb(0.5, 0.5, 0.5); // memory gray, no lighting
+                if is_ascii {
+                    sprite.color = Color::NONE;
+                    // Dim ASCII children for explored-not-visible
+                    if let Some(children) = children {
+                        for child in children.iter() {
+                            if let Ok(mut bg_sprite) = ascii_bg_query.get_mut(child) {
+                                bg_sprite.color = Color::srgba(0.5, 0.5, 0.5, 1.0);
+                            }
+                            if let Ok(mut text_color) = ascii_glyph_query.get_mut(child) {
+                                *text_color = TextColor(Color::srgb(0.5, 0.5, 0.5));
+                            }
+                        }
+                    }
+                } else {
+                    sprite.color = Color::srgb(0.5, 0.5, 0.5); // memory gray, no lighting
+                }
             } else {
                 *visibility = Visibility::Hidden;
                 sprite.color = Color::BLACK;
