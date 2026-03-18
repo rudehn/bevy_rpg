@@ -176,7 +176,8 @@ impl LakeBuilder {
         let height = build_data.map.height;
         let mut wreath_tiles = Vec::new();
 
-        // For each lake tile, check all tiles within wreath_width radius
+        // For each lake tile, check all tiles within wreath_width radius.
+        // Wreaths carve through walls to create smooth shorelines.
         for &lake_idx in lake_indices {
             let (lx, ly) = build_data.map.idx_xy(lake_idx);
             for dy in -wreath_width..=wreath_width {
@@ -184,34 +185,36 @@ impl LakeBuilder {
                     let nx = lx + dx;
                     let ny = ly + dy;
                     if nx < 1 || ny < 1 || nx >= width - 1 || ny >= height - 1 { continue; }
-                    // Euclidean distance check (circular wreath)
                     if dx * dx + dy * dy > wreath_width * wreath_width { continue; }
 
                     let n_idx = build_data.map.xy_idx(nx, ny);
-                    if lake_indices.contains(&n_idx) { continue; } // skip lake tiles
-                    if build_data.map.tiles[n_idx].terrain != TerrainType::Floor { continue; }
+                    if lake_indices.contains(&n_idx) { continue; }
                     if build_data.map.tiles[n_idx].liquid != LiquidType::None { continue; }
+                    // Protect stairs and empty tiles, but carve walls and absorb doors
+                    let terrain = build_data.map.tiles[n_idx].terrain;
+                    if terrain == TerrainType::DownStairs || terrain == TerrainType::UpStairs
+                        || terrain == TerrainType::Empty { continue; }
 
                     wreath_tiles.push(n_idx);
                 }
             }
         }
 
-        // Apply wreath (deduplicate via HashSet)
         let unique_wreath: HashSet<usize> = wreath_tiles.into_iter().collect();
         for idx in unique_wreath {
+            // Carve walls/doors to floor for the wreath
+            let terrain = build_data.map.tiles[idx].terrain;
+            if terrain == TerrainType::Wall || terrain == TerrainType::Door || terrain == TerrainType::OpenDoor {
+                build_data.map.tiles[idx].terrain = TerrainType::Floor;
+            }
+            build_data.map.tiles[idx].decoration = Decoration::None;
+
             match wreath_type {
                 WreathType::Liquid(liq) => {
                     build_data.map.tiles[idx].liquid = liq;
-                    // Brogue converts doors in the wreath to floor
-                    if build_data.map.tiles[idx].terrain == TerrainType::Door {
-                        build_data.map.tiles[idx].terrain = TerrainType::Floor;
-                    }
                 }
                 WreathType::Decoration(dec) => {
-                    if build_data.map.tiles[idx].decoration == Decoration::None {
-                        build_data.map.tiles[idx].decoration = dec;
-                    }
+                    build_data.map.tiles[idx].decoration = dec;
                 }
             }
         }
@@ -261,6 +264,54 @@ impl LakeBuilder {
                 build_data.map.tiles[idx].liquid = liquid;
             }
         }
+    }
+}
+
+/// Clean up orphaned doors after lake placement (Brogue's finishDoors logic).
+/// A door is orphaned if:
+/// - It has passable terrain on both horizontal AND vertical sides (open space)
+/// - OR it has 3+ wall/blocking neighbors in cardinal directions (dead-end)
+fn finish_doors(map: &mut crate::map::map::Map) {
+    let width = map.width;
+    let height = map.height;
+    let mut to_floor = Vec::new();
+
+    for y in 1..height - 1 {
+        for x in 1..width - 1 {
+            let idx = map.xy_idx(x, y);
+            if map.tiles[idx].terrain != TerrainType::Door { continue; }
+
+            let left = map.tiles[map.xy_idx(x - 1, y)].terrain;
+            let right = map.tiles[map.xy_idx(x + 1, y)].terrain;
+            let up = map.tiles[map.xy_idx(x, y - 1)].terrain;
+            let down = map.tiles[map.xy_idx(x, y + 1)].terrain;
+
+            let is_blocking = |t: TerrainType| matches!(t, TerrainType::Wall | TerrainType::Empty);
+            let is_passable = |t: TerrainType| !is_blocking(t);
+
+            // Orphaned if passable on both left-right AND top-bottom
+            let h_open = is_passable(left) || is_passable(right);
+            let v_open = is_passable(up) || is_passable(down);
+            if h_open && v_open {
+                // Check if BOTH horizontal AND BOTH vertical are passable — truly open space
+                if (is_passable(left) && is_passable(right))
+                    || (is_passable(up) && is_passable(down))
+                {
+                    to_floor.push(idx);
+                    continue;
+                }
+            }
+
+            // Orphaned if 3+ blocking cardinal neighbors
+            let blocking_count = [left, right, up, down].iter().filter(|&&t| is_blocking(t)).count();
+            if blocking_count >= 3 {
+                to_floor.push(idx);
+            }
+        }
+    }
+
+    for idx in to_floor {
+        map.tiles[idx].terrain = TerrainType::Floor;
     }
 }
 
@@ -374,5 +425,8 @@ impl MetaMapBuilder for LakeBuilder {
                 break;
             }
         }
+
+        // Clean up orphaned doors left by lake carving (Brogue's finishDoors)
+        finish_doors(&mut build_data.map);
     }
 }
