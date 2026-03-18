@@ -111,9 +111,20 @@ pub fn init_explored_tiles_system(
     }
 }
 
-/// Multiply an sRGB color's channels by a scalar brightness (0.0 = black, 1.0 = original).
-fn scale_color(color: Color, factor: f32) -> Color {
-    let srgba = color.to_srgba();
+/// Add warm light to a base color. `light_amount` is 0.0 (no light) to 1.0 (max light).
+/// Uses additive warm tint: candles add (warm_r, warm_g, warm_b) scaled by light_amount.
+fn apply_light_to_color(base: Color, light_amount: f32) -> Color {
+    let srgba = base.to_srgba();
+    // Warm candle tint: add up to (0.15, 0.10, 0.03) at full light
+    let r = (srgba.red + light_amount * 0.15).min(1.0);
+    let g = (srgba.green + light_amount * 0.10).min(1.0);
+    let b = (srgba.blue + light_amount * 0.03).min(1.0);
+    Color::srgba(r, g, b, srgba.alpha)
+}
+
+/// Dim a color for explored-but-not-visible tiles.
+fn dim_color(base: Color, factor: f32) -> Color {
+    let srgba = base.to_srgba();
     Color::srgba(srgba.red * factor, srgba.green * factor, srgba.blue * factor, srgba.alpha)
 }
 
@@ -143,10 +154,9 @@ pub fn update_tile_visibility(
     let is_ascii = *mode == crate::game::ascii_mode::GraphicsMode::Ascii;
 
     let mut newly_explored = Vec::new();
-    // Deferred brightness updates: (entity, brightness_multiplier).
+    // Deferred ASCII child updates: (entity, light_amount, is_explored_dim).
     // Applied after the tile query loop via ParamSet to avoid Sprite borrow conflict.
-    let mut ascii_bg_updates: Vec<(Entity, f32)> = Vec::new();
-    let mut ascii_glyph_updates: Vec<(Entity, f32)> = Vec::new();
+    let mut ascii_child_updates: Vec<(Entity, f32, bool)> = Vec::new();
 
     for (tile_pos, mut tile_visibility, mut tile_explored, mut sprite, mut visibility, children) in
         sprite_set.p0().iter_mut()
@@ -170,12 +180,11 @@ pub fn update_tile_visibility(
 
             if is_ascii {
                 sprite.color = Color::NONE;
-                // Subtle brightness: remap light (AMBIENT..1.0) → (0.65..1.0)
-                let brightness = 0.65 + 0.35 * ((light - AMBIENT) / (1.0 - AMBIENT)).clamp(0.0, 1.0);
+                // Additive light: 0.0 at ambient, 1.0 at max candle brightness
+                let light_amount = ((light - AMBIENT) / (1.0 - AMBIENT)).clamp(0.0, 1.0);
                 if let Some(children) = children {
                     for child in children.iter() {
-                        ascii_bg_updates.push((child, brightness));
-                        ascii_glyph_updates.push((child, brightness));
+                        ascii_child_updates.push((child, light_amount, false));
                     }
                 }
             } else {
@@ -189,8 +198,7 @@ pub fn update_tile_visibility(
                     sprite.color = Color::NONE;
                     if let Some(children) = children {
                         for child in children.iter() {
-                            ascii_bg_updates.push((child, 0.35));
-                            ascii_glyph_updates.push((child, 0.45));
+                            ascii_child_updates.push((child, 0.0, true));
                         }
                     }
                 } else {
@@ -204,18 +212,25 @@ pub fn update_tile_visibility(
     }
 
     // Apply deferred ASCII child color updates via ParamSet's second query.
-    // Multiply the baked base color by the brightness factor.
     {
         let mut bg_q = sprite_set.p1();
-        for (entity, brightness) in ascii_bg_updates {
+        for &(entity, light_amount, is_dim) in &ascii_child_updates {
             if let Ok((mut bg_sprite, bg_data)) = bg_q.get_mut(entity) {
-                bg_sprite.color = scale_color(bg_data.base_color, brightness);
+                bg_sprite.color = if is_dim {
+                    dim_color(bg_data.base_color, 0.35)
+                } else {
+                    apply_light_to_color(bg_data.base_color, light_amount)
+                };
             }
         }
     }
-    for (entity, brightness) in ascii_glyph_updates {
+    for &(entity, light_amount, is_dim) in &ascii_child_updates {
         if let Ok((mut text_color, glyph_data)) = ascii_glyph_query.get_mut(entity) {
-            *text_color = TextColor(scale_color(glyph_data.0, brightness));
+            *text_color = TextColor(if is_dim {
+                dim_color(glyph_data.0, 0.45)
+            } else {
+                apply_light_to_color(glyph_data.0, light_amount)
+            });
         }
     }
 
