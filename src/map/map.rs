@@ -116,15 +116,17 @@ pub fn update_tile_visibility(
     mut map: ResMut<Map>,
     light_map: Res<LightMap>,
     mode: Res<crate::game::ascii_mode::GraphicsMode>,
-    mut tile_render_query: Query<(
-        &Position,
-        &mut TileVisibility,
-        &mut TileExplored,
-        &mut Sprite,
-        &mut Visibility,
-        Option<&Children>,
+    mut sprite_set: ParamSet<(
+        Query<(
+            &Position,
+            &mut TileVisibility,
+            &mut TileExplored,
+            &mut Sprite,
+            &mut Visibility,
+            Option<&Children>,
+        )>,
+        Query<&mut Sprite, With<crate::game::ascii_mode::AsciiBackground>>,
     )>,
-    mut ascii_bg_query: Query<&mut Sprite, (With<crate::game::ascii_mode::AsciiBackground>, Without<TileMarker>)>,
     mut ascii_glyph_query: Query<&mut TextColor, With<crate::game::ascii_mode::AsciiGlyph>>,
 ) {
     let Ok(player_viewshed) = player_query.single() else {
@@ -135,12 +137,12 @@ pub fn update_tile_visibility(
     let is_ascii = *mode == crate::game::ascii_mode::GraphicsMode::Ascii;
 
     let mut newly_explored = Vec::new();
-    // Deferred updates for ASCII children (avoids Sprite query conflict with tile query).
+    // Deferred updates for ASCII children (applied via ParamSet after tile query is done).
     let mut ascii_bg_updates: Vec<(Entity, Color)> = Vec::new();
     let mut ascii_glyph_updates: Vec<(Entity, Color)> = Vec::new();
 
     for (tile_pos, mut tile_visibility, mut tile_explored, mut sprite, mut visibility, children) in
-        tile_render_query.iter_mut()
+        sprite_set.p0().iter_mut()
     {
         let current_point = Point::new(tile_pos.x, tile_pos.y);
 
@@ -193,12 +195,13 @@ pub fn update_tile_visibility(
         }
     }
 
-    // Apply deferred ASCII child color updates (background sprites + text glyphs).
-    // Using separate queries avoids the Sprite borrow conflict with the tile query.
-    for (entity, tint) in ascii_bg_updates {
-        if let Ok(mut bg_sprite) = ascii_bg_query.get_mut(entity) {
-            // Multiply the baked bg color by the light tint
-            bg_sprite.color = tint;
+    // Apply deferred ASCII child color updates via ParamSet's second query.
+    {
+        let mut bg_q = sprite_set.p1();
+        for (entity, tint) in ascii_bg_updates {
+            if let Ok(mut bg_sprite) = bg_q.get_mut(entity) {
+                bg_sprite.color = tint;
+            }
         }
     }
     for (entity, tint) in ascii_glyph_updates {
