@@ -267,54 +267,6 @@ impl LakeBuilder {
     }
 }
 
-/// Clean up orphaned doors after lake placement (Brogue's finishDoors logic).
-/// A door is orphaned if:
-/// - It has passable terrain on both horizontal AND vertical sides (open space)
-/// - OR it has 3+ wall/blocking neighbors in cardinal directions (dead-end)
-fn finish_doors(map: &mut crate::map::map::Map) {
-    let width = map.width;
-    let height = map.height;
-    let mut to_floor = Vec::new();
-
-    for y in 1..height - 1 {
-        for x in 1..width - 1 {
-            let idx = map.xy_idx(x, y);
-            if map.tiles[idx].terrain != TerrainType::Door { continue; }
-
-            let left = map.tiles[map.xy_idx(x - 1, y)].terrain;
-            let right = map.tiles[map.xy_idx(x + 1, y)].terrain;
-            let up = map.tiles[map.xy_idx(x, y - 1)].terrain;
-            let down = map.tiles[map.xy_idx(x, y + 1)].terrain;
-
-            let is_blocking = |t: TerrainType| matches!(t, TerrainType::Wall | TerrainType::Empty);
-            let is_passable = |t: TerrainType| !is_blocking(t);
-
-            // Orphaned if passable on both left-right AND top-bottom
-            let h_open = is_passable(left) || is_passable(right);
-            let v_open = is_passable(up) || is_passable(down);
-            if h_open && v_open {
-                // Check if BOTH horizontal AND BOTH vertical are passable — truly open space
-                if (is_passable(left) && is_passable(right))
-                    || (is_passable(up) && is_passable(down))
-                {
-                    to_floor.push(idx);
-                    continue;
-                }
-            }
-
-            // Orphaned if 3+ blocking cardinal neighbors
-            let blocking_count = [left, right, up, down].iter().filter(|&&t| is_blocking(t)).count();
-            if blocking_count >= 3 {
-                to_floor.push(idx);
-            }
-        }
-    }
-
-    for idx in to_floor {
-        map.tiles[idx].terrain = TerrainType::Floor;
-    }
-}
-
 /// Brogue-style connectivity check: flood-fill from start and verify all
 /// non-lake walkable tiles are reachable. Returns true if any dry passable
 /// tile is disconnected (lake disrupts passability).
@@ -426,7 +378,5 @@ impl MetaMapBuilder for LakeBuilder {
             }
         }
 
-        // Clean up orphaned doors left by lake carving (Brogue's finishDoors)
-        finish_doors(&mut build_data.map);
     }
 }

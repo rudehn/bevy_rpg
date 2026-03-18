@@ -16,6 +16,7 @@ use crate::{
             cave_eroder::CaveEroder,
             diagonal_culler::DiagonalCuller,
             exit_points::DistantExit,
+            finish_doors::FinishDoors,
             item_spawner::ItemSpawner,
             lake_builder::LakeBuilder,
             monster_spawner::MonsterSpawner,
@@ -35,6 +36,7 @@ mod choke_map;
 mod corridors;
 mod diagonal_culler;
 mod exit_points;
+mod finish_doors;
 pub mod item_spawner;
 mod lake_builder;
 pub mod monster_spawner;
@@ -261,6 +263,7 @@ pub fn floor_builder(
     builder.with(DiagonalCuller::new());
     builder.with(StartPointBuilder::new());
     builder.with(LakeBuilder::new(new_depth));
+    builder.with(FinishDoors::new());
     builder.with(PrefabPlacer::new(prefabs, role_table));
     builder.with(CandleSpawner::new());
     builder.with(MonsterSpawner::new(spawn_table));
