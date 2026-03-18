@@ -163,11 +163,13 @@ pub fn update_tile_visibility(
 
             if is_ascii {
                 sprite.color = Color::NONE;
-                // Apply light brightness to ASCII children
+                // Subtle brightness: remap light (AMBIENT..1.0) → (0.6..1.0) so
+                // candles brighten gently rather than washing out to white.
+                let ascii_brightness = 0.6 + 0.4 * ((light - AMBIENT) / (1.0 - AMBIENT)).clamp(0.0, 1.0);
                 if let Some(children) = children {
                     for child in children.iter() {
-                        ascii_bg_updates.push((child, Color::srgb(light, light, light)));
-                        ascii_glyph_updates.push((child, Color::srgb(light, light, light)));
+                        ascii_bg_updates.push((child, Color::srgb(ascii_brightness, ascii_brightness, ascii_brightness)));
+                        ascii_glyph_updates.push((child, Color::srgb(ascii_brightness, ascii_brightness, ascii_brightness)));
                     }
                 }
             } else {
