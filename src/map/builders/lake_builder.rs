@@ -167,8 +167,8 @@ impl LakeBuilder {
         // Wreath width by liquid type (from Brogue: Water=2, Lava=0, Chasm=1)
         let (wreath_width, wreath_type) = match liquid {
             LiquidType::Water => (2, WreathType::Liquid(LiquidType::ShallowWater)),
-            LiquidType::Lava => (1, WreathType::Decoration(Decoration::ScorchedEarth)),
-            LiquidType::Chasm => return, // no wreath
+            LiquidType::Lava => return, // Brogue: no lava wreath (width=0)
+            LiquidType::Chasm => return, // no chasm wreath for now (TODO: add chasm edge)
             _ => return,
         };
 
@@ -190,10 +190,11 @@ impl LakeBuilder {
                     let n_idx = build_data.map.xy_idx(nx, ny);
                     if lake_indices.contains(&n_idx) { continue; }
                     if build_data.map.tiles[n_idx].liquid != LiquidType::None { continue; }
-                    // Protect stairs and empty tiles, but carve walls and absorb doors
+                    // Wreath only places on floor/door tiles (Brogue sets LIQUID layer
+                    // without carving walls — we approximate by skipping non-floor)
                     let terrain = build_data.map.tiles[n_idx].terrain;
-                    if terrain == TerrainType::DownStairs || terrain == TerrainType::UpStairs
-                        || terrain == TerrainType::Empty { continue; }
+                    if terrain != TerrainType::Floor && terrain != TerrainType::Door
+                        && terrain != TerrainType::OpenDoor { continue; }
 
                     wreath_tiles.push(n_idx);
                 }
@@ -202,12 +203,12 @@ impl LakeBuilder {
 
         let unique_wreath: HashSet<usize> = wreath_tiles.into_iter().collect();
         for idx in unique_wreath {
-            // Carve walls/doors to floor for the wreath
-            let terrain = build_data.map.tiles[idx].terrain;
-            if terrain == TerrainType::Wall || terrain == TerrainType::Door || terrain == TerrainType::OpenDoor {
+            // Brogue converts doors in the wreath to floor
+            if build_data.map.tiles[idx].terrain == TerrainType::Door
+                || build_data.map.tiles[idx].terrain == TerrainType::OpenDoor
+            {
                 build_data.map.tiles[idx].terrain = TerrainType::Floor;
             }
-            build_data.map.tiles[idx].decoration = Decoration::None;
 
             match wreath_type {
                 WreathType::Liquid(liq) => {
