@@ -46,12 +46,21 @@ fn load_ascii_font(mut commands: Commands, asset_server: Res<AssetServer>) {
 }
 
 /// F5 toggles between Sprites and ASCII mode.
-fn toggle_graphics_mode(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<GraphicsMode>) {
+/// Also marks the player viewshed dirty so visibility systems re-run immediately.
+fn toggle_graphics_mode(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut mode: ResMut<GraphicsMode>,
+    mut viewshed_query: Query<&mut crate::components::Viewshed, With<crate::player::Player>>,
+) {
     if keys.just_pressed(KeyCode::Equal) {
         *mode = match *mode {
             GraphicsMode::Sprites => GraphicsMode::Ascii,
             GraphicsMode::Ascii => GraphicsMode::Sprites,
         };
+        // Force visibility systems to re-evaluate this frame
+        if let Ok(mut vs) = viewshed_query.single_mut() {
+            vs.dirty = true;
+        }
     }
 }
 
@@ -134,15 +143,16 @@ fn apply_graphics_mode_swap(
     // which branch on GraphicsMode. Player sprite is handled by update_player_ascii_sprite.
 }
 
-/// Keep the player sprite transparent in ASCII mode (player has no visibility system).
+/// Keep the player sprite transparent in ASCII mode, restore in Sprites mode.
 fn update_player_ascii_sprite(
     mode: Res<GraphicsMode>,
     mut player_query: Query<&mut Sprite, With<crate::player::Player>>,
 ) {
+    if !mode.is_changed() {
+        return;
+    }
     let is_ascii = *mode == GraphicsMode::Ascii;
     for mut sprite in player_query.iter_mut() {
-        if is_ascii {
-            sprite.color = Color::NONE;
-        }
+        sprite.color = if is_ascii { Color::NONE } else { Color::WHITE };
     }
 }
