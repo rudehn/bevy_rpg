@@ -366,8 +366,8 @@ PrefabManifest(
                 (x: 5, y: 0, prop: "small_chest"),
             ],
             monster_spawns: [
-                (x: 3, y: 1, role: "melee_guard", behavior: Roam(( min: (0, 0), max: (10, 5) ))),
-                (x: 7, y: 4, role: "melee_guard", behavior: Roam(( min: (0, 0), max: (10, 5) ))),
+                (x: 3, y: 1, role: "melee_guard", behavior: Roam(min: (0, 0), max: (10, 5))),
+                (x: 7, y: 4, role: "melee_guard", behavior: Roam(min: (0, 0), max: (10, 5))),
             ],
             item_spawns: [],
             on_leader_death: "scatter",
