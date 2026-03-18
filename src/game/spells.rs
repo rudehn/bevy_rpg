@@ -31,10 +31,6 @@ pub enum SpellEffect {
     AoeDamage { dice: String, radius: i32, int_scaling: bool },
     /// Hit primary target, then jump to nearby enemies.
     ChainDamage { dice: String, max_jumps: i32, jump_range: i32, int_scaling: bool },
-    /// Temporarily boost a target's attribute.
-    Buff { attribute: String, amount: i32, duration: u32 },
-    /// Temporarily reduce a target's attribute.
-    Debuff { attribute: String, amount: i32, duration: u32 },
     /// Grant +50% speed for N turns.
     ApplyHaste { duration: u32 },
     /// Inflict -50% speed for N turns.

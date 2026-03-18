@@ -43,7 +43,7 @@
 
     // Orc warriors
     (monster: "Orc Warrior",     min_floor: 6,  max_floor: 10, min_group: 1, max_group: 3,
-     on_leader_death: "enrage"),
+     on_leader_death: "scatter"),
 
     // Orc archers
     (monster: "Orc Archer",      min_floor: 7,  max_floor: 10, min_group: 1, max_group: 2),
@@ -59,7 +59,7 @@
         (monster: "Orc Warlord",  min_count: 1, max_count: 1),
         (monster: "Orc Warrior",  min_count: 2, max_count: 3),
         (monster: "Orc Archer",   min_count: 1, max_count: 2),
-    ], min_floor: 9, max_floor: 12, on_leader_death: "enrage"),
+    ], min_floor: 9, max_floor: 12, on_leader_death: "scatter"),
 
     // ==================== FUNGAL (Floors 8-13) ====================
 
@@ -146,6 +146,6 @@
         (monster: "Elder Drake",   min_count: 1, max_count: 1),
         (monster: "Drake",         min_count: 1, max_count: 2),
         (monster: "Wyrm",          min_count: 1, max_count: 1),
-    ], min_floor: 19, max_floor: 20, on_leader_death: "enrage"),
+    ], min_floor: 19, max_floor: 20, on_leader_death: "scatter"),
   ]
 )

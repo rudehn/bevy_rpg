@@ -8,7 +8,7 @@ use crate::game::{
     essence::Essence,
     magic::{
         ActiveSpells, Burning, Hasted, Slowed, SpellCooldowns,
-        Stunned,
+        SpiritShielded, Stunned,
     },
     stats::Mana,
 };
@@ -412,6 +412,7 @@ pub fn collect_status_effects(
     slowed: Option<&Slowed>,
     hasted: Option<&Hasted>,
     stunned: Option<&Stunned>,
+    spirit_shielded: Option<&SpiritShielded>,
 ) -> Vec<(String, Color)> {
     let mut effects = Vec::new();
 
@@ -439,6 +440,12 @@ pub fn collect_status_effects(
             Color::srgb(1.0, 1.0, 0.0),
         ));
     }
+    if let Some(ss) = spirit_shielded {
+        effects.push((
+            format!("Spirit Shield ({}t)", ss.turns_remaining),
+            Color::srgb(0.4, 0.6, 1.0),
+        ));
+    }
 
     effects
 }
@@ -454,6 +461,7 @@ fn update_player_status_effects_ui(
             Option<&Slowed>,
             Option<&Hasted>,
             Option<&Stunned>,
+            Option<&SpiritShielded>,
         ),
         With<Player>,
     >,
@@ -461,14 +469,14 @@ fn update_player_status_effects_ui(
     let Ok((container, mut tracker)) = q_container.single_mut() else {
         return;
     };
-    let Ok((burning, slowed, hasted, stunned)) =
+    let Ok((burning, slowed, hasted, stunned, spirit_shielded)) =
         player_query.single()
     else {
         return;
     };
 
     let effects = collect_status_effects(
-        burning, slowed, hasted, stunned,
+        burning, slowed, hasted, stunned, spirit_shielded,
     );
 
     // Quick hash: combine effect count with sum of turns to detect changes

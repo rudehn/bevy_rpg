@@ -119,6 +119,13 @@ pub struct Burning {
     pub turns_remaining: u32,
 }
 
+/// Spirit Shield: damage is absorbed by mana (1:1) for N turns.
+#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
+#[reflect(Component)]
+pub struct SpiritShielded {
+    pub turns_remaining: u32,
+}
+
 // =====================================================================
 // Messages
 // =====================================================================
@@ -429,10 +436,6 @@ pub fn handle_cast_spell(
                         }
                     }
                 }
-                SpellEffect::Buff { .. } | SpellEffect::Debuff { .. } => {
-                    // Buff/Debuff no longer modifies attributes — log only
-                    log_writer.write(GameLogMessage("The magical energy fizzles without effect.".to_string()));
-                }
                 SpellEffect::ApplyHaste { duration } => {
                     commands
                         .entity(target_entity)
@@ -481,9 +484,14 @@ pub fn handle_cast_spell(
                         )));
                     });
                 }
-                SpellEffect::SpiritShield { .. } => {
-                    // Spirit Shield removed — log only
-                    log_writer.write(GameLogMessage("The spirit shield spell has no effect.".to_string()));
+                SpellEffect::SpiritShield { duration } => {
+                    commands.entity(caster_entity).insert(SpiritShielded {
+                        turns_remaining: *duration,
+                    });
+                    log_writer.write(GameLogMessage(format!(
+                        "{} is shielded by spirit energy! (mana absorbs damage for {} turns)",
+                        caster_label, duration
+                    )));
                 }
                 SpellEffect::Teleport { range } => {
                     if *range == 0 {
@@ -681,7 +689,30 @@ pub fn process_burning_system(
     }
 }
 
-// =====================================================================
+/// Tick spirit shield duration: decrement, remove when expired.
+pub fn tick_spirit_shield_system(
+    mut turn_end: MessageReader<TurnEndEvent>,
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut SpiritShielded)>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+    names: Query<&Name>,
+) {
+    for _ in turn_end.read() {
+        for (entity, mut shield) in query.iter_mut() {
+            shield.turns_remaining = shield.turns_remaining.saturating_sub(1);
+            if shield.turns_remaining == 0 {
+                commands.entity(entity).remove::<SpiritShielded>();
+                if let Ok(name) = names.get(entity) {
+                    log_writer.write(GameLogMessage(format!(
+                        "{}'s spirit shield fades.",
+                        name.0
+                    )));
+                }
+            }
+        }
+    }
+}
+
 // =====================================================================
 // Pending Summon — deferred from handle_cast_spell to avoid param limit
 // =====================================================================
@@ -767,6 +798,7 @@ impl Plugin for MagicPlugin {
             .register_type::<Slowed>()
             .register_type::<Stunned>()
             .register_type::<Burning>()
+            .register_type::<SpiritShielded>()
             .add_message::<CastSpellMessage>()
             .add_systems(
                 Update,
@@ -776,6 +808,7 @@ impl Plugin for MagicPlugin {
                     tick_speed_effects_system,
                     tick_stunned_system,
                     process_burning_system,
+                    tick_spirit_shield_system,
                     apply_speed_effects_system,
                     process_pending_summon,
                 )

@@ -95,20 +95,17 @@ impl Default for SquadConfig {
 /// What happens to remaining squad members when the leader dies.
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub enum LeaderDeathBehavior {
-    /// No special effect.
+    /// No special effect; squad dissolves.
     #[default]
     Nothing,
     /// Members lose their target and wander aimlessly.
     Scatter,
-    /// Members gain a temporary damage bonus.
-    Enrage,
 }
 
 impl LeaderDeathBehavior {
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "scatter" => Self::Scatter,
-            "enrage" => Self::Enrage,
             _ => Self::Nothing,
         }
     }
@@ -269,14 +266,6 @@ fn squad_leader_death_system(
                     }
                 }
                 log_writer.write(GameLogMessage("The group scatters!".to_string()));
-            }
-            LeaderDeathBehavior::Enrage => {
-                // Enraged status effect was removed in the mechanics simplification.
-                // Log the flavor text but no mechanical effect.
-                let _ = (&mut members, &commands); // suppress unused warnings
-                log_writer.write(GameLogMessage(
-                    "The group flies into a rage!".to_string(),
-                ));
             }
             LeaderDeathBehavior::Nothing => {}
         }

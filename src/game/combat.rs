@@ -405,11 +405,13 @@ fn damage_application_system(
         &mut Health,
         &Name,
         Has<GodMode>,
+        Has<crate::game::magic::SpiritShielded>,
+        Option<&mut crate::game::stats::Mana>,
     )>,
     query_names: Query<(&Name, Has<Player>)>,
 ) {
     for message in apply_messages.read() {
-        let Ok((mut target_health, target_name, has_god_mode)) =
+        let Ok((mut target_health, target_name, has_god_mode, has_spirit_shield, mut mana)) =
             query_health.get_mut(message.target)
         else {
             continue;
@@ -436,7 +438,25 @@ fn damage_application_system(
             continue;
         };
 
-        let remaining_damage = message.final_damage;
+        // Spirit Shield: absorb damage from mana first (1 mana = 1 damage)
+        let remaining_damage = if has_spirit_shield {
+            if let Some(ref mut mana) = mana {
+                let absorbed = message.final_damage.min(mana.current);
+                mana.current -= absorbed;
+                let overflow = message.final_damage - absorbed;
+                if absorbed > 0 {
+                    log_writer.write(GameLogMessage(format!(
+                        "{}'s spirit shield absorbs {} damage! ({} mana remaining)",
+                        target_name.0, absorbed, mana.current
+                    )));
+                }
+                overflow
+            } else {
+                message.final_damage
+            }
+        } else {
+            message.final_damage
+        };
 
         if remaining_damage > 0 {
             target_health.current -= remaining_damage;

@@ -750,22 +750,6 @@ fn choose_spell(
                         target = target.or(Some(enemy.entity));
                     }
                 }
-                SpellEffect::Buff {
-                    amount, duration, ..
-                } => {
-                    let score = *amount * (*duration as i32) / 4;
-                    raw += score;
-                    target = target.or(Some(resolved_entity));
-                }
-                SpellEffect::Debuff {
-                    amount, duration, ..
-                } => {
-                    if let Some(enemy) = primary_target.filter(|e| caster_faction.is_hostile_to(&e.faction)) {
-                        let score = *amount * (*duration as i32) / 4;
-                        raw += score;
-                        target = target.or(Some(enemy.entity));
-                    }
-                }
                 SpellEffect::ApplyHaste { .. } => {
                     // Self-haste or ally-haste
                     if resolved_entity == caster {
