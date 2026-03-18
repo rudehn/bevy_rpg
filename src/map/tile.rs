@@ -3,7 +3,7 @@ use bevy::ecs::component::Component;
 use serde::{Deserialize, Serialize};
 use bevy::prelude::{
     Commands, Entity, InheritedVisibility, Sprite, TextureAtlas, Transform, Vec3, ViewVisibility,
-    Visibility,
+    Visibility, Text2d, TextFont, TextColor, default,
 };
 use bracket_lib::prelude::Point;
 
@@ -128,6 +128,7 @@ pub fn spawn_tile_entity(
     pt: Point,
     tile_manifest: &TileManifest,
     tile_sprite_assets: &TileSpriteAssets,
+    ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
 ) -> Entity {
     let terrain_asset = tile_manifest
         .tiles
@@ -214,10 +215,69 @@ pub fn spawn_tile_entity(
                 ),
                 Transform::from_translation(Vec3::new(0.0, 0.0, 0.1)), // Slightly above terrain
                 RenderLayers::layer(1),
+                crate::game::ascii_mode::LiquidOverlay,
             ))
             .id();
 
         commands.entity(tile_entity).add_child(l_child);
+    }
+
+    // --- ASCII mode children ---
+    if let Some(font) = ascii_font {
+        // Determine background color: liquid overrides terrain
+        let bg_color = if tile.liquid != LiquidType::None {
+            let liquid_asset = tile_manifest.tiles.get(tile.liquid.name());
+            liquid_asset.map(|a| a.ascii_bg).unwrap_or(terrain_asset.ascii_bg)
+        } else {
+            terrain_asset.ascii_bg
+        };
+
+        // Determine character: liquid overrides terrain (e.g., ~ for water)
+        let (ascii_char, fg_color) = if tile.liquid != LiquidType::None {
+            let liquid_asset = tile_manifest.tiles.get(tile.liquid.name());
+            match liquid_asset {
+                Some(la) if !la.ascii_char.is_empty() => (la.ascii_char.clone(), la.ascii_fg),
+                _ => (terrain_asset.ascii_char.clone(), terrain_asset.ascii_fg),
+            }
+        } else {
+            (terrain_asset.ascii_char.clone(), terrain_asset.ascii_fg)
+        };
+
+        let display_char = if ascii_char.is_empty() { "?".to_string() } else { ascii_char };
+
+        // Background quad
+        let bg_child = commands
+            .spawn((
+                Sprite {
+                    color: bg_color,
+                    custom_size: Some(GRID_SIZE),
+                    ..default()
+                },
+                Transform::from_translation(Vec3::ZERO),
+                Visibility::Hidden,
+                crate::game::ascii_mode::AsciiBackground,
+                RenderLayers::layer(1),
+            ))
+            .id();
+        commands.entity(tile_entity).add_child(bg_child);
+
+        // Character glyph
+        let glyph_child = commands
+            .spawn((
+                Text2d::new(display_char),
+                TextFont {
+                    font: font.0.clone(),
+                    font_size: 14.0,
+                    ..default()
+                },
+                TextColor(fg_color),
+                Transform::from_translation(Vec3::new(0.0, 0.0, 0.05)),
+                Visibility::Hidden,
+                crate::game::ascii_mode::AsciiGlyph,
+                RenderLayers::layer(1),
+            ))
+            .id();
+        commands.entity(tile_entity).add_child(glyph_child);
     }
 
     tile_entity

@@ -397,6 +397,7 @@ fn spawn_tiles_into_ecs(
     map_entity: Entity,
     game_map: &Map,
     tile_assets: &TileAssets,
+    ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
 ) {
     let tile_manifest = tile_assets
         .manifests
@@ -415,6 +416,7 @@ fn spawn_tiles_into_ecs(
                 pt,
                 tile_manifest,
                 &tile_assets.sprite_assets,
+                ascii_font,
             );
             commands
                 .entity(tile_entity)
@@ -501,6 +503,7 @@ pub fn spawn_dungeon(
     mut log_writer: MessageWriter<GameLogMessage>,
     player_query: Query<Entity, With<Player>>,
     turn_marker_query: Query<Entity, (With<TurnMarker>, Without<Player>)>,
+    ascii_font: Option<Res<crate::game::ascii_mode::AsciiFont>>,
 ) {
     let map_entity = commands.spawn((DungeonECSMap, RenderLayers::layer(1))).id();
 
@@ -512,7 +515,7 @@ pub fn spawn_dungeon(
 
         // Restore map
         *map = save_data_to_map(&save_data.map);
-        spawn_tiles_into_ecs(&mut commands, map_entity, &map, &tile_assets);
+        spawn_tiles_into_ecs(&mut commands, map_entity, &map, &tile_assets, ascii_font.as_deref());
 
         // Restore squad ID counter
         commands.insert_resource(crate::game::squad::SquadIdCounter(save_data.squad_id_counter));
@@ -604,7 +607,7 @@ pub fn spawn_dungeon(
         let ascending = pending_restore.ascending;
         *map = cached.map;
 
-        spawn_tiles_into_ecs(&mut commands, map_entity, &map, &tile_assets);
+        spawn_tiles_into_ecs(&mut commands, map_entity, &map, &tile_assets, ascii_font.as_deref());
 
         for cached_mon in &cached.monster_list {
             if let Some(entity) = spawn_monster_by_name(
@@ -709,7 +712,7 @@ pub fn spawn_dungeon(
         *squad_counter = builder.build_data.squad_counter.clone();
         *map = builder.build_data.map.clone();
 
-        spawn_tiles_into_ecs(&mut commands, map_entity, &map, &tile_assets);
+        spawn_tiles_into_ecs(&mut commands, map_entity, &map, &tile_assets, ascii_font.as_deref());
 
         spawn_dungeon_entities(
             &mut commands,
