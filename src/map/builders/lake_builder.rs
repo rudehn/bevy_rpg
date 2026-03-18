@@ -112,9 +112,7 @@ impl LakeBuilder {
     }
 
     /// Phase 1: Design — stamp lake tiles as Floor terrain and mark in lake_map.
-    /// Also carves a floor shore buffer around the lake so the wreath has room
-    /// to create smooth circular edges (Brogue gets this naturally because rooms
-    /// are already carved; we need to explicitly carve the buffer).
+    /// Also fills internal holes and carves a shore buffer for smooth edges.
     fn design_lake(
         &self,
         build_data: &mut BuilderMap,
@@ -127,7 +125,7 @@ impl LakeBuilder {
         let height = build_data.map.height;
         let mut affected = Vec::new();
 
-        // First: stamp the lake blob itself
+        // Step 1: Stamp the lake blob itself
         let mut lake_positions = HashSet::new();
         for &(bx, by) in blob_tiles {
             let wx = ox + bx;
@@ -150,9 +148,70 @@ impl LakeBuilder {
             }
         }
 
-        // Second: carve a floor shore buffer around lake edges.
-        // This gives the wreath room to create smooth circular shorelines.
-        // Buffer radius = 2 (matches water wreath width).
+        // Step 2: Fill internal holes — wall tiles completely surrounded by lake.
+        // A "hole" is a non-lake tile where flood-fill from it can't reach the
+        // map border without crossing a lake tile.
+        let bbox = self.blob_bbox(blob_tiles, ox, oy, width, height);
+        if let Some((bx1, by1, bx2, by2)) = bbox {
+            // Expand bbox by 1 to include the surrounding ring
+            let bx1 = (bx1 - 1).max(1);
+            let by1 = (by1 - 1).max(1);
+            let bx2 = (bx2 + 1).min(width - 2);
+            let by2 = (by2 + 1).min(height - 2);
+
+            // Flood-fill from bbox border tiles that are NOT lake
+            let mut exterior = HashSet::new();
+            let mut queue = VecDeque::new();
+            for x in bx1..=bx2 {
+                for y in [by1, by2] {
+                    let idx = build_data.map.xy_idx(x, y);
+                    if !lake_positions.contains(&(x, y)) {
+                        exterior.insert(idx);
+                        queue.push_back((x, y));
+                    }
+                }
+            }
+            for y in by1..=by2 {
+                for x in [bx1, bx2] {
+                    let idx = build_data.map.xy_idx(x, y);
+                    if !lake_positions.contains(&(x, y)) {
+                        exterior.insert(idx);
+                        queue.push_back((x, y));
+                    }
+                }
+            }
+            while let Some((x, y)) = queue.pop_front() {
+                for (dx, dy) in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
+                    let nx = x + dx;
+                    let ny = y + dy;
+                    if nx < bx1 || ny < by1 || nx > bx2 || ny > by2 { continue; }
+                    let n_idx = build_data.map.xy_idx(nx, ny);
+                    if !exterior.contains(&n_idx) && !lake_positions.contains(&(nx, ny)) {
+                        exterior.insert(n_idx);
+                        queue.push_back((nx, ny));
+                    }
+                }
+            }
+
+            // Any tile inside bbox that isn't lake AND isn't exterior = internal hole
+            for y in by1..=by2 {
+                for x in bx1..=bx2 {
+                    let idx = build_data.map.xy_idx(x, y);
+                    if !lake_positions.contains(&(x, y)) && !exterior.contains(&idx) {
+                        let terrain = build_data.map.tiles[idx].terrain;
+                        if terrain != TerrainType::DownStairs && terrain != TerrainType::UpStairs {
+                            build_data.map.tiles[idx].terrain = TerrainType::Floor;
+                            build_data.map.tiles[idx].decoration = Decoration::None;
+                            lake_map[idx] = true;
+                            affected.push(idx);
+                            lake_positions.insert((x, y));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Step 3: Carve a floor shore buffer around lake edges.
         let shore_radius: i32 = 2;
         let mut shore_tiles = Vec::new();
         for &(lx, ly) in &lake_positions {
@@ -163,13 +222,9 @@ impl LakeBuilder {
                     let ny = ly + dy;
                     if nx < 1 || ny < 1 || nx >= width - 1 || ny >= height - 1 { continue; }
                     let n_idx = build_data.map.xy_idx(nx, ny);
-                    if lake_positions.contains(&(nx, ny)) { continue; } // skip lake tiles
-                    let terrain = build_data.map.tiles[n_idx].terrain;
-                    match terrain {
-                        TerrainType::Wall => {
-                            shore_tiles.push(n_idx);
-                        }
-                        _ => {}
+                    if lake_positions.contains(&(nx, ny)) { continue; }
+                    if build_data.map.tiles[n_idx].terrain == TerrainType::Wall {
+                        shore_tiles.push(n_idx);
                     }
                 }
             }
@@ -181,6 +236,32 @@ impl LakeBuilder {
         }
 
         affected
+    }
+
+    /// Get bounding box of blob tiles in map coordinates.
+    fn blob_bbox(
+        &self,
+        blob_tiles: &[(i32, i32)],
+        ox: i32,
+        oy: i32,
+        width: i32,
+        height: i32,
+    ) -> Option<(i32, i32, i32, i32)> {
+        let mut min_x = width;
+        let mut min_y = height;
+        let mut max_x = 0i32;
+        let mut max_y = 0i32;
+        for &(bx, by) in blob_tiles {
+            let wx = ox + bx;
+            let wy = oy + by;
+            if wx >= 1 && wy >= 1 && wx < width - 1 && wy < height - 1 {
+                min_x = min_x.min(wx);
+                min_y = min_y.min(wy);
+                max_x = max_x.max(wx);
+                max_y = max_y.max(wy);
+            }
+        }
+        if max_x >= min_x { Some((min_x, min_y, max_x, max_y)) } else { None }
     }
 
     /// Revert designed lake tiles.
