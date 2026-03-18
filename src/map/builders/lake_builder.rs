@@ -158,33 +158,36 @@ impl LakeBuilder {
         }
     }
 
-    /// Phase 2: Fill — Brogue's fillLake. Recursive flood-fill from a lake tile,
-    /// scanning within LAKE_SCAN_WIDTH to merge nearby lake tiles into the same
-    /// liquid type.
+    /// Phase 2: Fill — Brogue's fillLake (iterative version).
+    /// Flood-fill from a lake tile, scanning within LAKE_SCAN_WIDTH to merge
+    /// nearby lake tiles into the same liquid type.
     fn fill_lake(
         &self,
         build_data: &mut BuilderMap,
         lake_map: &mut Vec<bool>,
         wreath_set: &mut HashSet<usize>,
-        x: i32,
-        y: i32,
+        start_x: i32,
+        start_y: i32,
         liquid: LiquidType,
     ) {
         let width = build_data.map.width;
         let height = build_data.map.height;
+        let mut queue: VecDeque<(i32, i32)> = VecDeque::new();
+        queue.push_back((start_x, start_y));
 
-        for dy in -LAKE_SCAN_WIDTH..=LAKE_SCAN_WIDTH {
-            for dx in -LAKE_SCAN_WIDTH..=LAKE_SCAN_WIDTH {
-                let nx = x + dx;
-                let ny = y + dy;
-                if nx < 0 || ny < 0 || nx >= width || ny >= height { continue; }
-                let idx = build_data.map.xy_idx(nx, ny);
-                if lake_map[idx] {
-                    lake_map[idx] = false; // mark as filled
-                    build_data.map.tiles[idx].liquid = liquid;
-                    wreath_set.insert(idx);
-                    // Recurse to merge nearby lake tiles
-                    self.fill_lake(build_data, lake_map, wreath_set, nx, ny, liquid);
+        while let Some((x, y)) = queue.pop_front() {
+            for dy in -LAKE_SCAN_WIDTH..=LAKE_SCAN_WIDTH {
+                for dx in -LAKE_SCAN_WIDTH..=LAKE_SCAN_WIDTH {
+                    let nx = x + dx;
+                    let ny = y + dy;
+                    if nx < 0 || ny < 0 || nx >= width || ny >= height { continue; }
+                    let idx = build_data.map.xy_idx(nx, ny);
+                    if lake_map[idx] {
+                        lake_map[idx] = false;
+                        build_data.map.tiles[idx].liquid = liquid;
+                        wreath_set.insert(idx);
+                        queue.push_back((nx, ny));
+                    }
                 }
             }
         }
