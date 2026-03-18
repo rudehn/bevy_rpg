@@ -224,6 +224,10 @@ pub fn spawn_tile_entity(
 
     // --- ASCII mode children ---
     if let Some(font) = ascii_font {
+        // Children inherit parent's scale transform. Compensate so they render
+        // at the correct pixel size regardless of the atlas tile's native size.
+        let inv_scale = Vec3::new(1.0 / scale_x, 1.0 / scale_y, 1.0);
+
         // Determine background color: liquid overrides terrain
         let bg_color = if tile.liquid != LiquidType::None {
             let liquid_asset = tile_manifest.tiles.get(tile.liquid.name());
@@ -245,7 +249,7 @@ pub fn spawn_tile_entity(
 
         let display_char = if ascii_char.is_empty() { "?".to_string() } else { ascii_char };
 
-        // Background quad
+        // Background quad — sized to fill one grid cell after parent scale is applied
         let bg_child = commands
             .spawn((
                 Sprite {
@@ -253,7 +257,10 @@ pub fn spawn_tile_entity(
                     custom_size: Some(GRID_SIZE),
                     ..default()
                 },
-                Transform::from_translation(Vec3::ZERO),
+                Transform {
+                    scale: inv_scale,
+                    ..default()
+                },
                 Visibility::Hidden,
                 crate::game::ascii_mode::AsciiBackground,
                 RenderLayers::layer(1),
@@ -261,7 +268,7 @@ pub fn spawn_tile_entity(
             .id();
         commands.entity(tile_entity).add_child(bg_child);
 
-        // Character glyph
+        // Character glyph — also counter-scaled so font renders at correct size
         let glyph_child = commands
             .spawn((
                 Text2d::new(display_char),
@@ -271,7 +278,11 @@ pub fn spawn_tile_entity(
                     ..default()
                 },
                 TextColor(fg_color),
-                Transform::from_translation(Vec3::new(0.0, 0.0, 0.05)),
+                Transform {
+                    translation: Vec3::new(0.0, 0.0, 0.05),
+                    scale: inv_scale,
+                    ..default()
+                },
                 Visibility::Hidden,
                 crate::game::ascii_mode::AsciiGlyph,
                 RenderLayers::layer(1),

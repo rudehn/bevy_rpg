@@ -226,6 +226,7 @@ pub fn player_spawn_or_move_system(
                 &player_asset.ascii_char,
                 player_asset.ascii_fg,
                 &font.0,
+                Vec3::new(scale_x, scale_y, 1.0),
             );
         }
 

@@ -28,14 +28,18 @@ use crate::{
 
 /// Attach an AsciiGlyph child entity to a parent for ASCII rendering mode.
 /// The glyph starts hidden and becomes visible when GraphicsMode switches to Ascii.
+/// `parent_scale` is the parent entity's transform scale — the glyph counter-scales
+/// so text renders at the correct pixel size regardless of parent sprite scaling.
 pub fn attach_ascii_glyph(
     commands: &mut Commands,
     parent: Entity,
     ascii_char: &str,
     ascii_fg: Color,
     font: &Handle<Font>,
+    parent_scale: Vec3,
 ) {
     let display = if ascii_char.is_empty() { "?" } else { ascii_char };
+    let inv_scale = Vec3::new(1.0 / parent_scale.x, 1.0 / parent_scale.y, 1.0);
     let glyph = commands
         .spawn((
             Text2d::new(display.to_string()),
@@ -45,7 +49,10 @@ pub fn attach_ascii_glyph(
                 ..default()
             },
             TextColor(ascii_fg),
-            Transform::from_translation(Vec3::ZERO),
+            Transform {
+                scale: inv_scale,
+                ..default()
+            },
             Visibility::Hidden,
             crate::game::ascii_mode::AsciiGlyph,
             RenderLayers::layer(1),
@@ -285,7 +292,7 @@ pub fn spawn_monster(
 
     // ASCII glyph child
     if let Some(font) = ascii_font {
-        attach_ascii_glyph(commands, monster_entity, &monster_asset.ascii_char, monster_asset.ascii_fg, &font.0);
+        attach_ascii_glyph(commands, monster_entity, &monster_asset.ascii_char, monster_asset.ascii_fg, &font.0, Vec3::new(scale_x, scale_y, 1.0));
     }
 
     turn_manager.add_entity(monster_entity);
@@ -401,7 +408,7 @@ pub fn spawn_item(
 
     // ASCII glyph child
     if let Some(font) = ascii_font {
-        attach_ascii_glyph(commands, item_entity, &asset.ascii_char, asset.ascii_fg, &font.0);
+        attach_ascii_glyph(commands, item_entity, &asset.ascii_char, asset.ascii_fg, &font.0, Vec3::new(scale_x, scale_y, 1.0));
     }
 
     Some(item_entity)
@@ -484,7 +491,7 @@ pub fn spawn_prop(
 
     // ASCII glyph child
     if let Some(font) = ascii_font {
-        attach_ascii_glyph(commands, prop_entity, &asset.ascii_char, asset.ascii_fg, &font.0);
+        attach_ascii_glyph(commands, prop_entity, &asset.ascii_char, asset.ascii_fg, &font.0, Vec3::new(scale_x, scale_y, 1.0));
     }
 
     Some(prop_entity)
