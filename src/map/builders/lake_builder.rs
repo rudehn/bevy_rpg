@@ -320,31 +320,32 @@ impl MetaMapBuilder for LakeBuilder {
                     continue;
                 }
 
-                // Backup for rollback
-                let backup: Vec<(usize, Tile)> = blob_tiles.iter()
-                    .filter_map(|&(bx, by)| {
-                        let wx = ox + bx;
-                        let wy = oy + by;
-                        if wx >= 1 && wy >= 1 && wx < build_data.map.width - 1 && wy < build_data.map.height - 1 {
-                            let idx = build_data.map.xy_idx(wx, wy);
-                            Some((idx, build_data.map.tiles[idx]))
-                        } else {
-                            None
+                // Build a HYPOTHETICAL lake_map to check connectivity without
+                // modifying the actual map (matching Brogue's approach).
+                let mut hypothetical_lake = lake_map.clone();
+                for &(bx, by) in &blob_tiles {
+                    let wx = ox + bx;
+                    let wy = oy + by;
+                    if wx >= 1 && wy >= 1 && wx < build_data.map.width - 1 && wy < build_data.map.height - 1 {
+                        let idx = build_data.map.xy_idx(wx, wy);
+                        let terrain = build_data.map.tiles[idx].terrain;
+                        if terrain != TerrainType::DownStairs && terrain != TerrainType::UpStairs
+                            && terrain != TerrainType::Empty
+                        {
+                            hypothetical_lake[idx] = true;
                         }
-                    })
-                    .collect();
+                    }
+                }
 
-                // Design (stamp as floor, mark in lake_map)
-                let affected = self.design_lake(build_data, &mut lake_map, &blob_tiles, ox, oy);
-                if affected.is_empty() { continue; }
-
-                // Connectivity check BEFORE committing (Brogue checks hypothetically)
-                if lake_disrupts_passability(&build_data.map, &lake_map, start_idx) {
-                    self.revert_lake(build_data, &mut lake_map, &backup);
+                // Connectivity check on the ORIGINAL map with hypothetical lake blocked
+                if lake_disrupts_passability(&build_data.map, &hypothetical_lake, start_idx) {
                     continue;
                 }
 
-                // Lake designed successfully
+                // Passed! Now actually stamp the lake.
+                let affected = self.design_lake(build_data, &mut lake_map, &blob_tiles, ox, oy);
+                if affected.is_empty() { continue; }
+
                 break;
             }
         }
