@@ -6,7 +6,7 @@ use crate::{
     game::AppState,
     map::{
         light::LightMap,
-        tile::{TileExplored, TileMarker, Tile, TerrainType, LiquidType, TileVisibility, is_opaque},
+        tile::{Decoration, TileExplored, TileMarker, Tile, TerrainType, LiquidType, TileVisibility, is_opaque},
     },
     player::Player,
     ui::game_log::GameLogMessage,
@@ -284,7 +284,7 @@ impl Map {
         let map_tile_count = (width * height) as usize;
         Self {
             name: name.to_string(),
-            tiles: vec![Tile { terrain: TerrainType::Wall, liquid: LiquidType::None }; map_tile_count],
+            tiles: vec![Tile { terrain: TerrainType::Wall, liquid: LiquidType::None, decoration: Decoration::None }; map_tile_count],
             explored_tiles: vec![false; map_tile_count],
             blocked: vec![false; map_tile_count],
             width,

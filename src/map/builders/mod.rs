@@ -258,7 +258,7 @@ pub fn floor_builder(
         new_depth, width, height, profile,
     ));
     builder.with(DiagonalCuller::new());
-    builder.with(CaveEroder::with_profile(profile));
+    // CaveEroder removed — it was expanding hallways and damaging door placement.
     builder.with(StartPointBuilder::new());
     // builder.with(LakeBuilder::new(LiquidType::Water));
     builder.with(PrefabPlacer::new(prefabs, role_table));

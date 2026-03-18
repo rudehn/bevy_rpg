@@ -24,6 +24,10 @@ pub enum TerrainType {
     Empty,
     Door,
     OpenDoor,
+    /// Renders as Wall until discovered, then converts to Door.
+    HiddenDoor,
+    /// Requires a matching key item to open. Renders as a locked door.
+    LockedDoor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Component, Serialize, Deserialize)]
@@ -33,12 +37,31 @@ pub enum LiquidType {
     Water,
     ShallowWater,
     Lava,
+    /// Impassable void — no wreath, blocks everything.
+    Chasm,
+}
+
+/// Purely visual decoration overlay on a tile. Does not affect walkability or opacity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Decoration {
+    #[default]
+    None,
+    Grass,
+    TallGrass,
+    DeadGrass,
+    Rubble,
+    Moss,
+    Fungus,
+    Cobweb,
+    Bloodstain,
+    ScorchedEarth,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Tile {
     pub terrain: TerrainType,
     pub liquid: LiquidType,
+    pub decoration: Decoration,
 }
 
 impl TerrainType {
@@ -51,6 +74,8 @@ impl TerrainType {
             TerrainType::Empty => "Empty",
             TerrainType::Door => "Door",
             TerrainType::OpenDoor => "OpenDoor",
+            TerrainType::HiddenDoor => "HiddenDoor",
+            TerrainType::LockedDoor => "LockedDoor",
         }
     }
 }
@@ -62,6 +87,7 @@ impl LiquidType {
             LiquidType::Water => "Water",
             LiquidType::ShallowWater => "ShallowWater",
             LiquidType::Lava => "Lava",
+            LiquidType::Chasm => "Chasm",
         }
     }
 }
@@ -90,6 +116,8 @@ pub fn is_walkable(tile: Tile) -> bool {
         TerrainType::Empty => false,
         TerrainType::Door => false,
         TerrainType::OpenDoor => true,
+        TerrainType::HiddenDoor => false,  // Not walkable until discovered → Door
+        TerrainType::LockedDoor => false,  // Not walkable until unlocked → Door
     };
 
     let liquid_walkable = match tile.liquid {
@@ -97,6 +125,7 @@ pub fn is_walkable(tile: Tile) -> bool {
         LiquidType::Water => true,
         LiquidType::ShallowWater => true,
         LiquidType::Lava => false,
+        LiquidType::Chasm => false,
     };
 
     terrain_walkable && liquid_walkable
@@ -104,19 +133,22 @@ pub fn is_walkable(tile: Tile) -> bool {
 
 pub fn is_passable(tile: Tile) -> bool {
     // Topologically passable: anywhere an entity *could* go, or doors.
-    // This is used for connectivity checks like the ChokeMap.
+    // Used for connectivity checks (ChokeMap, flood-fill). HiddenDoor and
+    // LockedDoor are passable so connectivity checkers don't reject maps
+    // where these are the only connection between regions.
     match tile.terrain {
         TerrainType::Wall => false,
         TerrainType::Empty => false,
-        _ => true, // Doors, floors, stairs are all passable connections
+        _ => true, // Doors, floors, stairs, HiddenDoor, LockedDoor all passable
     }
 }
 
 pub fn is_opaque(tile: Tile) -> bool {
-    // If either layer is opaque, the tile is opaque
     match tile.terrain {
         TerrainType::Wall => true,
         TerrainType::Door => true,
+        TerrainType::HiddenDoor => true,  // Blocks FOV like a wall
+        TerrainType::LockedDoor => true,  // Blocks FOV like a closed door
         _ => false,
     }
 }
