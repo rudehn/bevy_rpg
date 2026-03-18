@@ -11,6 +11,7 @@ use crate::{
     components::{Equipped, FloorEntityMarker, InInventory, Inventory, Item, Monster, Name, Position, Prop, Viewshed},
     game::{
         AppState,
+        boss::TyrantPower,
         combat::{Damage, Health},
         essence::Essence,
         items::{Equipment, ItemProperties, ItemStack},
@@ -184,6 +185,8 @@ pub struct GameSaveData {
     pub floor_cache: HashMap<u32, CachedFloorSave>,
     #[serde(default)]
     pub squad_id_counter: u64,
+    #[serde(default)]
+    pub tyrant_power: TyrantPower,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -426,6 +429,7 @@ pub fn auto_save_system(
     squad_counter: Res<SquadIdCounter>,
     floor_item_query: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     prop_query: Query<(&Position, &Name), With<Prop>>,
+    tyrant_power: Res<TyrantPower>,
 ) {
     auto_save_pending.0 = false;
 
@@ -550,6 +554,7 @@ pub fn auto_save_system(
         props,
         floor_cache: floor_cache_save,
         squad_id_counter: squad_counter.0,
+        tyrant_power: tyrant_power.clone(),
     };
 
     match ron::ser::to_string_pretty(&save_data, ron::ser::PrettyConfig::default()) {

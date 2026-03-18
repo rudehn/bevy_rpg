@@ -517,6 +517,9 @@ pub fn spawn_dungeon(
         // Restore squad ID counter
         commands.insert_resource(crate::game::squad::SquadIdCounter(save_data.squad_id_counter));
 
+        // Restore Tyrant escalation power
+        commands.insert_resource(save_data.tyrant_power.clone());
+
         // Spawn monsters with saved HP override and squad data
         for entry in &save_data.monsters {
             let pt = Point::new(entry.x, entry.y);
