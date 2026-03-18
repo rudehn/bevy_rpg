@@ -220,8 +220,158 @@ PrefabManifest(
                 (x: 4, y: 6, role: "melee_guard", behavior: Sentry),
             ],
             item_spawns: [],
-            on_leader_death: "enrage",
+            on_leader_death: "scatter",
             flee_threshold: 0.25,
+        ),
+
+        // --- Medium: L-shaped hazard alcove, no monsters, environmental puzzle ---
+        //   col: 01234567
+        //        ____####   row 0: void + wall
+        //        ____#..#   row 1: top arm (floor at 5,6)
+        //        #####..#   row 2: body connects to arm
+        //        #......#   row 3: main body
+        //        #....###   row 4: main body narrows
+        //        ###+####   row 5: door at col 3
+        PrefabTemplate(
+            name: "Alchemist's Closet",
+            width: 8,
+            height: 6,
+            min_floor: 2,
+            max_floor: 18,
+            placement: "wall",
+            tiles: [
+                "    ####",
+                "    #..#",
+                "#####..#",
+                "#......#",
+                "#....###",
+                "###+####",
+            ],
+            props: [
+                (x: 6, y: 2, prop: "chest"),
+                (x: 2, y: 3, prop: "candle"),
+            ],
+            structures: [
+                (x: 5, y: 1, structure: "Explosive Barrel"),
+                (x: 1, y: 4, structure: "Explosive Barrel"),
+                (x: 3, y: 4, structure: "Poison Mushroom"),
+            ],
+            monster_spawns: [],
+            item_spawns: [],
+        ),
+
+        // --- Medium: cross-shaped ritual chamber with caster ---
+        //   col: 01234567
+        //        __####__   row 0: void + north arm walls
+        //        __#..#__   row 1: north arm floor
+        //        ###..###   row 2: crossbar walls
+        //        #......#   row 3: center floor (wide)
+        //        ###..###   row 4: crossbar walls
+        //        __#..#__   row 5: south arm floor
+        //        __#+##__   row 6: door at col 3
+        PrefabTemplate(
+            name: "Ritualist's Den",
+            width: 8,
+            height: 7,
+            min_floor: 4,
+            max_floor: 20,
+            placement: "wall",
+            tiles: [
+                "  ####  ",
+                "  #..#  ",
+                "###..###",
+                "#......#",
+                "###..###",
+                "  #..#  ",
+                "  #+##  ",
+            ],
+            props: [
+                (x: 3, y: 1, prop: "totem_pole"),
+                (x: 4, y: 1, prop: "candle"),
+                (x: 4, y: 5, prop: "chest"),
+            ],
+            monster_spawns: [
+                (x: 4, y: 3, role: "caster", behavior: Sentry),
+                (x: 3, y: 5, role: "melee_guard", behavior: Sentry),
+            ],
+            item_spawns: [],
+            on_leader_death: "scatter",
+            flee_threshold: 0.4,
+        ),
+
+        // --- Medium: rounded pit with a brute, tight space ---
+        //   col: 0123456
+        //        _#####_   row 0: void + walls
+        //        ##...##   row 1: narrow top
+        //        #.....#   row 2: wide center
+        //        #.....#   row 3: wide center
+        //        ##...##   row 4: narrow bottom
+        //        _###+#_   row 5: door at col 3
+        PrefabTemplate(
+            name: "Brute Pen",
+            width: 7,
+            height: 6,
+            min_floor: 4,
+            max_floor: 20,
+            placement: "wall",
+            tiles: [
+                " ##### ",
+                "##...##",
+                "#.....#",
+                "#.....#",
+                "##...##",
+                " ###+# ",
+            ],
+            props: [
+                (x: 1, y: 2, prop: "barrel"),
+                (x: 5, y: 2, prop: "barrel"),
+                (x: 3, y: 3, prop: "watchfire"),
+                (x: 4, y: 1, prop: "chest"),
+            ],
+            monster_spawns: [
+                (x: 3, y: 2, role: "brute", behavior: Sentry),
+            ],
+            item_spawns: [],
+        ),
+
+        // --- Medium: open campsite with rounded void corners, roaming guards ---
+        //   col: 0123456789A
+        //        __.......__ row 0: void corners
+        //        _........._  row 1
+        //        ...........  row 2: full width
+        //        ...........  row 3: full width
+        //        _........._  row 4
+        //        __.......__ row 5: void corners
+        PrefabTemplate(
+            name: "Roaming Camp",
+            width: 11,
+            height: 6,
+            min_floor: 3,
+            max_floor: 18,
+            placement: "room",
+            tiles: [
+                "  .......  ",
+                " ......... ",
+                "...........",
+                "...........",
+                " ......... ",
+                "  .......  ",
+            ],
+            props: [
+                (x: 2, y: 2, prop: "barrel"),
+                (x: 8, y: 2, prop: "barrel"),
+                (x: 2, y: 3, prop: "barrel"),
+                (x: 8, y: 3, prop: "barrel"),
+                (x: 5, y: 2, prop: "watchfire"),
+                (x: 5, y: 0, prop: "small_chest"),
+            ],
+            monster_spawns: [
+                (x: 3, y: 1, role: "melee_guard", behavior: Roam(( min: (0, 0), max: (10, 5) ))),
+                (x: 7, y: 4, role: "melee_guard", behavior: Roam(( min: (0, 0), max: (10, 5) ))),
+            ],
+            item_spawns: [],
+            on_leader_death: "scatter",
+            flee_threshold: 0.5,
         ),
     ],
 )

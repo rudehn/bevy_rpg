@@ -76,6 +76,21 @@ differently. For each variant, annotate:
 - Approach angles (single entry vs. multiple)
 - Internal doors and rooms-within-rooms
 
+**Void spaces:** Use space characters (` `) to create non-rectangular
+shapes. Void tiles preserve whatever the map already has — they do NOT
+overwrite terrain. This enables:
+- **Protrusions** (towers, alcoves jutting out from a main body)
+- **Irregular silhouettes** (L-shapes, crosses, crescents, organic blobs)
+- **Compound layouts** (separate buildings connected by corridors with
+  void between them — the dungeon terrain fills the gaps)
+- **Campsites** (a ring of floor tiles around a campfire with void in
+  the corners, so surrounding dungeon terrain is visible)
+
+Void spaces interact with the dungeon differently depending on placement
+strategy: for `wall` placement, void areas remain solid rock; for `room`
+placement, void areas keep whatever the existing room had. This means
+the same prefab shape plays differently depending on where it lands.
+
 ### Step 4: Monster Composition
 
 Propose roles, count, and faction considerations. Reference valid roles:

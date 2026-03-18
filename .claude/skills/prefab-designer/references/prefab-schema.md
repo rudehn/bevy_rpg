@@ -55,10 +55,16 @@ Source: `src/assets/mod.rs:243-271`
 | `+` | Door |
 | ` ` | Unchanged (passthrough — keeps whatever the map already has) |
 
+**Void space (` `)** preserves whatever the map already has at that
+position. Use void to create non-rectangular shapes: L-shapes, crosses,
+protrusions, campsites, compound structures with gaps between buildings.
+For `wall` placement, void stays as rock. For `room` placement, void
+keeps the existing room floor. Never place spawns on void tiles.
+
 **Rules:**
 - Tile row count must equal `height`
 - Each row length must equal `width`
-- Spawn coordinates (props, structures, monsters, items) must land on floor (`.`) or door (`+`) tiles
+- Spawn coordinates (props, structures, monsters, items) must land on floor (`.`) or door (`+`) tiles, never on void or wall
 
 ## Valid Enum Values
 
