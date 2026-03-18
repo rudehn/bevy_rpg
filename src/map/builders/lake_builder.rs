@@ -112,7 +112,9 @@ impl LakeBuilder {
     }
 
     /// Phase 1: Design — stamp lake tiles as Floor terrain and mark in lake_map.
-    /// Does NOT assign liquid yet (matching Brogue's designLakes).
+    /// Also carves a floor shore buffer around the lake so the wreath has room
+    /// to create smooth circular edges (Brogue gets this naturally because rooms
+    /// are already carved; we need to explicitly carve the buffer).
     fn design_lake(
         &self,
         build_data: &mut BuilderMap,
@@ -121,17 +123,21 @@ impl LakeBuilder {
         ox: i32,
         oy: i32,
     ) -> Vec<usize> {
+        let width = build_data.map.width;
+        let height = build_data.map.height;
         let mut affected = Vec::new();
+
+        // First: stamp the lake blob itself
+        let mut lake_positions = HashSet::new();
         for &(bx, by) in blob_tiles {
             let wx = ox + bx;
             let wy = oy + by;
-            if wx < 1 || wy < 1 || wx >= build_data.map.width - 1 || wy >= build_data.map.height - 1 {
+            if wx < 1 || wy < 1 || wx >= width - 1 || wy >= height - 1 {
                 continue;
             }
             let idx = build_data.map.xy_idx(wx, wy);
             let terrain = build_data.map.tiles[idx].terrain;
 
-            // Lakes carve through walls and floor. Protect stairs and empty.
             match terrain {
                 TerrainType::DownStairs | TerrainType::UpStairs | TerrainType::Empty => {}
                 _ => {
@@ -139,9 +145,41 @@ impl LakeBuilder {
                     build_data.map.tiles[idx].decoration = Decoration::None;
                     lake_map[idx] = true;
                     affected.push(idx);
+                    lake_positions.insert((wx, wy));
                 }
             }
         }
+
+        // Second: carve a floor shore buffer around lake edges.
+        // This gives the wreath room to create smooth circular shorelines.
+        // Buffer radius = 2 (matches water wreath width).
+        let shore_radius: i32 = 2;
+        let mut shore_tiles = Vec::new();
+        for &(lx, ly) in &lake_positions {
+            for dy in -shore_radius..=shore_radius {
+                for dx in -shore_radius..=shore_radius {
+                    if dx * dx + dy * dy > shore_radius * shore_radius { continue; }
+                    let nx = lx + dx;
+                    let ny = ly + dy;
+                    if nx < 1 || ny < 1 || nx >= width - 1 || ny >= height - 1 { continue; }
+                    let n_idx = build_data.map.xy_idx(nx, ny);
+                    if lake_positions.contains(&(nx, ny)) { continue; } // skip lake tiles
+                    let terrain = build_data.map.tiles[n_idx].terrain;
+                    match terrain {
+                        TerrainType::Wall => {
+                            shore_tiles.push(n_idx);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        for idx in shore_tiles {
+            build_data.map.tiles[idx].terrain = TerrainType::Floor;
+            build_data.map.tiles[idx].decoration = Decoration::None;
+            affected.push(idx);
+        }
+
         affected
     }
 
