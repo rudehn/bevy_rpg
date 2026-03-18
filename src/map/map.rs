@@ -124,7 +124,6 @@ pub fn update_tile_visibility(
         &mut Visibility,
         Option<&Children>,
     )>,
-    mut ascii_bg_query: Query<&mut Sprite, (With<crate::game::ascii_mode::AsciiBackground>, Without<TileMarker>)>,
     mut ascii_glyph_query: Query<&mut TextColor, With<crate::game::ascii_mode::AsciiGlyph>>,
 ) {
     let Ok(player_viewshed) = player_query.single() else {
@@ -134,8 +133,6 @@ pub fn update_tile_visibility(
     let fov_tiles = &player_viewshed.visible_tiles;
     let is_ascii = *mode == crate::game::ascii_mode::GraphicsMode::Ascii;
 
-    // Collect newly-explored tile indices so we only trigger map change detection
-    // when there is actually something new to mark (avoids 23ms/frame light map rebuild).
     let mut newly_explored = Vec::new();
 
     for (tile_pos, mut tile_visibility, mut tile_explored, mut sprite, mut visibility, children) in
@@ -160,20 +157,7 @@ pub fn update_tile_visibility(
 
             if is_ascii {
                 sprite.color = Color::NONE;
-                // ASCII children get full color (no light-map tinting)
-                if let Some(children) = children {
-                    for child in children.iter() {
-                        if let Ok(mut bg_sprite) = ascii_bg_query.get_mut(child) {
-                            bg_sprite.color = Color::WHITE; // bg color is baked at spawn
-                        }
-                        if let Ok(mut text_color) = ascii_glyph_query.get_mut(child) {
-                            *text_color = TextColor(Color::WHITE); // fg color is baked at spawn
-                        }
-                    }
-                }
             } else {
-                // Warm candlelight tint: srgb(1.0, 0.95, 0.8) at full brightness,
-                // srgb(0.2, 0.19, 0.16) at ambient minimum.
                 sprite.color = Color::srgb(light, light * 0.95, light * 0.8);
             }
         } else {
@@ -182,19 +166,16 @@ pub fn update_tile_visibility(
                 *visibility = Visibility::Visible;
                 if is_ascii {
                     sprite.color = Color::NONE;
-                    // Dim ASCII children for explored-not-visible
+                    // Dim ASCII glyph for explored-not-visible
                     if let Some(children) = children {
                         for child in children.iter() {
-                            if let Ok(mut bg_sprite) = ascii_bg_query.get_mut(child) {
-                                bg_sprite.color = Color::srgba(0.5, 0.5, 0.5, 1.0);
-                            }
                             if let Ok(mut text_color) = ascii_glyph_query.get_mut(child) {
                                 *text_color = TextColor(Color::srgb(0.5, 0.5, 0.5));
                             }
                         }
                     }
                 } else {
-                    sprite.color = Color::srgb(0.5, 0.5, 0.5); // memory gray, no lighting
+                    sprite.color = Color::srgb(0.5, 0.5, 0.5);
                 }
             } else {
                 *visibility = Visibility::Hidden;
@@ -203,7 +184,6 @@ pub fn update_tile_visibility(
         }
     }
 
-    // Only touch ResMut<Map> (triggering change detection) if there are new tiles to mark.
     if !newly_explored.is_empty() {
         for idx in newly_explored {
             map.explored_tiles[idx] = true;
