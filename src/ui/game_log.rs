@@ -11,6 +11,9 @@ pub struct GameLog {
     /// Displayed in the log panel but NOT stored in `entries`.
     /// Set this when entering a transient state; clear it on exit.
     pub status_message: Option<String>,
+    /// Description of whatever the mouse is hovering over (tile, monster, item, prop).
+    /// Shown as the FIRST line of the game log. Updated every frame by the hover system.
+    pub hover_description: Option<String>,
 }
 
 #[derive(Component)]
@@ -93,14 +96,23 @@ pub fn update_game_log_ui(game_log: Res<GameLog>, mut q_text: Query<&mut Text, W
         return;
     }
     if let Ok(mut text) = q_text.single_mut() {
-        let max_lines = 5;
-        let entries_len = game_log.entries.len();
-        let start = entries_len.saturating_sub(max_lines);
-        let mut lines: Vec<String> = game_log.entries[start..].to_vec();
+        let mut lines: Vec<String> = Vec::new();
 
+        // First line: hover description (what the mouse is pointing at)
+        if let Some(hover) = &game_log.hover_description {
+            lines.push(hover.clone());
+        }
+
+        // Status message (targeting prompts etc.)
         if let Some(status) = &game_log.status_message {
             lines.push(format!("> {}", status));
         }
+
+        // Log entries (last N, leaving room for hover + status lines)
+        let max_log_lines = 4;
+        let entries_len = game_log.entries.len();
+        let start = entries_len.saturating_sub(max_log_lines);
+        lines.extend_from_slice(&game_log.entries[start..]);
 
         text.0 = lines.join("\n");
     }

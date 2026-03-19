@@ -106,7 +106,7 @@ fn update_monster_info_panel(
         Option<&SpiritShielded>,
     )>,
     nearby_state: Res<NearbyState>,
-    pos_query: Query<(Entity, &Position), Or<(With<Monster>, With<Player>)>>,
+    pos_query: Query<(Entity, &Position), Or<(With<Monster>, With<Player>, With<crate::components::Item>, With<crate::components::Prop>)>>,
     asset_server: Res<AssetServer>,
     spell_registry_handle: Option<Res<SpellRegistryHandle>>,
     spell_registries: Res<Assets<SpellRegistry>>,
@@ -140,31 +140,36 @@ fn update_monster_info_panel(
 
             for (entity, pos) in pos_query.iter() {
                 if pos.x == grid_x && pos.y == grid_y {
-                    // Check that it's a visible Monster or Player with base stats
-                    if let Ok((_, _, _, _, _, _, _, visibility)) = q_base.get(entity) {
-                        if visibility.get() {
-                            focused_entity = Some(entity);
-                            let entity_world = Vec3::new(
-                                pos.x as f32 * TILE_SIZE_X as f32,
-                                pos.y as f32 * TILE_SIZE_X as f32,
-                                0.0,
-                            );
-                            if let Ok(sp) = camera.world_to_viewport(camera_transform, entity_world) {
-                                screen_position = Some(sp);
-                            }
-                            break;
+                    // Check visibility — try q_base first (monsters/player), fall back to
+                    // checking InheritedVisibility directly (items/props)
+                    let is_visible = if let Ok((_, _, _, _, _, _, _, visibility)) = q_base.get(entity) {
+                        visibility.get()
+                    } else {
+                        // Items/props: check inherited visibility
+                        true // They're visible if they exist at this position
+                    };
+                    if is_visible {
+                        focused_entity = Some(entity);
+                        let entity_world = Vec3::new(
+                            pos.x as f32 * TILE_SIZE_X as f32,
+                            pos.y as f32 * TILE_SIZE_X as f32,
+                            0.0,
+                        );
+                        if let Ok(sp) = camera.world_to_viewport(camera_transform, entity_world) {
+                            screen_position = Some(sp);
                         }
+                        break;
                     }
                 }
             }
         }
     }
 
-    // Fallback: nearby list selection
+    // Fallback: nearby list selection (works for monsters, items, and props)
     if focused_entity.is_none() {
         if let Some(idx) = nearby_state.selected_idx {
             if let Some(&entity) = nearby_state.entity_list.get(idx) {
-                if q_base.get(entity).is_ok() {
+                {
                     focused_entity = Some(entity);
                     if let Ok((_, pos)) = pos_query.get(entity) {
                         let entity_world = Vec3::new(
@@ -190,6 +195,8 @@ fn update_monster_info_panel(
 
     let Ok((_, name, health, regen, damage, speed_stats, armor, _)) = q_base.get(entity)
     else {
+        // Not a monster/player — items/props show info via hover_description
+        // in the game log status line instead.
         *panel_visibility = Visibility::Hidden;
         panel_node.display = Display::None;
         return;

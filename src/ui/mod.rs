@@ -18,6 +18,7 @@ use crate::player::Player;
 pub mod character_info;
 pub mod cheat_menu;
 pub mod game_log;
+pub mod hover_info;
 pub mod inventory;
 pub mod log_history;
 pub mod menu;
@@ -560,6 +561,7 @@ impl Plugin for UiPlugin {
             .add_plugins((
                 CharacterInfoPlugin, CheatMenuPlugin, InventoryPlugin, LogHistoryPlugin,
                 MenuPlugin, NearbyPlugin, SpellsPlugin, monster_info::MonsterInfoPlugin,
+                hover_info::HoverInfoPlugin,
             ))
             .add_systems(
                 OnEnter(AppState::InGame),
