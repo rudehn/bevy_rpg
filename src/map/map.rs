@@ -344,6 +344,13 @@ impl Map {
         }
     }
 
+    pub fn set_decoration(&mut self, pt: Point, decoration: crate::map::tile::Decoration) {
+        if self.in_bounds(pt) {
+            let idx = self.xy_idx(pt.x, pt.y);
+            self.tiles[idx].decoration = decoration;
+        }
+    }
+
     /// Determine the cost to move to this cell
     /// None: Can't move to this cell
     /// Some(f32): The cost to move to this cell (usually 1.0 for normal terrain)
