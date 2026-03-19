@@ -143,6 +143,18 @@ pub fn is_passable(tile: Tile) -> bool {
     }
 }
 
+/// Brogue's T_LAKE_PATHING_BLOCKER / T_PATHING_BLOCKER concept.
+/// These tiles are physically walkable but AI and level design should avoid them.
+/// Deep water, lava, and chasm are pathing blockers.
+pub fn is_pathing_blocker(tile: Tile) -> bool {
+    match tile.liquid {
+        LiquidType::Water => true,   // deep water — Brogue's T_IS_DEEP_WATER
+        LiquidType::Lava => true,    // instant death
+        LiquidType::Chasm => true,   // impassable void
+        _ => false,
+    }
+}
+
 pub fn is_opaque(tile: Tile) -> bool {
     match tile.terrain {
         TerrainType::Wall => true,

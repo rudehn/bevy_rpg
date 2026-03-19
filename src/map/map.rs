@@ -360,6 +360,13 @@ impl Map {
             return None;
         }
 
+        // Pathing blockers (deep water, lava, chasm): AI strongly avoids
+        // but CAN path through as a last resort. Matches Brogue's
+        // T_PATHING_BLOCKER / T_IS_DEEP_WATER behavior.
+        if crate::map::tile::is_pathing_blocker(tile) {
+            return Some(50.0);
+        }
+
         // High cost for tiles occupied by another entity — A* will prefer
         // routing around rather than queuing behind.
         if self.blocked.get(idx).copied().unwrap_or(false) {
