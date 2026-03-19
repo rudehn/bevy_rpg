@@ -31,6 +31,7 @@ use crate::{
 
 pub mod algorithms;
 mod brogelike;
+pub mod decoration_propagator;
 mod bsp_dungeon;
 mod candle_spawner;
 mod cave_eroder;
