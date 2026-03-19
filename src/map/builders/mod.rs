@@ -14,6 +14,7 @@ use crate::{
         builders::{
             candle_spawner::CandleSpawner,
             cave_eroder::CaveEroder,
+            decoration_propagator::DecorationPropagator,
             diagonal_culler::DiagonalCuller,
             exit_points::DistantExit,
             finish_doors::FinishDoors,
@@ -258,6 +259,7 @@ pub fn floor_builder(
     squad_counter: SquadIdCounter,
     prefabs: Vec<PrefabTemplate>,
     monster_manifest: &HashMap<String, MonsterAsset>,
+    decoration_rules: Vec<crate::assets::DecorationRule>,
 ) -> BuilderChain {
     let mut map_name = "Floor ".to_owned() + &new_depth.to_string();
     if new_depth == 1 {
@@ -284,6 +286,11 @@ pub fn floor_builder(
     builder.with(ItemSpawner::new(item_spawn_table));
     builder.with(IsolatedAreaCuller::new());  // replaces UnseenCuller — culls ALL disconnected areas
     builder.with(DistantExit::new());
+    builder.with(DecorationPropagator::new(
+        decoration_rules,
+        new_depth,
+        profile.decoration_density,
+    ));
 
     builder
 }
@@ -297,6 +304,7 @@ pub fn level_builder(
     squad_counter: SquadIdCounter,
     prefabs: Vec<PrefabTemplate>,
     monster_manifest: &HashMap<String, MonsterAsset>,
+    decoration_rules: Vec<crate::assets::DecorationRule>,
 ) -> BuilderChain {
-    floor_builder(new_depth, width, height, spawn_table, item_spawn_table, squad_counter, prefabs, monster_manifest)
+    floor_builder(new_depth, width, height, spawn_table, item_spawn_table, squad_counter, prefabs, monster_manifest, decoration_rules)
 }

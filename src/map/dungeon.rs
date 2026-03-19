@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::assets::{
+    DecorationCatalog, DecorationCatalogHandle,
     ItemManifest, ItemManifestHandle, ItemSpriteAssets, ItemSpawnTable,
     ItemSpawnTableHandle, MonsterManifest, MonsterManifestHandle, MonsterSpawnTable,
     MonsterSpawnTableHandle, MonsterSpriteAssets, TileManifest, TileManifestHandle, TileSpriteAssets,
@@ -56,6 +57,8 @@ pub struct EntityAssets<'w> {
     pub prop_sprite_assets: Res<'w, PropSpriteAssets>,
     pub prefab_manifests: Res<'w, Assets<PrefabManifest>>,
     pub prefab_manifest_handle: Res<'w, PrefabManifestHandle>,
+    pub decoration_catalogs: Res<'w, Assets<DecorationCatalog>>,
+    pub decoration_catalog_handle: Res<'w, DecorationCatalogHandle>,
 }
 
 // ---------------------------------------------------------------------------
@@ -707,6 +710,11 @@ pub fn spawn_dungeon(
             .get(&assets.monster_manifest_handle.0)
             .unwrap();
 
+        let decoration_rules = assets.decoration_catalogs
+            .get(&assets.decoration_catalog_handle.0)
+            .map(|c| c.rules.clone())
+            .unwrap_or_default();
+
         let mut builder = level_builder(
             floor.0 as i32,
             MAP_SIZE.x as i32,
@@ -716,6 +724,7 @@ pub fn spawn_dungeon(
             squad_counter.clone(),
             prefabs,
             &monster_manifest.monsters,
+            decoration_rules,
         );
         builder.build_map();
         // Write the updated counter back so future floors don't reuse IDs.
