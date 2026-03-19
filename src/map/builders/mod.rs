@@ -17,8 +17,10 @@ use crate::{
             diagonal_culler::DiagonalCuller,
             exit_points::DistantExit,
             finish_doors::FinishDoors,
+            isolated_area_culler::IsolatedAreaCuller,
             item_spawner::ItemSpawner,
             lake_builder::LakeBuilder,
+            pillar_culler::PillarCuller,
             monster_spawner::MonsterSpawner,
             prefab_placer::{MonsterRoleTable, PrefabPlacer},
             start_point::{StartPointBuilder, XStart, YStart},
@@ -37,6 +39,8 @@ mod corridors;
 mod diagonal_culler;
 mod exit_points;
 mod finish_doors;
+mod isolated_area_culler;
+mod pillar_culler;
 pub mod item_spawner;
 mod lake_builder;
 pub mod monster_spawner;
@@ -263,12 +267,14 @@ pub fn floor_builder(
     builder.with(DiagonalCuller::new());
     builder.with(StartPointBuilder::new());
     builder.with(LakeBuilder::new(new_depth));
+    builder.with(DiagonalCuller::new());   // run again after lakes carve new openings
+    builder.with(PillarCuller::new());
     builder.with(FinishDoors::new());
     builder.with(PrefabPlacer::new(prefabs, role_table));
     builder.with(CandleSpawner::new());
     builder.with(MonsterSpawner::new(spawn_table));
     builder.with(ItemSpawner::new(item_spawn_table));
-    builder.with(UnseenCuller::new());
+    builder.with(IsolatedAreaCuller::new());  // replaces UnseenCuller — culls ALL disconnected areas
     builder.with(DistantExit::new());
 
     builder

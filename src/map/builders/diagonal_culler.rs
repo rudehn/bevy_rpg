@@ -1,69 +1,68 @@
+//! Brogue's removeDiagonalOpenings: removes diagonal-only passages where two
+//! passable tiles are diagonally adjacent with blocking tiles on both shared edges.
+//! These create passages the player can't traverse with cardinal movement (WASD)
+//! but could squeeze through diagonally. One of the blocking tiles is converted
+//! to match its passable neighbor, eliminating the diagonal-only gap.
+
 use super::{BuilderMap, MetaMapBuilder};
 use crate::map::tile::TerrainType;
-use bracket_lib::prelude::Point;
 use rand::prelude::*;
 
-#[derive(Clone)]
-pub struct DiagonalCuller {}
+pub struct DiagonalCuller;
 
 impl DiagonalCuller {
-    pub fn new() -> Box<DiagonalCuller> {
-        Box::new(DiagonalCuller {})
+    pub fn new() -> Box<Self> {
+        Box::new(Self)
     }
 }
 
 impl MetaMapBuilder for DiagonalCuller {
     fn build_map(&mut self, build_data: &mut BuilderMap) {
-        let width = build_data.map.width();
-        let height = build_data.map.height();
+        let width = build_data.map.width;
+        let height = build_data.map.height;
         let mut rng = rand::rng();
 
-        let mut diagonal_corner_removed = true;
-        while diagonal_corner_removed {
-            diagonal_corner_removed = false;
-            let mut changes = Vec::new();
+        // Brogue: do { } while (diagonalCornerRemoved)
+        let mut changed = true;
+        while changed {
+            changed = false;
 
             for y in 0..height - 1 {
                 for x in 0..width - 1 {
-                    for k in 0..=1 {
-                        let idx_a = build_data.map.xy_idx(x + k, y);
-                        let idx_b = build_data.map.xy_idx(x + (1 - k), y);
-                        let idx_c = build_data.map.xy_idx(x + k, y + 1);
-                        let idx_d = build_data.map.xy_idx(x + (1 - k), y + 1);
+                    // Check both diagonal orientations (k=0: top-left/bottom-right, k=1: top-right/bottom-left)
+                    for k in 0..=1i32 {
+                        let ax = x + k;
+                        let bx = x + (1 - k);
 
-                        let tile_a = build_data.map.tiles[idx_a];
-                        let tile_b = build_data.map.tiles[idx_b];
-                        let tile_c = build_data.map.tiles[idx_c];
-                        let tile_d = build_data.map.tiles[idx_d];
+                        // a = (ax, y), b = (bx, y), c = (ax, y+1), d = (bx, y+1)
+                        // Pattern: a is passable, b is blocking, c is blocking, d is passable
+                        // This creates a diagonal-only passage from a to d.
+                        let idx_a = build_data.map.xy_idx(ax, y);
+                        let idx_b = build_data.map.xy_idx(bx, y);
+                        let idx_c = build_data.map.xy_idx(ax, y + 1);
+                        let idx_d = build_data.map.xy_idx(bx, y + 1);
 
-                        // We check terrain logic. 
-                        // Note: simplified check since is_walkable works on Tile.
-                        // We'll treat any non-wall as walkable for this culler's logic.
-                        let is_w = |t: crate::map::tile::Tile| t.terrain != TerrainType::Wall && t.terrain != TerrainType::Empty;
+                        let is_blocking = |idx: usize| {
+                            let t = build_data.map.tiles[idx].terrain;
+                            matches!(t, TerrainType::Wall | TerrainType::Empty)
+                        };
+                        let is_open = |idx: usize| !is_blocking(idx);
 
-                        if is_w(tile_a)
-                            && !is_w(tile_b)
-                            && !is_w(tile_c)
-                            && is_w(tile_d)
-                        {
-                            let (target_x, source_x, target_y) = if rng.random_bool(0.5) {
-                                (x + (1 - k), x + k, y)
+                        if is_open(idx_a) && is_blocking(idx_b) && is_blocking(idx_c) && is_open(idx_d) {
+                            // Randomly pick which blocking tile to convert (b or c)
+                            // Brogue: copies ALL layers from the passable neighbor
+                            let (target_idx, source_idx) = if rng.random_bool(0.5) {
+                                (idx_b, idx_a) // convert b to match a
                             } else {
-                                (x + k, x + (1 - k), y + 1)
+                                (idx_c, idx_d) // convert c to match d
                             };
 
-                            changes.push((target_x, target_y, build_data.map.tiles[build_data.map.xy_idx(source_x, target_y)].terrain));
-                            diagonal_corner_removed = true;
+                            build_data.map.tiles[target_idx] = build_data.map.tiles[source_idx];
+                            changed = true;
                         }
                     }
                 }
             }
-
-            for (tx, ty, terrain) in changes {
-                build_data.map.set_tile(Point::new(tx, ty), terrain);
-            }
         }
-
-        build_data.take_snapshot();
     }
 }
