@@ -410,6 +410,7 @@ impl PrefabPlacer {
                     build_data, oriented, rng, occupied,
                 ) {
                     occupied.push(rect);
+                    build_data.decoration_exclusion_zones.push(rect);
                     return true;
                 }
             }
@@ -418,6 +419,7 @@ impl PrefabPlacer {
                     build_data, oriented, rng, occupied,
                 ) {
                     occupied.push(rect);
+                    build_data.decoration_exclusion_zones.push(rect);
                     return true;
                 }
             }
