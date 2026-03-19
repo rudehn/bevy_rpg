@@ -107,6 +107,7 @@ fn update_monster_info_panel(
     )>,
     nearby_state: Res<NearbyState>,
     pos_query: Query<(Entity, &Position), Or<(With<Monster>, With<Player>, With<crate::components::Item>, With<crate::components::Prop>)>>,
+    name_query: Query<&Name>,
     asset_server: Res<AssetServer>,
     spell_registry_handle: Option<Res<SpellRegistryHandle>>,
     spell_registries: Res<Assets<SpellRegistry>>,
@@ -195,10 +196,37 @@ fn update_monster_info_panel(
 
     let Ok((_, name, health, regen, damage, speed_stats, armor, _)) = q_base.get(entity)
     else {
-        // Not a monster/player — items/props show info via hover_description
-        // in the game log status line instead.
-        *panel_visibility = Visibility::Hidden;
-        panel_node.display = Display::None;
+        // Not a monster/player — show a simple name-only tooltip for items/props
+        if let Ok(item_name) = name_query.get(entity) {
+            *panel_visibility = Visibility::Visible;
+            panel_node.display = Display::Flex;
+
+            if let Some(sp) = screen_position {
+                panel_node.left = Val::Px(sp.x + 18.0);
+                panel_node.top = Val::Px(sp.y - 18.0);
+            }
+
+            // Only rebuild if target changed
+            let should_rebuild = current_target
+                .map(|t| t.entity != entity)
+                .unwrap_or(true);
+
+            if should_rebuild {
+                let font: Handle<Font> = asset_server.load("fonts/Macondo-Regular.ttf");
+                commands.entity(panel_entity).insert(PanelTarget { entity, last_hp: 0 });
+                commands.entity(content_entity).despawn_related::<Children>();
+                commands.entity(content_entity).with_children(|parent| {
+                    parent.spawn((
+                        Text::new(&item_name.0),
+                        TextFont { font, font_size: 16.0, ..default() },
+                        TextColor(Color::WHITE),
+                    ));
+                });
+            }
+        } else {
+            *panel_visibility = Visibility::Hidden;
+            panel_node.display = Display::None;
+        }
         return;
     };
 

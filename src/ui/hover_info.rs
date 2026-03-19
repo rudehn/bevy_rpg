@@ -89,10 +89,10 @@ fn update_hover_description(
         // Check for entities at this position (priority: monster > player > item > prop)
         let mut found_entity = false;
 
-        // Monster
-        for (pos, name, health) in monster_query.iter() {
+        // Monster (name only — HP shown in the tooltip panel)
+        for (pos, name, _health) in monster_query.iter() {
             if pos.x == gx && pos.y == gy {
-                parts.push(format!("{} ({}/{})", name.0, health.current, health.max));
+                parts.push(name.0.clone());
                 found_entity = true;
                 break;
             }
