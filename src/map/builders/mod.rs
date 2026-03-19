@@ -86,6 +86,7 @@ pub struct BuilderMap {
     pub item_spawn_list: Vec<(Point, String, u32)>, // (pos, item_name, count)
     pub prop_spawn_list: Vec<(Point, String)>,       // (pos, prop_name)
     pub squad_counter: SquadIdCounter,
+    pub decoration_exclusion_zones: Vec<Rect>,
 }
 
 impl BuilderMap {
@@ -122,6 +123,7 @@ impl BuilderChain {
                 item_spawn_list: Vec::new(),
                 prop_spawn_list: Vec::new(),
                 squad_counter,
+                decoration_exclusion_zones: Vec::new(),
             },
         }
     }
@@ -178,6 +180,8 @@ pub struct FloorProfile {
     pub erosion_percent: i32,
     /// Whether cavern rooms can use relaxed (no-padding) fitting.
     pub relaxed_fitting: bool,
+    /// Decoration density multiplier (0.0-1.0). Scales seed count per rule.
+    pub decoration_density: f32,
 }
 
 impl FloorProfile {
@@ -190,6 +194,7 @@ impl FloorProfile {
                 hallway_chance: 25,
                 erosion_percent: 20,
                 relaxed_fitting: false,
+                decoration_density: 0.6,
             },
             4..=7 => Self {
                 cavern_weight: 40,
@@ -198,6 +203,7 @@ impl FloorProfile {
                 hallway_chance: 40,
                 erosion_percent: 40,
                 relaxed_fitting: true,
+                decoration_density: 0.8,
             },
             _ => Self {
                 cavern_weight: 60,
@@ -206,6 +212,7 @@ impl FloorProfile {
                 hallway_chance: 50,
                 erosion_percent: 55,
                 relaxed_fitting: true,
+                decoration_density: 1.0,
             },
         }
     }
