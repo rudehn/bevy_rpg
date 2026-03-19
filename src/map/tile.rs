@@ -92,6 +92,23 @@ impl LiquidType {
     }
 }
 
+impl Decoration {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Decoration::None => "None",
+            Decoration::Grass => "Grass",
+            Decoration::TallGrass => "TallGrass",
+            Decoration::DeadGrass => "DeadGrass",
+            Decoration::Rubble => "Rubble",
+            Decoration::Moss => "Moss",
+            Decoration::Fungus => "Fungus",
+            Decoration::Cobweb => "Cobweb",
+            Decoration::Bloodstain => "Bloodstain",
+            Decoration::ScorchedEarth => "ScorchedEarth",
+        }
+    }
+}
+
 #[derive(Component, Default, Copy, Clone, Eq, PartialEq, Debug)]
 pub enum TileVisibility {
     #[default]
@@ -105,6 +122,10 @@ pub enum TileExplored {
     Unexplored,
     Explored,
 }
+
+/// Marker for child sprite entities that render decoration overlays on tiles.
+#[derive(Component)]
+pub struct DecorationOverlay;
 
 pub fn is_walkable(tile: Tile) -> bool {
     // Both terrain and liquid must be walkable
