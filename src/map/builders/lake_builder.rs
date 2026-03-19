@@ -304,14 +304,13 @@ fn create_wreath(
 
                 let n_idx = build_data.map.xy_idx(nx, ny);
                 if build_data.map.tiles[n_idx].liquid != LiquidType::None { continue; }
-                // Skip walls (Brogue has separate LIQUID layer; we don't, so placing
-                // liquid on a wall creates a confusing impassable liquid tile)
-                // Also skip stairs — they need to remain visible and accessible
+                // Skip walls and empty (Brogue has separate LIQUID layer that can
+                // coexist with walls; we don't, so placing liquid on a wall creates
+                // a confusing impassable tile). Stairs are fine — they render above
+                // the liquid overlay.
                 let terrain = build_data.map.tiles[n_idx].terrain;
-                match terrain {
-                    TerrainType::Wall | TerrainType::Empty |
-                    TerrainType::DownStairs | TerrainType::UpStairs => continue,
-                    _ => {}
+                if terrain == TerrainType::Wall || terrain == TerrainType::Empty {
+                    continue;
                 }
 
                 wreath_tiles.push(n_idx);

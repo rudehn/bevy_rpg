@@ -213,7 +213,12 @@ pub fn spawn_tile_entity(
         TileVisibility::Hidden,
         TileExplored::Unexplored,
         Transform {
-            translation: Vec3::new(pt.x as f32 * GRID_SIZE.x, pt.y as f32 * GRID_SIZE.y, 0.0),
+            translation: Vec3::new(
+                pt.x as f32 * GRID_SIZE.x,
+                pt.y as f32 * GRID_SIZE.y,
+                // Stairs render above liquid overlays (z=0.1) so they stay visible
+                if matches!(tile.terrain, TerrainType::DownStairs | TerrainType::UpStairs) { 0.2 } else { 0.0 },
+            ),
             scale: Vec3::new(scale_x, scale_y, 1.0),
             ..Default::default()
         },
