@@ -428,6 +428,61 @@ fn clean_up_lake_boundaries(build_data: &mut BuilderMap) {
 
 // ─── MetaMapBuilder ─────────────────────────────────────────────────────────
 
+/// Remove lake/liquid tiles that are completely isolated from any dry passable tile.
+/// These are artifacts from blobs placed in solid wall areas. Reverts them to Wall.
+fn remove_isolated_lake_tiles(build_data: &mut BuilderMap) {
+    use crate::map::tile::is_passable;
+
+    let width = build_data.map.width;
+    let height = build_data.map.height;
+
+    // Find all tiles reachable from any dry passable tile
+    let mut reachable = HashSet::new();
+    let mut queue = VecDeque::new();
+
+    // Seed from all dry passable tiles (floor/door without liquid)
+    for y in 0..height {
+        for x in 0..width {
+            let idx = build_data.map.xy_idx(x, y);
+            if is_passable(build_data.map.tiles[idx]) && build_data.map.tiles[idx].liquid == LiquidType::None {
+                if !reachable.contains(&idx) {
+                    reachable.insert(idx);
+                    queue.push_back((x, y));
+                }
+            }
+        }
+    }
+
+    // Flood-fill through all passable tiles (including liquid ones)
+    while let Some((x, y)) = queue.pop_front() {
+        for (dx, dy) in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
+            let nx = x + dx;
+            let ny = y + dy;
+            if nx < 0 || ny < 0 || nx >= width || ny >= height { continue; }
+            let n_idx = build_data.map.xy_idx(nx, ny);
+            if !reachable.contains(&n_idx) {
+                // Can reach through any passable terrain (including liquid tiles)
+                if is_passable(build_data.map.tiles[n_idx]) {
+                    reachable.insert(n_idx);
+                    queue.push_back((nx, ny));
+                }
+            }
+        }
+    }
+
+    // Remove liquid from any tile not reachable from dry land → revert to Wall
+    for y in 1..height - 1 {
+        for x in 1..width - 1 {
+            let idx = build_data.map.xy_idx(x, y);
+            if build_data.map.tiles[idx].liquid != LiquidType::None && !reachable.contains(&idx) {
+                build_data.map.tiles[idx].terrain = TerrainType::Wall;
+                build_data.map.tiles[idx].liquid = LiquidType::None;
+                build_data.map.tiles[idx].decoration = Decoration::None;
+            }
+        }
+    }
+}
+
 impl MetaMapBuilder for LakeBuilder {
     fn build_map(&mut self, build_data: &mut BuilderMap) {
         let tile_count = (build_data.map.width * build_data.map.height) as usize;
@@ -441,5 +496,8 @@ impl MetaMapBuilder for LakeBuilder {
 
         // Phase 3: cleanUpLakeBoundaries — merge thin walls between same-type lakes
         clean_up_lake_boundaries(build_data);
+
+        // Phase 4: Remove isolated lake tiles unreachable from dry land
+        remove_isolated_lake_tiles(build_data);
     }
 }
