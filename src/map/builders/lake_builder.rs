@@ -394,31 +394,25 @@ fn clean_up_lake_boundaries(build_data: &mut BuilderMap) {
                 // Only process blocking tiles (walls or impassable liquid)
                 if tile.terrain != TerrainType::Wall { continue; }
 
-                // Check horizontal: same liquid on left and right
+                let is_liquid = |idx: usize| build_data.map.tiles[idx].liquid != LiquidType::None;
+
+                // Check horizontal: any liquid on both left and right
                 let left_idx = build_data.map.xy_idx(x - 1, y);
                 let right_idx = build_data.map.xy_idx(x + 1, y);
-                let left_liq = build_data.map.tiles[left_idx].liquid;
-                let right_liq = build_data.map.tiles[right_idx].liquid;
 
-                if left_liq != LiquidType::None && left_liq == right_liq {
-                    // Replace this wall with floor + same liquid
-                    build_data.map.tiles[idx].terrain = TerrainType::Floor;
-                    build_data.map.tiles[idx].liquid = left_liq;
-                    build_data.map.tiles[idx].decoration = Decoration::None;
+                if is_liquid(left_idx) && is_liquid(right_idx) {
+                    // Copy all tile data from the right neighbor (Brogue copies all layers)
+                    build_data.map.tiles[idx] = build_data.map.tiles[right_idx];
                     changed = true;
                     continue;
                 }
 
-                // Check vertical: same liquid above and below
+                // Check vertical: any liquid above and below
                 let up_idx = build_data.map.xy_idx(x, y - 1);
                 let down_idx = build_data.map.xy_idx(x, y + 1);
-                let up_liq = build_data.map.tiles[up_idx].liquid;
-                let down_liq = build_data.map.tiles[down_idx].liquid;
 
-                if up_liq != LiquidType::None && up_liq == down_liq {
-                    build_data.map.tiles[idx].terrain = TerrainType::Floor;
-                    build_data.map.tiles[idx].liquid = up_liq;
-                    build_data.map.tiles[idx].decoration = Decoration::None;
+                if is_liquid(up_idx) && is_liquid(down_idx) {
+                    build_data.map.tiles[idx] = build_data.map.tiles[down_idx];
                     changed = true;
                 }
             }
