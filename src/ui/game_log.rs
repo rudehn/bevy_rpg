@@ -98,17 +98,14 @@ pub fn update_game_log_ui(game_log: Res<GameLog>, mut q_text: Query<&mut Text, W
     if let Ok(mut text) = q_text.single_mut() {
         let mut lines: Vec<String> = Vec::new();
 
-        // First line: hover description (what the mouse is pointing at)
-        if let Some(hover) = &game_log.hover_description {
+        // First line: status message overrides hover description
+        if let Some(status) = &game_log.status_message {
+            lines.push(format!("> {}", status));
+        } else if let Some(hover) = &game_log.hover_description {
             lines.push(hover.clone());
         }
 
-        // Status message (targeting prompts etc.)
-        if let Some(status) = &game_log.status_message {
-            lines.push(format!("> {}", status));
-        }
-
-        // Log entries (last N, leaving room for hover + status lines)
+        // Log entries
         let max_log_lines = 4;
         let entries_len = game_log.entries.len();
         let start = entries_len.saturating_sub(max_log_lines);
