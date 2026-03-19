@@ -292,6 +292,34 @@ pub fn spawn_tile_entity(
         commands.entity(tile_entity).add_child(l_child);
     }
 
+    // If there's a decoration (on dry tiles only), spawn as child overlay
+    if tile.decoration != Decoration::None && tile.liquid == LiquidType::None {
+        if let Some(dec_asset) = tile_manifest.tiles.get(tile.decoration.name()) {
+            let (d_texture_path, d_index) = crate::assets::parse_sprite_path(&dec_asset.sprite);
+
+            if let (Some(d_texture_handle), Some(d_layout_handle)) = (
+                tile_sprite_assets.handles.get(d_texture_path),
+                tile_sprite_assets.layouts.get(d_texture_path),
+            ) {
+                let d_child = commands
+                    .spawn((
+                        Sprite::from_atlas_image(
+                            d_texture_handle.clone(),
+                            TextureAtlas {
+                                index: d_index,
+                                layout: d_layout_handle.clone(),
+                            },
+                        ),
+                        Transform::from_translation(Vec3::new(0.0, 0.0, 0.05)),
+                        RenderLayers::layer(1),
+                        DecorationOverlay,
+                    ))
+                    .id();
+                commands.entity(tile_entity).add_child(d_child);
+            }
+        }
+    }
+
     // --- ASCII mode children ---
     if let Some(font) = ascii_font {
         // Children inherit parent's scale transform. Compensate so they render
@@ -306,8 +334,14 @@ pub fn spawn_tile_entity(
             terrain_asset.ascii_bg
         };
 
-        // Determine character: liquid overrides terrain (e.g., ~ for water)
-        let (ascii_char, fg_color) = if tile.liquid != LiquidType::None {
+        // Determine character: decoration (dry only) > liquid > terrain
+        let (ascii_char, fg_color) = if tile.decoration != Decoration::None && tile.liquid == LiquidType::None {
+            let dec_asset = tile_manifest.tiles.get(tile.decoration.name());
+            match dec_asset {
+                Some(da) if !da.ascii_char.is_empty() => (da.ascii_char.clone(), da.ascii_fg),
+                _ => (terrain_asset.ascii_char.clone(), terrain_asset.ascii_fg),
+            }
+        } else if tile.liquid != LiquidType::None {
             let liquid_asset = tile_manifest.tiles.get(tile.liquid.name());
             match liquid_asset {
                 Some(la) if !la.ascii_char.is_empty() => (la.ascii_char.clone(), la.ascii_fg),
