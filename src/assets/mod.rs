@@ -71,6 +71,7 @@ impl Plugin for AssetsPlugin {
             .init_resource::<SpellRegistryHandle>()
             .init_resource::<PropManifestHandle>()
             .init_resource::<PrefabManifestHandle>()
+            .init_resource::<DecorationCatalogHandle>()
             .add_systems(
                 OnEnter(AppState::Loading),
                 (
@@ -83,6 +84,7 @@ impl Plugin for AssetsPlugin {
                     load_spell_registry,
                     load_prop_manifest,
                     load_prefab_manifest,
+                    load_decoration_catalog,
                 ),
             )
             .add_systems(
@@ -113,6 +115,7 @@ impl Plugin for LoadingPlugin {
             RonAssetPlugin::<SpellRegistry>::new(&["spells.ron"]),
             RonAssetPlugin::<PropManifest>::new(&["props.ron"]),
             RonAssetPlugin::<PrefabManifest>::new(&["prefabs.ron"]),
+            RonAssetPlugin::<DecorationCatalog>::new(&["decorations.ron"]),
         ))
         .add_systems(Startup, (camera::setup_camera, set_clear_color))
         .init_resource::<MonsterSpriteAssets>()
@@ -257,6 +260,45 @@ pub struct PrefabManifest {
 
 #[derive(Resource, Default)]
 pub struct PrefabManifestHandle(pub Handle<PrefabManifest>);
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct DecorationChain {
+    pub decoration: crate::map::tile::Decoration,
+    pub chance: f32,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct DecorationRule {
+    pub name: String,
+    pub min_floor: i32,
+    pub max_floor: i32,
+    pub min_seeds: i32,
+    pub max_seeds: i32,
+    pub decoration: crate::map::tile::Decoration,
+    pub requires_terrain: Vec<crate::map::tile::TerrainType>,
+    #[serde(default)]
+    pub propagation_chance: f32,
+    #[serde(default)]
+    pub propagation_decay: f32,
+    #[serde(default)]
+    pub max_propagation_depth: i32,
+    #[serde(default)]
+    pub wall_adjacent_only: bool,
+    #[serde(default)]
+    pub corner_only: bool,
+    #[serde(default)]
+    pub requires_nearby_liquid: bool,
+    #[serde(default)]
+    pub chain: Option<DecorationChain>,
+}
+
+#[derive(Asset, TypePath, Deserialize, Debug, Clone)]
+pub struct DecorationCatalog {
+    pub rules: Vec<DecorationRule>,
+}
+
+#[derive(Resource, Default)]
+pub struct DecorationCatalogHandle(pub Handle<DecorationCatalog>);
 
 #[derive(Asset, TypePath, Deserialize, Resource, Debug, Clone)]
 pub struct PlayerAsset {
@@ -593,6 +635,13 @@ fn load_prefab_manifest(asset_server: Res<AssetServer>, mut handle: ResMut<Prefa
     handle.0 = asset_server.load("prefabs.ron");
 }
 
+fn load_decoration_catalog(
+    asset_server: Res<AssetServer>,
+    mut handle: ResMut<DecorationCatalogHandle>,
+) {
+    handle.0 = asset_server.load("decorations.ron");
+}
+
 fn load_monster_sprites(
     asset_server: Res<AssetServer>,
     monster_manifest_handle: Res<MonsterManifestHandle>,
@@ -801,6 +850,8 @@ struct ExtraLoadingParams<'w> {
     prop_sprite_assets: Res<'w, PropSpriteAssets>,
     prefab_manifest_handle: Res<'w, PrefabManifestHandle>,
     prefab_manifests: Res<'w, Assets<PrefabManifest>>,
+    decoration_catalog_handle: Res<'w, DecorationCatalogHandle>,
+    decoration_catalogs: Res<'w, Assets<DecorationCatalog>>,
     next_state: ResMut<'w, NextState<AppState>>,
 }
 
@@ -873,6 +924,14 @@ fn check_assets_loaded(
     if extra
         .prefab_manifests
         .get(&extra.prefab_manifest_handle.0)
+        .is_none()
+    {
+        return;
+    }
+
+    if extra
+        .decoration_catalogs
+        .get(&extra.decoration_catalog_handle.0)
         .is_none()
     {
         return;
