@@ -1,3 +1,4 @@
+use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point, RandomNumberGenerator, Rect};
 
 use crate::map::tile::TerrainType;
@@ -20,6 +21,7 @@ impl CandleSpawner {
 
     fn build(&mut self, build_data: &mut BuilderMap) {
         let Some(rooms) = build_data.rooms.clone() else {
+            warn!("CandleSpawner: rooms not set, skipping");
             return;
         };
 
@@ -46,7 +48,7 @@ impl CandleSpawner {
             // Spread candles as far apart as possible for even coverage.
             let chosen = pick_spread_positions(&candidates, candle_count, &mut rng);
             for pt in chosen {
-                build_data.prop_spawn_list.push((pt, "candle".to_string()));
+                build_data.add_prop_spawn(pt, "candle".to_string());
             }
         }
     }

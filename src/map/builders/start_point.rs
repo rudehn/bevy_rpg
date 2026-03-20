@@ -45,21 +45,16 @@ impl StartPointBuilder {
     }
 
     fn build(&mut self, build_data: &mut BuilderMap) {
-        if let Some(rooms) = &build_data.rooms {
-            if let Some(first_room) = rooms.first() {
-                let start_pos = first_room.center();
-                build_data.starting_position = Some(Position {
-                    x: start_pos.x,
-                    y: start_pos.y,
-                });
-                if build_data.map.depth() > 1 {
-                    build_data.map.set_tile(start_pos, TerrainType::UpStairs);
-                }
-            } else {
-                panic!("Cannot determine starting point: No rooms have been generated.");
-            }
-        } else {
-            panic!("Cannot determine starting point: Room data is missing.");
+        let rooms = build_data.require_rooms("StartPointBuilder");
+        let first_room = rooms.first().unwrap_or_else(||
+            panic!("StartPointBuilder requires at least one room"));
+        let start_pos = first_room.center();
+        build_data.starting_position = Some(Position {
+            x: start_pos.x,
+            y: start_pos.y,
+        });
+        if build_data.map.depth() > 1 {
+            build_data.map.set_tile(start_pos, TerrainType::UpStairs);
         }
     }
 }

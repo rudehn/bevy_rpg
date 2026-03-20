@@ -75,3 +75,51 @@ impl MetaMapBuilder for IsolatedAreaCuller {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map::tile::TerrainType;
+
+    fn idx(bm: &BuilderMap, x: i32, y: i32) -> usize {
+        bm.map.xy_idx(x, y)
+    }
+
+    #[test]
+    fn smaller_region_walled_off() {
+        let mut bm = BuilderMap::new_for_test(10, 5);
+
+        // Large region: x=1..4, y=1..3 (4x3 = 12 tiles)
+        for y in 1..4 {
+            for x in 1..5 {
+                let i = idx(&bm, x, y);
+                bm.map.tiles[i].terrain = TerrainType::Floor;
+            }
+        }
+
+        // Small region: x=7..8, y=2 (2 tiles)
+        let i72 = idx(&bm, 7, 2);
+        let i82 = idx(&bm, 8, 2);
+        bm.map.tiles[i72].terrain = TerrainType::Floor;
+        bm.map.tiles[i82].terrain = TerrainType::Floor;
+
+        IsolatedAreaCuller.build_map(&mut bm);
+
+        let i22 = idx(&bm, 2, 2);
+        assert_eq!(bm.map.tiles[i22].terrain, TerrainType::Floor);
+        assert_eq!(bm.map.tiles[i72].terrain, TerrainType::Wall);
+        assert_eq!(bm.map.tiles[i82].terrain, TerrainType::Wall);
+    }
+
+    #[test]
+    fn single_connected_region_unchanged() {
+        let mut bm = BuilderMap::with_open_room(6, 6);
+
+        let floor_before = bm.map.tiles.iter().filter(|t| t.terrain == TerrainType::Floor).count();
+
+        IsolatedAreaCuller.build_map(&mut bm);
+
+        let floor_after = bm.map.tiles.iter().filter(|t| t.terrain == TerrainType::Floor).count();
+        assert_eq!(floor_before, floor_after);
+    }
+}

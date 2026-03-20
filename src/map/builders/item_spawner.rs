@@ -1,3 +1,4 @@
+use bevy::prelude::*;
 use crate::{
     assets::ItemSpawnInfo,
     map::{builders::{BuilderMap, MetaMapBuilder}, map::Map, tile::{is_walkable, LiquidType}},
@@ -37,7 +38,13 @@ impl ItemSpawner {
 
         let total_weight: i32 = candidates.iter().map(|s| s.weight).sum();
 
-        if let Some(rooms) = &build_data.rooms {
+        let Some(rooms) = build_data.rooms.clone() else {
+            warn!("ItemSpawner: rooms not set, skipping");
+            return;
+        };
+
+        let mut pending_spawns: Vec<(Point, String, u32)> = Vec::new();
+        {
             let map = &build_data.map;
             for room in rooms.iter() {
                 let roll = rng.range(0, total_weight);
@@ -54,12 +61,13 @@ impl ItemSpawner {
                         } else {
                             1
                         };
-                        build_data
-                            .item_spawn_list
-                            .push((pt, spawn_info.item.clone(), count));
+                        pending_spawns.push((pt, spawn_info.item.clone(), count));
                     }
                 }
             }
+        }
+        for (pt, name, count) in pending_spawns {
+            build_data.add_item_spawn(pt, name, count);
         }
     }
 }

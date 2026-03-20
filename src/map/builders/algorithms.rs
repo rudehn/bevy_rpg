@@ -343,3 +343,195 @@ where T: Copy + Clone + PartialEq + Default
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Grid basics ---
+
+    #[test]
+    fn grid_new_dimensions() {
+        let g: Grid<i32> = Grid::new(5, 3, 0);
+        assert_eq!(g.width, 5);
+        assert_eq!(g.height, 3);
+        assert_eq!(g.len(), 15);
+    }
+
+    #[test]
+    fn grid_xy_idx_round_trip() {
+        let g: Grid<i32> = Grid::new(10, 8, 0);
+        for y in 0..g.height {
+            for x in 0..g.width {
+                let idx = g.xy_idx(x, y);
+                let (rx, ry) = g.idx_to_xy(idx);
+                assert_eq!((x, y), (rx, ry), "Round-trip failed for ({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn grid_in_bounds() {
+        let g: Grid<i32> = Grid::new(5, 3, 0);
+        assert!(g.in_bounds(0, 0));
+        assert!(g.in_bounds(4, 2));
+        assert!(!g.in_bounds(-1, 0));
+        assert!(!g.in_bounds(5, 0));
+        assert!(!g.in_bounds(0, 3));
+    }
+
+    #[test]
+    fn grid_at_and_set() {
+        let mut g: Grid<i32> = Grid::new(4, 4, 0);
+        g.set(2, 1, 42);
+        assert_eq!(*g.at(2, 1).unwrap(), 42);
+        assert_eq!(*g.at(0, 0).unwrap(), 0);
+        // Out-of-bounds returns None
+        assert!(g.at(10, 10).is_none());
+    }
+
+    // --- count_neighbors ---
+
+    #[test]
+    fn count_neighbors_known_grid() {
+        // 3x3 grid, center surrounded by 8 floor tiles
+        let mut g = Grid::new(3, 3, BlobType::Wall);
+        for y in 0..3 {
+            for x in 0..3 {
+                if !(x == 1 && y == 1) {
+                    g.set(x, y, BlobType::Floor);
+                }
+            }
+        }
+        assert_eq!(count_neighbors(&g, 1, 1, 1, BlobType::Floor), 8);
+        // Corner (0,0) has 2 floor neighbors at radius 1 (not counting itself)
+        // Neighbors of (0,0): (1,0), (0,1), (1,1) — but (1,1) is Wall
+        assert_eq!(count_neighbors(&g, 0, 0, 1, BlobType::Floor), 2);
+    }
+
+    // --- cellular_automata_iteration ---
+
+    #[test]
+    fn cellular_automata_birth_and_survival() {
+        // 5x5 grid, all wall except center cross of floor
+        let mut g = Grid::new(5, 5, BlobType::Wall);
+        // Cross pattern: (2,1), (1,2), (2,2), (3,2), (2,3)
+        g.set(2, 1, BlobType::Floor);
+        g.set(1, 2, BlobType::Floor);
+        g.set(2, 2, BlobType::Floor);
+        g.set(3, 2, BlobType::Floor);
+        g.set(2, 3, BlobType::Floor);
+
+        // birth_threshold=3, survival_threshold=2
+        // Center (2,2) has 4 floor neighbors → survives (4 >= 2)
+        // Wall at (1,1) has 3 floor neighbors: (2,1), (1,2), (2,2) → births (3 >= 3)
+        cellular_automata_iteration(&mut g, 3, 2, BlobType::Floor, BlobType::Wall);
+
+        assert_eq!(*g.at(2, 2).unwrap(), BlobType::Floor, "center should survive");
+        assert_eq!(*g.at(1, 1).unwrap(), BlobType::Floor, "(1,1) should birth");
+    }
+
+    // --- flood_fill_region ---
+
+    #[test]
+    fn flood_fill_4_connectivity() {
+        // 5x5 grid with L-shaped floor region
+        let mut g = Grid::new(5, 5, BlobType::Wall);
+        // Horizontal: (0,0), (1,0), (2,0)
+        // Vertical: (0,1), (0,2)
+        g.set(0, 0, BlobType::Floor);
+        g.set(1, 0, BlobType::Floor);
+        g.set(2, 0, BlobType::Floor);
+        g.set(0, 1, BlobType::Floor);
+        g.set(0, 2, BlobType::Floor);
+
+        let result = flood_fill_region(&g, 0, 0, 4, BlobType::Floor, BlobType::Wall);
+        assert_eq!(result.size, 5);
+    }
+
+    #[test]
+    fn flood_fill_8_connectivity_reaches_diagonal() {
+        // Two floor tiles connected only diagonally
+        let mut g = Grid::new(3, 3, BlobType::Wall);
+        g.set(0, 0, BlobType::Floor);
+        g.set(1, 1, BlobType::Floor);
+
+        let result_4 = flood_fill_region(&g, 0, 0, 4, BlobType::Floor, BlobType::Wall);
+        assert_eq!(result_4.size, 1, "4-conn should NOT reach diagonal");
+
+        let result_8 = flood_fill_region(&g, 0, 0, 8, BlobType::Floor, BlobType::Wall);
+        assert_eq!(result_8.size, 2, "8-conn should reach diagonal");
+    }
+
+    #[test]
+    fn flood_fill_wall_start_returns_empty() {
+        let g = Grid::new(3, 3, BlobType::Wall);
+        let result = flood_fill_region(&g, 1, 1, 4, BlobType::Floor, BlobType::Wall);
+        assert_eq!(result.size, 0);
+    }
+
+    // --- get_all_regions ---
+
+    #[test]
+    fn get_all_regions_two_islands() {
+        // 7x3 grid with two disconnected floor patches
+        let mut g = Grid::new(7, 3, BlobType::Wall);
+        // Island 1: (0,1), (1,1)
+        g.set(0, 1, BlobType::Floor);
+        g.set(1, 1, BlobType::Floor);
+        // Island 2: (5,1), (6,1)
+        g.set(5, 1, BlobType::Floor);
+        g.set(6, 1, BlobType::Floor);
+
+        let regions = get_all_regions(&g, BlobType::Floor, BlobType::Wall);
+        assert_eq!(regions.len(), 2);
+        assert!(regions.iter().all(|r| r.size == 2));
+    }
+
+    // --- retain_specific_region ---
+
+    #[test]
+    fn retain_specific_region_walls_off_others() {
+        let mut g = Grid::new(5, 3, BlobType::Wall);
+        g.set(0, 1, BlobType::Floor);
+        g.set(1, 1, BlobType::Floor);
+        g.set(4, 1, BlobType::Floor);
+
+        let regions = get_all_regions(&g, BlobType::Floor, BlobType::Wall);
+        let largest = regions.iter().max_by_key(|r| r.size).unwrap();
+        retain_specific_region(&mut g, largest, BlobType::Wall);
+
+        // Only the largest region's tiles should be floor
+        let floor_count = g.data.iter().filter(|&&v| v == BlobType::Floor).count();
+        assert_eq!(floor_count, largest.size);
+    }
+
+    // --- create_blob ---
+
+    #[test]
+    fn create_blob_produces_connected_output() {
+        let grid = Grid::new(20, 20, BlobType::Wall);
+        let config = BlobGenConfig {
+            round_count: 5,
+            min_blob_width: 3,
+            min_blob_height: 3,
+            max_blob_width: 15,
+            max_blob_height: 15,
+            initial_alive_percent: 55,
+            birth_threshold: 5,
+            survival_threshold: 4,
+        };
+
+        let (result, min_x, min_y, blob_w, blob_h) =
+            create_blob(&grid, &config, BlobType::Floor, BlobType::Wall);
+
+        // Output should be within grid bounds
+        assert!(min_x >= 0 && min_y >= 0);
+        assert!(min_x + blob_w <= result.width);
+        assert!(min_y + blob_h <= result.height);
+
+        // All floor tiles should be in one connected region
+        let regions = get_all_regions(&result, BlobType::Floor, BlobType::Wall);
+        assert!(regions.len() <= 1, "blob should be a single connected region");
+    }
+}

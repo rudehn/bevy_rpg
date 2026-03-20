@@ -101,6 +101,89 @@ impl BuilderMap {
         //     self.history.push(snapshot);
         // }
     }
+
+    // --- Validation helpers (Phase 2) ---
+
+    /// Panics with a descriptive message if `rooms` has not been set by a prior builder.
+    pub fn require_rooms(&self, builder: &'static str) -> &Vec<Rect> {
+        self.rooms.as_ref().unwrap_or_else(||
+            panic!("{builder} requires rooms to be set by a prior builder"))
+    }
+
+    /// Panics with a descriptive message if `starting_position` has not been set.
+    pub fn require_starting_position(&self, builder: &'static str) -> &Position {
+        self.starting_position.as_ref().unwrap_or_else(||
+            panic!("{builder} requires starting_position to be set by a prior builder"))
+    }
+
+    // --- Accessor methods (Phase 3) ---
+
+    pub fn add_monster_spawn(&mut self, entry: SpawnEntry) {
+        self.spawn_list.push(entry);
+    }
+
+    pub fn add_item_spawn(&mut self, pos: Point, name: String, count: u32) {
+        self.item_spawn_list.push((pos, name, count));
+    }
+
+    pub fn add_prop_spawn(&mut self, pos: Point, name: String) {
+        self.prop_spawn_list.push((pos, name));
+    }
+
+    pub fn add_exclusion_zone(&mut self, rect: Rect) {
+        self.decoration_exclusion_zones.push(rect);
+    }
+
+    pub fn exclusion_zones(&self) -> &[Rect] {
+        &self.decoration_exclusion_zones
+    }
+
+    pub fn rooms(&self) -> Option<&Vec<Rect>> {
+        self.rooms.as_ref()
+    }
+
+    pub fn set_starting_position(&mut self, pos: Position) {
+        self.starting_position = Some(pos);
+    }
+
+    // --- Test constructors (Phase 1) ---
+
+    #[cfg(test)]
+    pub fn new_for_test(width: i32, height: i32) -> Self {
+        BuilderMap {
+            map: Map::new(1, width, height, "test"),
+            starting_position: None,
+            rooms: None,
+            corridors: None,
+            width,
+            height,
+            spawn_list: Vec::new(),
+            item_spawn_list: Vec::new(),
+            prop_spawn_list: Vec::new(),
+            squad_counter: SquadIdCounter::default(),
+            decoration_exclusion_zones: Vec::new(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn with_open_room(width: i32, height: i32) -> Self {
+        use crate::map::tile::{Tile, TerrainType, LiquidType, Decoration};
+
+        let mut bm = Self::new_for_test(width, height);
+        // Carve floor interior, leave wall border
+        for y in 1..height - 1 {
+            for x in 1..width - 1 {
+                let idx = bm.map.xy_idx(x, y);
+                bm.map.tiles[idx] = Tile {
+                    terrain: TerrainType::Floor,
+                    liquid: LiquidType::None,
+                    decoration: Decoration::None,
+                };
+            }
+        }
+        bm.rooms = Some(vec![Rect::with_size(1, 1, width - 2, height - 2)]);
+        bm
+    }
 }
 
 pub struct BuilderChain {

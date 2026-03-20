@@ -66,3 +66,54 @@ impl MetaMapBuilder for DiagonalCuller {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map::tile::TerrainType;
+
+    /// Creates a diagonal-only passage: two floor tiles at (1,1) and (2,2)
+    /// with walls at (2,1) and (1,2). The culler should resolve this by
+    /// converting one of the blocking tiles to floor.
+    fn idx(bm: &BuilderMap, x: i32, y: i32) -> usize {
+        bm.map.xy_idx(x, y)
+    }
+
+    #[test]
+    fn resolves_diagonal_passage() {
+        let mut bm = BuilderMap::new_for_test(4, 4);
+        let i11 = idx(&bm, 1, 1);
+        let i22 = idx(&bm, 2, 2);
+        let i21 = idx(&bm, 2, 1);
+        let i12 = idx(&bm, 1, 2);
+
+        bm.map.tiles[i11].terrain = TerrainType::Floor;
+        bm.map.tiles[i22].terrain = TerrainType::Floor;
+        assert_eq!(bm.map.tiles[i21].terrain, TerrainType::Wall);
+        assert_eq!(bm.map.tiles[i12].terrain, TerrainType::Wall);
+
+        DiagonalCuller.build_map(&mut bm);
+
+        let b = bm.map.tiles[i21].terrain;
+        let c = bm.map.tiles[i12].terrain;
+        assert!(
+            b == TerrainType::Floor || c == TerrainType::Floor,
+            "DiagonalCuller should resolve diagonal-only passage"
+        );
+    }
+
+    #[test]
+    fn no_change_when_no_diagonal() {
+        let mut bm = BuilderMap::new_for_test(4, 4);
+        let i11 = idx(&bm, 1, 1);
+        let i21 = idx(&bm, 2, 1);
+        bm.map.tiles[i11].terrain = TerrainType::Floor;
+        bm.map.tiles[i21].terrain = TerrainType::Floor;
+
+        let before: Vec<_> = bm.map.tiles.iter().map(|t| t.terrain).collect();
+        DiagonalCuller.build_map(&mut bm);
+        let after: Vec<_> = bm.map.tiles.iter().map(|t| t.terrain).collect();
+
+        assert_eq!(before, after);
+    }
+}

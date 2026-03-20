@@ -1,23 +1,16 @@
 use std::collections::HashMap;
 
 use bevy::camera::visibility::RenderLayers;
-use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
-use crate::assets::{
-    DecorationCatalog, DecorationCatalogHandle,
-    ItemManifest, ItemManifestHandle, ItemSpriteAssets, ItemSpawnTable,
-    ItemSpawnTableHandle, MonsterManifest, MonsterManifestHandle, MonsterSpawnTable,
-    MonsterSpawnTableHandle, MonsterSpriteAssets, TileManifest, TileManifestHandle, TileSpriteAssets,
-    PropManifest, PropManifestHandle, PropSpriteAssets,
-    PrefabManifest, PrefabManifestHandle,
-};
 use crate::components::{FloorEntityMarker, InInventory, Monster, Name, Position, Item, Prop};
-use crate::game::{TurnManager, spawn_monster_by_name, spawn_item, spawn_prop, items::ItemStack, turns::TurnMarker};
+use crate::game::{TurnManager, items::ItemStack, turns::TurnMarker};
+use crate::map::floor_materializer::{
+    EntityAssets, FloorResult, FloorSource, TileAssets, materialize_floor,
+};
 use crate::map::Map;
-use crate::map::builders::BuilderMap;
-use crate::map::tile::{TerrainType, is_walkable};
+use crate::map::tile::TerrainType;
 use crate::player::Player;
 use crate::ui::game_log::GameLogMessage;
 
@@ -26,40 +19,9 @@ use crate::{
     map::{
         builders::level_builder,
         map::{DungeonECSMap, MAP_SIZE, NeedsExploredInit},
-        tile::{TileMarker, spawn_tile_entity},
+        tile::TileMarker,
     },
 };
-
-/// Groups the three tile-asset resources to keep `spawn_dungeon`'s parameter
-/// count within Bevy's 16-parameter limit for system functions.
-#[derive(SystemParam)]
-pub struct TileAssets<'w> {
-    manifests: Res<'w, Assets<TileManifest>>,
-    manifest_handle: Res<'w, TileManifestHandle>,
-    sprite_assets: Res<'w, TileSpriteAssets>,
-}
-
-/// Groups monster, item, and prop assets to keep parameter count down.
-#[derive(SystemParam)]
-pub struct EntityAssets<'w> {
-    pub monster_manifests: Res<'w, Assets<MonsterManifest>>,
-    pub monster_manifest_handle: Res<'w, MonsterManifestHandle>,
-    pub monster_spawn_tables: Res<'w, Assets<MonsterSpawnTable>>,
-    pub monster_spawn_table_handle: Res<'w, MonsterSpawnTableHandle>,
-    pub monster_sprite_assets: Res<'w, MonsterSpriteAssets>,
-    pub item_manifests: Res<'w, Assets<ItemManifest>>,
-    pub item_manifest_handle: Res<'w, ItemManifestHandle>,
-    pub item_sprite_assets: Res<'w, ItemSpriteAssets>,
-    pub item_spawn_tables: Res<'w, Assets<ItemSpawnTable>>,
-    pub item_spawn_table_handle: Res<'w, ItemSpawnTableHandle>,
-    pub prop_manifests: Res<'w, Assets<PropManifest>>,
-    pub prop_manifest_handle: Res<'w, PropManifestHandle>,
-    pub prop_sprite_assets: Res<'w, PropSpriteAssets>,
-    pub prefab_manifests: Res<'w, Assets<PrefabManifest>>,
-    pub prefab_manifest_handle: Res<'w, PrefabManifestHandle>,
-    pub decoration_catalogs: Res<'w, Assets<DecorationCatalog>>,
-    pub decoration_catalog_handle: Res<'w, DecorationCatalogHandle>,
-}
 
 // ---------------------------------------------------------------------------
 // Floor caching — preserves a visited floor's state so returning via UpStairs
@@ -68,28 +30,18 @@ pub struct EntityAssets<'w> {
 
 pub struct CachedFloor {
     pub map: Map,
-    /// Alive monsters: their position, name, and optional squad data.
-    pub monster_list: Vec<CachedMonster>,
-    /// Surrounding items: their position, name, and stack count.
-    pub item_list: Vec<(Point, String, u32)>,
-    /// Props: their position and prop name.
-    pub prop_list: Vec<(Point, String)>,
+    /// Alive monsters with mutable state (HP, squad, patrol).
+    pub monsters: Vec<crate::save::SavedMonster>,
+    /// Floor items with stack counts.
+    pub items: Vec<crate::save::SavedItem>,
+    /// Props.
+    pub props: Vec<crate::save::SavedProp>,
     /// Position of the DownStairs on this floor; player lands adjacent to it
     /// when returning from below (ascending).
     pub down_stairs_pos: Point,
     /// Position of the UpStairs on this floor; player lands adjacent to it
     /// when returning from above (descending).
     pub up_stairs_pos: Point,
-}
-
-/// A monster entry in the floor cache, preserving squad membership.
-pub struct CachedMonster {
-    pub pos: Point,
-    pub name: String,
-    pub squad_id: Option<u64>,
-    pub is_leader: bool,
-    pub squad_config: Option<crate::game::squad::SquadConfig>,
-    pub patrol_route: Option<crate::game::ai::PatrolRoute>,
 }
 
 #[derive(Resource, Default)]
@@ -210,43 +162,22 @@ fn find_up_stairs(map: &Map) -> Option<Point> {
     })
 }
 
-/// Returns the first orthogonally adjacent walkable, non-stair tile to `target`.
-/// Stair tiles are excluded so the player doesn't immediately re-trigger a
-/// floor transition upon being placed there.
-fn find_adjacent_floor(map: &Map, target: Point) -> Option<Point> {
-    use TerrainType::{DownStairs, UpStairs};
-    for (dx, dy) in [(0i32, 1i32), (1, 0), (0, -1), (-1, 0)] {
-        let pt = Point::new(target.x + dx, target.y + dy);
-        if let Some(tile) = map.get_tile(pt) {
-            if is_walkable(tile) && tile.terrain != DownStairs && tile.terrain != UpStairs {
-                return Some(pt);
-            }
-        }
-    }
-    // Fallback: search the whole map for any plain floor tile.
-    map.tiles.iter().enumerate().find_map(|(idx, tile)| {
-        use TerrainType::{DownStairs, UpStairs};
-        if is_walkable(*tile) && tile.terrain != DownStairs && tile.terrain != UpStairs {
-            let (x, y) = map.idx_xy(idx);
-            Some(Point::new(x, y))
-        } else {
-            None
-        }
-    })
-}
-
 /// Snapshot the current floor's surviving entities into a `CachedFloor`.
 fn snapshot_floor(
     map: &Map,
-    monster_query: &Query<(&Position, &Name, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>), With<Monster>>,
+    monster_query: &Query<(&Position, &Name, &crate::game::combat::Health, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>), With<Monster>>,
     item_query: &Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     prop_query: &Query<(&Position, &Name), With<Prop>>,
 ) -> CachedFloor {
-    let monster_list = monster_query
+    use crate::save::{SavedMonster, SavedItem, SavedProp};
+
+    let monsters = monster_query
         .iter()
-        .map(|(pos, name, squad_id, squad_config, is_leader, patrol_route)| CachedMonster {
-            pos: pos.to_point(),
+        .map(|(pos, name, health, squad_id, squad_config, is_leader, patrol_route)| SavedMonster {
+            x: pos.x,
+            y: pos.y,
             name: name.0.clone(),
+            hp_current: health.current,
             squad_id: squad_id.map(|s| s.0),
             is_leader,
             squad_config: squad_config.cloned(),
@@ -254,17 +185,23 @@ fn snapshot_floor(
         })
         .collect();
 
-    let item_list = item_query
+    let items = item_query
         .iter()
-        .map(|(pos, name, stack)| {
-            let count = stack.map(|s| s.count).unwrap_or(1);
-            (pos.to_point(), name.0.clone(), count)
+        .map(|(pos, name, stack)| SavedItem {
+            x: pos.x,
+            y: pos.y,
+            name: name.0.clone(),
+            count: stack.map(|s| s.count).unwrap_or(1),
         })
         .collect();
 
-    let prop_list = prop_query
+    let props = prop_query
         .iter()
-        .map(|(pos, name)| (pos.to_point(), name.0.clone()))
+        .map(|(pos, name)| SavedProp {
+            x: pos.x,
+            y: pos.y,
+            name: name.0.clone(),
+        })
         .collect();
 
     let down_stairs_pos = find_down_stairs(map).unwrap_or(Point::new(0, 0));
@@ -272,9 +209,9 @@ fn snapshot_floor(
 
     CachedFloor {
         map: map.clone(),
-        monster_list,
-        item_list,
-        prop_list,
+        monsters,
+        items,
+        props,
         down_stairs_pos,
         up_stairs_pos,
     }
@@ -334,7 +271,7 @@ fn map_transition_system(
     q_map_markers: Query<Entity, With<DungeonECSMap>>,
     q_tiles: Query<Entity, With<TileMarker>>,
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
-    q_monsters: Query<(&Position, &Name, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>), With<Monster>>,
+    q_monsters: Query<(&Position, &Name, &crate::game::combat::Health, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>), With<Monster>>,
     q_items: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     q_props: Query<(&Position, &Name), With<Prop>>,
     mut turn_manager: ResMut<TurnManager>,
@@ -367,7 +304,7 @@ fn ascend_stairs_system(
     q_map_markers: Query<Entity, With<DungeonECSMap>>,
     q_tiles: Query<Entity, With<TileMarker>>,
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
-    q_monsters: Query<(&Position, &Name, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>), With<Monster>>,
+    q_monsters: Query<(&Position, &Name, &crate::game::combat::Health, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>), With<Monster>>,
     q_items: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     q_props: Query<(&Position, &Name), With<Prop>>,
     mut turn_manager: ResMut<TurnManager>,
@@ -395,105 +332,6 @@ fn ascend_stairs_system(
     message_writer.write(SpawnDungeonMessage);
 }
 
-fn spawn_tiles_into_ecs(
-    commands: &mut Commands,
-    map_entity: Entity,
-    game_map: &Map,
-    tile_assets: &TileAssets,
-    ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
-) {
-    let tile_manifest = tile_assets
-        .manifests
-        .get(&tile_assets.manifest_handle.0)
-        .expect("Tile manifest not loaded");
-
-    for y in 0..game_map.height() {
-        for x in 0..game_map.width() {
-            let pt = Point::new(x, y);
-            let tile = game_map.get_tile(pt).unwrap();
-
-            let tile_entity = spawn_tile_entity(
-                commands,
-                map_entity,
-                tile,
-                pt,
-                tile_manifest,
-                &tile_assets.sprite_assets,
-                ascii_font,
-            );
-            commands
-                .entity(tile_entity)
-                .insert(Position { x: pt.x, y: pt.y });
-        }
-    }
-}
-
-fn spawn_dungeon_entities(
-    commands: &mut Commands,
-    build_data: &BuilderMap,
-    turn_manager: &mut ResMut<TurnManager>,
-    assets: &EntityAssets,
-    ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
-) {
-    for entry in build_data.spawn_list.iter() {
-        if let Some(entity) = spawn_monster_by_name(
-            commands,
-            entry.name.as_str(),
-            &entry.pos,
-            turn_manager,
-            &assets.monster_manifests,
-            &assets.monster_manifest_handle,
-            &assets.monster_sprite_assets,
-            ascii_font,
-        ) {
-            // Attach squad components if this monster is part of a squad.
-            if let (Some(squad_id), Some(squad_config)) = (entry.squad_id, entry.squad_config.clone()) {
-                commands.entity(entity).insert((squad_id, squad_config));
-                if entry.is_leader {
-                    commands.entity(entity).insert(crate::game::squad::SquadLeader);
-                }
-            }
-            // Guard AI: override default MonsterAI with guard behavior.
-            if let Some(patrol_route) = entry.patrol_route.clone() {
-                commands.entity(entity).insert(patrol_route);
-            }
-        }
-    }
-
-    for (pt, name, count) in build_data.item_spawn_list.iter() {
-        if let Some(entity) = spawn_item(
-            commands,
-            name.as_str(),
-            pt,
-            &assets.item_manifests,
-            &assets.item_manifest_handle,
-            &assets.item_sprite_assets,
-            ascii_font,
-        ) {
-            if *count > 1 {
-                let max_stack = assets.item_manifests
-                    .get(&assets.item_manifest_handle.0)
-                    .and_then(|m| m.items.get(name.as_str()))
-                    .map(|a| a.max_stack)
-                    .unwrap_or(1);
-                commands.entity(entity).insert(crate::game::items::ItemStack { count: *count, max_stack });
-            }
-        }
-    }
-
-    for (pt, name) in build_data.prop_spawn_list.iter() {
-        spawn_prop(
-            commands,
-            name.as_str(),
-            pt,
-            &assets.prop_manifests,
-            &assets.prop_manifest_handle,
-            &assets.prop_sprite_assets,
-            ascii_font,
-        );
-    }
-}
-
 pub fn spawn_dungeon(
     mut commands: Commands,
     floor: Res<Floor>,
@@ -514,203 +352,50 @@ pub fn spawn_dungeon(
 ) {
     let map_entity = commands.spawn((DungeonECSMap, RenderLayers::layer(1))).id();
 
-    let player_spawn: Point = if let Some(save_data) = pending_game_load.0.take() {
-        // ---------------------------------------------------------------
-        // LOAD PATH: Restore full game state from disk
-        // ---------------------------------------------------------------
-        use crate::save::{SavedHp, save_data_to_map, SavedFloorCache};
+    // ---------------------------------------------------------------
+    // Determine floor source + handle resource-level side effects
+    // ---------------------------------------------------------------
+    let source = if let Some(save_data) = pending_game_load.0.take() {
+        // Load path: extract resource-level state before materialization
+        use crate::save::SavedFloorCache;
 
-        // Restore map
-        *map = save_data_to_map(&save_data.map);
-        spawn_tiles_into_ecs(&mut commands, map_entity, &map, &tile_assets, ascii_font.as_deref());
-
-        // Restore squad ID counter
         commands.insert_resource(crate::game::squad::SquadIdCounter(save_data.squad_id_counter));
-
-        // Restore Tyrant escalation power
         commands.insert_resource(save_data.tyrant_power.clone());
 
-        // Spawn monsters with saved HP override and squad data
-        for entry in &save_data.monsters {
-            let pt = Point::new(entry.x, entry.y);
-            if let Some(entity) = spawn_monster_by_name(
-                &mut commands,
-                &entry.name,
-                &pt,
-                &mut turn_manager,
-                &assets.monster_manifests,
-                &assets.monster_manifest_handle,
-                &assets.monster_sprite_assets,
-                ascii_font.as_deref(),
-            ) {
-                commands.entity(entity).insert(SavedHp(entry.hp_current));
-                if let (Some(sid), Some(cfg)) = (entry.squad_id, entry.squad_config.clone()) {
-                    commands.entity(entity).insert((
-                        crate::game::squad::SquadId(sid),
-                        cfg,
-                    ));
-                    if entry.is_leader {
-                        commands.entity(entity).insert(crate::game::squad::SquadLeader);
-                    }
-                }
-                if let Some(patrol_route) = entry.patrol_route.clone() {
-                    commands.entity(entity).insert(patrol_route);
-                }
-            }
-        }
-
-        // Spawn floor items
-        for entry in &save_data.floor_items {
-            let pt = Point::new(entry.x, entry.y);
-            if let Some(entity) = spawn_item(
-                &mut commands,
-                &entry.name,
-                &pt,
-                &assets.item_manifests,
-                &assets.item_manifest_handle,
-                &assets.item_sprite_assets,
-                ascii_font.as_deref(),
-            ) {
-                if entry.count > 1 {
-                    let max_stack = assets.item_manifests
-                        .get(&assets.item_manifest_handle.0)
-                        .and_then(|m| m.items.get(entry.name.as_str()))
-                        .map(|a| a.max_stack)
-                        .unwrap_or(1);
-                    commands.entity(entity).insert(ItemStack { count: entry.count, max_stack });
-                }
-            }
-        }
-
-        // Spawn props
-        for entry in &save_data.props {
-            let pt = Point::new(entry.x, entry.y);
-            spawn_prop(
-                &mut commands,
-                &entry.name,
-                &pt,
-                &assets.prop_manifests,
-                &assets.prop_manifest_handle,
-                &assets.prop_sprite_assets,
-                ascii_font.as_deref(),
-            );
-        }
-        // Pass the floor cache save data to apply_player_load_system
         let saved_floor_cache: std::collections::HashMap<u32, crate::save::CachedFloorSave> =
             save_data.floor_cache.clone();
         commands.insert_resource(SavedFloorCache(saved_floor_cache));
 
-        // Restore game log
-        // (done indirectly — apply_player_load_system handles player state,
-        //  GameLog is reset here from save)
-        // We pass the full save to PendingPlayerLoad so the game log is also restored
-        let player_spawn_pt = Point::new(save_data.player.x, save_data.player.y);
-
-        pending_player_load.0 = Some(save_data.player);
         needs_explored_init.0 = true;
 
-        player_spawn_pt
+        FloorSource::Load(save_data)
     } else if let Some(cached) = pending_restore.floor.take() {
-        // ---------------------------------------------------------------
-        // Restore a previously visited floor
-        // ---------------------------------------------------------------
+        // Restore path
         let ascending = pending_restore.ascending;
-        *map = cached.map;
-
-        spawn_tiles_into_ecs(&mut commands, map_entity, &map, &tile_assets, ascii_font.as_deref());
-
-        for cached_mon in &cached.monster_list {
-            if let Some(entity) = spawn_monster_by_name(
-                &mut commands,
-                cached_mon.name.as_str(),
-                &cached_mon.pos,
-                &mut turn_manager,
-                &assets.monster_manifests,
-                &assets.monster_manifest_handle,
-                &assets.monster_sprite_assets,
-                ascii_font.as_deref(),
-            ) {
-                if let (Some(sid), Some(cfg)) = (cached_mon.squad_id, cached_mon.squad_config.clone()) {
-                    commands.entity(entity).insert((
-                        crate::game::squad::SquadId(sid),
-                        cfg,
-                    ));
-                    if cached_mon.is_leader {
-                        commands.entity(entity).insert(crate::game::squad::SquadLeader);
-                    }
-                }
-                if let Some(patrol_route) = cached_mon.patrol_route.clone() {
-                    commands.entity(entity).insert(patrol_route);
-                }
-            }
-        }
-
-        for (pt, name, count) in &cached.item_list {
-            if let Some(entity) = spawn_item(
-                &mut commands,
-                name.as_str(),
-                pt,
-                &assets.item_manifests,
-                &assets.item_manifest_handle,
-                &assets.item_sprite_assets,
-                ascii_font.as_deref(),
-            ) {
-                if *count > 1 {
-                    let max_stack = assets.item_manifests
-                        .get(&assets.item_manifest_handle.0)
-                        .and_then(|m| m.items.get(name.as_str()))
-                        .map(|a| a.max_stack)
-                        .unwrap_or(1);
-                    commands.entity(entity).insert(ItemStack { count: *count, max_stack });
-                }
-            }
-        }
-
-        for (pt, name) in &cached.prop_list {
-            spawn_prop(
-                &mut commands,
-                name.as_str(),
-                pt,
-                &assets.prop_manifests,
-                &assets.prop_manifest_handle,
-                &assets.prop_sprite_assets,
-                ascii_font.as_deref(),
-            );
-        }
-
         needs_explored_init.0 = true;
 
-        // Land the player adjacent to the stairs they arrived through so they
-        // don't immediately re-trigger the stair system.
-        // Ascending (came up from below) → land near down stairs.
-        // Descending (came down from above) → land near up stairs.
-        let target_stairs = if ascending {
-            cached.down_stairs_pos
-        } else {
-            cached.up_stairs_pos
-        };
-        find_adjacent_floor(&map, target_stairs).unwrap_or(target_stairs)
+        FloorSource::Restore { cached, ascending }
     } else {
-        // ---------------------------------------------------------------
-        // Generate a fresh floor
-        // ---------------------------------------------------------------
-        let spawn_table = assets.monster_spawn_tables
+        // Generate path: run the builder pipeline
+        let spawn_table = assets
+            .monster_spawn_tables
             .get(&assets.monster_spawn_table_handle.0)
             .unwrap();
-        let item_spawn_table = assets.item_spawn_tables
+        let item_spawn_table = assets
+            .item_spawn_tables
             .get(&assets.item_spawn_table_handle.0)
             .unwrap();
-
-        let prefabs = assets.prefab_manifests
+        let prefabs = assets
+            .prefab_manifests
             .get(&assets.prefab_manifest_handle.0)
             .map(|m| m.prefabs.clone())
             .unwrap_or_default();
-
-        let monster_manifest = assets.monster_manifests
+        let monster_manifest = assets
+            .monster_manifests
             .get(&assets.monster_manifest_handle.0)
             .unwrap();
-
-        let decoration_rules = assets.decoration_catalogs
+        let decoration_rules = assets
+            .decoration_catalogs
             .get(&assets.decoration_catalog_handle.0)
             .map(|c| c.rules.clone())
             .unwrap_or_default();
@@ -729,47 +414,33 @@ pub fn spawn_dungeon(
         builder.build_map();
         // Write the updated counter back so future floors don't reuse IDs.
         *squad_counter = builder.build_data.squad_counter.clone();
-        *map = builder.build_data.map.clone();
 
-        spawn_tiles_into_ecs(&mut commands, map_entity, &map, &tile_assets, ascii_font.as_deref());
-
-        spawn_dungeon_entities(
-            &mut commands,
-            &builder.build_data,
-            &mut turn_manager,
-            &assets,
-            ascii_font.as_deref(),
-        );
-
-        let starting_pos = builder.build_data.starting_position.unwrap_or_else(|| {
-            warn!("Map builder did not set a starting position; falling back to first walkable tile.");
-            map.tiles
-                .iter()
-                .enumerate()
-                .find(|(_, t)| is_walkable(**t))
-                .map(|(idx, _)| {
-                    let (x, y) = map.idx_xy(idx);
-                    crate::components::Position { x, y }
-                })
-                .expect("Map has no walkable tiles — cannot place player")
-        });
-
-        let starting_pt = Point::new(starting_pos.x, starting_pos.y);
-        // If the builder placed UpStairs at the starting position (depth > 1),
-        // step the player off it so player_stair_system doesn't immediately
-        // fire AscendStairsMessage on the first Changed<Position>.
-        if map
-            .get_tile(starting_pt)
-            .map(|t| t.terrain == TerrainType::UpStairs)
-            .unwrap_or(false)
-        {
-            find_adjacent_floor(&map, starting_pt).unwrap_or(starting_pt)
-        } else {
-            starting_pt
-        }
+        FloorSource::Generate(builder.build_data)
     };
 
-    commands.insert_resource(PlayerSpawnPoint(player_spawn));
+    // ---------------------------------------------------------------
+    // Materialize floor entities (single code path for all sources)
+    // ---------------------------------------------------------------
+    let result: FloorResult = materialize_floor(
+        &mut commands,
+        map_entity,
+        &assets,
+        &tile_assets,
+        &mut turn_manager,
+        ascii_font.as_deref(),
+        source,
+    );
+
+    for warning in &result.warnings {
+        warn!("{}", warning);
+    }
+
+    *map = result.map;
+    commands.insert_resource(PlayerSpawnPoint(result.player_spawn));
+
+    if let Some(player_save) = result.pending_player_load {
+        pending_player_load.0 = Some(player_save);
+    }
 
     // Re-add persistent actors (player + global turn marker) to the turn queue.
     if let Ok(player_entity) = player_query.single() {
@@ -784,10 +455,12 @@ pub fn spawn_dungeon(
     // First floor intro — set the atmosphere.
     if floor.0 == 1 {
         log_writer.write(GameLogMessage(
-            "The stone steps descend into darkness. Somewhere far below, the Veiled Tyrant stirs.".to_string(),
+            "The stone steps descend into darkness. Somewhere far below, the Veiled Tyrant stirs."
+                .to_string(),
         ));
         log_writer.write(GameLogMessage(
-            "Its power grows with every passing moment. You must reach the depths before it becomes unstoppable.".to_string(),
+            "Its power grows with every passing moment. You must reach the depths before it becomes unstoppable."
+                .to_string(),
         ));
     }
 

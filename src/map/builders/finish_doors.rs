@@ -35,9 +35,11 @@ impl MetaMapBuilder for FinishDoors {
                     |t: TerrainType| matches!(t, TerrainType::Wall | TerrainType::Empty);
                 let is_passable = |t: TerrainType| !is_blocking(t);
 
-                // Orphaned: passable on both sides of either axis
-                if (is_passable(left) && is_passable(right))
-                    || (is_passable(up) && is_passable(down))
+                // Orphaned: at least one passable neighbor on each axis
+                // A valid door blocks one axis entirely (wall on both sides)
+                let passable_h = is_passable(left) || is_passable(right);
+                let passable_v = is_passable(up) || is_passable(down);
+                if passable_h && passable_v
                 {
                     to_floor.push(idx);
                     continue;
@@ -55,5 +57,101 @@ impl MetaMapBuilder for FinishDoors {
         for idx in to_floor {
             build_data.map.tiles[idx].terrain = TerrainType::Floor;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map::tile::TerrainType;
+
+    #[test]
+    fn orphaned_door_converted_to_floor() {
+        // Door with passable neighbors on both axes → orphaned (not a chokepoint)
+        //   .
+        //  .+.
+        //   .
+        let mut bm = BuilderMap::new_for_test(5, 5);
+        let door_idx = bm.map.xy_idx(2, 2);
+        let left_idx = bm.map.xy_idx(1, 2);
+        let right_idx = bm.map.xy_idx(3, 2);
+        let above_idx = bm.map.xy_idx(2, 1);
+        let below_idx = bm.map.xy_idx(2, 3);
+        bm.map.tiles[door_idx].terrain = TerrainType::Door;
+        bm.map.tiles[left_idx].terrain = TerrainType::Floor;
+        bm.map.tiles[right_idx].terrain = TerrainType::Floor;
+        bm.map.tiles[above_idx].terrain = TerrainType::Floor;
+        bm.map.tiles[below_idx].terrain = TerrainType::Floor;
+
+        FinishDoors.build_map(&mut bm);
+
+        assert_eq!(
+            bm.map.tiles[door_idx].terrain,
+            TerrainType::Floor,
+            "Orphaned door should become floor"
+        );
+    }
+
+    #[test]
+    fn valid_horizontal_door_kept() {
+        // Valid door:  x#x     (# above, # below, . left, . right)
+        //              .+.     Vertical axis fully blocked → valid chokepoint
+        //              x#x
+        let mut bm = BuilderMap::new_for_test(5, 5);
+        let door_idx = bm.map.xy_idx(2, 2);
+        let left_idx = bm.map.xy_idx(1, 2);
+        let right_idx = bm.map.xy_idx(3, 2);
+        bm.map.tiles[door_idx].terrain = TerrainType::Door;
+        bm.map.tiles[left_idx].terrain = TerrainType::Floor;
+        bm.map.tiles[right_idx].terrain = TerrainType::Floor;
+        // above (2,1) and below (2,3) are walls (default)
+
+        FinishDoors.build_map(&mut bm);
+
+        assert_eq!(
+            bm.map.tiles[door_idx].terrain,
+            TerrainType::Door,
+            "Valid horizontal door should be kept"
+        );
+    }
+
+    #[test]
+    fn valid_vertical_door_kept() {
+        // Valid door:  x.x     (# left, # right, . above, . below)
+        //              #+#     Horizontal axis fully blocked → valid chokepoint
+        //              x.x
+        let mut bm = BuilderMap::new_for_test(5, 5);
+        let door_idx = bm.map.xy_idx(2, 2);
+        let above_idx = bm.map.xy_idx(2, 1);
+        let below_idx = bm.map.xy_idx(2, 3);
+        bm.map.tiles[door_idx].terrain = TerrainType::Door;
+        bm.map.tiles[above_idx].terrain = TerrainType::Floor;
+        bm.map.tiles[below_idx].terrain = TerrainType::Floor;
+        // left (1,2) and right (3,2) are walls (default)
+
+        FinishDoors.build_map(&mut bm);
+
+        assert_eq!(
+            bm.map.tiles[door_idx].terrain,
+            TerrainType::Door,
+            "Valid vertical door should be kept"
+        );
+    }
+
+    #[test]
+    fn dead_end_door_converted() {
+        let mut bm = BuilderMap::new_for_test(5, 5);
+        let door_idx = bm.map.xy_idx(2, 2);
+        let left_idx = bm.map.xy_idx(1, 2);
+        bm.map.tiles[door_idx].terrain = TerrainType::Door;
+        bm.map.tiles[left_idx].terrain = TerrainType::Floor;
+
+        FinishDoors.build_map(&mut bm);
+
+        assert_eq!(
+            bm.map.tiles[door_idx].terrain,
+            TerrainType::Floor,
+            "Dead-end door should become floor"
+        );
     }
 }

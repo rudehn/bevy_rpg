@@ -46,9 +46,13 @@ impl MonsterSpawner {
             occupied.insert(build_data.map.xy_idx(start.x, start.y));
         }
 
-        if let Some(rooms) = &build_data.rooms {
-            let map = &build_data.map;
-            for room in rooms.iter() {
+        let Some(rooms) = build_data.rooms.clone() else {
+            warn!("MonsterSpawner: rooms not set, skipping");
+            return;
+        };
+
+        let map = &build_data.map;
+        for room in rooms.iter() {
                 // 50% chance per room
                 if rng.roll_dice(1, 2) == 1 {
                     let spawn_index = rng.range(0, possible_spawns.len());
@@ -136,7 +140,6 @@ impl MonsterSpawner {
                     }
                 }
             }
-        }
     }
 
     fn get_walkable_room_point(

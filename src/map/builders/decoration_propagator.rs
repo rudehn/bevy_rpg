@@ -82,6 +82,7 @@ impl DecorationPropagator {
         let mut rng = RandomNumberGenerator::new();
         let width = build_data.width;
         let height = build_data.height;
+        let exclusion_zones = build_data.exclusion_zones().to_vec();
 
         for rule in &self.rules {
             if self.depth < rule.min_floor || self.depth > rule.max_floor {
@@ -108,7 +109,7 @@ impl DecorationPropagator {
                     }
                     if Self::in_exclusion_zone(
                         Point::new(x, y),
-                        &build_data.decoration_exclusion_zones,
+                        &exclusion_zones,
                     ) {
                         continue;
                     }

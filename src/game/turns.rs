@@ -14,12 +14,11 @@ use crate::game::actions::{
 use crate::map::map::populate_blocked_tiles;
 use crate::game::ai::MonsterAI;
 use crate::game::effects::{UseItemMessage, handle_use_item};
-use crate::game::magic::{ActiveSpells, handle_cast_spell};
 use crate::game::ranged::handle_ranged_attack;
 use crate::game::targeting::TargetingMode;
-use crate::game::items::{handle_drop_item, handle_equip_item, handle_unequip_item};
 use crate::game::spells::{SpellEffect, SpellRegistry, SpellTarget};
 use crate::game::targeting::TargetingContext;
+use crate::game::magic::ActiveSpells;
 use crate::game::InGameState;
 use crate::player::{MovementTimer, Player};
 
@@ -57,13 +56,41 @@ pub enum TurnState {
     Processing,
 }
 
+/// Ordered phases within `TurnState::Processing`.
+///
+/// Domain plugins register their action handlers into the appropriate phase
+/// (usually `ResolveActions`) instead of editing this plugin. To add a new
+/// action handler:
+///
+/// 1. Define the intent message + handler in your domain module
+/// 2. In your plugin's `build()`:
+///    ```ignore
+///    app.add_message::<MyIntent>()
+///       .add_systems(Update, handle_my_action.in_set(ProcessingPhase::ResolveActions));
+///    ```
+/// 3. Add the dispatch arm in `dispatch_player_action` (actions.rs)
+/// 4. Add the key binding in `handle_player_input` (turns.rs)
+///
+/// That's it — no changes needed in `TurnOrderPlugin`.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ProcessingPhase {
+    /// Pre-execution: populate blocked tiles, dispatch intents from AI/player.
+    Brain,
+    /// Resolves movement first since it can redirect to melee/door intents.
+    ResolveMovement,
+    /// All other action handlers (items, spells, melee, ranged, etc.).
+    ResolveActions,
+    /// Post-execution: resolve turn end, continue processing.
+    Cleanup,
+}
+
 pub struct TurnOrderPlugin;
 
 impl Plugin for TurnOrderPlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<TurnState>()
             .init_resource::<PendingPlayerAction>()
-            // Intent messages used by the Processing chain's handler systems.
+            // Core intent messages written by dispatch_player_action.
             .add_message::<MovementIntent>()
             .add_message::<MeleeIntent>()
             .add_message::<WaitIntent>()
@@ -76,47 +103,73 @@ impl Plugin for TurnOrderPlugin {
             .add_message::<ActionFinishedEvent>()
             .add_message::<FreeActionEvent>()
             .add_message::<TurnEndEvent>()
+            // --- Processing phase ordering ---
+            .configure_sets(
+                Update,
+                (
+                    ProcessingPhase::Brain,
+                    ProcessingPhase::ResolveMovement,
+                    ProcessingPhase::ResolveActions,
+                    ProcessingPhase::Cleanup,
+                )
+                    .chain()
+                    .run_if(in_state(TurnState::Processing)),
+            )
             .add_systems(OnEnter(AppState::InGame), (setup_turn_order, start_turns))
             .add_systems(
                 Update,
                 (
                     select_next_actor.run_if(in_state(TurnState::NextTurn)),
-                    // Only accept movement input when no UI screen is open.
-                    // player_stun_check intercepts before input if stunned.
                     (
                         player_stun_check,
                         handle_player_input.after(player_stun_check),
                     ).run_if(
                         in_state(TurnState::PlayerInput).and(in_state(InGameState::Running))
                     ),
-                    (
-                        // --- Brain Systems ---
-                        populate_blocked_tiles,
-                        dispatch_player_action,
-                        monster_ai_dispatch,
-                        marker_dispatch,
-                        // --- Execution Systems ---
-                        handle_movement,
-                        handle_melee,
-                        handle_ranged_attack,
-                        handle_door_open,
-                        handle_open_chest,
-                        handle_pickup,
-                        handle_wait,
-                        handle_equip_item,
-                        handle_unequip_item,
-                        handle_drop_item,
-                        handle_use_item,
-                        handle_cast_spell,
-                        // --- Cleanup ---
-                        resolve_free_actions,
-                        resolve_turn_end,
-                        continue_turn_processing,
-                    )
-                        .chain()
-                        .run_if(in_state(TurnState::Processing)),
                 )
                     .run_if(in_state(AppState::InGame)),
+            )
+            // --- Brain phase ---
+            .add_systems(
+                Update,
+                (
+                    populate_blocked_tiles,
+                    dispatch_player_action,
+                    monster_ai_dispatch,
+                    marker_dispatch,
+                )
+                    .chain()
+                    .in_set(ProcessingPhase::Brain),
+            )
+            // --- Movement phase (runs before other handlers since it can redirect) ---
+            .add_systems(
+                Update,
+                handle_movement.in_set(ProcessingPhase::ResolveMovement),
+            )
+            // --- Action handlers (core) ---
+            .add_systems(
+                Update,
+                (
+                    handle_melee,
+                    handle_ranged_attack,
+                    handle_door_open,
+                    handle_open_chest,
+                    handle_pickup,
+                    handle_wait,
+                    handle_use_item,
+                )
+                    .in_set(ProcessingPhase::ResolveActions),
+            )
+            // --- Cleanup phase ---
+            .add_systems(
+                Update,
+                (
+                    resolve_free_actions,
+                    resolve_turn_end,
+                    continue_turn_processing,
+                )
+                    .chain()
+                    .in_set(ProcessingPhase::Cleanup),
             );
     }
 }

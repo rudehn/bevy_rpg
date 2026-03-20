@@ -21,7 +21,7 @@ impl DistantExit {
     }
 
     fn build(&mut self, build_data: &mut BuilderMap) {
-        let starting_pos = build_data.starting_position.as_ref().unwrap().clone();
+        let starting_pos = build_data.require_starting_position("DistantExit").clone();
         let start_idx = build_data
             .map
             .point2d_to_index(Point::new(starting_pos.x, starting_pos.y));
@@ -71,14 +71,14 @@ impl DistantExit {
 
         if build_data.map.depth == 10 {
             // Final floor: spawn The Veiled Tyrant + guards, no down stairs
-            build_data.spawn_list.push(SpawnEntry::solo(stairs_pos, "The Veiled Tyrant".to_string()));
+            build_data.add_monster_spawn(SpawnEntry::solo(stairs_pos, "The Veiled Tyrant".to_string()));
             // Guard minions near the boss
             for (dx, dy) in [(1, 0), (-1, 0), (0, 1)] {
                 let guard_pt = Point::new(stairs_pos.x + dx, stairs_pos.y + dy);
                 if build_data.map.in_bounds(guard_pt) {
                     let idx = build_data.map.point2d_to_index(guard_pt);
                     if build_data.map.tiles[idx].terrain == TerrainType::Floor {
-                        build_data.spawn_list.push(SpawnEntry::solo(guard_pt, "Wraith".to_string()));
+                        build_data.add_monster_spawn(SpawnEntry::solo(guard_pt, "Wraith".to_string()));
                     }
                 }
             }

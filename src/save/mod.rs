@@ -178,22 +178,72 @@ pub struct GameSaveData {
     pub game_log: Vec<String>,
     pub map: MapSaveData,
     pub player: PlayerSaveData,
-    pub monsters: Vec<MonsterEntry>,
-    pub floor_items: Vec<ItemEntry>,
+    pub monsters: Vec<SavedMonster>,
+    pub floor_items: Vec<SavedItem>,
     #[serde(default)]
-    pub props: Vec<PropEntry>,
-    pub floor_cache: HashMap<u32, CachedFloorSave>,
+    pub props: Vec<SavedProp>,
+    pub floor_cache: HashMap<u32, SavedFloorData>,
     #[serde(default)]
     pub squad_id_counter: u64,
     #[serde(default)]
     pub tyrant_power: TyrantPower,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct PropEntry {
+// ---------------------------------------------------------------------------
+// Unified entity types — shared by GameSaveData, CachedFloor, and
+// SavedFloorData. Adding a new persistent field only requires updating
+// these types + the queries that populate them.
+// ---------------------------------------------------------------------------
+
+/// A monster's mutable state, shared by save files and the floor cache.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SavedMonster {
     pub x: i32,
     pub y: i32,
     pub name: String,
+    #[serde(default)]
+    pub hp_current: i32,
+    #[serde(default)]
+    pub squad_id: Option<u64>,
+    #[serde(default)]
+    pub is_leader: bool,
+    #[serde(default)]
+    pub squad_config: Option<SquadConfig>,
+    #[serde(default)]
+    pub patrol_route: Option<crate::game::ai::PatrolRoute>,
+}
+
+/// A floor item's mutable state, shared by save files and the floor cache.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SavedItem {
+    pub x: i32,
+    pub y: i32,
+    pub name: String,
+    #[serde(default = "default_stack_count")]
+    pub count: u32,
+}
+
+/// A prop's state, shared by save files and the floor cache.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SavedProp {
+    pub x: i32,
+    pub y: i32,
+    pub name: String,
+}
+
+/// A complete floor snapshot, shared by the in-memory floor cache and
+/// serialized save files. Uses `MapSaveData` so it can be serialized
+/// without a separate conversion type.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SavedFloorData {
+    pub map: MapSaveData,
+    pub monsters: Vec<SavedMonster>,
+    pub items: Vec<SavedItem>,
+    #[serde(default)]
+    pub props: Vec<SavedProp>,
+    pub down_stairs_pos: [i32; 2],
+    #[serde(default)]
+    pub up_stairs_pos: [i32; 2],
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -249,56 +299,9 @@ pub struct InventoryItemSave {
 fn default_stack_count() -> u32 { 1 }
 fn default_stack_max() -> u32 { 1 }
 
-#[derive(Serialize, Deserialize)]
-pub struct MonsterEntry {
-    pub x: i32,
-    pub y: i32,
-    pub name: String,
-    pub hp_current: i32,
-    #[serde(default)]
-    pub squad_id: Option<u64>,
-    #[serde(default)]
-    pub is_leader: bool,
-    #[serde(default)]
-    pub squad_config: Option<SquadConfig>,
-    #[serde(default)]
-    pub patrol_route: Option<crate::game::ai::PatrolRoute>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct ItemEntry {
-    pub x: i32,
-    pub y: i32,
-    pub name: String,
-    #[serde(default = "default_stack_count")]
-    pub count: u32,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct CachedFloorSave {
-    pub map: MapSaveData,
-    pub monster_list: Vec<CachedMonsterSave>,
-    pub item_list: Vec<([i32; 2], String, u32)>,
-    #[serde(default)]
-    pub prop_list: Vec<([i32; 2], String)>,
-    pub down_stairs_pos: [i32; 2],
-    #[serde(default)]
-    pub up_stairs_pos: [i32; 2],
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct CachedMonsterSave {
-    pub pos: [i32; 2],
-    pub name: String,
-    #[serde(default)]
-    pub squad_id: Option<u64>,
-    #[serde(default)]
-    pub is_leader: bool,
-    #[serde(default)]
-    pub squad_config: Option<SquadConfig>,
-    #[serde(default)]
-    pub patrol_route: Option<crate::game::ai::PatrolRoute>,
-}
+/// Backward-compatible alias: save files and `SavedFloorCache` still
+/// reference this name.
+pub type CachedFloorSave = SavedFloorData;
 
 // ---- Conversion helpers ----
 
@@ -326,62 +329,23 @@ pub fn save_data_to_map(data: &MapSaveData) -> Map {
     }
 }
 
-pub fn cached_floor_to_save(cached: &CachedFloor) -> CachedFloorSave {
-    CachedFloorSave {
+pub fn cached_floor_to_save(cached: &CachedFloor) -> SavedFloorData {
+    SavedFloorData {
         map: map_to_save_data(&cached.map),
-        monster_list: cached
-            .monster_list
-            .iter()
-            .map(|m| CachedMonsterSave {
-                pos: [m.pos.x, m.pos.y],
-                name: m.name.clone(),
-                squad_id: m.squad_id,
-                is_leader: m.is_leader,
-                squad_config: m.squad_config.clone(),
-                patrol_route: m.patrol_route.clone(),
-            })
-            .collect(),
-        item_list: cached
-            .item_list
-            .iter()
-            .map(|(pt, name, count)| ([pt.x, pt.y], name.clone(), *count))
-            .collect(),
-        prop_list: cached
-            .prop_list
-            .iter()
-            .map(|(pt, name)| ([pt.x, pt.y], name.clone()))
-            .collect(),
+        monsters: cached.monsters.clone(),
+        items: cached.items.clone(),
+        props: cached.props.clone(),
         down_stairs_pos: [cached.down_stairs_pos.x, cached.down_stairs_pos.y],
         up_stairs_pos: [cached.up_stairs_pos.x, cached.up_stairs_pos.y],
     }
 }
 
-pub fn save_to_cached_floor(data: &CachedFloorSave) -> CachedFloor {
-    use crate::map::dungeon::CachedMonster;
+pub fn save_to_cached_floor(data: &SavedFloorData) -> CachedFloor {
     CachedFloor {
         map: save_data_to_map(&data.map),
-        monster_list: data
-            .monster_list
-            .iter()
-            .map(|m| CachedMonster {
-                pos: Point::new(m.pos[0], m.pos[1]),
-                name: m.name.clone(),
-                squad_id: m.squad_id,
-                is_leader: m.is_leader,
-                squad_config: m.squad_config.clone(),
-                patrol_route: m.patrol_route.clone(),
-            })
-            .collect(),
-        item_list: data
-            .item_list
-            .iter()
-            .map(|(pos, name, count)| (Point::new(pos[0], pos[1]), name.clone(), *count))
-            .collect(),
-        prop_list: data
-            .prop_list
-            .iter()
-            .map(|(pos, name)| (Point::new(pos[0], pos[1]), name.clone()))
-            .collect(),
+        monsters: data.monsters.clone(),
+        items: data.items.clone(),
+        props: data.props.clone(),
         down_stairs_pos: Point::new(data.down_stairs_pos[0], data.down_stairs_pos[1]),
         up_stairs_pos: Point::new(data.up_stairs_pos[0], data.up_stairs_pos[1]),
     }
@@ -465,9 +429,9 @@ pub fn auto_save_system(
         .collect();
 
     // Floor monsters
-    let monsters: Vec<MonsterEntry> = monster_query
+    let monsters: Vec<SavedMonster> = monster_query
         .iter()
-        .map(|(pos, name, health, squad_id, squad_config, is_leader, patrol_route)| MonsterEntry {
+        .map(|(pos, name, health, squad_id, squad_config, is_leader, patrol_route)| SavedMonster {
             x: pos.x,
             y: pos.y,
             name: name.0.clone(),
@@ -480,9 +444,9 @@ pub fn auto_save_system(
         .collect();
 
     // Floor items (not in inventory)
-    let floor_items: Vec<ItemEntry> = floor_item_query
+    let floor_items: Vec<SavedItem> = floor_item_query
         .iter()
-        .map(|(pos, name, stack)| ItemEntry {
+        .map(|(pos, name, stack)| SavedItem {
             x: pos.x,
             y: pos.y,
             name: name.0.clone(),
@@ -513,13 +477,13 @@ pub fn auto_save_system(
         };
 
     // Props
-    let props: Vec<PropEntry> = prop_query
+    let props: Vec<SavedProp> = prop_query
         .iter()
-        .map(|(pos, name)| PropEntry { x: pos.x, y: pos.y, name: name.0.clone() })
+        .map(|(pos, name)| SavedProp { x: pos.x, y: pos.y, name: name.0.clone() })
         .collect();
 
     // Floor cache
-    let floor_cache_save: HashMap<u32, CachedFloorSave> = floor_cache
+    let floor_cache_save: HashMap<u32, SavedFloorData> = floor_cache
         .0
         .iter()
         .map(|(k, v)| (*k, cached_floor_to_save(v)))
@@ -732,4 +696,4 @@ pub fn apply_saved_hp_system(
 /// Temporarily holds the serialized floor cache loaded from disk.
 /// Consumed by apply_player_load_system to restore FloorCache.
 #[derive(Resource, Default)]
-pub struct SavedFloorCache(pub HashMap<u32, CachedFloorSave>);
+pub struct SavedFloorCache(pub HashMap<u32, SavedFloorData>);

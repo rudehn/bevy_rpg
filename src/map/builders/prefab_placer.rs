@@ -410,7 +410,7 @@ impl PrefabPlacer {
                     build_data, oriented, rng, occupied,
                 ) {
                     occupied.push(rect);
-                    build_data.decoration_exclusion_zones.push(rect);
+                    build_data.add_exclusion_zone(rect);
                     return true;
                 }
             }
@@ -419,7 +419,7 @@ impl PrefabPlacer {
                     build_data, oriented, rng, occupied,
                 ) {
                     occupied.push(rect);
-                    build_data.decoration_exclusion_zones.push(rect);
+                    build_data.add_exclusion_zone(rect);
                     return true;
                 }
             }
@@ -435,7 +435,7 @@ impl PrefabPlacer {
         rng: &mut RandomNumberGenerator,
         occupied: &[Rect],
     ) -> Option<Rect> {
-        let Some(rooms) = build_data.rooms.as_ref() else {
+        let Some(rooms) = build_data.rooms() else {
             return None;
         };
 
@@ -749,21 +749,21 @@ impl PrefabPlacer {
                     }
                     crate::assets::MonsterBehavior::Wander => None,
                 };
-                build_data.spawn_list.push(entry);
+                build_data.add_monster_spawn(entry);
             }
         }
 
         for pe in &prefab.props {
             let wx = offset_x + pe.x;
             let wy = offset_y + pe.y;
-            build_data.prop_spawn_list.push((Point::new(wx, wy), pe.prop.clone()));
+            build_data.add_prop_spawn(Point::new(wx, wy), pe.prop.clone());
         }
 
         for ie in &prefab.item_spawns {
             let wx = offset_x + ie.x;
             let wy = offset_y + ie.y;
             if let Some(ref item_name) = ie.item {
-                build_data.item_spawn_list.push((Point::new(wx, wy), item_name.clone(), 1));
+                build_data.add_item_spawn(Point::new(wx, wy), item_name.clone(), 1);
             }
         }
     }

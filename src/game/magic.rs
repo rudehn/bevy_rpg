@@ -244,305 +244,50 @@ pub fn handle_cast_spell(
         for effect in &spell.effects {
             match effect {
                 SpellEffect::Damage { dice, .. } => {
-                    let roll = roll_dice_expr(&mut game_rng.0, dice);
-                    let damage = roll.max(1);
-                    damage_writer.write(ApplyDamageMessage {
-                        attacker: caster_entity,
-                        target: target_entity,
-                        final_damage: damage,
-                        damage_type: spell_damage_type,
-                        source: DamageSource::Spell,
-                    });
-                    if let (Ok(caster_pos), Ok(target_pos_c)) =
-                        (positions.get(caster_entity), positions.get(target_entity))
-                    {
-                        let src = (caster_pos.x, caster_pos.y);
-                        let dst = (target_pos_c.x, target_pos_c.y);
-                        match spell_damage_type {
-                            DamageType::Fire => { particle_writer.write(ParticleRequest::fire_bolt(src, dst)); },
-                            DamageType::Lightning => { particle_writer.write(ParticleRequest::lightning(src, dst)); },
-                            _ => { particle_writer.write(ParticleRequest::spell(
-                                grid_to_world_center(src.0, src.1),
-                                grid_to_world_center(dst.0, dst.1),
-                                damage_type_color(spell_damage_type),
-                            )); },
-                        }
-                    }
+                    effect_damage(caster_entity, target_entity, spell_damage_type, dice,
+                        &mut game_rng, &positions, &mut damage_writer, &mut particle_writer);
                 }
                 SpellEffect::Heal { dice, .. } => {
-                    let roll = roll_dice_expr(&mut game_rng.0, dice);
-                    let amount = roll.max(1);
-                    heal_writer.write(HealMessage {
-                        entity: target_entity,
-                        amount,
-                    });
+                    effect_heal(target_entity, dice, &mut game_rng, &mut heal_writer);
                 }
-                SpellEffect::AoeDamage {
-                    dice,
-                    radius,
-                    ..
-                } => {
-                    let target_pos_result = positions.get(target_entity).map(|p| (p.x, p.y));
-                    if let Ok((cx, cy)) = target_pos_result {
-                        let mut hit_count = 0;
-                        for (ent, pos) in all_positions.iter() {
-                            let dist = (pos.x - cx).abs() + (pos.y - cy).abs();
-                            if dist <= *radius {
-                                let roll = roll_dice_expr(&mut game_rng.0, dice);
-                                let damage = roll.max(1);
-                                damage_writer.write(ApplyDamageMessage {
-                                    attacker: caster_entity,
-                                    target: ent,
-                                    final_damage: damage,
-                                    damage_type: spell_damage_type,
-                                    source: DamageSource::Spell,
-                                });
-                                hit_count += 1;
-                            }
-                        }
-                        for dx in -radius..=*radius {
-                            for dy in -radius..=*radius {
-                                if dx.abs() + dy.abs() <= *radius {
-                                    let tx = cx + dx;
-                                    let ty = cy + dy;
-                                    if tx >= 0
-                                        && ty >= 0
-                                        && tx < map.width()
-                                        && ty < map.height()
-                                    {
-                                        let idx = map.xy_idx(tx, ty);
-                                        if map.tiles[idx].terrain
-                                            == crate::map::tile::TerrainType::Door
-                                        {
-                                            log_writer.write(GameLogMessage(
-                                                "A door is destroyed by the blast!".to_string(),
-                                            ));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if hit_count > 0 {
-                            log_writer.write(GameLogMessage(format!(
-                                "{} creatures caught in the blast!",
-                                hit_count
-                            )));
-                        }
-
-                        if let Ok(caster_pos) = positions.get(caster_entity) {
-                            let src = (caster_pos.x, caster_pos.y);
-                            let center = (cx, cy);
-                            match spell_damage_type {
-                                DamageType::Fire => {
-                                    particle_writer.write(ParticleRequest::fire_bolt(src, center));
-                                    for dx in -radius..=*radius {
-                                        for dy in -radius..=*radius {
-                                            if dx.abs() + dy.abs() <= *radius {
-                                                particle_writer.write(ParticleRequest::fire_impact((cx + dx, cy + dy)));
-                                            }
-                                        }
-                                    }
-                                }
-                                DamageType::Lightning => {
-                                    particle_writer.write(ParticleRequest::lightning(src, center));
-                                    for dx in -radius..=*radius {
-                                        for dy in -radius..=*radius {
-                                            if dx.abs() + dy.abs() <= *radius {
-                                                particle_writer.write(ParticleRequest::lightning_impact((cx + dx, cy + dy)));
-                                            }
-                                        }
-                                    }
-                                }
-                                _ => {
-                                    let color = damage_type_color(spell_damage_type);
-                                    particle_writer.write(ParticleRequest::spell(
-                                        grid_to_world_center(src.0, src.1),
-                                        grid_to_world_center(center.0, center.1),
-                                        color,
-                                    ));
-                                }
-                            }
-                        }
-                    }
+                SpellEffect::AoeDamage { dice, radius, .. } => {
+                    effect_aoe_damage(caster_entity, target_entity, spell_damage_type, dice, *radius,
+                        &mut game_rng, &positions, &all_positions, &map,
+                        &mut damage_writer, &mut log_writer, &mut particle_writer);
                 }
-                SpellEffect::ChainDamage {
-                    dice,
-                    max_jumps,
-                    jump_range,
-                    ..
-                } => {
-                    let roll = roll_dice_expr(&mut game_rng.0, dice);
-                    let primary_damage = roll.max(1);
-                    damage_writer.write(ApplyDamageMessage {
-                        attacker: caster_entity,
-                        target: target_entity,
-                        final_damage: primary_damage,
-                        damage_type: spell_damage_type,
-                        source: DamageSource::Spell,
-                    });
-
-                    if let (Ok(caster_pos), Ok(target_pos_c)) =
-                        (positions.get(caster_entity), positions.get(target_entity))
-                    {
-                        particle_writer.write(ParticleRequest::lightning(
-                            (caster_pos.x, caster_pos.y),
-                            (target_pos_c.x, target_pos_c.y),
-                        ));
-                    }
-
-                    let mut hit_entities = vec![target_entity, caster_entity];
-                    let mut last_pos = positions
-                        .get(target_entity)
-                        .map(|p| (p.x, p.y))
-                        .unwrap_or((0, 0));
-
-                    for _ in 0..*max_jumps {
-                        let mut best: Option<(Entity, i32)> = None;
-                        for (ent, pos) in all_positions.iter() {
-                            if hit_entities.contains(&ent) {
-                                continue;
-                            }
-                            let dist =
-                                (pos.x - last_pos.0).abs() + (pos.y - last_pos.1).abs();
-                            if dist <= *jump_range {
-                                if best.is_none() || dist < best.unwrap().1 {
-                                    best = Some((ent, dist));
-                                }
-                            }
-                        }
-                        if let Some((next_ent, _)) = best {
-                            let next_pos = positions
-                                .get(next_ent)
-                                .map(|p| (p.x, p.y))
-                                .unwrap_or(last_pos);
-                            particle_writer.write(ParticleRequest::lightning(last_pos, next_pos));
-
-                            let jump_roll = game_rng.0.roll_dice(1, 6);
-                            let jump_damage = jump_roll.max(1);
-                            damage_writer.write(ApplyDamageMessage {
-                                attacker: caster_entity,
-                                target: next_ent,
-                                final_damage: jump_damage,
-                                damage_type: spell_damage_type,
-                                source: DamageSource::Spell,
-                            });
-                            last_pos = next_pos;
-                            hit_entities.push(next_ent);
-                            log_writer.write(GameLogMessage(
-                                "Lightning arcs to another target!".to_string(),
-                            ));
-                        } else {
-                            break;
-                        }
-                    }
+                SpellEffect::ChainDamage { dice, max_jumps, jump_range, .. } => {
+                    effect_chain_damage(caster_entity, target_entity, spell_damage_type, dice, *max_jumps, *jump_range,
+                        &mut game_rng, &positions, &all_positions,
+                        &mut damage_writer, &mut log_writer, &mut particle_writer);
                 }
                 SpellEffect::ApplyHaste { duration } => {
-                    commands
-                        .entity(target_entity)
-                        .insert(Hasted {
-                            turns_remaining: *duration,
-                        })
-                        .remove::<Slowed>();
-                    log_writer.write(GameLogMessage("Haste granted!".to_string()));
+                    effect_apply_haste(&mut commands, target_entity, *duration, &mut log_writer);
                 }
                 SpellEffect::ApplySlow { duration } => {
-                    commands
-                        .entity(target_entity)
-                        .insert(Slowed {
-                            turns_remaining: *duration,
-                        })
-                        .remove::<Hasted>();
-                    log_writer.write(GameLogMessage("Target is slowed!".to_string()));
+                    effect_apply_slow(&mut commands, target_entity, *duration, &mut log_writer);
                 }
-                SpellEffect::DrainMana {
-                    amount,
-                    ..
-                } => {
-                    let drain = (*amount).max(0);
-                    let caster_e = caster_entity;
-                    let target_e = target_entity;
-                    let label = caster_label.clone();
-                    commands.queue(move |world: &mut World| {
-                        let actual_drain = {
-                            if let Some(mut target_mana) = world.get_mut::<Mana>(target_e) {
-                                let actual = drain.min(target_mana.current);
-                                target_mana.current -= actual;
-                                actual
-                            } else {
-                                0
-                            }
-                        };
-                        if actual_drain > 0 {
-                            if let Some(mut caster_mana) = world.get_mut::<Mana>(caster_e) {
-                                caster_mana.current =
-                                    (caster_mana.current + actual_drain).min(caster_mana.max);
-                            }
-                        }
-                        world.write_message(GameLogMessage(format!(
-                            "{} drains {} mana!",
-                            label, actual_drain
-                        )));
-                    });
+                SpellEffect::DrainMana { amount, .. } => {
+                    effect_drain_mana(&mut commands, caster_entity, target_entity, *amount, &caster_label);
                 }
                 SpellEffect::SpiritShield { duration } => {
-                    commands.entity(caster_entity).insert(SpiritShielded {
-                        turns_remaining: *duration,
-                    });
-                    log_writer.write(GameLogMessage(format!(
-                        "{} is shielded by spirit energy! (mana absorbs damage for {} turns)",
-                        caster_label, duration
-                    )));
+                    effect_spirit_shield(&mut commands, caster_entity, *duration, &caster_label, &mut log_writer);
                 }
                 SpellEffect::Teleport { range } => {
-                    if *range == 0 {
-                        let walkable: Vec<usize> = (0..map.tiles.len())
-                            .filter(|&idx| crate::map::tile::is_walkable(map.tiles[idx]))
-                            .collect();
-                        if !walkable.is_empty() {
-                            let pick = game_rng.0.roll_dice(1, walkable.len() as i32) as usize - 1;
-                            let idx = walkable[pick];
-                            let (tx, ty) = map.idx_xy(idx);
-                            commands
-                                .entity(caster_entity)
-                                .insert(Position { x: tx, y: ty });
-                            log_writer.write(GameLogMessage(format!(
-                                "{} teleports away!",
-                                caster_label
-                            )));
-                        }
-                    } else if let Some((tx, ty)) = target_pos {
-                        commands
-                            .entity(caster_entity)
-                            .insert(Position { x: tx, y: ty });
-                        log_writer.write(GameLogMessage(format!(
-                            "{} blinks to ({}, {})!",
-                            caster_label, tx, ty
-                        )));
-                    }
+                    effect_teleport(&mut commands, caster_entity, *range, target_pos, &caster_label,
+                        &mut game_rng, &map, &mut log_writer);
                 }
                 SpellEffect::ApplyEnrage { duration } => {
-                    commands.entity(target_entity).insert(
-                        crate::game::abilities::Enraged { turns_remaining: *duration }
-                    );
-                    log_writer.write(GameLogMessage(format!(
-                        "{} enters a rage! (+50% damage for {} turns)",
-                        caster_label, duration
-                    )));
+                    effect_apply_enrage(&mut commands, target_entity, *duration, &caster_label, &mut log_writer);
                 }
                 SpellEffect::SummonAlly { monster, count } => {
-                    // Queue a pending summon — processed by a separate system
-                    // to avoid exceeding the system parameter limit.
-                    let caster_pos = if let Ok(pos) = positions.get(caster_entity) {
-                        *pos
-                    } else {
-                        continue;
-                    };
-                    commands.insert_resource(PendingSummon {
-                        caster_pos,
-                        caster_label: caster_label.clone(),
-                        monster_name: monster.clone(),
-                        count: *count,
-                    });
+                    if let Ok(pos) = positions.get(caster_entity) {
+                        commands.insert_resource(PendingSummon {
+                            caster_pos: *pos,
+                            caster_label: caster_label.clone(),
+                            monster_name: monster.clone(),
+                            count: *count,
+                        });
+                    }
                 }
             }
         }
@@ -552,6 +297,294 @@ pub fn handle_cast_spell(
             base_cost: BASE_ACTION_COST,
         });
     }
+}
+
+// ---------------------------------------------------------------------------
+// Spell effect handlers — one function per SpellEffect variant
+// ---------------------------------------------------------------------------
+
+/// Emit a damage-type-appropriate projectile particle from `src` to `dst`.
+fn emit_spell_particle(
+    particle_writer: &mut MessageWriter<ParticleRequest>,
+    src: (i32, i32),
+    dst: (i32, i32),
+    damage_type: DamageType,
+) {
+    match damage_type {
+        DamageType::Fire => { particle_writer.write(ParticleRequest::fire_bolt(src, dst)); },
+        DamageType::Lightning => { particle_writer.write(ParticleRequest::lightning(src, dst)); },
+        _ => { particle_writer.write(ParticleRequest::spell(
+            grid_to_world_center(src.0, src.1),
+            grid_to_world_center(dst.0, dst.1),
+            damage_type_color(damage_type),
+        )); },
+    }
+}
+
+fn effect_damage(
+    caster: Entity,
+    target: Entity,
+    damage_type: DamageType,
+    dice: &str,
+    rng: &mut ResMut<GameRng>,
+    positions: &Query<&Position>,
+    damage_writer: &mut MessageWriter<ApplyDamageMessage>,
+    particle_writer: &mut MessageWriter<ParticleRequest>,
+) {
+    let damage = roll_dice_expr(&mut rng.0, dice).max(1);
+    damage_writer.write(ApplyDamageMessage {
+        attacker: caster,
+        target,
+        final_damage: damage,
+        damage_type,
+        source: DamageSource::Spell,
+    });
+    if let (Ok(cp), Ok(tp)) = (positions.get(caster), positions.get(target)) {
+        emit_spell_particle(particle_writer, (cp.x, cp.y), (tp.x, tp.y), damage_type);
+    }
+}
+
+fn effect_heal(
+    target: Entity,
+    dice: &str,
+    rng: &mut ResMut<GameRng>,
+    heal_writer: &mut MessageWriter<HealMessage>,
+) {
+    let amount = roll_dice_expr(&mut rng.0, dice).max(1);
+    heal_writer.write(HealMessage { entity: target, amount });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn effect_aoe_damage(
+    caster: Entity,
+    target: Entity,
+    damage_type: DamageType,
+    dice: &str,
+    radius: i32,
+    rng: &mut ResMut<GameRng>,
+    positions: &Query<&Position>,
+    all_positions: &Query<(Entity, &Position)>,
+    map: &Map,
+    damage_writer: &mut MessageWriter<ApplyDamageMessage>,
+    log_writer: &mut MessageWriter<GameLogMessage>,
+    particle_writer: &mut MessageWriter<ParticleRequest>,
+) {
+    let Ok(tp) = positions.get(target).map(|p| (p.x, p.y)) else {
+        return;
+    };
+    let (cx, cy) = tp;
+
+    // Hit entities in radius.
+    let mut hit_count = 0;
+    for (ent, pos) in all_positions.iter() {
+        let dist = (pos.x - cx).abs() + (pos.y - cy).abs();
+        if dist <= radius {
+            let damage = roll_dice_expr(&mut rng.0, dice).max(1);
+            damage_writer.write(ApplyDamageMessage {
+                attacker: caster, target: ent, final_damage: damage, damage_type, source: DamageSource::Spell,
+            });
+            hit_count += 1;
+        }
+    }
+
+    // Check for doors destroyed by the blast.
+    for dx in -radius..=radius {
+        for dy in -radius..=radius {
+            if dx.abs() + dy.abs() <= radius {
+                let (tx, ty) = (cx + dx, cy + dy);
+                if tx >= 0 && ty >= 0 && tx < map.width() && ty < map.height() {
+                    let idx = map.xy_idx(tx, ty);
+                    if map.tiles[idx].terrain == crate::map::tile::TerrainType::Door {
+                        log_writer.write(GameLogMessage("A door is destroyed by the blast!".to_string()));
+                    }
+                }
+            }
+        }
+    }
+    if hit_count > 0 {
+        log_writer.write(GameLogMessage(format!("{} creatures caught in the blast!", hit_count)));
+    }
+
+    // Particles: projectile from caster to center, then impacts across radius.
+    if let Ok(cp) = positions.get(caster) {
+        let src = (cp.x, cp.y);
+        emit_spell_particle(particle_writer, src, (cx, cy), damage_type);
+        match damage_type {
+            DamageType::Fire => {
+                for dx in -radius..=radius {
+                    for dy in -radius..=radius {
+                        if dx.abs() + dy.abs() <= radius {
+                            particle_writer.write(ParticleRequest::fire_impact((cx + dx, cy + dy)));
+                        }
+                    }
+                }
+            }
+            DamageType::Lightning => {
+                for dx in -radius..=radius {
+                    for dy in -radius..=radius {
+                        if dx.abs() + dy.abs() <= radius {
+                            particle_writer.write(ParticleRequest::lightning_impact((cx + dx, cy + dy)));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn effect_chain_damage(
+    caster: Entity,
+    target: Entity,
+    damage_type: DamageType,
+    dice: &str,
+    max_jumps: i32,
+    jump_range: i32,
+    rng: &mut ResMut<GameRng>,
+    positions: &Query<&Position>,
+    all_positions: &Query<(Entity, &Position)>,
+    damage_writer: &mut MessageWriter<ApplyDamageMessage>,
+    log_writer: &mut MessageWriter<GameLogMessage>,
+    particle_writer: &mut MessageWriter<ParticleRequest>,
+) {
+    // Primary hit.
+    let primary_damage = roll_dice_expr(&mut rng.0, dice).max(1);
+    damage_writer.write(ApplyDamageMessage {
+        attacker: caster, target, final_damage: primary_damage, damage_type, source: DamageSource::Spell,
+    });
+    if let (Ok(cp), Ok(tp)) = (positions.get(caster), positions.get(target)) {
+        particle_writer.write(ParticleRequest::lightning((cp.x, cp.y), (tp.x, tp.y)));
+    }
+
+    // Chain jumps.
+    let mut hit_entities = vec![target, caster];
+    let mut last_pos = positions.get(target).map(|p| (p.x, p.y)).unwrap_or((0, 0));
+
+    for _ in 0..max_jumps {
+        let best = all_positions.iter()
+            .filter(|(ent, _)| !hit_entities.contains(ent))
+            .filter_map(|(ent, pos)| {
+                let dist = (pos.x - last_pos.0).abs() + (pos.y - last_pos.1).abs();
+                (dist <= jump_range).then_some((ent, dist))
+            })
+            .min_by_key(|&(_, dist)| dist);
+
+        let Some((next_ent, _)) = best else { break };
+        let next_pos = positions.get(next_ent).map(|p| (p.x, p.y)).unwrap_or(last_pos);
+        particle_writer.write(ParticleRequest::lightning(last_pos, next_pos));
+
+        let jump_damage = rng.0.roll_dice(1, 6).max(1);
+        damage_writer.write(ApplyDamageMessage {
+            attacker: caster, target: next_ent, final_damage: jump_damage, damage_type, source: DamageSource::Spell,
+        });
+        last_pos = next_pos;
+        hit_entities.push(next_ent);
+        log_writer.write(GameLogMessage("Lightning arcs to another target!".to_string()));
+    }
+}
+
+fn effect_apply_haste(
+    commands: &mut Commands,
+    target: Entity,
+    duration: u32,
+    log_writer: &mut MessageWriter<GameLogMessage>,
+) {
+    commands.entity(target).insert(Hasted { turns_remaining: duration }).remove::<Slowed>();
+    log_writer.write(GameLogMessage("Haste granted!".to_string()));
+}
+
+fn effect_apply_slow(
+    commands: &mut Commands,
+    target: Entity,
+    duration: u32,
+    log_writer: &mut MessageWriter<GameLogMessage>,
+) {
+    commands.entity(target).insert(Slowed { turns_remaining: duration }).remove::<Hasted>();
+    log_writer.write(GameLogMessage("Target is slowed!".to_string()));
+}
+
+fn effect_drain_mana(
+    commands: &mut Commands,
+    caster: Entity,
+    target: Entity,
+    amount: i32,
+    caster_label: &str,
+) {
+    let drain = amount.max(0);
+    let label = caster_label.to_string();
+    commands.queue(move |world: &mut World| {
+        let actual_drain = {
+            if let Some(mut target_mana) = world.get_mut::<Mana>(target) {
+                let actual = drain.min(target_mana.current);
+                target_mana.current -= actual;
+                actual
+            } else {
+                0
+            }
+        };
+        if actual_drain > 0 {
+            if let Some(mut caster_mana) = world.get_mut::<Mana>(caster) {
+                caster_mana.current = (caster_mana.current + actual_drain).min(caster_mana.max);
+            }
+        }
+        world.write_message(GameLogMessage(format!("{} drains {} mana!", label, actual_drain)));
+    });
+}
+
+fn effect_spirit_shield(
+    commands: &mut Commands,
+    caster: Entity,
+    duration: u32,
+    caster_label: &str,
+    log_writer: &mut MessageWriter<GameLogMessage>,
+) {
+    commands.entity(caster).insert(SpiritShielded { turns_remaining: duration });
+    log_writer.write(GameLogMessage(format!(
+        "{} is shielded by spirit energy! (mana absorbs damage for {} turns)",
+        caster_label, duration
+    )));
+}
+
+fn effect_teleport(
+    commands: &mut Commands,
+    caster: Entity,
+    range: i32,
+    target_pos: Option<(i32, i32)>,
+    caster_label: &str,
+    rng: &mut ResMut<GameRng>,
+    map: &Map,
+    log_writer: &mut MessageWriter<GameLogMessage>,
+) {
+    if range == 0 {
+        let walkable: Vec<usize> = (0..map.tiles.len())
+            .filter(|&idx| crate::map::tile::is_walkable(map.tiles[idx]))
+            .collect();
+        if !walkable.is_empty() {
+            let pick = rng.0.roll_dice(1, walkable.len() as i32) as usize - 1;
+            let idx = walkable[pick];
+            let (tx, ty) = map.idx_xy(idx);
+            commands.entity(caster).insert(Position { x: tx, y: ty });
+            log_writer.write(GameLogMessage(format!("{} teleports away!", caster_label)));
+        }
+    } else if let Some((tx, ty)) = target_pos {
+        commands.entity(caster).insert(Position { x: tx, y: ty });
+        log_writer.write(GameLogMessage(format!("{} blinks to ({}, {})!", caster_label, tx, ty)));
+    }
+}
+
+fn effect_apply_enrage(
+    commands: &mut Commands,
+    target: Entity,
+    duration: u32,
+    caster_label: &str,
+    log_writer: &mut MessageWriter<GameLogMessage>,
+) {
+    commands.entity(target).insert(crate::game::abilities::Enraged { turns_remaining: duration });
+    log_writer.write(GameLogMessage(format!(
+        "{} enters a rage! (+50% damage for {} turns)",
+        caster_label, duration
+    )));
 }
 
 // =====================================================================
@@ -801,6 +834,10 @@ impl Plugin for MagicPlugin {
             .register_type::<Burning>()
             .register_type::<SpiritShielded>()
             .add_message::<CastSpellMessage>()
+            .add_systems(
+                Update,
+                handle_cast_spell.in_set(crate::game::turns::ProcessingPhase::ResolveActions),
+            )
             .add_systems(
                 Update,
                 (

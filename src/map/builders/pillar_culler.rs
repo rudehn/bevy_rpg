@@ -54,3 +54,41 @@ impl MetaMapBuilder for PillarCuller {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map::tile::TerrainType;
+
+    #[test]
+    fn removes_isolated_pillar() {
+        // 5x5 room with a lone wall pillar at center
+        let mut bm = BuilderMap::with_open_room(5, 5);
+        let center = bm.map.xy_idx(2, 2);
+        bm.map.tiles[center].terrain = TerrainType::Wall;
+
+        PillarCuller.build_map(&mut bm);
+
+        assert_eq!(
+            bm.map.tiles[center].terrain,
+            TerrainType::Floor,
+            "Isolated pillar should be removed"
+        );
+    }
+
+    #[test]
+    fn keeps_wall_connected_to_border() {
+        // 5x5 room with a wall tile at (1,1) — adjacent to border walls
+        let mut bm = BuilderMap::with_open_room(5, 5);
+        let idx = bm.map.xy_idx(1, 1);
+        bm.map.tiles[idx].terrain = TerrainType::Wall;
+
+        PillarCuller.build_map(&mut bm);
+
+        assert_eq!(
+            bm.map.tiles[idx].terrain,
+            TerrainType::Wall,
+            "Wall connected to border should be kept"
+        );
+    }
+}

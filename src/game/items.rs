@@ -483,6 +483,7 @@ pub struct ItemsPlugin;
 
 impl Plugin for ItemsPlugin {
     fn build(&self, app: &mut App) {
+        use crate::game::turns::ProcessingPhase;
         app.register_type::<ItemKind>()
             .register_type::<ArmorSlot>()
             .register_type::<Rarity>()
@@ -491,10 +492,13 @@ impl Plugin for ItemsPlugin {
             .register_type::<ItemStack>()
             .register_type::<Equipment>()
             .init_resource::<SelectedInventorySlot>()
-            // Messages are registered here; the handler systems live in TurnOrderPlugin's
-            // Processing chain so they emit ActionFinishedEvent and cost a turn.
             .add_message::<DropItemMessage>()
             .add_message::<EquipItemMessage>()
-            .add_message::<UnequipItemMessage>();
+            .add_message::<UnequipItemMessage>()
+            .add_systems(
+                Update,
+                (handle_equip_item, handle_unequip_item, handle_drop_item)
+                    .in_set(ProcessingPhase::ResolveActions),
+            );
     }
 }

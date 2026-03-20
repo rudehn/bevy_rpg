@@ -642,44 +642,72 @@ fn load_decoration_catalog(
     handle.0 = asset_server.load("decorations.ron");
 }
 
+/// Collects sprite entries that need loading: `(texture_path, tile_size, grid_size)`.
+/// Used to build a deduped list before inserting into the sprite asset maps.
+struct SpriteEntry {
+    key: String,
+    tile_size: UVec2,
+    grid_size: UVec2,
+}
+
+/// Shared sprite loading logic. For each manifest entry, loads the image texture
+/// and creates a `TextureAtlasLayout` if not already present in `existing_keys`.
+fn load_sprite_entries(
+    entries: impl Iterator<Item = (String, UVec2, UVec2)>,
+    existing_keys: &HashMap<String, Handle<Image>>,
+) -> Vec<SpriteEntry> {
+    let mut result = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for (sprite_path, tile_size, grid_size) in entries {
+        let (texture_path, _) = parse_sprite_path(&sprite_path);
+        let key = texture_path.to_string();
+        if !existing_keys.contains_key(&key) && seen.insert(key.clone()) {
+            result.push(SpriteEntry { key, tile_size, grid_size });
+        }
+    }
+    result
+}
+
+fn apply_sprite_entries(
+    entries: Vec<SpriteEntry>,
+    handles: &mut HashMap<String, Handle<Image>>,
+    layouts: &mut HashMap<String, Handle<TextureAtlasLayout>>,
+    asset_server: &AssetServer,
+    atlas_layouts: &mut Assets<TextureAtlasLayout>,
+) {
+    for entry in entries {
+        handles.insert(entry.key.clone(), asset_server.load::<Image>(entry.key.clone()));
+        layouts.insert(
+            entry.key,
+            atlas_layouts.add(TextureAtlasLayout::from_grid(
+                entry.tile_size,
+                entry.grid_size.x,
+                entry.grid_size.y,
+                None,
+                None,
+            )),
+        );
+    }
+}
+
 fn load_monster_sprites(
     asset_server: Res<AssetServer>,
-    monster_manifest_handle: Res<MonsterManifestHandle>,
-    monster_manifests: Res<Assets<MonsterManifest>>,
-    mut monster_sprite_assets: ResMut<MonsterSpriteAssets>,
-    mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
+    manifest_handle: Res<MonsterManifestHandle>,
+    manifests: Res<Assets<MonsterManifest>>,
+    mut sprites: ResMut<MonsterSpriteAssets>,
+    mut layouts: ResMut<Assets<TextureAtlasLayout>>,
 ) {
-    {
-        if let Some(manifest) = monster_manifests.get(&monster_manifest_handle.0) {
-            for monster_asset in manifest.monsters.values() {
-                let (texture_path, _) = parse_sprite_path(&monster_asset.sprite);
-                let texture_path_string = texture_path.to_string();
-
-                if !monster_sprite_assets
-                    .handles
-                    .contains_key(&texture_path_string)
-                {
-                    let texture_handle = asset_server.load::<Image>(texture_path_string.clone());
-                    monster_sprite_assets
-                        .handles
-                        .insert(texture_path_string.clone(), texture_handle);
-
-                    let tile_size = monster_asset.tile_size.unwrap_or(UVec2::new(32, 32));
-                    let grid_size = monster_asset.grid_size.unwrap_or(UVec2::new(1, 1));
-
-                    let layout_handle = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
-                        tile_size,
-                        grid_size.x,
-                        grid_size.y,
-                        None,
-                        None,
-                    ));
-                    monster_sprite_assets
-                        .layouts
-                        .insert(texture_path_string, layout_handle);
-                }
-            }
-        }
+    if let Some(manifest) = manifests.get(&manifest_handle.0) {
+        let new = load_sprite_entries(
+            manifest.monsters.values().map(|a| (
+                a.sprite.clone(),
+                a.tile_size.unwrap_or(UVec2::new(32, 32)),
+                a.grid_size.unwrap_or(UVec2::new(1, 1)),
+            )),
+            &sprites.handles,
+        );
+        let s = &mut *sprites;
+        apply_sprite_entries(new, &mut s.handles, &mut s.layouts, &asset_server, &mut layouts);
     }
 }
 
@@ -689,149 +717,66 @@ fn load_tile_sprites(
     tile_manifests: Res<Assets<TileManifest>>,
     player_asset_handle: Res<PlayerAssetHandle>,
     player_assets: Res<Assets<PlayerAsset>>,
-    mut tile_sprite_assets: ResMut<TileSpriteAssets>,
-    mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
+    mut sprites: ResMut<TileSpriteAssets>,
+    mut layouts: ResMut<Assets<TextureAtlasLayout>>,
 ) {
+    // Collect all entries from both tile manifest and player asset before mutating.
+    let mut all_entries: Vec<(String, UVec2, UVec2)> = Vec::new();
     if let Some(manifest) = tile_manifests.get(&tile_manifest_handle.0) {
-        for tile_asset in manifest.tiles.values() {
-            let (texture_path, _) = parse_sprite_path(&tile_asset.sprite);
-            let texture_path_string = texture_path.to_string();
-
-            if !tile_sprite_assets
-                .handles
-                .contains_key(&texture_path_string)
-            {
-                let texture_handle = asset_server.load::<Image>(texture_path_string.clone());
-                tile_sprite_assets
-                    .handles
-                    .insert(texture_path_string.clone(), texture_handle);
-
-                let tile_size = tile_asset.tile_size.unwrap_or(UVec2::new(16, 16));
-                let grid_size = tile_asset.grid_size.unwrap_or(UVec2::new(1, 1));
-
-                let layout_handle = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
-                    tile_size,
-                    grid_size.x,
-                    grid_size.y,
-                    None,
-                    None,
-                ));
-                tile_sprite_assets
-                    .layouts
-                    .insert(texture_path_string, layout_handle);
-            }
-        }
+        all_entries.extend(manifest.tiles.values().map(|a| (
+            a.sprite.clone(),
+            a.tile_size.unwrap_or(UVec2::new(16, 16)),
+            a.grid_size.unwrap_or(UVec2::new(1, 1)),
+        )));
     }
-
-    // Ensure player sprite is also loaded (checked independently — player.ron may
-    // load after the tile manifest, so this must not be gated on tile handles being empty)
+    // Player sprite loaded into tile assets (player.ron may load after tile manifest).
     if let Some(player_asset) = player_assets.get(&player_asset_handle.0) {
-        let (texture_path, _) = parse_sprite_path(&player_asset.sprite);
-        let texture_path_string = texture_path.to_string();
-
-        if !tile_sprite_assets
-            .handles
-            .contains_key(&texture_path_string)
-        {
-            let texture_handle = asset_server.load::<Image>(texture_path_string.clone());
-            tile_sprite_assets
-                .handles
-                .insert(texture_path_string.clone(), texture_handle);
-
-            let tile_size = UVec2::new(32, 32);
-            let grid_size = UVec2::new(1, 1);
-
-            let layout_handle = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
-                tile_size,
-                grid_size.x,
-                grid_size.y,
-                None,
-                None,
-            ));
-            tile_sprite_assets
-                .layouts
-                .insert(texture_path_string, layout_handle);
-        }
+        all_entries.push((player_asset.sprite.clone(), UVec2::new(32, 32), UVec2::new(1, 1)));
     }
+    let new = load_sprite_entries(all_entries.into_iter(), &sprites.handles);
+    let s = &mut *sprites;
+    apply_sprite_entries(new, &mut s.handles, &mut s.layouts, &asset_server, &mut layouts);
 }
 
 fn load_item_sprites(
     asset_server: Res<AssetServer>,
-    item_manifest_handle: Res<ItemManifestHandle>,
-    item_manifests: Res<Assets<ItemManifest>>,
-    mut item_sprite_assets: ResMut<ItemSpriteAssets>,
-    mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
+    manifest_handle: Res<ItemManifestHandle>,
+    manifests: Res<Assets<ItemManifest>>,
+    mut sprites: ResMut<ItemSpriteAssets>,
+    mut layouts: ResMut<Assets<TextureAtlasLayout>>,
 ) {
-    {
-        if let Some(manifest) = item_manifests.get(&item_manifest_handle.0) {
-            for item_asset in manifest.items.values() {
-                let (texture_path, _) = parse_sprite_path(&item_asset.sprite);
-                let texture_path_string = texture_path.to_string();
-
-                if !item_sprite_assets
-                    .handles
-                    .contains_key(&texture_path_string)
-                {
-                    let texture_handle = asset_server.load::<Image>(texture_path_string.clone());
-                    item_sprite_assets
-                        .handles
-                        .insert(texture_path_string.clone(), texture_handle);
-
-                    let tile_size = item_asset.tile_size.unwrap_or(UVec2::new(32, 32));
-                    let grid_size = item_asset.grid_size.unwrap_or(UVec2::new(1, 1));
-
-                    let layout_handle = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
-                        tile_size,
-                        grid_size.x,
-                        grid_size.y,
-                        None,
-                        None,
-                    ));
-                    item_sprite_assets
-                        .layouts
-                        .insert(texture_path_string, layout_handle);
-                }
-            }
-        }
+    if let Some(manifest) = manifests.get(&manifest_handle.0) {
+        let new = load_sprite_entries(
+            manifest.items.values().map(|a| (
+                a.sprite.clone(),
+                a.tile_size.unwrap_or(UVec2::new(32, 32)),
+                a.grid_size.unwrap_or(UVec2::new(1, 1)),
+            )),
+            &sprites.handles,
+        );
+        let s = &mut *sprites;
+        apply_sprite_entries(new, &mut s.handles, &mut s.layouts, &asset_server, &mut layouts);
     }
 }
 
 fn load_prop_sprites(
     asset_server: Res<AssetServer>,
-    prop_manifest_handle: Res<PropManifestHandle>,
-    prop_manifests: Res<Assets<PropManifest>>,
-    mut prop_sprite_assets: ResMut<PropSpriteAssets>,
-    mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
+    manifest_handle: Res<PropManifestHandle>,
+    manifests: Res<Assets<PropManifest>>,
+    mut sprites: ResMut<PropSpriteAssets>,
+    mut layouts: ResMut<Assets<TextureAtlasLayout>>,
 ) {
-    if let Some(manifest) = prop_manifests.get(&prop_manifest_handle.0) {
-        for prop_asset in manifest.props.values() {
-            let (texture_path, _) = parse_sprite_path(&prop_asset.sprite);
-            let texture_path_string = texture_path.to_string();
-
-            if !prop_sprite_assets
-                .handles
-                .contains_key(&texture_path_string)
-            {
-                let texture_handle = asset_server.load::<Image>(texture_path_string.clone());
-                prop_sprite_assets
-                    .handles
-                    .insert(texture_path_string.clone(), texture_handle);
-
-                let tile_size = prop_asset.tile_size.unwrap_or(UVec2::new(16, 16));
-                let grid_size = prop_asset.grid_size.unwrap_or(UVec2::new(4, 1));
-
-                let layout_handle = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
-                    tile_size,
-                    grid_size.x,
-                    grid_size.y,
-                    None,
-                    None,
-                ));
-                prop_sprite_assets
-                    .layouts
-                    .insert(texture_path_string, layout_handle);
-            }
-        }
+    if let Some(manifest) = manifests.get(&manifest_handle.0) {
+        let new = load_sprite_entries(
+            manifest.props.values().map(|a| (
+                a.sprite.clone(),
+                a.tile_size.unwrap_or(UVec2::new(16, 16)),
+                a.grid_size.unwrap_or(UVec2::new(4, 1)),
+            )),
+            &sprites.handles,
+        );
+        let s = &mut *sprites;
+        apply_sprite_entries(new, &mut s.handles, &mut s.layouts, &asset_server, &mut layouts);
     }
 }
 
