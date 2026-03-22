@@ -5,7 +5,7 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use crate::components::{GameEntityMarker, InInventory, Item, Monster, Name, Position, Viewshed};
+use crate::components::{Chest, GameEntityMarker, InInventory, Item, Monster, Name, Position, Prop, Viewshed};
 use crate::game::items::ItemProperties;
 use crate::game::{AppState, InGameState};
 use crate::map::map::GRID_SIZE;
@@ -95,6 +95,10 @@ fn update_nearby_panel(
         (Entity, &Position, &Name, &ItemProperties, &Sprite, Option<&Children>),
         (With<Item>, Without<InInventory>),
     >,
+    chest_query: Query<
+        (Entity, &Position, &Name, &Sprite, Option<&Children>),
+        (With<Chest>, With<Prop>),
+    >,
     glyph_query: Query<(&Text2d, &TextColor), With<crate::game::ascii_mode::AsciiGlyph>>,
     root_query: Query<Entity, With<NearbyListRoot>>,
     row_query: Query<Entity, With<NearbyRow>>,
@@ -152,11 +156,24 @@ fn update_nearby_panel(
         .collect();
     items.sort_by_key(|(_, d, ..)| *d);
 
+    // Collect visible chests (props)
+    let mut chests: Vec<NearbyEntry> = chest_query
+        .iter()
+        .filter(|(_, pos, ..)| visible.contains(&(pos.x, pos.y)))
+        .map(|(entity, pos, name, sprite, children)| {
+            let dist = tile_distance(player_pos, pos);
+            let (ac, acol) = get_ascii_info(children).unzip();
+            (entity, dist, name.0.clone(), sprite.image.clone(), sprite.texture_atlas.clone(), ac, acol)
+        })
+        .collect();
+    chests.sort_by_key(|(_, d, ..)| *d);
+
     // Update entity list
     nearby_state.entity_list = monsters
         .iter()
         .map(|(e, ..)| *e)
         .chain(items.iter().map(|(e, ..)| *e))
+        .chain(chests.iter().map(|(e, ..)| *e))
         .collect();
 
     // Clamp selection
@@ -175,7 +192,7 @@ fn update_nearby_panel(
         return;
     };
 
-    if monsters.is_empty() && items.is_empty() {
+    if monsters.is_empty() && items.is_empty() && chests.is_empty() {
         return;
     }
 
@@ -273,6 +290,76 @@ fn update_nearby_panel(
             ));
             for (i, (entity, dist, name, image, atlas, ascii_char, ascii_color)) in items.iter().enumerate() {
                 let global_idx = monsters.len() + i;
+                let is_selected = sel == Some(global_idx);
+                let bg = if is_selected {
+                    BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15))
+                } else {
+                    BackgroundColor(Color::NONE)
+                };
+                let truncated = truncate_name(name);
+                parent
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::axes(Val::Px(2.0), Val::Px(1.0)),
+                            margin: UiRect::top(Val::Px(1.0)),
+                            ..default()
+                        },
+                        bg,
+                        NearbyRow { entity: *entity },
+                    ))
+                    .with_children(|row| {
+                        if is_ascii {
+                            if let (Some(ch), Some(col)) = (ascii_char, ascii_color) {
+                                let afont = ascii_font_res.as_ref().map(|f| f.0.clone()).unwrap_or_else(|| font.clone());
+                                row.spawn((
+                                    Text::new(ch.clone()),
+                                    TextFont { font: afont, font_size: 14.0, ..default() },
+                                    TextColor(*col),
+                                    Node {
+                                        width: Val::Px(14.0),
+                                        margin: UiRect::right(Val::Px(4.0)),
+                                        ..default()
+                                    },
+                                ));
+                            }
+                        } else {
+                            let mut img = ImageNode::new(image.clone());
+                            img.texture_atlas = atlas.clone();
+                            row.spawn((
+                                Node {
+                                    width: Val::Px(14.0),
+                                    height: Val::Px(14.0),
+                                    margin: UiRect::right(Val::Px(4.0)),
+                                    flex_shrink: 0.0,
+                                    ..default()
+                                },
+                                img,
+                            ));
+                        }
+                        row.spawn((
+                            Text::new(format!("{} {}", truncated, dist)),
+                            TextFont { font: font.clone(), font_size: 12.0, ..default() },
+                            TextColor(Color::srgb(0.85, 0.85, 0.85)),
+                            Node { flex_grow: 1.0, ..default() },
+                        ));
+                    });
+            }
+        }
+
+        // --- CHESTS ---
+        if !chests.is_empty() {
+            parent.spawn((
+                Text::new("CHESTS"),
+                TextFont { font: font.clone(), font_size: 11.0, ..default() },
+                TextColor(Color::srgb(0.6, 0.4, 0.2)),
+                Node { margin: UiRect::top(Val::Px(4.0)), ..default() },
+                NearbyRow { entity: Entity::PLACEHOLDER },
+            ));
+            for (i, (entity, dist, name, image, atlas, ascii_char, ascii_color)) in chests.iter().enumerate() {
+                let global_idx = monsters.len() + items.len() + i;
                 let is_selected = sel == Some(global_idx);
                 let bg = if is_selected {
                     BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15))
@@ -431,7 +518,7 @@ fn update_nearby_highlight(
     time: Res<Time>,
     nearby_state: Res<NearbyState>,
     white_pixel: Option<Res<WhitePixelHandle>>,
-    entity_positions: Query<&Position, Or<(With<Monster>, With<Item>)>>,
+    entity_positions: Query<&Position, Or<(With<Monster>, With<Item>, With<Chest>)>>,
     monster_check: Query<(), With<Monster>>,
     mut overlay_query: Query<(&mut Transform, &mut Sprite), With<NearbyHighlightOverlay>>,
     overlay_entities: Query<Entity, With<NearbyHighlightOverlay>>,
