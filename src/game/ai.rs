@@ -146,6 +146,24 @@ impl MonsterAI {
             }
         }
 
+        // --- Kite check (ranged monsters retreat when player is too close) ---
+        if self.mode == MonsterAIMode::Hunting && self.kites && ctx.is_player_visible {
+            if ai_behaviors::should_kite_retreat(
+                ctx.monster_pos.x, ctx.monster_pos.y,
+                ctx.player_point.x, ctx.player_point.y,
+                self.kite_distance,
+            ) {
+                if let Some(intent) = try_flee_movement(
+                    entity, ctx.monster_pos, ctx.player_point, world,
+                ) {
+                    world.write_message(intent);
+                } else {
+                    world.write_message(WaitIntent { entity });
+                }
+                return;
+            }
+        }
+
         // Try special actions (spell, ranged) before movement.
         if self.mode == MonsterAIMode::Hunting && ctx.is_player_visible {
             if try_cast_spell(entity, ctx.monster_pos, ctx.player_entity, world) {
@@ -153,6 +171,32 @@ impl MonsterAI {
             }
             if try_ranged_attack(entity, ctx.monster_pos, ctx.player_point, ctx.player_entity, world) {
                 return;
+            }
+        }
+
+        // --- Erratic movement check (before normal pathfinding) ---
+        if self.mode == MonsterAIMode::Hunting && self.erratic_chance > 0.0 {
+            let mut rng_inst = rng();
+            let roll: f32 = rand::Rng::random(&mut rng_inst);
+            if ai_behaviors::should_move_erratically(self.erratic_chance, roll) {
+                let map = world.resource::<Map>();
+                let mut directions = [Direction::N, Direction::E, Direction::S, Direction::W].to_vec();
+                directions.shuffle(&mut rng_inst);
+                let erratic_intent = directions.into_iter().find_map(|dir| {
+                    let target = ctx.monster_pos + dir.offset();
+                    if map.in_bounds(target)
+                        && is_walkable(map.tiles[map.xy_idx(target.x, target.y)])
+                    {
+                        Some(MovementIntent { entity, dir })
+                    } else {
+                        None
+                    }
+                });
+                if let Some(intent) = erratic_intent {
+                    world.write_message(intent);
+                    return;
+                }
+                // If no valid erratic direction, fall through to normal pathfinding.
             }
         }
 
