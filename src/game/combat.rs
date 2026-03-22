@@ -203,7 +203,7 @@ pub fn compute_spirit_shield(damage: i32, current_mana: i32) -> (i32, i32) {
 
 /// Compute XP reward for killing an entity based on its max HP.
 pub fn xp_for_kill(max_hp: i32) -> i32 {
-    max_hp / 2 + 5
+    max_hp
 }
 
 /// Apply status multipliers to base damage.
