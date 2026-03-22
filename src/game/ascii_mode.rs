@@ -41,7 +41,7 @@ impl Plugin for AsciiModePlugin {
             .add_systems(Startup, load_ascii_font)
             .add_systems(
                 Update,
-                (toggle_graphics_mode, apply_graphics_mode_swap, update_player_ascii_sprite)
+                (toggle_graphics_mode, apply_graphics_mode_swap, init_new_ascii_glyphs, update_player_ascii_sprite)
                     .run_if(in_state(crate::game::AppState::InGame)),
             );
     }
@@ -148,6 +148,23 @@ fn apply_graphics_mode_swap(
 
     // Note: monster, item, and prop sprites are handled by their visibility systems
     // which branch on GraphicsMode. Player sprite is handled by update_player_ascii_sprite.
+}
+
+/// Set the correct visibility on newly spawned AsciiGlyph entities based on
+/// the current graphics mode. This catches glyphs created after the last
+/// mode toggle (e.g., items spawned from chests at runtime).
+fn init_new_ascii_glyphs(
+    mode: Res<GraphicsMode>,
+    mut new_glyphs: Query<&mut Visibility, Added<AsciiGlyph>>,
+) {
+    let target = if *mode == GraphicsMode::Ascii {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    for mut vis in new_glyphs.iter_mut() {
+        *vis = target;
+    }
 }
 
 /// Keep the player sprite transparent in ASCII mode, restore in Sprites mode.
