@@ -3,6 +3,7 @@ use crate::{
     components::{Faction, FactionKind, Position, Viewshed},
     game::{
         actions::{Direction, MovementIntent, RangedAttackIntent, WaitIntent},
+        ai_behaviors,
         boss::BossAI,
         combat::Health,
         magic::{ActiveSpells, CastSpellMessage, Hasted, Slowed, SpellCooldowns},
@@ -129,6 +130,22 @@ impl MonsterAI {
         // Update AI mode based on visibility.
         self.update_mode(entity, &ctx, world);
 
+        // --- Flee check (highest priority behavior) ---
+        if self.mode == MonsterAIMode::Hunting && self.flee_at_hp_percent > 0.0 {
+            if let Some(health) = world.get::<Health>(entity) {
+                if ai_behaviors::should_flee(health.current, health.max, self.flee_at_hp_percent) {
+                    if let Some(intent) = try_flee_movement(
+                        entity, ctx.monster_pos, ctx.player_point, world,
+                    ) {
+                        world.write_message(intent);
+                    } else {
+                        world.write_message(WaitIntent { entity });
+                    }
+                    return;
+                }
+            }
+        }
+
         // Try special actions (spell, ranged) before movement.
         if self.mode == MonsterAIMode::Hunting && ctx.is_player_visible {
             if try_cast_spell(entity, ctx.monster_pos, ctx.player_entity, world) {
@@ -217,6 +234,55 @@ impl AIContext {
 
         Some(AIContext { monster_pos, player_point, player_entity, is_player_visible })
     }
+}
+
+/// Try to move away from the threat position (used for fleeing and kiting).
+/// Tries the primary flee direction first, then perpendicular directions.
+fn try_flee_movement(
+    entity: Entity,
+    monster_pos: Point,
+    threat_pos: Point,
+    world: &mut World,
+) -> Option<MovementIntent> {
+    let (dx, dy) = ai_behaviors::flee_direction(
+        monster_pos.x, monster_pos.y,
+        threat_pos.x, threat_pos.y,
+    );
+    if dx == 0 && dy == 0 {
+        return None;
+    }
+
+    let map = world.resource::<Map>();
+
+    // Try primary flee direction.
+    let primary = Point::new(monster_pos.x + dx, monster_pos.y + dy);
+    if map.in_bounds(primary) && is_walkable(map.tiles[map.xy_idx(primary.x, primary.y)]) {
+        let dir = Direction::from_pos(
+            &Position::from_point(monster_pos),
+            &Position::from_point(primary),
+        );
+        return Some(MovementIntent { entity, dir });
+    }
+
+    // Try perpendicular directions.
+    let perp_offsets = if dx != 0 {
+        [(0, 1), (0, -1)] // Primary was horizontal, try vertical
+    } else {
+        [(1, 0), (-1, 0)] // Primary was vertical, try horizontal
+    };
+
+    for (px, py) in perp_offsets {
+        let target = Point::new(monster_pos.x + px, monster_pos.y + py);
+        if map.in_bounds(target) && is_walkable(map.tiles[map.xy_idx(target.x, target.y)]) {
+            let dir = Direction::from_pos(
+                &Position::from_point(monster_pos),
+                &Position::from_point(target),
+            );
+            return Some(MovementIntent { entity, dir });
+        }
+    }
+
+    None
 }
 
 /// If the entity is stunned, emit a wait + visual feedback and return true.
