@@ -83,6 +83,7 @@ pub enum InGameState {
     Spells,
     Targeting,
     LogHistory,
+    Shrine,
 }
 
 pub struct GamePlugin;

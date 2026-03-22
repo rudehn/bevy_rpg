@@ -22,8 +22,10 @@ pub mod hover_info;
 pub mod inventory;
 pub mod log_history;
 pub mod menu;
+pub mod modal;
 pub mod monster_info;
 pub mod nearby;
+pub mod shrine_ui;
 pub mod spells;
 
 use character_info::CharacterInfoPlugin;
@@ -561,7 +563,7 @@ impl Plugin for UiPlugin {
             .add_plugins((
                 CharacterInfoPlugin, CheatMenuPlugin, InventoryPlugin, LogHistoryPlugin,
                 MenuPlugin, NearbyPlugin, SpellsPlugin, monster_info::MonsterInfoPlugin,
-                hover_info::HoverInfoPlugin,
+                hover_info::HoverInfoPlugin, shrine_ui::ShrineUiPlugin,
             ))
             .add_systems(
                 OnEnter(AppState::InGame),

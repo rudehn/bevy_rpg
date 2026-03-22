@@ -9,6 +9,7 @@ use crate::{
         effects::UseItemMessage,
         items::{DropItemMessage, EquipItemMessage, ItemStack, UnequipItemMessage},
         magic::CastSpellMessage,
+        shrines::{ActiveShrine, ShrineMarker},
         spawner::spawn_item,
         turns::MyTurn,
     },
@@ -313,6 +314,7 @@ pub fn handle_pickup(
 /// it converts the movement into a MeleeIntent instead.
 /// If the target tile is a closed door, it converts it into an OpenDoorIntent.
 pub fn handle_movement(
+    mut commands: Commands,
     mut intents: MessageReader<MovementIntent>,
     mut melee_writer: MessageWriter<MeleeIntent>,
     mut open_door_writer: MessageWriter<OpenDoorIntent>,
@@ -326,11 +328,13 @@ pub fn handle_movement(
         Has<Monster>,
         Has<Collider>,
         Has<Chest>,
+        Has<ShrineMarker>,
     ), (Without<TileMarker>, Without<Item>)>,
     map: Res<Map>,
+    mut next_ingame: ResMut<NextState<crate::game::InGameState>>,
 ) {
     for intent in intents.read() {
-        let Ok((_, pos, is_player, _, _, _)) = actors_query.get(intent.entity) else {
+        let Ok((_, pos, is_player, _, _, _, _)) = actors_query.get(intent.entity) else {
             finish_writer.write(ActionFinishedEvent {
                 entity: intent.entity,
                 base_cost: BASE_ACTION_COST,
@@ -364,25 +368,25 @@ pub fn handle_movement(
         // 3. Occupant Check (Bump-to-Attack / Block) — must happen before wall check
         //    so that monsters standing on non-walkable tiles can still be attacked.
         let mut bump_target = None;
-        for (e, other_pos, other_is_player, other_is_monster, other_has_collider, other_is_chest) in
+        for (e, other_pos, other_is_player, other_is_monster, other_has_collider, other_is_chest, other_is_shrine) in
             actors_query.iter()
         {
             if other_pos.to_point() == target_pt && e != intent.entity {
-                bump_target = Some((e, other_is_player, other_is_monster, other_has_collider, other_is_chest));
+                bump_target = Some((e, other_is_player, other_is_monster, other_has_collider, other_is_chest, other_is_shrine));
                 break;
             }
         }
 
-        if let Some((target_entity, target_is_player, target_is_monster, target_has_collider, target_is_chest)) =
+        if let Some((target_entity, target_is_player, target_is_monster, target_has_collider, target_is_chest, target_is_shrine)) =
             bump_target
         {
             let actor_is_player = actors_query
                 .get(intent.entity)
-                .map(|(_, _, p, _, _, _)| p)
+                .map(|(_, _, p, _, _, _, _)| p)
                 .unwrap_or(false);
             let actor_is_monster = actors_query
                 .get(intent.entity)
-                .map(|(_, _, _, m, _, _)| m)
+                .map(|(_, _, _, m, _, _, _)| m)
                 .unwrap_or(false);
 
             let is_hostile =
@@ -393,6 +397,12 @@ pub fn handle_movement(
                     attacker: intent.entity,
                     target: target_entity,
                 });
+                continue;
+            } else if target_is_shrine && actor_is_player {
+                // Player bumps a shrine — open shrine UI (free action, no turn consumed)
+                commands.insert_resource(ActiveShrine(target_entity));
+                next_ingame.set(crate::game::InGameState::Shrine);
+                free_writer.write(FreeActionEvent { entity: intent.entity });
                 continue;
             } else if target_is_chest && actor_is_player {
                 // Player bumps a chest — open it
@@ -417,7 +427,7 @@ pub fn handle_movement(
         if !is_walkable(target_tile) {
             let actor_is_player = actors_query
                 .get(intent.entity)
-                .map(|(_, _, p, _, _, _)| p)
+                .map(|(_, _, p, _, _, _, _)| p)
                 .unwrap_or(false);
             if actor_is_player {
                 free_writer.write(FreeActionEvent { entity: intent.entity });
@@ -428,7 +438,7 @@ pub fn handle_movement(
         }
 
         // 5. Apply Movement
-        if let Ok((_, mut pos, _, _, _, _)) = actors_query.get_mut(intent.entity) {
+        if let Ok((_, mut pos, _, _, _, _, _)) = actors_query.get_mut(intent.entity) {
             pos.x = target_pt.x;
             pos.y = target_pt.y;
         }
