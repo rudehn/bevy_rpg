@@ -37,6 +37,7 @@ pub struct RunSummary {
 pub mod abilities;
 pub mod actions;
 pub mod ai;
+pub mod ai_behaviors;
 pub mod ascii_mode;
 pub mod boss;
 pub mod camera;
