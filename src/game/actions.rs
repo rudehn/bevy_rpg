@@ -655,6 +655,7 @@ pub fn handle_open_chest(
     item_manifests: Res<Assets<ItemManifest>>,
     item_manifest_handle: Res<ItemManifestHandle>,
     item_sprite_assets: Res<ItemSpriteAssets>,
+    ascii_font: Option<Res<crate::game::ascii_mode::AsciiFont>>,
 ) {
     use bracket_lib::prelude::RandomNumberGenerator;
     use crate::game::items::Rarity;
@@ -764,7 +765,7 @@ pub fn handle_open_chest(
                     &item_manifests,
                     &item_manifest_handle,
                     &item_sprite_assets,
-                    None,
+                    ascii_font.as_deref(),
                 ) {
                     log_writer.write(GameLogMessage(format!("  Found: {}", spawn_info.item)));
                 }
