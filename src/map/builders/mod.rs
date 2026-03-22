@@ -366,7 +366,7 @@ pub fn floor_builder(
     builder.with(PrefabPlacer::new(prefabs, role_table));
     builder.with(CandleSpawner::new());
     builder.with(MonsterSpawner::new(spawn_table));
-    builder.with(ItemSpawner::new(item_spawn_table));
+    builder.with(ItemSpawner::new());
     builder.with(IsolatedAreaCuller::new());  // replaces UnseenCuller — culls ALL disconnected areas
     builder.with(DistantExit::new());
     builder.with(DecorationPropagator::new(

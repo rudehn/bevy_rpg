@@ -1,73 +1,44 @@
 use bevy::prelude::*;
-use crate::{
-    assets::ItemSpawnInfo,
-    map::{builders::{BuilderMap, MetaMapBuilder}, map::Map, tile::{is_walkable, LiquidType}},
-};
+use crate::map::{builders::{BuilderMap, MetaMapBuilder}, map::Map, tile::{is_walkable, LiquidType}};
 use bracket_lib::prelude::{Point, RandomNumberGenerator, Rect};
 
-pub struct ItemSpawner {
-    spawn_table: Vec<ItemSpawnInfo>,
-}
+pub struct ItemSpawner;
 
 impl MetaMapBuilder for ItemSpawner {
     fn build_map(&mut self, build_data: &mut BuilderMap) {
-        self.spawn_items(build_data);
+        self.spawn_chests(build_data);
     }
 }
 
 impl ItemSpawner {
-    pub fn new(spawn_table: &[ItemSpawnInfo]) -> Box<ItemSpawner> {
-        Box::new(ItemSpawner {
-            spawn_table: spawn_table.to_vec(),
-        })
+    pub fn new() -> Box<ItemSpawner> {
+        Box::new(ItemSpawner)
     }
 
-    fn spawn_items(&mut self, build_data: &mut BuilderMap) {
-        let depth = build_data.map.depth;
+    fn spawn_chests(&mut self, build_data: &mut BuilderMap) {
         let mut rng = RandomNumberGenerator::new();
-
-        let candidates: Vec<&ItemSpawnInfo> = self
-            .spawn_table
-            .iter()
-            .filter(|s| depth >= s.min_floor && depth <= s.max_floor)
-            .collect();
-
-        if candidates.is_empty() {
-            return;
-        }
-
-        let total_weight: i32 = candidates.iter().map(|s| s.weight).sum();
 
         let Some(rooms) = build_data.rooms.clone() else {
             warn!("ItemSpawner: rooms not set, skipping");
             return;
         };
 
-        let mut pending_spawns: Vec<(Point, String, u32)> = Vec::new();
+        let mut pending_props: Vec<(Point, String)> = Vec::new();
         {
             let map = &build_data.map;
             for room in rooms.iter() {
-                let roll = rng.range(0, total_weight);
-                let mut acc = 0;
-                let chosen = candidates.iter().find(|s| {
-                    acc += s.weight;
-                    roll < acc
-                });
+                // ~50% chance per room to place a chest
+                if rng.range(0, 100) >= 50 {
+                    continue;
+                }
 
-                if let Some(spawn_info) = chosen {
-                    if let Some(pt) = walkable_room_point(room, map, &mut rng) {
-                        let count = if spawn_info.max_count > 1 {
-                            rng.range(spawn_info.min_count, spawn_info.max_count + 1)
-                        } else {
-                            1
-                        };
-                        pending_spawns.push((pt, spawn_info.item.clone(), count));
-                    }
+                if let Some(pt) = walkable_room_point(room, map, &mut rng) {
+                    pending_props.push((pt, "chest".to_string()));
                 }
             }
         }
-        for (pt, name, count) in pending_spawns {
-            build_data.add_item_spawn(pt, name, count);
+        for (pt, name) in pending_props {
+            build_data.add_prop_spawn(pt, name);
         }
     }
 }
