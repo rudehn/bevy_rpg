@@ -119,8 +119,13 @@ impl Plugin for DungeonPlugin {
             )
             .add_systems(
                 Update,
-                spawn_dungeon
-                    .run_if(on_message::<SpawnDungeonMessage>)
+                (
+                    spawn_dungeon
+                        .run_if(on_message::<SpawnDungeonMessage>),
+                    apply_floor_entry_shrine_effects
+                        .run_if(on_message::<SpawnDungeonMessage>)
+                        .after(spawn_dungeon),
+                )
                     .in_set(SpawnDungeonSet),
             )
             .add_systems(
@@ -483,4 +488,42 @@ pub fn spawn_dungeon(
     // (Skipped during load since apply_player_load_system hasn't run yet;
     //  auto_save_system checks for the player entity so it will self-correct.)
     extras.auto_save_pending.0 = true;
+}
+
+/// Apply shrine effects that trigger on floor entry:
+/// - ManaWell: restore mana to max
+/// - SecondWind: reset availability
+fn apply_floor_entry_shrine_effects(
+    mut player_query: Query<(
+        Option<&crate::game::shrines::ManaWellAbility>,
+        Option<&mut crate::game::shrines::SecondWindAbility>,
+        Option<&mut crate::game::stats::Mana>,
+    ), With<Player>>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+) {
+    let Ok((mana_well, second_wind, mana)) = player_query.single_mut() else {
+        return;
+    };
+
+    // ManaWell: full mana on floor entry
+    if mana_well.is_some() {
+        if let Some(mut mana) = mana {
+            if mana.current < mana.max {
+                mana.current = mana.max;
+                log_writer.write(GameLogMessage(
+                    "Mana Well: your mana is fully restored!".to_string(),
+                ));
+            }
+        }
+    }
+
+    // SecondWind: reset availability on new floor
+    if let Some(mut sw) = second_wind {
+        if !sw.available {
+            sw.available = true;
+            log_writer.write(GameLogMessage(
+                "Second Wind is available again.".to_string(),
+            ));
+        }
+    }
 }

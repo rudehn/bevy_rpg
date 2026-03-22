@@ -144,13 +144,15 @@ pub struct CastSpellMessage {
 // =====================================================================
 
 /// Pure effect executor -- applies spell effects for any entity (player or monster).
+#[allow(clippy::too_many_arguments)]
 pub fn handle_cast_spell(
     mut commands: Commands,
     mut messages: MessageReader<CastSpellMessage>,
     spell_registry_handle: Res<SpellRegistryHandle>,
     spell_registries: Res<Assets<SpellRegistry>>,
-    caster_ro: Query<(&ActiveSpells, Option<&Name>)>,
+    caster_ro: Query<(&ActiveSpells, Option<&Name>, Has<crate::game::shrines::QuickCastAbility>, Has<crate::game::shrines::BloodMageAbility>)>,
     mut caster_resources: Query<(&mut Mana, &mut SpellCooldowns)>,
+    mut caster_health: Query<&mut crate::game::combat::Health>,
     positions: Query<&Position>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
@@ -171,7 +173,7 @@ pub fn handle_cast_spell(
         .collect();
 
     for (caster_entity, slot, target_entity, target_pos) in messages {
-        let Ok((active_spells, caster_name)) = caster_ro.get(caster_entity) else {
+        let Ok((active_spells, caster_name, has_quick_cast, has_blood_mage)) = caster_ro.get(caster_entity) else {
             continue;
         };
 
@@ -201,12 +203,30 @@ pub fn handle_cast_spell(
             .map(|n| n.0.clone())
             .unwrap_or_else(|| "Someone".to_string());
 
-        // Check mana and cooldown before acting.
+        // Check mana/HP and cooldown before acting.
         {
             let Ok((mana, cooldowns)) = caster_resources.get(caster_entity) else {
                 continue;
             };
-            if mana.current < spell.mana_cost {
+            if has_blood_mage {
+                // BloodMage: spells cost HP instead of mana (ceil(mana_cost / 2))
+                let hp_cost = (spell.mana_cost + 1) / 2;
+                let current_hp = caster_health
+                    .get(caster_entity)
+                    .map(|h| h.current)
+                    .unwrap_or(0);
+                if current_hp <= hp_cost {
+                    log_writer.write(GameLogMessage(format!(
+                        "Not enough HP to blood-cast {} (need {} HP).",
+                        spell.name, hp_cost
+                    )));
+                    finish_writer.write(ActionFinishedEvent {
+                        entity: caster_entity,
+                        base_cost: BASE_ACTION_COST,
+                    });
+                    continue;
+                }
+            } else if mana.current < spell.mana_cost {
                 log_writer.write(GameLogMessage(format!(
                     "Not enough mana to cast {} ({}/{} MP).",
                     spell.name, mana.current, mana.max
@@ -227,8 +247,20 @@ pub fn handle_cast_spell(
             }
         }
 
-        // Deduct mana and set cooldown.
-        if let Ok((mut mana, mut cooldowns)) = caster_resources.get_mut(caster_entity) {
+        // Deduct mana (or HP for BloodMage) and set cooldown.
+        if has_blood_mage {
+            let hp_cost = (spell.mana_cost + 1) / 2;
+            if let Ok(mut health) = caster_health.get_mut(caster_entity) {
+                health.current -= hp_cost;
+                log_writer.write(GameLogMessage(format!(
+                    "You pay {} HP to blood-cast {}.",
+                    hp_cost, spell.name
+                )));
+            }
+            if let Ok((_, mut cooldowns)) = caster_resources.get_mut(caster_entity) {
+                cooldowns.set(&spell_id, spell.cooldown);
+            }
+        } else if let Ok((mut mana, mut cooldowns)) = caster_resources.get_mut(caster_entity) {
             mana.current -= spell.mana_cost;
             cooldowns.set(&spell_id, spell.cooldown);
         }
@@ -292,9 +324,16 @@ pub fn handle_cast_spell(
             }
         }
 
+        // QuickCast: spells cost 50% action time
+        let spell_cost = if has_quick_cast {
+            BASE_ACTION_COST / 2
+        } else {
+            BASE_ACTION_COST
+        };
+
         finish_writer.write(ActionFinishedEvent {
             entity: caster_entity,
-            base_cost: BASE_ACTION_COST,
+            base_cost: spell_cost,
         });
     }
 }

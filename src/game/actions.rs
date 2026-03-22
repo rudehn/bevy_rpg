@@ -666,6 +666,7 @@ pub fn handle_open_chest(
     item_manifest_handle: Res<ItemManifestHandle>,
     item_sprite_assets: Res<ItemSpriteAssets>,
     ascii_font: Option<Res<crate::game::ascii_mode::AsciiFont>>,
+    scavenger_query: Query<Has<crate::game::shrines::ScavengerAbility>, With<Player>>,
 ) {
     use bracket_lib::prelude::RandomNumberGenerator;
     use crate::game::items::Rarity;
@@ -710,6 +711,8 @@ pub fn handle_open_chest(
 
         log_writer.write(GameLogMessage("You open the chest!".to_string()));
 
+        let has_scavenger = scavenger_query.single().unwrap_or(false);
+
         for _ in 0..item_count {
             // Roll a rarity tier using floor-scaled weights.
             let rarity_roll = rng.range(0, rarity_total as i32) as u32;
@@ -721,6 +724,16 @@ pub fn handle_open_chest(
                     chosen_rarity = rarity_tiers[i].clone();
                     break;
                 }
+            }
+
+            // Scavenger: boost rarity by one tier
+            if has_scavenger {
+                chosen_rarity = match chosen_rarity {
+                    Rarity::Common => Rarity::Uncommon,
+                    Rarity::Uncommon => Rarity::Rare,
+                    Rarity::Rare => Rarity::Legendary,
+                    Rarity::Legendary => Rarity::Legendary,
+                };
             }
 
             // Filter candidates to the chosen rarity, falling back to lower tiers.

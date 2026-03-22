@@ -326,15 +326,24 @@ fn resolve_free_actions(
 }
 
 fn resolve_turn_end(
+    mut commands: Commands,
     mut events: MessageReader<ActionFinishedEvent>,
     mut turn_manager: ResMut<TurnManager>,
     stats_query: Query<&SpeedStats>,
+    gambler_penalty_query: Query<Has<crate::game::combat::GamblerMissPenalty>>,
 ) {
     let current_time = turn_manager.current_time;
     let mut any = false;
     for event in events.read() {
         let stats = stats_query.get(event.entity).cloned().unwrap_or_default();
-        let cost = (event.base_cost as f32 * stats.delay).round() as u32;
+        let mut cost = (event.base_cost as f32 * stats.delay).round() as u32;
+
+        // GamblersMark: double cost on miss
+        if gambler_penalty_query.get(event.entity).unwrap_or(false) {
+            cost *= 2;
+            commands.entity(event.entity).remove::<crate::game::combat::GamblerMissPenalty>();
+        }
+
         turn_manager.turn_queue.push((event.entity, current_time + cost));
         any = true;
     }
