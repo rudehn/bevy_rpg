@@ -22,10 +22,39 @@
         (item: "Crossbow",                min_floor: 5,  max_floor: 15, weight: 2),
 
         // ===========================
-        // ARMOR
+        // ARMOR — Chest
         // ===========================
         (item: "Leather Armor",           min_floor: 1,  max_floor: 8,  weight: 3),
         (item: "Studded Leather Armor",   min_floor: 4,  max_floor: 12, weight: 2),
+        (item: "Plate Armor",             min_floor: 8,  max_floor: 20, weight: 1),
+
+        // ===========================
+        // ARMOR — Helms
+        // ===========================
+        (item: "Leather Cap",             min_floor: 1,  max_floor: 10, weight: 3),
+        (item: "Iron Helm",               min_floor: 4,  max_floor: 15, weight: 2),
+        (item: "Full Helm",               min_floor: 8,  max_floor: 20, weight: 1),
+
+        // ===========================
+        // ARMOR — Gloves
+        // ===========================
+        (item: "Leather Gloves",          min_floor: 1,  max_floor: 10, weight: 3),
+        (item: "Splint Gloves",           min_floor: 4,  max_floor: 15, weight: 2),
+        (item: "Gauntlets",               min_floor: 8,  max_floor: 20, weight: 1),
+
+        // ===========================
+        // ARMOR — Boots
+        // ===========================
+        (item: "Soft Boots",              min_floor: 1,  max_floor: 10, weight: 3),
+        (item: "Iron Boots",              min_floor: 4,  max_floor: 15, weight: 2),
+        (item: "Heavy Boots",             min_floor: 8,  max_floor: 20, weight: 1),
+
+        // ===========================
+        // SHIELDS
+        // ===========================
+        (item: "Wooden Shield",           min_floor: 1,  max_floor: 10, weight: 2),
+        (item: "Iron Shield",             min_floor: 4,  max_floor: 15, weight: 2),
+        (item: "Tower Shield",            min_floor: 8,  max_floor: 20, weight: 1),
 
         // ===========================
         // ACCESSORIES
