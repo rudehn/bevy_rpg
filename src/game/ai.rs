@@ -131,17 +131,19 @@ impl MonsterAI {
         self.update_mode(entity, &ctx, world);
 
         // --- Flee check (highest priority behavior) ---
-        if self.mode == MonsterAIMode::Hunting && self.flee_at_hp_percent > 0.0 {
+        // Only flee when the player is visible — a monster that rounds a corner
+        // and loses sight of the threat should stop fleeing and resume normal AI.
+        if self.mode == MonsterAIMode::Hunting && self.flee_at_hp_percent > 0.0 && ctx.is_player_visible {
             if let Some(health) = world.get::<Health>(entity) {
                 if ai_behaviors::should_flee(health.current, health.max, self.flee_at_hp_percent) {
                     if let Some(intent) = try_flee_movement(
                         entity, ctx.monster_pos, ctx.player_point, world,
                     ) {
                         world.write_message(intent);
-                    } else {
-                        world.write_message(WaitIntent { entity });
+                        return;
                     }
-                    return;
+                    // All flee directions blocked (cornered) — fall through to
+                    // normal behavior so the monster can still attack or act.
                 }
             }
         }
@@ -157,10 +159,10 @@ impl MonsterAI {
                     entity, ctx.monster_pos, ctx.player_point, world,
                 ) {
                     world.write_message(intent);
-                } else {
-                    world.write_message(WaitIntent { entity });
+                    return;
                 }
-                return;
+                // Retreat blocked — fall through to spell/ranged/melee instead
+                // of wasting the turn standing still.
             }
         }
 
