@@ -630,8 +630,19 @@ impl Direction {
     }
 }
 
+/// Returns rarity weights `[Common, Uncommon, Rare, Legendary]` scaled by floor depth.
+pub fn rarity_weights_for_floor(floor: i32) -> [u32; 4] {
+    match floor {
+        1..=5   => [70, 24,  5, 1],
+        6..=10  => [55, 32, 11, 2],
+        11..=15 => [40, 38, 18, 4],
+        _       => [25, 40, 27, 8],
+    }
+}
+
 /// When a player bumps a chest, despawn it and spawn 1-3 random items from
-/// the floor's item spawn table at the chest's position.
+/// the floor's item spawn table at the chest's position, using floor-scaled
+/// rarity weights.
 pub fn handle_open_chest(
     mut commands: Commands,
     mut intents: MessageReader<OpenChestIntent>,
@@ -646,6 +657,7 @@ pub fn handle_open_chest(
     item_sprite_assets: Res<ItemSpriteAssets>,
 ) {
     use bracket_lib::prelude::RandomNumberGenerator;
+    use crate::game::items::Rarity;
 
     for intent in intents.read() {
         let Ok(chest_pos) = chest_query.get(intent.chest_entity) else {
@@ -662,29 +674,85 @@ pub fn handle_open_chest(
             continue;
         };
 
+        let Some(item_manifest) = item_manifests.get(&item_manifest_handle.0) else {
+            finish_writer.write(ActionFinishedEvent { entity: intent.entity, base_cost: BASE_ACTION_COST });
+            continue;
+        };
+
         let depth = floor.0 as i32;
-        let candidates: Vec<_> = spawn_table.spawns.iter()
+        let floor_candidates: Vec<_> = spawn_table.spawns.iter()
             .filter(|s| depth >= s.min_floor && depth <= s.max_floor)
             .collect();
 
-        if candidates.is_empty() {
+        if floor_candidates.is_empty() {
             log_writer.write(GameLogMessage("You open the chest but it's empty!".to_string()));
             finish_writer.write(ActionFinishedEvent { entity: intent.entity, base_cost: BASE_ACTION_COST });
             continue;
         }
 
-        let total_weight: i32 = candidates.iter().map(|s| s.weight).sum();
+        let rarity_weights = rarity_weights_for_floor(depth);
+        let rarity_tiers = [Rarity::Common, Rarity::Uncommon, Rarity::Rare, Rarity::Legendary];
+        let rarity_total: u32 = rarity_weights.iter().sum();
+
         let mut rng = RandomNumberGenerator::new();
         let item_count = rng.range(1, 4); // 1-3 items
 
         log_writer.write(GameLogMessage("You open the chest!".to_string()));
 
         for _ in 0..item_count {
+            // Roll a rarity tier using floor-scaled weights.
+            let rarity_roll = rng.range(0, rarity_total as i32) as u32;
+            let mut acc = 0u32;
+            let mut chosen_rarity = Rarity::Common;
+            for (i, &w) in rarity_weights.iter().enumerate() {
+                acc += w;
+                if rarity_roll < acc {
+                    chosen_rarity = rarity_tiers[i].clone();
+                    break;
+                }
+            }
+
+            // Filter candidates to the chosen rarity, falling back to lower tiers.
+            let mut candidates: Vec<_> = floor_candidates.iter()
+                .filter(|s| {
+                    item_manifest.items.get(&s.item)
+                        .map(|a| a.rarity == chosen_rarity)
+                        .unwrap_or(false)
+                })
+                .collect();
+
+            // Fallback: try each lower rarity tier until we find items.
+            if candidates.is_empty() {
+                let tier_idx = rarity_tiers.iter().position(|r| *r == chosen_rarity).unwrap_or(0);
+                for fallback in (0..tier_idx).rev() {
+                    candidates = floor_candidates.iter()
+                        .filter(|s| {
+                            item_manifest.items.get(&s.item)
+                                .map(|a| a.rarity == rarity_tiers[fallback])
+                                .unwrap_or(false)
+                        })
+                        .collect();
+                    if !candidates.is_empty() {
+                        break;
+                    }
+                }
+            }
+
+            // If still empty, use all floor candidates as final fallback.
+            if candidates.is_empty() {
+                candidates = floor_candidates.iter().collect();
+            }
+
+            let total_weight: i32 = candidates.iter().map(|s| s.weight).sum();
+            if total_weight <= 0 {
+                continue;
+            }
+
             let roll = rng.range(0, total_weight);
-            let mut acc = 0;
+            let mut item_acc = 0;
             let chosen = candidates.iter().find(|s| {
-                acc += s.weight;
-                roll < acc
+                item_acc += s.weight;
+                roll < item_acc
             });
 
             if let Some(spawn_info) = chosen {
@@ -707,5 +775,46 @@ pub fn handle_open_chest(
             entity: intent.entity,
             base_cost: BASE_ACTION_COST,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn floor_1_weights() {
+        let w = rarity_weights_for_floor(1);
+        assert_eq!(w, [70, 24, 5, 1]);
+    }
+
+    #[test]
+    fn floor_5_weights() {
+        let w = rarity_weights_for_floor(5);
+        assert_eq!(w, [70, 24, 5, 1]);
+    }
+
+    #[test]
+    fn floor_10_weights() {
+        let w = rarity_weights_for_floor(10);
+        assert_eq!(w, [55, 32, 11, 2]);
+    }
+
+    #[test]
+    fn floor_15_weights() {
+        let w = rarity_weights_for_floor(15);
+        assert_eq!(w, [40, 38, 18, 4]);
+    }
+
+    #[test]
+    fn floor_20_weights() {
+        let w = rarity_weights_for_floor(20);
+        assert_eq!(w, [25, 40, 27, 8]);
+    }
+
+    #[test]
+    fn floor_beyond_20_uses_deepest_tier() {
+        let w = rarity_weights_for_floor(25);
+        assert_eq!(w, [25, 40, 27, 8]);
     }
 }
