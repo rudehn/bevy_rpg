@@ -14,6 +14,12 @@
         (item: "Steel Sword",             min_floor: 5,  max_floor: 14, weight: 2),
         (item: "Short Bow",               min_floor: 1,  max_floor: 8,  weight: 2),
         (item: "Long Bow",                min_floor: 5,  max_floor: 14, weight: 2),
+        (item: "Dagger",                  min_floor: 1,  max_floor: 6,  weight: 4),
+        (item: "Axe",                     min_floor: 3,  max_floor: 12, weight: 3),
+        (item: "Mace",                    min_floor: 3,  max_floor: 12, weight: 3),
+        (item: "Staff",                   min_floor: 1,  max_floor: 10, weight: 2),
+        (item: "Great Axe",               min_floor: 6,  max_floor: 15, weight: 2),
+        (item: "Crossbow",                min_floor: 5,  max_floor: 15, weight: 2),
 
         // ===========================
         // ARMOR
