@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::components::{FinalBoss, Monster, Name, GodMode};
-use crate::game::stats::{Armor, Dodge};
+use crate::game::stats::{Armor, Dodge, HitBonus};
 use crate::game::turns::TurnEndEvent;
 use crate::game::{AppState, RunSummary, TurnManager};
 use crate::map::dungeon::Floor;
@@ -146,6 +146,7 @@ pub struct DamageRollMessage {
     pub target: Entity,
     pub damage_type: DamageType,
     pub source: DamageSource,
+    pub is_crit: bool,
 }
 
 /// Message sent after damage is rolled to apply armor reduction.
@@ -216,6 +217,52 @@ fn roll_dice(dice_string: &str, rng: &mut RandomNumberGenerator) -> i32 {
     }
 }
 
+// --- Pure computation helpers (testable without ECS) ---
+
+/// Apply armor reduction to raw damage. Always deals at least 1.
+pub fn compute_after_armor(raw_damage: i32, armor: i32) -> i32 {
+    (raw_damage - armor).max(1)
+}
+
+/// Apply a resistance level to post-armor damage.
+/// Returns the final damage (negative = heal via Absorb, 0 = immune).
+pub fn apply_resistance(after_armor: i32, resistance: ResistanceLevel) -> i32 {
+    match resistance {
+        ResistanceLevel::Weak => (after_armor * 3 / 2).max(1),
+        ResistanceLevel::Normal => after_armor,
+        ResistanceLevel::Resistant => (after_armor / 2).max(1),
+        ResistanceLevel::Immune => 0,
+        ResistanceLevel::Absorb => -after_armor,
+    }
+}
+
+/// Apply spirit shield mana absorption. Returns `(remaining_damage, mana_absorbed)`.
+pub fn compute_spirit_shield(damage: i32, current_mana: i32) -> (i32, i32) {
+    let absorbed = damage.min(current_mana);
+    (damage - absorbed, absorbed)
+}
+
+/// Compute XP reward for killing an entity based on its max HP.
+pub fn xp_for_kill(max_hp: i32) -> i32 {
+    max_hp / 2 + 5
+}
+
+/// Apply crit and status multipliers to base damage.
+/// `is_crit`: 150% damage. `is_enraged`: +50%. `is_terrified`: -25%.
+pub fn apply_damage_multipliers(base: i32, is_crit: bool, is_enraged: bool, is_terrified: bool) -> i32 {
+    let mut damage = base;
+    if is_crit {
+        damage = damage * 3 / 2;
+    }
+    if is_enraged {
+        damage = damage * 3 / 2;
+    }
+    if is_terrified {
+        damage = damage * 3 / 4;
+    }
+    damage
+}
+
 // --- Systems ---
 
 /// System that handles health regeneration at the end of a global turn cycle.
@@ -240,33 +287,36 @@ fn regen_system(
     }
 }
 
-/// 1. Hit Chance: 1d20 >= 2 + target_dodge
+/// 1. Hit Chance: d20 + hit_bonus >= 4 + dodge_bonus (natural 20 always hits)
 fn hit_check_system(
     mut intents: MessageReader<AttackIntentMessage>,
     mut roll_writer: MessageWriter<DamageRollMessage>,
     mut miss_writer: MessageWriter<MissMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut game_rng: ResMut<GameRng>,
-    query: Query<(&Name, Option<&Dodge>, Has<Player>)>,
+    query: Query<(&Name, Option<&Dodge>, Option<&HitBonus>, Has<Player>)>,
 ) {
     for intent in intents.read() {
-        let Ok((attacker_name, _, is_player)) = query.get(intent.attacker) else {
+        let Ok((attacker_name, _, attacker_hit_bonus, is_player)) = query.get(intent.attacker) else {
             continue;
         };
-        let Ok((target_name, target_dodge, _)) = query.get(intent.target) else {
+        let Ok((target_name, target_dodge, _, _)) = query.get(intent.target) else {
             continue;
         };
 
         let hit_roll = game_rng.0.roll_dice(1, 20);
+        let hit_bonus = attacker_hit_bonus.map(|h| h.0).unwrap_or(0);
         let dodge_val = target_dodge.map(|d| d.0).unwrap_or(0);
-        let hit_target = 2 + dodge_val;
+        let dodge_target = 4 + dodge_val;
+        let is_natural_20 = hit_roll == 20;
 
-        if hit_roll >= hit_target {
+        if is_natural_20 || (hit_roll + hit_bonus >= dodge_target) {
             roll_writer.write(DamageRollMessage {
                 attacker: intent.attacker,
                 target: intent.target,
                 damage_type: intent.damage_type,
                 source: intent.source,
+                is_crit: is_natural_20,
             });
         } else {
             let verb = if is_player { "miss" } else { "misses" };
@@ -295,23 +345,8 @@ fn damage_roll_system(
         };
 
         let rolled_damage = roll_dice(&damage_dice.0, &mut game_rng.0);
-        let mut raw_damage = rolled_damage;
-
-        // 5% flat crit: 150% damage
-        let crit_roll = game_rng.0.roll_dice(1, 20);
-        if crit_roll == 20 {
-            raw_damage = raw_damage * 3 / 2;
-        }
-
-        // Enraged: +50% damage
-        if is_enraged {
-            raw_damage = raw_damage * 3 / 2;
-        }
-
-        // Terrified: -25% damage
-        if is_terrified {
-            raw_damage = raw_damage * 3 / 4;
-        }
+        let is_crit = game_rng.0.roll_dice(1, 20) == 20; // 5% flat crit
+        let raw_damage = apply_damage_multipliers(rolled_damage, is_crit, is_enraged, is_terrified);
 
         reduction_writer.write(DamageReductionMessage {
             attacker: message.attacker,
@@ -338,50 +373,38 @@ fn armor_reduction_system(
         // Armor reduction (physical mitigation) + Rally aura bonus
         let armor_val = armor.map(|a| a.0).unwrap_or(0)
             + rally_buff.map(|r| r.armor_bonus).unwrap_or(0);
-        let after_armor = (message.raw_damage - armor_val).max(1);
+        let after_armor = compute_after_armor(message.raw_damage, armor_val);
 
         // Resistance multiplier
         let resistance = resistances
             .map(|r| r.get(&message.damage_type))
             .unwrap_or(ResistanceLevel::Normal);
+        let final_damage = apply_resistance(after_armor, resistance);
 
-        let final_damage = match resistance {
+        // Log notable resistances
+        match resistance {
             ResistanceLevel::Weak => {
                 log_writer.write(GameLogMessage(format!(
-                    "{} is weak to {}!",
-                    target_name.0,
-                    message.damage_type.name()
+                    "{} is weak to {}!", target_name.0, message.damage_type.name()
                 )));
-                (after_armor * 3 / 2).max(1)
             }
-            ResistanceLevel::Normal => after_armor,
             ResistanceLevel::Resistant => {
                 log_writer.write(GameLogMessage(format!(
-                    "{} resists the {} damage.",
-                    target_name.0,
-                    message.damage_type.name()
+                    "{} resists the {} damage.", target_name.0, message.damage_type.name()
                 )));
-                (after_armor / 2).max(1)
             }
             ResistanceLevel::Immune => {
                 log_writer.write(GameLogMessage(format!(
-                    "{} is immune to {} damage!",
-                    target_name.0,
-                    message.damage_type.name()
+                    "{} is immune to {} damage!", target_name.0, message.damage_type.name()
                 )));
-                0
             }
             ResistanceLevel::Absorb => {
-                // Negative damage signals healing in damage_application_system
                 log_writer.write(GameLogMessage(format!(
-                    "{} absorbs the {}! (+{} HP)",
-                    target_name.0,
-                    message.damage_type.name(),
-                    after_armor
+                    "{} absorbs the {}! (+{} HP)", target_name.0, message.damage_type.name(), after_armor
                 )));
-                -after_armor
             }
-        };
+            ResistanceLevel::Normal => {}
+        }
 
         apply_writer.write(ApplyDamageMessage {
             attacker: message.attacker,
@@ -441,9 +464,8 @@ fn damage_application_system(
         // Spirit Shield: absorb damage from mana first (1 mana = 1 damage)
         let remaining_damage = if has_spirit_shield {
             if let Some(ref mut mana) = mana {
-                let absorbed = message.final_damage.min(mana.current);
+                let (overflow, absorbed) = compute_spirit_shield(message.final_damage, mana.current);
                 mana.current -= absorbed;
-                let overflow = message.final_damage - absorbed;
                 if absorbed > 0 {
                     log_writer.write(GameLogMessage(format!(
                         "{}'s spirit shield absorbs {} damage! ({} mana remaining)",
@@ -486,8 +508,7 @@ fn damage_application_system(
         )));
 
         if target_health.current <= 0 {
-            // XP reward: use a flat value based on max HP
-            let xp = target_health.max / 2 + 5;
+            let xp = xp_for_kill(target_health.max);
             death_writer.write(DeathEvent {
                 attacker: message.attacker,
                 target: message.target,
@@ -635,5 +656,200 @@ impl Plugin for CombatPlugin {
                 )
                     .run_if(in_state(AppState::InGame)),
             );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- compute_after_armor ---
+
+    #[test]
+    fn armor_reduces_damage() {
+        assert_eq!(compute_after_armor(10, 3), 7);
+    }
+
+    #[test]
+    fn armor_cannot_reduce_below_one() {
+        assert_eq!(compute_after_armor(5, 100), 1);
+    }
+
+    #[test]
+    fn zero_armor_passes_through() {
+        assert_eq!(compute_after_armor(8, 0), 8);
+    }
+
+    // --- apply_resistance ---
+
+    #[test]
+    fn weak_increases_damage_by_50_percent() {
+        assert_eq!(apply_resistance(10, ResistanceLevel::Weak), 15);
+    }
+
+    #[test]
+    fn weak_minimum_one() {
+        assert_eq!(apply_resistance(0, ResistanceLevel::Weak), 1);
+    }
+
+    #[test]
+    fn normal_passes_through() {
+        assert_eq!(apply_resistance(10, ResistanceLevel::Normal), 10);
+    }
+
+    #[test]
+    fn resistant_halves_damage() {
+        assert_eq!(apply_resistance(10, ResistanceLevel::Resistant), 5);
+    }
+
+    #[test]
+    fn resistant_minimum_one() {
+        assert_eq!(apply_resistance(1, ResistanceLevel::Resistant), 1);
+    }
+
+    #[test]
+    fn immune_zeroes_damage() {
+        assert_eq!(apply_resistance(10, ResistanceLevel::Immune), 0);
+    }
+
+    #[test]
+    fn absorb_negates_to_healing() {
+        assert_eq!(apply_resistance(10, ResistanceLevel::Absorb), -10);
+    }
+
+    // --- compute_spirit_shield ---
+
+    #[test]
+    fn shield_absorbs_fully_when_mana_sufficient() {
+        let (remaining, absorbed) = compute_spirit_shield(8, 20);
+        assert_eq!(absorbed, 8);
+        assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn shield_partial_absorption_when_mana_low() {
+        let (remaining, absorbed) = compute_spirit_shield(10, 3);
+        assert_eq!(absorbed, 3);
+        assert_eq!(remaining, 7);
+    }
+
+    #[test]
+    fn shield_no_absorption_with_zero_mana() {
+        let (remaining, absorbed) = compute_spirit_shield(5, 0);
+        assert_eq!(absorbed, 0);
+        assert_eq!(remaining, 5);
+    }
+
+    // --- xp_for_kill ---
+
+    #[test]
+    fn xp_scales_with_max_hp() {
+        assert_eq!(xp_for_kill(10), 10); // 10/2 + 5
+        assert_eq!(xp_for_kill(20), 15); // 20/2 + 5
+        assert_eq!(xp_for_kill(100), 55); // 100/2 + 5
+    }
+
+    #[test]
+    fn xp_minimum_for_weakest_enemy() {
+        assert_eq!(xp_for_kill(1), 5); // 1/2 + 5 = 5 (integer division)
+    }
+
+    // --- apply_damage_multipliers ---
+
+    #[test]
+    fn no_multipliers_passes_through() {
+        assert_eq!(apply_damage_multipliers(10, false, false, false), 10);
+    }
+
+    #[test]
+    fn crit_adds_50_percent() {
+        assert_eq!(apply_damage_multipliers(10, true, false, false), 15);
+    }
+
+    #[test]
+    fn enraged_adds_50_percent() {
+        assert_eq!(apply_damage_multipliers(10, false, true, false), 15);
+    }
+
+    #[test]
+    fn terrified_reduces_25_percent() {
+        assert_eq!(apply_damage_multipliers(10, false, false, true), 7);
+    }
+
+    #[test]
+    fn crit_and_enraged_stack_multiplicatively() {
+        // 10 * 1.5 (crit) = 15, then 15 * 1.5 (enrage) = 22
+        assert_eq!(apply_damage_multipliers(10, true, true, false), 22);
+    }
+
+    #[test]
+    fn all_multipliers_combined() {
+        // 10 * 1.5 (crit) = 15, * 1.5 (enrage) = 22, * 0.75 (terrified) = 16
+        assert_eq!(apply_damage_multipliers(10, true, true, true), 16);
+    }
+
+    // --- Resistance component ---
+
+    #[test]
+    fn resistances_default_to_normal() {
+        let r = Resistances::default();
+        assert_eq!(r.get(&DamageType::Fire), ResistanceLevel::Normal);
+    }
+
+    #[test]
+    fn resistances_lookup() {
+        let mut map = HashMap::new();
+        map.insert(DamageType::Fire, ResistanceLevel::Immune);
+        map.insert(DamageType::Lightning, ResistanceLevel::Weak);
+        let r = Resistances(map);
+        assert_eq!(r.get(&DamageType::Fire), ResistanceLevel::Immune);
+        assert_eq!(r.get(&DamageType::Lightning), ResistanceLevel::Weak);
+        assert_eq!(r.get(&DamageType::Physical), ResistanceLevel::Normal);
+    }
+
+    // --- DamageType parsing ---
+
+    #[test]
+    fn damage_type_from_str() {
+        assert_eq!(DamageType::from_str("fire"), DamageType::Fire);
+        assert_eq!(DamageType::from_str("LIGHTNING"), DamageType::Lightning);
+        assert_eq!(DamageType::from_str("necrotic"), DamageType::Necrotic);
+        assert_eq!(DamageType::from_str("unknown"), DamageType::Physical);
+        assert_eq!(DamageType::from_str(""), DamageType::Physical);
+    }
+
+    // --- Full pipeline integration: armor + resistance ---
+
+    #[test]
+    fn armor_then_resistance_weak() {
+        let after_armor = compute_after_armor(20, 5); // 15
+        let final_damage = apply_resistance(after_armor, ResistanceLevel::Weak); // 22
+        assert_eq!(final_damage, 22);
+    }
+
+    #[test]
+    fn armor_then_resistance_immune() {
+        let after_armor = compute_after_armor(20, 5); // 15
+        let final_damage = apply_resistance(after_armor, ResistanceLevel::Immune); // 0
+        assert_eq!(final_damage, 0);
+    }
+
+    #[test]
+    fn armor_then_resistance_absorb() {
+        let after_armor = compute_after_armor(20, 5); // 15
+        let final_damage = apply_resistance(after_armor, ResistanceLevel::Absorb); // -15 (heal)
+        assert_eq!(final_damage, -15);
+    }
+
+    #[test]
+    fn full_pipeline_spirit_shield_overflow() {
+        // 20 raw - 5 armor = 15, Normal resistance = 15, shield with 10 mana
+        let after_armor = compute_after_armor(20, 5);
+        let after_resistance = apply_resistance(after_armor, ResistanceLevel::Normal);
+        let (remaining, absorbed) = compute_spirit_shield(after_resistance, 10);
+        assert_eq!(after_armor, 15);
+        assert_eq!(after_resistance, 15);
+        assert_eq!(absorbed, 10);
+        assert_eq!(remaining, 5); // 5 HP damage gets through
     }
 }
