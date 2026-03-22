@@ -157,6 +157,7 @@ pub fn handle_burning_strike(
     mut game_rng: ResMut<GameRng>,
     attacker_query: Query<(&Name, &BurningStrike)>,
     defender_query: Query<&Name>,
+    mut burning_query: Query<&mut Burning>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     for msg in messages.read() {
@@ -166,10 +167,14 @@ pub fn handle_burning_strike(
 
         let roll = game_rng.0.roll_dice(1, 100);
         if roll <= burning_strike.chance as i32 {
-            commands.entity(msg.defender).insert(Burning {
-                damage_per_turn: burning_strike.damage_per_turn,
-                turns_remaining: burning_strike.duration,
-            });
+            if let Ok(mut existing) = burning_query.get_mut(msg.defender) {
+                existing.turns_remaining = existing.turns_remaining.max(burning_strike.duration);
+            } else {
+                commands.entity(msg.defender).insert(Burning {
+                    damage_per_turn: burning_strike.damage_per_turn,
+                    turns_remaining: burning_strike.duration,
+                });
+            }
             log_writer.write(GameLogMessage(format!(
                 "{}'s attack sets {} ablaze!",
                 attacker_name.0, defender_name.0
@@ -185,6 +190,7 @@ pub fn handle_stunning_blow(
     mut game_rng: ResMut<GameRng>,
     attacker_query: Query<(&Name, &StunningBlow)>,
     defender_query: Query<&Name>,
+    mut stunned_query: Query<&mut Stunned>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     for msg in messages.read() {
@@ -194,9 +200,13 @@ pub fn handle_stunning_blow(
 
         let roll = game_rng.0.roll_dice(1, 100);
         if roll <= stun.chance as i32 {
-            commands.entity(msg.defender).insert(Stunned {
-                turns_remaining: stun.duration,
-            });
+            if let Ok(mut existing) = stunned_query.get_mut(msg.defender) {
+                existing.turns_remaining = existing.turns_remaining.max(stun.duration);
+            } else {
+                commands.entity(msg.defender).insert(Stunned {
+                    turns_remaining: stun.duration,
+                });
+            }
             log_writer.write(GameLogMessage(format!(
                 "{}'s blow stuns {}!",
                 attacker_name.0, defender_name.0
@@ -287,6 +297,7 @@ pub fn handle_slow_strike(
     mut game_rng: ResMut<GameRng>,
     attacker_query: Query<(&Name, &SlowStrike)>,
     defender_query: Query<&Name>,
+    mut slowed_query: Query<&mut Slowed>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     for msg in messages.read() {
@@ -296,9 +307,13 @@ pub fn handle_slow_strike(
 
         let roll = game_rng.0.roll_dice(1, 100);
         if roll <= slow.chance as i32 {
-            commands.entity(msg.defender).insert(Slowed {
-                turns_remaining: slow.duration,
-            });
+            if let Ok(mut existing) = slowed_query.get_mut(msg.defender) {
+                existing.turns_remaining = existing.turns_remaining.max(slow.duration);
+            } else {
+                commands.entity(msg.defender).insert(Slowed {
+                    turns_remaining: slow.duration,
+                });
+            }
             log_writer.write(GameLogMessage(format!(
                 "{}'s attack slows {}!",
                 attacker_name.0, defender_name.0

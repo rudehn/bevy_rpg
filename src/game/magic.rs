@@ -500,7 +500,17 @@ fn effect_apply_slow(
     duration: u32,
     log_writer: &mut MessageWriter<GameLogMessage>,
 ) {
-    commands.entity(target).insert(Slowed { turns_remaining: duration }).remove::<Hasted>();
+    commands.queue(move |world: &mut World| {
+        if let Some(mut existing) = world.get_mut::<Slowed>(target) {
+            existing.turns_remaining = existing.turns_remaining.max(duration);
+        } else if let Ok(mut entity_mut) = world.get_entity_mut(target) {
+            entity_mut.insert(Slowed { turns_remaining: duration });
+        }
+        // Remove Hasted regardless
+        if let Ok(mut entity_mut) = world.get_entity_mut(target) {
+            entity_mut.remove::<Hasted>();
+        }
+    });
     log_writer.write(GameLogMessage("Target is slowed!".to_string()));
 }
 
