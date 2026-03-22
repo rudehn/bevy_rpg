@@ -98,13 +98,21 @@ pub fn spawn_monster(
         return None;
     };
 
+    let mut monster_ai = MonsterAI::default();
+    monster_ai.flee_at_hp_percent = monster_asset.flee_at_hp_percent;
+    monster_ai.erratic_chance = monster_asset.erratic_chance;
+    monster_ai.chase_leash = monster_asset.chase_leash;
+    monster_ai.kites = monster_asset.kites;
+    monster_ai.kite_distance = monster_asset.kite_distance;
+    monster_ai.spawn_position = Some(Point::new(spawn_point.x, spawn_point.y));
+
     let monster_entity = commands
         .spawn((
             Monster,
             GameEntityMarker,
             FloorEntityMarker,
             Name(monster_asset.name.clone()),
-            MonsterAI::default(),
+            monster_ai,
             Collider,
             new_grid_pos,
             new_pos,

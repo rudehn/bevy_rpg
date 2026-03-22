@@ -411,6 +411,26 @@ pub struct MonsterAsset {
     pub ascii_char: String,
     #[serde(default = "default_white_hex", deserialize_with = "serde_helpers::deserialize_hex_color")]
     pub ascii_fg: Color,
+
+    /// HP percentage (0.0-1.0) at which this monster flees. 0.0 = never flees.
+    #[serde(default)]
+    pub flee_at_hp_percent: f32,
+
+    /// Chance (0.0-1.0) per turn to move in a random direction instead of toward target.
+    #[serde(default)]
+    pub erratic_chance: f32,
+
+    /// Max tiles this monster will chase before giving up and returning to idle. 0 = no limit.
+    #[serde(default)]
+    pub chase_leash: u32,
+
+    /// If true, ranged monsters try to maintain distance from the player.
+    #[serde(default)]
+    pub kites: bool,
+
+    /// Minimum distance a kiting monster tries to maintain from the player.
+    #[serde(default = "default_kite_distance")]
+    pub kite_distance: u32,
 }
 
 /// Ability definition for RON deserialization.
@@ -510,6 +530,10 @@ fn default_weight() -> i32 {
 }
 fn default_count_one() -> u32 {
     1
+}
+
+fn default_kite_distance() -> u32 {
+    3
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
