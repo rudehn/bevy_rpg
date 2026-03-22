@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     components::FinalBoss,
     game::{
-        combat::{DamageType, Health, Resistances, ResistanceLevel},
+        combat::{DamageType, Health, Resistances},
         stats::Armor,
         turns::TurnEndEvent,
         TurnManager,
@@ -91,9 +91,9 @@ fn apply_tyrant_power_on_spawn(
             let mut map = resistances
                 .map(|r| r.0.clone())
                 .unwrap_or_default();
-            map.insert(DamageType::Physical, ResistanceLevel::Resistant);
+            map.insert(DamageType::Physical, 50);
             if tyrant_power.tier >= 5 {
-                map.insert(DamageType::Necrotic, ResistanceLevel::Resistant);
+                map.insert(DamageType::Necrotic, 50);
             }
             commands.entity(entity).insert(Resistances(map));
         }

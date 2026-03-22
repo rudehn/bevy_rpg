@@ -300,16 +300,38 @@ pub struct DecorationCatalog {
 #[derive(Resource, Default)]
 pub struct DecorationCatalogHandle(pub Handle<DecorationCatalog>);
 
+#[derive(Deserialize, Debug, Clone)]
+pub struct StartingItemDef {
+    pub name: String,
+    #[serde(default = "default_count_one")]
+    pub count: u32,
+}
+
 #[derive(Asset, TypePath, Deserialize, Resource, Debug, Clone)]
 pub struct PlayerAsset {
     pub name: String,
     pub sprite: String,
     pub damage: String,
+    #[serde(default = "default_player_hp")]
+    pub max_hp: i32,
+    #[serde(default = "default_regen_rate")]
+    pub regen_rate: i32,
+    #[serde(default)]
+    pub armor: i32,
+    #[serde(default)]
+    pub dodge: i32,
+    #[serde(default)]
+    pub viewshed_range: i32,
+    #[serde(default)]
+    pub starting_items: Vec<StartingItemDef>,
     #[serde(default)]
     pub ascii_char: String,
     #[serde(default = "default_white_hex", deserialize_with = "serde_helpers::deserialize_hex_color")]
     pub ascii_fg: Color,
 }
+
+fn default_player_hp() -> i32 { 25 }
+fn default_regen_rate() -> i32 { 10 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct MonsterLootEntry {
@@ -362,9 +384,9 @@ pub struct MonsterAsset {
     #[serde(default)]
     pub damage_type: String,
 
-    /// Resistance map, e.g. {"poison": "immune", "fire": "weak"}.
+    /// Resistance map, e.g. {"fire": 100, "physical": 50}. Values are percentages.
     #[serde(default)]
-    pub resistances: HashMap<String, String>,
+    pub resistances: HashMap<String, i32>,
 
     /// Base armor value (flat damage reduction). Default: 0.
     #[serde(default)]

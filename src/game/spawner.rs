@@ -17,7 +17,7 @@ use crate::{
     game::{
         MonsterAI, TurnManager,
         actions::SpeedStats,
-        combat::{Damage, DamageType, DamageTypeTag, Health, HealthRegen, Resistances, ResistanceLevel},
+        combat::{Damage, DamageType, DamageTypeTag, Health, HealthRegen, Resistances},
         items::{ItemProperties, ItemStack, LootEntry, LootTable},
         magic::{ActiveSpells, KnownSpells, ManaRegen, SpellCooldowns, MAX_SPELL_SLOTS},
         ranged::RangedCapable,
@@ -197,8 +197,8 @@ pub fn spawn_monster(
     // Resistances
     if !monster_asset.resistances.is_empty() {
         let mut map = std::collections::HashMap::new();
-        for (dt_str, rl_str) in &monster_asset.resistances {
-            map.insert(DamageType::from_str(dt_str), ResistanceLevel::from_str(rl_str));
+        for (dt_str, val) in &monster_asset.resistances {
+            map.insert(DamageType::from_str(dt_str), *val);
         }
         commands.entity(monster_entity).insert(Resistances(map));
     }

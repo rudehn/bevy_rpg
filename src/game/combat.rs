@@ -43,51 +43,15 @@ impl DamageType {
     }
 }
 
-/// How much an entity resists a particular damage type.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ResistanceLevel {
-    /// Takes 150% damage.
-    Weak,
-    /// Takes normal damage.
-    Normal,
-    /// Takes 50% damage (min 1).
-    Resistant,
-    /// Takes 0 damage.
-    Immune,
-    /// Heals instead of taking damage.
-    Absorb,
-}
-
-impl ResistanceLevel {
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "weak" => ResistanceLevel::Weak,
-            "resistant" => ResistanceLevel::Resistant,
-            "immune" => ResistanceLevel::Immune,
-            "absorb" => ResistanceLevel::Absorb,
-            _ => ResistanceLevel::Normal,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn label(&self) -> &'static str {
-        match self {
-            ResistanceLevel::Weak => "weak",
-            ResistanceLevel::Normal => "normal",
-            ResistanceLevel::Resistant => "resistant",
-            ResistanceLevel::Immune => "immune",
-            ResistanceLevel::Absorb => "absorb",
-        }
-    }
-}
-
-/// Per-entity resistance map. Missing entries default to Normal.
+/// Per-entity resistance map. Values are percentages.
+/// 0 = normal, 50 = 50% reduction, 100 = immune, >100 = heals.
+/// Negative = vulnerability (takes extra damage).
 #[derive(Component, Clone, Debug, Default, Serialize, Deserialize)]
-pub struct Resistances(pub HashMap<DamageType, ResistanceLevel>);
+pub struct Resistances(pub HashMap<DamageType, i32>);
 
 impl Resistances {
-    pub fn get(&self, damage_type: &DamageType) -> ResistanceLevel {
-        self.0.get(damage_type).copied().unwrap_or(ResistanceLevel::Normal)
+    pub fn get(&self, damage_type: &DamageType) -> i32 {
+        self.0.get(damage_type).copied().unwrap_or(0)
     }
 }
 
@@ -219,21 +183,16 @@ fn roll_dice(dice_string: &str, rng: &mut RandomNumberGenerator) -> i32 {
 
 // --- Pure computation helpers (testable without ECS) ---
 
-/// Apply armor reduction to raw damage. Always deals at least 1.
+/// Apply armor reduction to raw damage. Armor can fully negate damage.
 pub fn compute_after_armor(raw_damage: i32, armor: i32) -> i32 {
-    (raw_damage - armor).max(1)
+    (raw_damage - armor).max(0)
 }
 
-/// Apply a resistance level to post-armor damage.
+/// Apply a resistance percentage to damage.
 /// Returns the final damage (negative = heal via Absorb, 0 = immune).
-pub fn apply_resistance(after_armor: i32, resistance: ResistanceLevel) -> i32 {
-    match resistance {
-        ResistanceLevel::Weak => (after_armor * 3 / 2).max(1),
-        ResistanceLevel::Normal => after_armor,
-        ResistanceLevel::Resistant => (after_armor / 2).max(1),
-        ResistanceLevel::Immune => 0,
-        ResistanceLevel::Absorb => -after_armor,
-    }
+pub fn apply_resistance(damage: i32, resist_percent: i32) -> i32 {
+    let multiplier = 1.0 - (resist_percent as f32 / 100.0);
+    (damage as f32 * multiplier).round() as i32
 }
 
 /// Apply spirit shield mana absorption. Returns `(remaining_damage, mana_absorbed)`.
@@ -372,40 +331,34 @@ fn armor_reduction_system(
             continue;
         };
 
-        // Armor reduction (physical mitigation) + Rally aura bonus
-        let armor_val = armor.map(|a| a.0).unwrap_or(0)
-            + rally_buff.map(|r| r.armor_bonus).unwrap_or(0);
-        let after_armor = compute_after_armor(message.raw_damage, armor_val);
+        // Armor reduction: only Physical damage applies armor
+        let after_armor = if message.damage_type == DamageType::Physical {
+            let armor_val = armor.map(|a| a.0).unwrap_or(0)
+                + rally_buff.map(|r| r.armor_bonus).unwrap_or(0);
+            compute_after_armor(message.raw_damage, armor_val)
+        } else {
+            message.raw_damage // Non-physical skips armor
+        };
 
-        // Resistance multiplier
-        let resistance = resistances
+        // Resistance percentage
+        let resist_percent = resistances
             .map(|r| r.get(&message.damage_type))
-            .unwrap_or(ResistanceLevel::Normal);
-        let final_damage = apply_resistance(after_armor, resistance);
+            .unwrap_or(0);
+        let final_damage = apply_resistance(after_armor, resist_percent);
 
-        // Log notable resistances
-        match resistance {
-            ResistanceLevel::Weak => {
-                log_writer.write(GameLogMessage(format!(
-                    "{} is weak to {}!", target_name.0, message.damage_type.name()
-                )));
-            }
-            ResistanceLevel::Resistant => {
-                log_writer.write(GameLogMessage(format!(
-                    "{} resists the {} damage.", target_name.0, message.damage_type.name()
-                )));
-            }
-            ResistanceLevel::Immune => {
-                log_writer.write(GameLogMessage(format!(
-                    "{} is immune to {} damage!", target_name.0, message.damage_type.name()
-                )));
-            }
-            ResistanceLevel::Absorb => {
-                log_writer.write(GameLogMessage(format!(
-                    "{} absorbs the {}! (+{} HP)", target_name.0, message.damage_type.name(), after_armor
-                )));
-            }
-            ResistanceLevel::Normal => {}
+        // Log resistance effects
+        if resist_percent >= 100 {
+            log_writer.write(GameLogMessage(format!(
+                "{} is immune to {} damage!", target_name.0, message.damage_type.name()
+            )));
+        } else if resist_percent > 0 {
+            log_writer.write(GameLogMessage(format!(
+                "{} resists the {} damage.", target_name.0, message.damage_type.name()
+            )));
+        } else if resist_percent < 0 {
+            log_writer.write(GameLogMessage(format!(
+                "{} is weak to {}!", target_name.0, message.damage_type.name()
+            )));
         }
 
         apply_writer.write(ApplyDamageMessage {
@@ -673,8 +626,8 @@ mod tests {
     }
 
     #[test]
-    fn armor_cannot_reduce_below_one() {
-        assert_eq!(compute_after_armor(5, 100), 1);
+    fn armor_can_reduce_to_zero() {
+        assert_eq!(compute_after_armor(5, 100), 0);
     }
 
     #[test]
@@ -685,38 +638,28 @@ mod tests {
     // --- apply_resistance ---
 
     #[test]
-    fn weak_increases_damage_by_50_percent() {
-        assert_eq!(apply_resistance(10, ResistanceLevel::Weak), 15);
+    fn resistance_zero_is_normal() {
+        assert_eq!(apply_resistance(10, 0), 10);
     }
 
     #[test]
-    fn weak_minimum_one() {
-        assert_eq!(apply_resistance(0, ResistanceLevel::Weak), 1);
+    fn resistance_50_halves_damage() {
+        assert_eq!(apply_resistance(10, 50), 5);
     }
 
     #[test]
-    fn normal_passes_through() {
-        assert_eq!(apply_resistance(10, ResistanceLevel::Normal), 10);
+    fn resistance_100_is_immune() {
+        assert_eq!(apply_resistance(10, 100), 0);
     }
 
     #[test]
-    fn resistant_halves_damage() {
-        assert_eq!(apply_resistance(10, ResistanceLevel::Resistant), 5);
+    fn resistance_150_heals() {
+        assert_eq!(apply_resistance(10, 150), -5);
     }
 
     #[test]
-    fn resistant_minimum_one() {
-        assert_eq!(apply_resistance(1, ResistanceLevel::Resistant), 1);
-    }
-
-    #[test]
-    fn immune_zeroes_damage() {
-        assert_eq!(apply_resistance(10, ResistanceLevel::Immune), 0);
-    }
-
-    #[test]
-    fn absorb_negates_to_healing() {
-        assert_eq!(apply_resistance(10, ResistanceLevel::Absorb), -10);
+    fn resistance_negative_50_is_vulnerable() {
+        assert_eq!(apply_resistance(10, -50), 15);
     }
 
     // --- compute_spirit_shield ---
@@ -787,20 +730,20 @@ mod tests {
     // --- Resistance component ---
 
     #[test]
-    fn resistances_default_to_normal() {
+    fn resistances_default_to_zero() {
         let r = Resistances::default();
-        assert_eq!(r.get(&DamageType::Fire), ResistanceLevel::Normal);
+        assert_eq!(r.get(&DamageType::Fire), 0);
     }
 
     #[test]
     fn resistances_lookup() {
         let mut map = HashMap::new();
-        map.insert(DamageType::Fire, ResistanceLevel::Immune);
-        map.insert(DamageType::Lightning, ResistanceLevel::Weak);
+        map.insert(DamageType::Fire, 100);
+        map.insert(DamageType::Lightning, -50);
         let r = Resistances(map);
-        assert_eq!(r.get(&DamageType::Fire), ResistanceLevel::Immune);
-        assert_eq!(r.get(&DamageType::Lightning), ResistanceLevel::Weak);
-        assert_eq!(r.get(&DamageType::Physical), ResistanceLevel::Normal);
+        assert_eq!(r.get(&DamageType::Fire), 100);
+        assert_eq!(r.get(&DamageType::Lightning), -50);
+        assert_eq!(r.get(&DamageType::Physical), 0);
     }
 
     // --- DamageType parsing ---
@@ -817,31 +760,31 @@ mod tests {
     // --- Full pipeline integration: armor + resistance ---
 
     #[test]
-    fn armor_then_resistance_weak() {
+    fn armor_then_resistance_vulnerable() {
         let after_armor = compute_after_armor(20, 5); // 15
-        let final_damage = apply_resistance(after_armor, ResistanceLevel::Weak); // 22
-        assert_eq!(final_damage, 22);
+        let final_damage = apply_resistance(after_armor, -50); // 15 * 1.5 = 22.5 -> 23
+        assert_eq!(final_damage, 23);
     }
 
     #[test]
     fn armor_then_resistance_immune() {
         let after_armor = compute_after_armor(20, 5); // 15
-        let final_damage = apply_resistance(after_armor, ResistanceLevel::Immune); // 0
+        let final_damage = apply_resistance(after_armor, 100); // 0
         assert_eq!(final_damage, 0);
     }
 
     #[test]
     fn armor_then_resistance_absorb() {
         let after_armor = compute_after_armor(20, 5); // 15
-        let final_damage = apply_resistance(after_armor, ResistanceLevel::Absorb); // -15 (heal)
-        assert_eq!(final_damage, -15);
+        let final_damage = apply_resistance(after_armor, 150); // 15 * -0.5 = -7.5 -> -8
+        assert_eq!(final_damage, -8);
     }
 
     #[test]
     fn full_pipeline_spirit_shield_overflow() {
-        // 20 raw - 5 armor = 15, Normal resistance = 15, shield with 10 mana
+        // 20 raw - 5 armor = 15, 0% resistance = 15, shield with 10 mana
         let after_armor = compute_after_armor(20, 5);
-        let after_resistance = apply_resistance(after_armor, ResistanceLevel::Normal);
+        let after_resistance = apply_resistance(after_armor, 0);
         let (remaining, absorbed) = compute_spirit_shield(after_resistance, 10);
         assert_eq!(after_armor, 15);
         assert_eq!(after_resistance, 15);
