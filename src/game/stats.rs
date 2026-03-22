@@ -23,6 +23,11 @@ pub struct Armor(pub i32);
 #[reflect(Component)]
 pub struct Dodge(pub i32);
 
+/// Flat bonus added to the d20 attack roll.
+#[derive(Component, Debug, Clone, Reflect, Default, Serialize, Deserialize)]
+#[reflect(Component)]
+pub struct HitBonus(pub i32);
+
 // --- Plugin ---
 
 pub struct StatsPlugin;
@@ -31,6 +36,7 @@ impl Plugin for StatsPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<Mana>()
             .register_type::<Armor>()
-            .register_type::<Dodge>();
+            .register_type::<Dodge>()
+            .register_type::<HitBonus>();
     }
 }

@@ -21,7 +21,7 @@ use crate::{
         items::{ItemProperties, ItemStack, LootEntry, LootTable},
         magic::{ActiveSpells, KnownSpells, ManaRegen, SpellCooldowns, MAX_SPELL_SLOTS},
         ranged::RangedCapable,
-        stats::{Armor, Dodge, Mana},
+        stats::{Armor, Dodge, HitBonus, Mana},
     },
     map::map::GRID_SIZE,
 };
@@ -120,6 +120,7 @@ pub fn spawn_monster(
             SpeedStats::default(),
             Armor(monster_asset.base_armor),
             Dodge(0),
+            HitBonus(0),
         ))
         .insert((
             Sprite::from_atlas_image(

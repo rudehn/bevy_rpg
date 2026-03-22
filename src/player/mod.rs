@@ -22,11 +22,14 @@ use crate::{
         items::Equipment,
         magic::{ActiveSpells, KnownSpells, ManaRegen, SpellCooldowns},
         spawn_item,
-        stats::{Armor, Dodge, Mana},
+        stats::{Armor, Dodge, HitBonus, Mana},
     },
     map::dungeon::{PlayerSpawnPoint, SpawnDungeonMessage, SpawnDungeonSet},
     map::map::GRID_SIZE,
 };
+
+use crate::assets::StartingItemDef;
+use crate::game::items::ItemStack;
 
 pub struct PlayerPlugin;
 
@@ -93,72 +96,23 @@ pub fn player_spawn_or_move_system(
             .unwrap()
             .clone();
 
-        // Determine scale to fit one game map tile (GRID_SIZE)
-        // Default to 32x32 for new assets
         let tile_size = UVec2::new(32, 32);
         let scale_x = GRID_SIZE.x / tile_size.x as f32;
         let scale_y = GRID_SIZE.y / tile_size.y as f32;
 
-        // Spawn starting Short Bow + Arrows and collect entity IDs for the inventory.
-        let starting_items: Vec<Entity> = {
-            use crate::game::items::ItemStack;
-            let mut items = Vec::new();
-            if let Some(bow_entity) = spawn_item(
-                &mut commands,
-                "Short Bow",
-                &Point::new(0, 0),
-                &item_manifests,
-                &item_manifest_handle,
-                &item_sprite_assets,
-                None,
-            ) {
-                commands
-                    .entity(bow_entity)
-                    .insert(InInventory)
-                    .insert(Visibility::Hidden)
-                    .remove::<FloorEntityMarker>();
-                items.push(bow_entity);
-            }
-            if let Some(arrow_entity) = spawn_item(
-                &mut commands,
-                "Arrow",
-                &Point::new(0, 0),
-                &item_manifests,
-                &item_manifest_handle,
-                &item_sprite_assets,
-                None,
-            ) {
-                commands
-                    .entity(arrow_entity)
-                    .insert(ItemStack {
-                        count: 20,
-                        max_stack: 30,
-                    })
-                    .insert(InInventory)
-                    .insert(Visibility::Hidden)
-                    .remove::<FloorEntityMarker>();
-                items.push(arrow_entity);
-            }
-            // Starting spellbooks: Fire Dart and Spark
-            for tome_name in &["Tome of Fire Dart", "Tome of Spark"] {
-                if let Some(tome_entity) = spawn_item(
-                    &mut commands,
-                    tome_name,
-                    &Point::new(0, 0),
-                    &item_manifests,
-                    &item_manifest_handle,
-                    &item_sprite_assets,
-                    None,
-                ) {
-                    commands
-                        .entity(tome_entity)
-                        .insert(InInventory)
-                        .insert(Visibility::Hidden)
-                        .remove::<FloorEntityMarker>();
-                    items.push(tome_entity);
-                }
-            }
-            items
+        // Spawn starting items from player.ron manifest.
+        let starting_items = spawn_starting_items(
+            &mut commands,
+            &player_asset.starting_items,
+            &item_manifests,
+            &item_manifest_handle,
+            &item_sprite_assets,
+        );
+
+        let viewshed_range = if player_asset.viewshed_range > 0 {
+            player_asset.viewshed_range
+        } else {
+            8
         };
 
         let player_entity = commands
@@ -168,7 +122,7 @@ pub fn player_spawn_or_move_system(
                 GameEntityMarker,
                 Collider,
                 new_grid_pos,
-                Viewshed::new(8),
+                Viewshed::new(viewshed_range),
                 Inventory {
                     items: starting_items,
                     capacity: 20,
@@ -177,20 +131,21 @@ pub fn player_spawn_or_move_system(
             ))
             .insert((
                 Health {
-                    current: 25,
-                    max: 25,
+                    current: player_asset.max_hp,
+                    max: player_asset.max_hp,
                 },
                 HealthRegen {
-                    regen_rate: 10,
+                    regen_rate: player_asset.regen_rate,
                     regen_accumulator: 0,
                 },
                 Damage(player_asset.damage.clone()),
-                Armor(0),
-                Dodge(0),
+                Armor(player_asset.armor),
+                Dodge(player_asset.dodge),
+                HitBonus(0),
                 SpeedStats::default(),
                 Mana {
-                    current: 0,
-                    max: 0,
+                    current: 10,
+                    max: 10,
                 },
                 ManaRegen::default(),
                 Essence::default(),
@@ -218,7 +173,6 @@ pub fn player_spawn_or_move_system(
             ))
             .id();
 
-        // ASCII glyph child: white @ symbol
         if let Some(ref font) = ascii_font {
             crate::game::spawner::attach_ascii_glyph(
                 &mut commands,
@@ -232,4 +186,45 @@ pub fn player_spawn_or_move_system(
 
         turn_manager.add_entity(player_entity);
     }
+}
+
+/// Spawn starting inventory items from the player asset manifest.
+fn spawn_starting_items(
+    commands: &mut Commands,
+    item_defs: &[StartingItemDef],
+    item_manifests: &Res<Assets<ItemManifest>>,
+    item_manifest_handle: &Res<ItemManifestHandle>,
+    item_sprite_assets: &Res<ItemSpriteAssets>,
+) -> Vec<Entity> {
+    let mut items = Vec::new();
+    for def in item_defs {
+        if let Some(entity) = spawn_item(
+            commands,
+            &def.name,
+            &Point::new(0, 0),
+            item_manifests,
+            item_manifest_handle,
+            item_sprite_assets,
+            None,
+        ) {
+            commands
+                .entity(entity)
+                .insert(InInventory)
+                .insert(Visibility::Hidden)
+                .remove::<FloorEntityMarker>();
+            if def.count > 1 {
+                let max_stack = item_manifests
+                    .get(&item_manifest_handle.0)
+                    .and_then(|m| m.items.get(def.name.as_str()))
+                    .map(|a| a.max_stack)
+                    .unwrap_or(1);
+                commands.entity(entity).insert(ItemStack {
+                    count: def.count,
+                    max_stack,
+                });
+            }
+            items.push(entity);
+        }
+    }
+    items
 }
