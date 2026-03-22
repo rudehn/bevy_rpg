@@ -22,7 +22,7 @@ use crate::{
         items::Equipment,
         magic::{ActiveSpells, KnownSpells, ManaRegen, SpellCooldowns},
         spawn_item,
-        stats::{Armor, Dodge, HitBonus, Mana},
+        stats::{Armor, DamageBonus, Dodge, HitBonus, Mana},
     },
     map::dungeon::{PlayerSpawnPoint, SpawnDungeonMessage, SpawnDungeonSet},
     map::map::GRID_SIZE,
@@ -142,6 +142,7 @@ pub fn player_spawn_or_move_system(
                 Armor(player_asset.armor),
                 Dodge(player_asset.dodge),
                 HitBonus(0),
+                DamageBonus(0),
                 SpeedStats::default(),
                 Mana {
                     current: 10,

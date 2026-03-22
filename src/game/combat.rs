@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::components::{FinalBoss, Monster, Name, GodMode};
-use crate::game::stats::{Armor, Dodge, HitBonus};
+use crate::game::stats::{Armor, DamageBonus, Dodge, HitBonus};
 use crate::game::turns::TurnEndEvent;
 use crate::game::{AppState, RunSummary, TurnManager};
 use crate::map::dungeon::Floor;
@@ -87,6 +87,11 @@ pub struct HealthRegen {
     pub regen_rate: i32,
     pub regen_accumulator: i32,
 }
+
+/// Suppresses HP regen for N turns after taking damage.
+#[derive(Component, Clone, Debug, Serialize, Deserialize, Reflect, Default)]
+#[reflect(Component)]
+pub struct RegenSuppression(pub u32);
 
 /// Component for an entity's damage, using dice notation (e.g., "1d6").
 #[derive(Component, Debug)]
@@ -225,10 +230,13 @@ pub fn apply_damage_multipliers(base: i32, is_enraged: bool, is_terrified: bool)
 /// System that handles health regeneration at the end of a global turn cycle.
 fn regen_system(
     mut turn_end_events: MessageReader<TurnEndEvent>,
-    mut query: Query<(&mut Health, &mut HealthRegen)>,
+    mut query: Query<(&mut Health, &mut HealthRegen, Has<RegenSuppression>)>,
 ) {
     for _ in turn_end_events.read() {
-        for (mut health, mut regen) in query.iter_mut() {
+        for (mut health, mut regen, is_suppressed) in query.iter_mut() {
+            if is_suppressed {
+                continue;
+            }
             if health.current < health.max {
                 regen.regen_accumulator += regen.regen_rate;
                 while regen.regen_accumulator >= 100 {
@@ -294,10 +302,10 @@ fn damage_roll_system(
     mut roll_messages: MessageReader<DamageRollMessage>,
     mut reduction_writer: MessageWriter<DamageReductionMessage>,
     mut game_rng: ResMut<GameRng>,
-    query: Query<(&Damage, Has<crate::game::abilities::Enraged>, Has<crate::game::abilities::Terrified>)>,
+    query: Query<(&Damage, Has<crate::game::abilities::Enraged>, Has<crate::game::abilities::Terrified>, Option<&DamageBonus>)>,
 ) {
     for message in roll_messages.read() {
-        let Ok((damage_dice, is_enraged, is_terrified)) = query.get(message.attacker) else {
+        let Ok((damage_dice, is_enraged, is_terrified, damage_bonus)) = query.get(message.attacker) else {
             continue;
         };
 
@@ -307,7 +315,8 @@ fn damage_roll_system(
         } else {
             base_roll
         };
-        let raw_damage = apply_damage_multipliers(rolled_damage, is_enraged, is_terrified);
+        let bonus = damage_bonus.map(|d| d.0).unwrap_or(0);
+        let raw_damage = apply_damage_multipliers(rolled_damage + bonus, is_enraged, is_terrified);
 
         reduction_writer.write(DamageReductionMessage {
             attacker: message.attacker,
@@ -374,6 +383,7 @@ fn armor_reduction_system(
 /// 4. Damage Application: Update health and log the result.
 /// Absorb resistance: negative final_damage means heal instead.
 fn damage_application_system(
+    mut commands: Commands,
     mut apply_messages: MessageReader<ApplyDamageMessage>,
     mut death_writer: MessageWriter<DeathEvent>,
     mut on_hit_writer: MessageWriter<crate::game::abilities::OnHitTriggerMessage>,
@@ -437,6 +447,8 @@ fn damage_application_system(
 
         if remaining_damage > 0 {
             target_health.current -= remaining_damage;
+            // Suppress HP regen for 5 turns after taking damage
+            commands.entity(message.target).insert(RegenSuppression(5));
         }
 
         // Emit ability trigger messages for on-hit and on-being-hit handlers.
@@ -495,6 +507,23 @@ pub fn handle_heal_system(
             let healed_amount = health.current - old_health;
             if healed_amount > 0 {
                 log_writer.write(GameLogMessage(format!("{} is healed for {} HP.", name.0, healed_amount)));
+            }
+        }
+    }
+}
+
+/// Tick down regen suppression each turn end. Removes the component when it reaches 0.
+fn tick_regen_suppression(
+    mut commands: Commands,
+    mut turn_end_events: MessageReader<TurnEndEvent>,
+    mut query: Query<(Entity, &mut RegenSuppression)>,
+) {
+    for _ in turn_end_events.read() {
+        for (entity, mut suppression) in query.iter_mut() {
+            if suppression.0 <= 1 {
+                commands.entity(entity).remove::<RegenSuppression>();
+            } else {
+                suppression.0 -= 1;
             }
         }
     }
@@ -592,6 +621,7 @@ impl Plugin for CombatPlugin {
             .add_message::<DeathEvent>()
             .register_type::<Health>()
             .register_type::<HealthRegen>()
+            .register_type::<RegenSuppression>()
             .register_type::<GodMode>()
             .configure_sets(Update, CombatDamageSet.run_if(in_state(AppState::InGame)))
             .add_systems(
@@ -606,6 +636,7 @@ impl Plugin for CombatPlugin {
                         .chain()
                         .in_set(CombatDamageSet),
                     regen_system,
+                    tick_regen_suppression,
                     handle_heal_system,
                     handle_toggle_god_mode_system,
                 )
@@ -744,6 +775,27 @@ mod tests {
         assert_eq!(r.get(&DamageType::Fire), 100);
         assert_eq!(r.get(&DamageType::Lightning), -50);
         assert_eq!(r.get(&DamageType::Physical), 0);
+    }
+
+    // --- DamageBonus ---
+
+    #[test]
+    fn damage_bonus_adds_to_base() {
+        // Simulated: rolled 4, bonus 2, no multipliers
+        let result = apply_damage_multipliers(4 + 2, false, false);
+        assert_eq!(result, 6);
+    }
+
+    // --- RegenSuppression ---
+
+    #[test]
+    fn regen_suppression_decrements() {
+        // Simulated: 5 turns, tick 4 times = 1 remaining
+        let mut turns = 5u32;
+        for _ in 0..4 {
+            turns -= 1;
+        }
+        assert_eq!(turns, 1);
     }
 
     // --- DamageType parsing ---

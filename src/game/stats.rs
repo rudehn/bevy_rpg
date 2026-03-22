@@ -28,6 +28,11 @@ pub struct Dodge(pub i32);
 #[reflect(Component)]
 pub struct HitBonus(pub i32);
 
+/// Flat damage added after dice roll.
+#[derive(Component, Debug, Clone, Reflect, Default, Serialize, Deserialize)]
+#[reflect(Component)]
+pub struct DamageBonus(pub i32);
+
 // --- Plugin ---
 
 pub struct StatsPlugin;
@@ -37,6 +42,7 @@ impl Plugin for StatsPlugin {
         app.register_type::<Mana>()
             .register_type::<Armor>()
             .register_type::<Dodge>()
-            .register_type::<HitBonus>();
+            .register_type::<HitBonus>()
+            .register_type::<DamageBonus>();
     }
 }
