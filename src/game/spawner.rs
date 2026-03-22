@@ -40,6 +40,10 @@ pub fn attach_ascii_glyph(
 ) {
     let display = if ascii_char.is_empty() { "?" } else { ascii_char };
     let inv_scale = Vec3::new(1.0 / parent_scale.x, 1.0 / parent_scale.y, 1.0);
+    // Use Inherited so the glyph follows the parent's visibility.
+    // In ASCII mode the parent visibility system controls when items are
+    // shown/hidden; in Sprite mode apply_graphics_mode_swap sets all
+    // AsciiGlyph entities to Hidden on mode change.
     let glyph = commands
         .spawn((
             Text2d::new(display.to_string()),
@@ -53,7 +57,7 @@ pub fn attach_ascii_glyph(
                 scale: inv_scale,
                 ..default()
             },
-            Visibility::Hidden,
+            Visibility::Inherited,
             crate::game::ascii_mode::AsciiGlyph,
             RenderLayers::layer(1),
         ))
