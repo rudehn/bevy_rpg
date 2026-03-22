@@ -247,20 +247,18 @@ pub fn xp_for_kill(max_hp: i32) -> i32 {
     max_hp / 2 + 5
 }
 
-/// Apply crit and status multipliers to base damage.
-/// `is_crit`: 150% damage. `is_enraged`: +50%. `is_terrified`: -25%.
-pub fn apply_damage_multipliers(base: i32, is_crit: bool, is_enraged: bool, is_terrified: bool) -> i32 {
+/// Apply status multipliers to base damage.
+/// `is_enraged`: +50%. `is_terrified`: -25%.
+/// Crits are handled upstream by doubling the damage dice, not here.
+pub fn apply_damage_multipliers(base: i32, is_enraged: bool, is_terrified: bool) -> i32 {
     let mut damage = base;
-    if is_crit {
-        damage = damage * 3 / 2;
-    }
     if is_enraged {
         damage = damage * 3 / 2;
     }
     if is_terrified {
         damage = damage * 3 / 4;
     }
-    damage
+    damage.max(1)
 }
 
 // --- Systems ---
@@ -332,7 +330,7 @@ fn hit_check_system(
     }
 }
 
-/// 2. Damage Calculation: Roll attacker damage dice. 5% flat crit (150% damage).
+/// 2. Damage Calculation: Roll attacker damage dice. Crits (nat 20) double the dice.
 fn damage_roll_system(
     mut roll_messages: MessageReader<DamageRollMessage>,
     mut reduction_writer: MessageWriter<DamageReductionMessage>,
@@ -344,9 +342,13 @@ fn damage_roll_system(
             continue;
         };
 
-        let rolled_damage = roll_dice(&damage_dice.0, &mut game_rng.0);
-        let is_crit = game_rng.0.roll_dice(1, 20) == 20; // 5% flat crit
-        let raw_damage = apply_damage_multipliers(rolled_damage, is_crit, is_enraged, is_terrified);
+        let base_roll = roll_dice(&damage_dice.0, &mut game_rng.0);
+        let rolled_damage = if message.is_crit {
+            base_roll + roll_dice(&damage_dice.0, &mut game_rng.0)
+        } else {
+            base_roll
+        };
+        let raw_damage = apply_damage_multipliers(rolled_damage, is_enraged, is_terrified);
 
         reduction_writer.write(DamageReductionMessage {
             attacker: message.attacker,
@@ -758,34 +760,28 @@ mod tests {
 
     #[test]
     fn no_multipliers_passes_through() {
-        assert_eq!(apply_damage_multipliers(10, false, false, false), 10);
-    }
-
-    #[test]
-    fn crit_adds_50_percent() {
-        assert_eq!(apply_damage_multipliers(10, true, false, false), 15);
+        assert_eq!(apply_damage_multipliers(10, false, false), 10);
     }
 
     #[test]
     fn enraged_adds_50_percent() {
-        assert_eq!(apply_damage_multipliers(10, false, true, false), 15);
+        assert_eq!(apply_damage_multipliers(10, true, false), 15);
     }
 
     #[test]
     fn terrified_reduces_25_percent() {
-        assert_eq!(apply_damage_multipliers(10, false, false, true), 7);
+        assert_eq!(apply_damage_multipliers(10, false, true), 7);
     }
 
     #[test]
-    fn crit_and_enraged_stack_multiplicatively() {
-        // 10 * 1.5 (crit) = 15, then 15 * 1.5 (enrage) = 22
-        assert_eq!(apply_damage_multipliers(10, true, true, false), 22);
+    fn enraged_and_terrified_stack_multiplicatively() {
+        // 10 * 1.5 (enrage) = 15, then 15 * 0.75 (terrified) = 11
+        assert_eq!(apply_damage_multipliers(10, true, true), 11);
     }
 
     #[test]
-    fn all_multipliers_combined() {
-        // 10 * 1.5 (crit) = 15, * 1.5 (enrage) = 22, * 0.75 (terrified) = 16
-        assert_eq!(apply_damage_multipliers(10, true, true, true), 16);
+    fn minimum_damage_is_one() {
+        assert_eq!(apply_damage_multipliers(1, false, true), 1);
     }
 
     // --- Resistance component ---
