@@ -431,6 +431,14 @@ pub struct MonsterAsset {
     /// Minimum distance a kiting monster tries to maintain from the player.
     #[serde(default = "default_kite_distance")]
     pub kite_distance: u32,
+
+    /// Base dodge value for this monster. Default: 0.
+    #[serde(default)]
+    pub base_dodge: i32,
+
+    /// Action delay multiplier. 1.0 = normal speed, >1.0 = slower, <1.0 = faster.
+    #[serde(default = "default_delay")]
+    pub delay: f32,
 }
 
 /// Ability definition for RON deserialization.
@@ -534,6 +542,10 @@ fn default_count_one() -> u32 {
 
 fn default_kite_distance() -> u32 {
     3
+}
+
+fn default_delay() -> f32 {
+    1.0
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]

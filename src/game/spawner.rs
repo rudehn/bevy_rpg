@@ -125,9 +125,9 @@ pub fn spawn_monster(
                 max: monster_asset.base_hp,
             },
             Damage(monster_asset.damage.clone()),
-            SpeedStats::default(),
+            SpeedStats { delay: monster_asset.delay },
             Armor(monster_asset.base_armor),
-            Dodge(0),
+            Dodge(monster_asset.base_dodge),
             HitBonus(0),
         ))
         .insert((
