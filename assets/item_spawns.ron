@@ -5,6 +5,8 @@
         // ===========================
         (item: "Healing Potion",          min_floor: 1,  max_floor: 12, weight: 5),
         (item: "Greater Healing Potion",  min_floor: 6,  max_floor: 20, weight: 2),
+        (item: "Mana Potion",             min_floor: 1,  max_floor: 20, weight: 3),
+        (item: "Greater Mana Potion",     min_floor: 6,  max_floor: 20, weight: 2),
         (item: "Arrow",                   min_floor: 1,  max_floor: 20, weight: 4, min_count: 5, max_count: 12),
 
         // ===========================
