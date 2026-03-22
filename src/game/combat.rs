@@ -688,15 +688,15 @@ mod tests {
     // --- xp_for_kill ---
 
     #[test]
-    fn xp_scales_with_max_hp() {
-        assert_eq!(xp_for_kill(10), 10); // 10/2 + 5
-        assert_eq!(xp_for_kill(20), 15); // 20/2 + 5
-        assert_eq!(xp_for_kill(100), 55); // 100/2 + 5
+    fn xp_equals_max_hp() {
+        assert_eq!(xp_for_kill(10), 10);
+        assert_eq!(xp_for_kill(20), 20);
+        assert_eq!(xp_for_kill(100), 100);
     }
 
     #[test]
     fn xp_minimum_for_weakest_enemy() {
-        assert_eq!(xp_for_kill(1), 5); // 1/2 + 5 = 5 (integer division)
+        assert_eq!(xp_for_kill(1), 1);
     }
 
     // --- apply_damage_multipliers ---
