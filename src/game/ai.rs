@@ -148,7 +148,19 @@ impl MonsterAI {
             }
         }
 
+        // Try special actions (spell, ranged) before kiting.
+        // Ranged monsters fire first, THEN kite on their next turn.
+        if self.mode == MonsterAIMode::Hunting && ctx.is_player_visible {
+            if try_cast_spell(entity, ctx.monster_pos, ctx.player_entity, world) {
+                return;
+            }
+            if try_ranged_attack(entity, ctx.monster_pos, ctx.player_point, ctx.player_entity, world) {
+                return;
+            }
+        }
+
         // --- Kite check (ranged monsters retreat when player is too close) ---
+        // Runs AFTER ranged attack so archers shoot-then-retreat, not retreat-forever.
         if self.mode == MonsterAIMode::Hunting && self.kites && ctx.is_player_visible {
             if ai_behaviors::should_kite_retreat(
                 ctx.monster_pos.x, ctx.monster_pos.y,
@@ -161,18 +173,7 @@ impl MonsterAI {
                     world.write_message(intent);
                     return;
                 }
-                // Retreat blocked — fall through to spell/ranged/melee instead
-                // of wasting the turn standing still.
-            }
-        }
-
-        // Try special actions (spell, ranged) before movement.
-        if self.mode == MonsterAIMode::Hunting && ctx.is_player_visible {
-            if try_cast_spell(entity, ctx.monster_pos, ctx.player_entity, world) {
-                return;
-            }
-            if try_ranged_attack(entity, ctx.monster_pos, ctx.player_point, ctx.player_entity, world) {
-                return;
+                // Retreat blocked — fall through to normal pathfinding.
             }
         }
 
