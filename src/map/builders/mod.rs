@@ -6,8 +6,9 @@ use bracket_lib::{
 use std::collections::HashMap;
 
 use crate::{
-    assets::{ItemSpawnInfo, MonsterAsset, MonsterSpawnInfo, PrefabTemplate},
+    assets::{ItemSpawnInfo, MonsterAsset, MonsterSpawnInfo, PrefabTemplate, ShrineCategoryDef},
     components::Position,
+    game::shrines::ShrinesPurchased,
     game::squad::{SquadConfig, SquadId, SquadIdCounter},
     map::{
         Map,
@@ -16,6 +17,7 @@ use crate::{
             cave_eroder::CaveEroder,
             decoration_propagator::DecorationPropagator,
             diagonal_culler::DiagonalCuller,
+            shrine_spawner::ShrineSpawner,
             exit_points::DistantExit,
             finish_doors::FinishDoors,
             isolated_area_culler::IsolatedAreaCuller,
@@ -48,8 +50,16 @@ mod lake_builder;
 pub mod monster_spawner;
 pub mod prefab_placer;
 mod room_drawer;
+pub mod shrine_spawner;
 mod start_point;
 mod unseen_culler;
+
+/// A shrine to be spawned on the floor.
+pub struct ShrineSpawnEntry {
+    pub pos: Point,
+    pub shrine_data: crate::game::shrines::ShrineData,
+    pub category_id: String,
+}
 
 /// A single monster spawn entry, optionally linked to a squad.
 pub struct SpawnEntry {
@@ -87,6 +97,7 @@ pub struct BuilderMap {
     pub spawn_list: Vec<SpawnEntry>,
     pub item_spawn_list: Vec<(Point, String, u32)>, // (pos, item_name, count)
     pub prop_spawn_list: Vec<(Point, String)>,       // (pos, prop_name)
+    pub shrine_spawn_list: Vec<ShrineSpawnEntry>,
     pub squad_counter: SquadIdCounter,
     pub decoration_exclusion_zones: Vec<Rect>,
 }
@@ -160,6 +171,7 @@ impl BuilderMap {
             spawn_list: Vec::new(),
             item_spawn_list: Vec::new(),
             prop_spawn_list: Vec::new(),
+            shrine_spawn_list: Vec::new(),
             squad_counter: SquadIdCounter::default(),
             decoration_exclusion_zones: Vec::new(),
         }
@@ -207,6 +219,7 @@ impl BuilderChain {
                 spawn_list: Vec::new(),
                 item_spawn_list: Vec::new(),
                 prop_spawn_list: Vec::new(),
+                shrine_spawn_list: Vec::new(),
                 squad_counter,
                 decoration_exclusion_zones: Vec::new(),
             },
@@ -343,6 +356,8 @@ pub fn floor_builder(
     prefabs: Vec<PrefabTemplate>,
     monster_manifest: &HashMap<String, MonsterAsset>,
     decoration_rules: Vec<crate::assets::DecorationRule>,
+    shrine_categories: Vec<ShrineCategoryDef>,
+    shrines_purchased: &ShrinesPurchased,
 ) -> BuilderChain {
     let mut map_name = "Floor ".to_owned() + &new_depth.to_string();
     if new_depth == 1 {
@@ -367,6 +382,7 @@ pub fn floor_builder(
     builder.with(CandleSpawner::new());
     builder.with(MonsterSpawner::new(spawn_table));
     builder.with(ItemSpawner::new());
+    builder.with(ShrineSpawner::new(shrine_categories, shrines_purchased));
     builder.with(IsolatedAreaCuller::new());  // replaces UnseenCuller — culls ALL disconnected areas
     builder.with(DistantExit::new());
     builder.with(DecorationPropagator::new(
@@ -388,6 +404,8 @@ pub fn level_builder(
     prefabs: Vec<PrefabTemplate>,
     monster_manifest: &HashMap<String, MonsterAsset>,
     decoration_rules: Vec<crate::assets::DecorationRule>,
+    shrine_categories: Vec<ShrineCategoryDef>,
+    shrines_purchased: &ShrinesPurchased,
 ) -> BuilderChain {
-    floor_builder(new_depth, width, height, spawn_table, item_spawn_table, squad_counter, prefabs, monster_manifest, decoration_rules)
+    floor_builder(new_depth, width, height, spawn_table, item_spawn_table, squad_counter, prefabs, monster_manifest, decoration_rules, shrine_categories, shrines_purchased)
 }

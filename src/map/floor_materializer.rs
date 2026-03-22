@@ -6,8 +6,8 @@ use crate::assets::{
     DecorationCatalog, DecorationCatalogHandle, ItemManifest, ItemManifestHandle, ItemSpawnTable,
     ItemSpawnTableHandle, ItemSpriteAssets, MonsterManifest, MonsterManifestHandle,
     MonsterSpawnTable, MonsterSpawnTableHandle, MonsterSpriteAssets, PrefabManifest,
-    PrefabManifestHandle, PropManifest, PropManifestHandle, PropSpriteAssets, TileManifest,
-    TileManifestHandle, TileSpriteAssets,
+    PrefabManifestHandle, PropManifest, PropManifestHandle, PropSpriteAssets, ShrinesCatalog,
+    ShrinesCatalogHandle, TileManifest, TileManifestHandle, TileSpriteAssets,
 };
 use crate::components::Position;
 use crate::game::ai::PatrolRoute;
@@ -57,6 +57,8 @@ pub struct EntityAssets<'w> {
     pub prefab_manifest_handle: Res<'w, PrefabManifestHandle>,
     pub decoration_catalogs: Res<'w, Assets<DecorationCatalog>>,
     pub decoration_catalog_handle: Res<'w, DecorationCatalogHandle>,
+    pub shrines_catalogs: Res<'w, Assets<ShrinesCatalog>>,
+    pub shrines_catalog_handle: Res<'w, ShrinesCatalogHandle>,
 }
 
 // ---------------------------------------------------------------------------
@@ -84,11 +86,18 @@ struct PropPlan {
     name: String,
 }
 
+struct ShrinePlan {
+    pos: Point,
+    shrine_data: crate::game::shrines::ShrineData,
+    category_id: String,
+}
+
 struct FloorPlan {
     map: Map,
     monsters: Vec<MonsterPlan>,
     items: Vec<ItemPlan>,
     props: Vec<PropPlan>,
+    shrines: Vec<ShrinePlan>,
     player_spawn: Point,
     /// Carried through from the Load path for the caller.
     pending_player_load: Option<crate::save::PlayerSaveData>,
@@ -286,11 +295,22 @@ impl FloorPlan {
             .map(|(pt, name)| PropPlan { pos: pt, name })
             .collect();
 
+        let shrines = build_data
+            .shrine_spawn_list
+            .into_iter()
+            .map(|entry| ShrinePlan {
+                pos: entry.pos,
+                shrine_data: entry.shrine_data,
+                category_id: entry.category_id,
+            })
+            .collect();
+
         FloorPlan {
             map: build_data.map,
             monsters,
             items,
             props,
+            shrines,
             player_spawn,
             pending_player_load: None,
         }
@@ -314,6 +334,7 @@ impl FloorPlan {
             monsters,
             items,
             props,
+            shrines: Vec::new(),
             player_spawn,
             pending_player_load: None,
         }
@@ -333,6 +354,7 @@ impl FloorPlan {
             monsters,
             items,
             props,
+            shrines: Vec::new(),
             player_spawn,
             pending_player_load: Some(save_data.player),
         }
@@ -440,6 +462,29 @@ pub fn materialize_floor(
         .is_none()
         {
             warnings.push(format!("Failed to spawn prop '{}'", p.name));
+        }
+    }
+
+    // Spawn shrines
+    if let Some(catalog) = entity_assets
+        .shrines_catalogs
+        .get(&entity_assets.shrines_catalog_handle.0)
+    {
+        for s in &plan.shrines {
+            if let Some(cat_def) = catalog.categories.iter().find(|c| c.id == s.category_id) {
+                crate::game::spawn_shrine(
+                    commands,
+                    &s.pos,
+                    s.shrine_data.clone(),
+                    cat_def,
+                    ascii_font,
+                );
+            } else {
+                warnings.push(format!(
+                    "Shrine category '{}' not found in catalog",
+                    s.category_id
+                ));
+            }
         }
     }
 

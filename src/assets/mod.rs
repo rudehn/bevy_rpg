@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use crate::game::effects::Effect;
 use crate::game::items::{ArmorSlot, ItemKind, Rarity};
+use crate::game::shrines::ShrineEffectKind;
 use crate::game::spells::SpellRegistry;
 
 use crate::game::{AppState, camera};
@@ -72,6 +73,7 @@ impl Plugin for AssetsPlugin {
             .init_resource::<PropManifestHandle>()
             .init_resource::<PrefabManifestHandle>()
             .init_resource::<DecorationCatalogHandle>()
+            .init_resource::<ShrinesCatalogHandle>()
             .add_systems(
                 OnEnter(AppState::Loading),
                 (
@@ -85,6 +87,7 @@ impl Plugin for AssetsPlugin {
                     load_prop_manifest,
                     load_prefab_manifest,
                     load_decoration_catalog,
+                    load_shrines_catalog,
                 ),
             )
             .add_systems(
@@ -116,6 +119,7 @@ impl Plugin for LoadingPlugin {
             RonAssetPlugin::<PropManifest>::new(&["props.ron"]),
             RonAssetPlugin::<PrefabManifest>::new(&["prefabs.ron"]),
             RonAssetPlugin::<DecorationCatalog>::new(&["decorations.ron"]),
+            RonAssetPlugin::<ShrinesCatalog>::new(&["shrines.ron"]),
         ))
         .add_systems(Startup, (camera::setup_camera, set_clear_color))
         .init_resource::<MonsterSpriteAssets>()
@@ -299,6 +303,38 @@ pub struct DecorationCatalog {
 
 #[derive(Resource, Default)]
 pub struct DecorationCatalogHandle(pub Handle<DecorationCatalog>);
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct ShrineEffectDef {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub rarity: Rarity,
+    pub cost: i32,
+    pub kind: ShrineEffectKind,
+    #[serde(default)]
+    pub unique: bool,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct ShrineCategoryDef {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub ascii_glyph: String,
+    #[serde(default = "default_white_hex", deserialize_with = "serde_helpers::deserialize_hex_color")]
+    pub ascii_color: Color,
+    pub effects: Vec<ShrineEffectDef>,
+}
+
+#[derive(Asset, TypePath, Deserialize, Debug, Clone)]
+pub struct ShrinesCatalog {
+    pub categories: Vec<ShrineCategoryDef>,
+}
+
+#[derive(Resource, Default)]
+pub struct ShrinesCatalogHandle(pub Handle<ShrinesCatalog>);
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct StartingItemDef {
@@ -700,6 +736,13 @@ fn load_decoration_catalog(
     handle.0 = asset_server.load("decorations.ron");
 }
 
+fn load_shrines_catalog(
+    asset_server: Res<AssetServer>,
+    mut handle: ResMut<ShrinesCatalogHandle>,
+) {
+    handle.0 = asset_server.load("shrines.ron");
+}
+
 /// Collects sprite entries that need loading: `(texture_path, tile_size, grid_size)`.
 /// Used to build a deduped list before inserting into the sprite asset maps.
 struct SpriteEntry {
@@ -855,6 +898,8 @@ struct ExtraLoadingParams<'w> {
     prefab_manifests: Res<'w, Assets<PrefabManifest>>,
     decoration_catalog_handle: Res<'w, DecorationCatalogHandle>,
     decoration_catalogs: Res<'w, Assets<DecorationCatalog>>,
+    shrines_catalog_handle: Res<'w, ShrinesCatalogHandle>,
+    shrines_catalogs: Res<'w, Assets<ShrinesCatalog>>,
     next_state: ResMut<'w, NextState<AppState>>,
 }
 
@@ -935,6 +980,14 @@ fn check_assets_loaded(
     if extra
         .decoration_catalogs
         .get(&extra.decoration_catalog_handle.0)
+        .is_none()
+    {
+        return;
+    }
+
+    if extra
+        .shrines_catalogs
+        .get(&extra.shrines_catalog_handle.0)
         .is_none()
     {
         return;

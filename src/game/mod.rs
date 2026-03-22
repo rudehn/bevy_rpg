@@ -49,6 +49,7 @@ pub mod magic;
 pub mod particles;
 pub mod ranged;
 pub mod spawner;
+pub mod shrines;
 pub mod spells;
 pub mod squad;
 pub mod stats;
@@ -104,6 +105,9 @@ impl Plugin for GamePlugin {
                 SquadPlugin,
                 TargetingPlugin,
                 AbilitiesPlugin,
+            ))
+            .add_plugins((
+                shrines::ShrinesPlugin,
                 ascii_mode::AsciiModePlugin,
             ))
             // Position→Transform sync and camera run whenever in-game, including Targeting state.

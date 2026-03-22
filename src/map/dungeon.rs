@@ -332,6 +332,16 @@ fn ascend_stairs_system(
     message_writer.write(SpawnDungeonMessage);
 }
 
+/// Groups extra resources for `spawn_dungeon` to stay within Bevy's
+/// 16-SystemParam limit.
+#[derive(bevy::ecs::system::SystemParam)]
+struct SpawnDungeonExtras<'w> {
+    auto_save_pending: ResMut<'w, AutoSavePending>,
+    needs_explored_init: ResMut<'w, NeedsExploredInit>,
+    squad_counter: ResMut<'w, crate::game::squad::SquadIdCounter>,
+    shrines_purchased: Res<'w, crate::game::shrines::ShrinesPurchased>,
+}
+
 pub fn spawn_dungeon(
     mut commands: Commands,
     floor: Res<Floor>,
@@ -340,11 +350,9 @@ pub fn spawn_dungeon(
     mut pending_restore: ResMut<PendingFloorRestore>,
     mut pending_game_load: ResMut<PendingGameLoad>,
     mut pending_player_load: ResMut<PendingPlayerLoad>,
-    mut auto_save_pending: ResMut<AutoSavePending>,
-    mut needs_explored_init: ResMut<NeedsExploredInit>,
-    mut squad_counter: ResMut<crate::game::squad::SquadIdCounter>,
     assets: EntityAssets,
     tile_assets: TileAssets,
+    mut extras: SpawnDungeonExtras,
     mut log_writer: MessageWriter<GameLogMessage>,
     player_query: Query<Entity, With<Player>>,
     turn_marker_query: Query<Entity, (With<TurnMarker>, Without<Player>)>,
@@ -366,13 +374,13 @@ pub fn spawn_dungeon(
             save_data.floor_cache.clone();
         commands.insert_resource(SavedFloorCache(saved_floor_cache));
 
-        needs_explored_init.0 = true;
+        extras.needs_explored_init.0 = true;
 
         FloorSource::Load(save_data)
     } else if let Some(cached) = pending_restore.floor.take() {
         // Restore path
         let ascending = pending_restore.ascending;
-        needs_explored_init.0 = true;
+        extras.needs_explored_init.0 = true;
 
         FloorSource::Restore { cached, ascending }
     } else {
@@ -399,6 +407,11 @@ pub fn spawn_dungeon(
             .get(&assets.decoration_catalog_handle.0)
             .map(|c| c.rules.clone())
             .unwrap_or_default();
+        let shrine_categories = assets
+            .shrines_catalogs
+            .get(&assets.shrines_catalog_handle.0)
+            .map(|c| c.categories.clone())
+            .unwrap_or_default();
 
         let mut builder = level_builder(
             floor.0 as i32,
@@ -406,14 +419,16 @@ pub fn spawn_dungeon(
             MAP_SIZE.y as i32,
             &spawn_table.spawns,
             &item_spawn_table.spawns,
-            squad_counter.clone(),
+            extras.squad_counter.clone(),
             prefabs,
             &monster_manifest.monsters,
             decoration_rules,
+            shrine_categories,
+            &extras.shrines_purchased,
         );
         builder.build_map();
         // Write the updated counter back so future floors don't reuse IDs.
-        *squad_counter = builder.build_data.squad_counter.clone();
+        *extras.squad_counter = builder.build_data.squad_counter.clone();
 
         FloorSource::Generate(builder.build_data)
     };
@@ -467,5 +482,5 @@ pub fn spawn_dungeon(
     // Trigger auto-save after the new floor is fully set up.
     // (Skipped during load since apply_player_load_system hasn't run yet;
     //  auto_save_system checks for the player entity so it will self-correct.)
-    auto_save_pending.0 = true;
+    extras.auto_save_pending.0 = true;
 }

@@ -9,6 +9,7 @@ use crate::{
         AbilityDef, MonsterAsset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets,
         ItemManifest, ItemManifestHandle, ItemSpriteAssets,
         PropManifest, PropManifestHandle, PropSpriteAssets,
+        ShrineCategoryDef,
     },
     components::{
         Ammo, Collider, Faction, FactionKind, FinalBoss, FloorEntityMarker, GameEntityMarker, Monster, Name, Position, Prop, Viewshed, Item,
@@ -509,4 +510,51 @@ pub fn spawn_prop(
     }
 
     Some(prop_entity)
+}
+
+pub fn spawn_shrine(
+    commands: &mut Commands,
+    spawn_point: &Point,
+    shrine_data: crate::game::shrines::ShrineData,
+    category_def: &ShrineCategoryDef,
+    ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
+) -> Entity {
+    let shrine_entity = commands
+        .spawn((
+            crate::game::shrines::ShrineMarker,
+            shrine_data.clone(),
+            Name(format!("{} Shrine", shrine_data.category_name)),
+            GameEntityMarker,
+            FloorEntityMarker,
+            Collider,
+            Position {
+                x: spawn_point.x,
+                y: spawn_point.y,
+            },
+            Transform {
+                translation: Vec3::new(
+                    spawn_point.x as f32 * GRID_SIZE.x,
+                    spawn_point.y as f32 * GRID_SIZE.y,
+                    Z_ITEM,
+                ),
+                ..Default::default()
+            },
+            Visibility::Hidden,
+            RenderLayers::layer(1),
+        ))
+        .id();
+
+    // ASCII glyph child
+    if let Some(font) = ascii_font {
+        attach_ascii_glyph(
+            commands,
+            shrine_entity,
+            &category_def.ascii_glyph,
+            category_def.ascii_color,
+            &font.0,
+            Vec3::ONE,
+        );
+    }
+
+    shrine_entity
 }
