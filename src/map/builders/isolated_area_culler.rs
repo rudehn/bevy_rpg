@@ -1,6 +1,11 @@
-//! Culls any area not connected to the largest passable region on the map.
+//! Culls any area not connected to the player-reachable region on the map.
 //! Disconnected rooms, isolated lake tiles, and orphaned corridors all get
 //! reverted to Wall. Ensures the player can reach everything on the map.
+//!
+//! If a starting position is set, the region containing it is always kept
+//! (even if it is not the largest). Otherwise, the largest region is kept.
+
+use bevy::log::warn;
 
 use super::{BuilderMap, MetaMapBuilder};
 use crate::map::tile::{Decoration, TerrainType, LiquidType, is_passable};
@@ -55,14 +60,32 @@ impl MetaMapBuilder for IsolatedAreaCuller {
             }
         }
 
-        // Find the largest region
-        let largest = regions.iter().max_by_key(|r| r.len());
-        let keep: HashSet<usize> = match largest {
-            Some(r) => r.clone(),
-            None => return,
+        // Prefer the region containing the starting position so the player
+        // is never walled off. Fall back to the largest region.
+        let start_idx = build_data.starting_position.as_ref().map(|pos| {
+            build_data.map.xy_idx(pos.x, pos.y)
+        });
+
+        let keep: HashSet<usize> = if let Some(si) = start_idx {
+            if let Some(r) = regions.iter().find(|r| r.contains(&si)) {
+                r.clone()
+            } else {
+                // Starting position is on a non-passable tile (e.g. wall) —
+                // this shouldn't happen, but fall back to the largest region.
+                warn!("IsolatedAreaCuller: starting position idx {} is not in any passable region", si);
+                match regions.iter().max_by_key(|r| r.len()) {
+                    Some(r) => r.clone(),
+                    None => return,
+                }
+            }
+        } else {
+            match regions.iter().max_by_key(|r| r.len()) {
+                Some(r) => r.clone(),
+                None => return,
+            }
         };
 
-        // Cull everything not in the largest region
+        // Cull everything not in the kept region
         for y in 1..height - 1 {
             for x in 1..width - 1 {
                 let idx = build_data.map.xy_idx(x, y);
