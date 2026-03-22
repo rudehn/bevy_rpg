@@ -225,22 +225,29 @@ impl MonsterAI {
             MonsterAIMode::Hunting => {
                 if ctx.is_player_visible {
                     self.last_known_player_position = Some(ctx.player_point);
+                    self.chase_distance = 0; // Reset chase tracking when player is visible
+                } else {
+                    // Player not visible — increment chase distance for leash tracking
+                    self.chase_distance += 1;
+
+                    // Chase leash: give up if chased too far without seeing player
+                    if ai_behaviors::should_give_up_chase(self.chase_distance, self.chase_leash) {
+                        self.mode = MonsterAIMode::Idle;
+                        self.last_known_player_position = None;
+                        self.chase_distance = 0;
+
+                        // Post-hunt: snap waypoint patrols to nearest waypoint.
+                        snap_to_nearest_waypoint(entity, ctx.monster_pos, world);
+                        return;
+                    }
                 }
                 if !ctx.is_player_visible && Some(ctx.monster_pos) == self.last_known_player_position {
                     self.mode = MonsterAIMode::Idle;
                     self.last_known_player_position = None;
+                    self.chase_distance = 0;
 
                     // Post-hunt: snap waypoint patrols to nearest waypoint.
-                    if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity) {
-                        if let PatrolState::Waypoint { ref points, ref mut current_index } = patrol.state {
-                            if !points.is_empty() {
-                                *current_index = points.iter().enumerate()
-                                    .min_by_key(|(_, p)| (p.0 - ctx.monster_pos.x).abs() + (p.1 - ctx.monster_pos.y).abs())
-                                    .map(|(i, _)| i)
-                                    .unwrap_or(0);
-                            }
-                        }
-                    }
+                    snap_to_nearest_waypoint(entity, ctx.monster_pos, world);
                 }
             }
             MonsterAIMode::Idle => {
@@ -277,6 +284,20 @@ impl AIContext {
         let is_player_visible = viewshed.visible_tiles.contains(&player_point);
 
         Some(AIContext { monster_pos, player_point, player_entity, is_player_visible })
+    }
+}
+
+/// Snap waypoint patrols to the nearest waypoint after a hunt ends.
+fn snap_to_nearest_waypoint(entity: Entity, monster_pos: Point, world: &mut World) {
+    if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity) {
+        if let PatrolState::Waypoint { ref points, ref mut current_index } = patrol.state {
+            if !points.is_empty() {
+                *current_index = points.iter().enumerate()
+                    .min_by_key(|(_, p)| (p.0 - monster_pos.x).abs() + (p.1 - monster_pos.y).abs())
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+            }
+        }
     }
 }
 
