@@ -144,6 +144,7 @@ pub fn update_tile_visibility(
             Option<&Children>,
         )>,
         Query<(&mut Sprite, &crate::game::ascii_mode::AsciiBackground)>,
+        Query<&mut Sprite, (With<crate::game::ascii_mode::LiquidOverlay>, Without<crate::game::ascii_mode::AsciiBackground>)>,
     )>,
     mut ascii_glyph_query: Query<(&mut TextColor, &crate::game::ascii_mode::AsciiGlyphColor), With<crate::game::ascii_mode::AsciiGlyph>>,
 ) {
@@ -165,6 +166,8 @@ pub fn update_tile_visibility(
     // Deferred ASCII child updates: (entity, light_amount, is_explored_dim).
     // Applied after the tile query loop via ParamSet to avoid Sprite borrow conflict.
     let mut ascii_child_updates: Vec<(Entity, f32, bool)> = Vec::new();
+    // Deferred liquid overlay child updates: (entity, light_level, is_explored_dim, is_hidden).
+    let mut liquid_child_updates: Vec<(Entity, f32, bool, bool)> = Vec::new();
 
     for (tile_pos, mut tile_visibility, mut tile_explored, mut sprite, mut visibility, children) in
         sprite_set.p0().iter_mut()
@@ -197,6 +200,12 @@ pub fn update_tile_visibility(
                 }
             } else {
                 sprite.color = Color::srgb(light, light * 0.95, light * 0.8);
+                // Tint liquid overlay children to match the parent tile lighting
+                if let Some(children) = children {
+                    for child in children.iter() {
+                        liquid_child_updates.push((child, light, false, false));
+                    }
+                }
             }
         } else {
             *tile_visibility = TileVisibility::Hidden;
@@ -211,10 +220,22 @@ pub fn update_tile_visibility(
                     }
                 } else {
                     sprite.color = Color::srgb(0.5, 0.5, 0.5);
+                    // Dim liquid overlay children to match the explored-but-not-visible state
+                    if let Some(children) = children {
+                        for child in children.iter() {
+                            liquid_child_updates.push((child, 0.0, true, false));
+                        }
+                    }
                 }
             } else {
                 *visibility = Visibility::Hidden;
                 sprite.color = Color::BLACK;
+                // Hide liquid overlay children when tile is unexplored
+                if let Some(children) = children {
+                    for child in children.iter() {
+                        liquid_child_updates.push((child, 0.0, false, true));
+                    }
+                }
             }
         }
     }
@@ -239,6 +260,20 @@ pub fn update_tile_visibility(
             } else {
                 apply_light_to_color(glyph_data.0, light_amount)
             });
+        }
+    }
+
+    // Apply deferred liquid overlay sprite tinting via ParamSet's third query.
+    {
+        let mut liquid_q = sprite_set.p2();
+        for &(entity, light, is_dim, _is_hidden) in &liquid_child_updates {
+            if let Ok(mut liquid_sprite) = liquid_q.get_mut(entity) {
+                if is_dim {
+                    liquid_sprite.color = Color::srgb(0.5, 0.5, 0.5);
+                } else {
+                    liquid_sprite.color = Color::srgb(light, light * 0.95, light * 0.8);
+                }
+            }
         }
     }
 
