@@ -3,65 +3,65 @@
         // ===========================
         // CONSUMABLES
         // ===========================
-        (item: "Healing Potion",          min_floor: 1,  max_floor: 12, weight: 5),
-        (item: "Greater Healing Potion",  min_floor: 6,  max_floor: 20, weight: 2),
-        (item: "Mana Potion",             min_floor: 1,  max_floor: 20, weight: 3),
-        (item: "Greater Mana Potion",     min_floor: 6,  max_floor: 20, weight: 2),
-        (item: "Arrow",                   min_floor: 1,  max_floor: 20, weight: 4, min_count: 5, max_count: 12),
+        (item: "Healing Potion",          min_floor: 1,  max_floor: 10, weight: 5),
+        (item: "Greater Healing Potion",  min_floor: 6,  max_floor: 10, weight: 2),
+        (item: "Mana Potion",             min_floor: 1,  max_floor: 10, weight: 3),
+        (item: "Greater Mana Potion",     min_floor: 6,  max_floor: 10, weight: 2),
+        (item: "Arrow",                   min_floor: 1,  max_floor: 10, weight: 4, min_count: 5, max_count: 12),
 
         // ===========================
         // WEAPONS
         // ===========================
         (item: "Iron Sword",              min_floor: 1,  max_floor: 8,  weight: 3),
-        (item: "Steel Sword",             min_floor: 5,  max_floor: 14, weight: 2),
+        (item: "Steel Sword",             min_floor: 5,  max_floor: 10, weight: 2),
         (item: "Short Bow",               min_floor: 1,  max_floor: 8,  weight: 2),
-        (item: "Long Bow",                min_floor: 5,  max_floor: 14, weight: 2),
+        (item: "Long Bow",                min_floor: 5,  max_floor: 10, weight: 2),
         (item: "Dagger",                  min_floor: 1,  max_floor: 6,  weight: 4),
-        (item: "Axe",                     min_floor: 3,  max_floor: 12, weight: 3),
-        (item: "Mace",                    min_floor: 3,  max_floor: 12, weight: 3),
+        (item: "Axe",                     min_floor: 3,  max_floor: 10, weight: 3),
+        (item: "Mace",                    min_floor: 3,  max_floor: 10, weight: 3),
         (item: "Staff",                   min_floor: 1,  max_floor: 10, weight: 2),
-        (item: "Great Axe",               min_floor: 6,  max_floor: 15, weight: 2),
-        (item: "Crossbow",                min_floor: 5,  max_floor: 15, weight: 2),
+        (item: "Great Axe",               min_floor: 6,  max_floor: 10, weight: 2),
+        (item: "Crossbow",                min_floor: 5,  max_floor: 10, weight: 2),
 
         // ===========================
         // ARMOR — Chest
         // ===========================
         (item: "Leather Armor",           min_floor: 1,  max_floor: 8,  weight: 3),
-        (item: "Studded Leather Armor",   min_floor: 4,  max_floor: 12, weight: 2),
-        (item: "Plate Armor",             min_floor: 8,  max_floor: 20, weight: 1),
+        (item: "Studded Leather Armor",   min_floor: 4,  max_floor: 10, weight: 2),
+        (item: "Plate Armor",             min_floor: 8,  max_floor: 10, weight: 1),
 
         // ===========================
         // ARMOR — Helms
         // ===========================
         (item: "Leather Cap",             min_floor: 1,  max_floor: 10, weight: 3),
-        (item: "Iron Helm",               min_floor: 4,  max_floor: 15, weight: 2),
-        (item: "Full Helm",               min_floor: 8,  max_floor: 20, weight: 1),
+        (item: "Iron Helm",               min_floor: 4,  max_floor: 10, weight: 2),
+        (item: "Full Helm",               min_floor: 8,  max_floor: 10, weight: 1),
 
         // ===========================
         // ARMOR — Gloves
         // ===========================
         (item: "Leather Gloves",          min_floor: 1,  max_floor: 10, weight: 3),
-        (item: "Splint Gloves",           min_floor: 4,  max_floor: 15, weight: 2),
-        (item: "Gauntlets",               min_floor: 8,  max_floor: 20, weight: 1),
+        (item: "Splint Gloves",           min_floor: 4,  max_floor: 10, weight: 2),
+        (item: "Gauntlets",               min_floor: 8,  max_floor: 10, weight: 1),
 
         // ===========================
         // ARMOR — Boots
         // ===========================
         (item: "Soft Boots",              min_floor: 1,  max_floor: 10, weight: 3),
-        (item: "Iron Boots",              min_floor: 4,  max_floor: 15, weight: 2),
-        (item: "Heavy Boots",             min_floor: 8,  max_floor: 20, weight: 1),
+        (item: "Iron Boots",              min_floor: 4,  max_floor: 10, weight: 2),
+        (item: "Heavy Boots",             min_floor: 8,  max_floor: 10, weight: 1),
 
         // ===========================
         // SHIELDS
         // ===========================
         (item: "Wooden Shield",           min_floor: 1,  max_floor: 10, weight: 2),
-        (item: "Iron Shield",             min_floor: 4,  max_floor: 15, weight: 2),
-        (item: "Tower Shield",            min_floor: 8,  max_floor: 20, weight: 1),
+        (item: "Iron Shield",             min_floor: 4,  max_floor: 10, weight: 2),
+        (item: "Tower Shield",            min_floor: 8,  max_floor: 10, weight: 1),
 
         // ===========================
         // ACCESSORIES
         // ===========================
-        (item: "Ring of Perception",      min_floor: 3,  max_floor: 12, weight: 1),
+        (item: "Ring of Perception",      min_floor: 3,  max_floor: 10, weight: 1),
 
         // ===========================
         // SPELLBOOKS — Zone 1 (Floors 1-5)
@@ -71,27 +71,27 @@
         (item: "Tome of Heal",            min_floor: 1,  max_floor: 8,  weight: 2),
 
         // ===========================
-        // SPELLBOOKS — Zone 2 (Floors 6-10)
+        // SPELLBOOKS — Zone 2 (Floors 5-8)
         // ===========================
-        (item: "Tome of Fire Dart",       min_floor: 5,  max_floor: 12, weight: 1),
-        (item: "Tome of Shadow Bolt",     min_floor: 6,  max_floor: 14, weight: 1),
-        (item: "Tome of Enrage",          min_floor: 6,  max_floor: 14, weight: 1),
-        (item: "Tome of Haste",           min_floor: 6,  max_floor: 14, weight: 1),
-        (item: "Tome of Slow",            min_floor: 6,  max_floor: 14, weight: 1),
+        (item: "Tome of Fire Dart",       min_floor: 5,  max_floor: 10, weight: 1),
+        (item: "Tome of Shadow Bolt",     min_floor: 6,  max_floor: 10, weight: 1),
+        (item: "Tome of Enrage",          min_floor: 6,  max_floor: 10, weight: 1),
+        (item: "Tome of Haste",           min_floor: 6,  max_floor: 10, weight: 1),
+        (item: "Tome of Slow",            min_floor: 6,  max_floor: 10, weight: 1),
 
         // ===========================
-        // SPELLBOOKS — Zone 3 (Floors 11-15)
+        // SPELLBOOKS — Zone 3 (Floors 7-10)
         // ===========================
-        (item: "Tome of Lightning Bolt",  min_floor: 10, max_floor: 18, weight: 1),
-        (item: "Tome of Fireball",        min_floor: 11, max_floor: 18, weight: 1),
-        (item: "Tome of Greater Heal",    min_floor: 10, max_floor: 18, weight: 1),
-        (item: "Tome of Spirit Shield",   min_floor: 11, max_floor: 18, weight: 1),
-        (item: "Tome of Mana Drain",      min_floor: 10, max_floor: 18, weight: 1),
-        (item: "Tome of Raise Dead",      min_floor: 11, max_floor: 18, weight: 1),
+        (item: "Tome of Lightning Bolt",  min_floor: 7,  max_floor: 10, weight: 1),
+        (item: "Tome of Fireball",        min_floor: 7,  max_floor: 10, weight: 1),
+        (item: "Tome of Greater Heal",    min_floor: 7,  max_floor: 10, weight: 1),
+        (item: "Tome of Spirit Shield",   min_floor: 7,  max_floor: 10, weight: 1),
+        (item: "Tome of Mana Drain",      min_floor: 7,  max_floor: 10, weight: 1),
+        (item: "Tome of Raise Dead",      min_floor: 7,  max_floor: 10, weight: 1),
 
         // ===========================
-        // SPELLBOOKS — Zone 4 (Floors 16-20)
+        // SPELLBOOKS — Zone 4 (Floor 9-10)
         // ===========================
-        (item: "Tome of Death Coil",      min_floor: 16, max_floor: 20, weight: 1),
+        (item: "Tome of Death Coil",      min_floor: 9,  max_floor: 10, weight: 1),
     ]
 )

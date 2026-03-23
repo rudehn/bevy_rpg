@@ -97,9 +97,9 @@ impl ShrineSpawner {
 /// Determine the three rarity slots based on floor depth.
 fn rarity_slots_for_depth(depth: i32, rng: &mut RandomNumberGenerator) -> [Rarity; 3] {
     match depth {
-        1..=5 => [Rarity::Common, Rarity::Common, Rarity::Uncommon],
-        6..=10 => [Rarity::Common, Rarity::Uncommon, Rarity::Uncommon],
-        11..=15 => [Rarity::Common, Rarity::Uncommon, Rarity::Rare],
+        1..=3 => [Rarity::Common, Rarity::Common, Rarity::Uncommon],
+        4..=6 => [Rarity::Common, Rarity::Uncommon, Rarity::Uncommon],
+        7..=9 => [Rarity::Common, Rarity::Uncommon, Rarity::Rare],
         _ => {
             let third = if rng.range(0, 2) == 0 {
                 Rarity::Rare

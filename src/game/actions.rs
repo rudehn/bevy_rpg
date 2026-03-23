@@ -643,9 +643,9 @@ impl Direction {
 /// Returns rarity weights `[Common, Uncommon, Rare, Legendary]` scaled by floor depth.
 pub fn rarity_weights_for_floor(floor: i32) -> [u32; 4] {
     match floor {
-        1..=5   => [70, 24,  5, 1],
-        6..=10  => [55, 32, 11, 2],
-        11..=15 => [40, 38, 18, 4],
+        1..=3   => [70, 24,  5, 1],
+        4..=6   => [55, 32, 11, 2],
+        7..=9   => [40, 38, 18, 4],
         _       => [25, 40, 27, 8],
     }
 }
@@ -813,32 +813,32 @@ mod tests {
     }
 
     #[test]
-    fn floor_5_weights() {
-        let w = rarity_weights_for_floor(5);
+    fn floor_3_weights() {
+        let w = rarity_weights_for_floor(3);
         assert_eq!(w, [70, 24, 5, 1]);
+    }
+
+    #[test]
+    fn floor_6_weights() {
+        let w = rarity_weights_for_floor(6);
+        assert_eq!(w, [55, 32, 11, 2]);
+    }
+
+    #[test]
+    fn floor_9_weights() {
+        let w = rarity_weights_for_floor(9);
+        assert_eq!(w, [40, 38, 18, 4]);
     }
 
     #[test]
     fn floor_10_weights() {
         let w = rarity_weights_for_floor(10);
-        assert_eq!(w, [55, 32, 11, 2]);
-    }
-
-    #[test]
-    fn floor_15_weights() {
-        let w = rarity_weights_for_floor(15);
-        assert_eq!(w, [40, 38, 18, 4]);
-    }
-
-    #[test]
-    fn floor_20_weights() {
-        let w = rarity_weights_for_floor(20);
         assert_eq!(w, [25, 40, 27, 8]);
     }
 
     #[test]
-    fn floor_beyond_20_uses_deepest_tier() {
-        let w = rarity_weights_for_floor(25);
+    fn floor_beyond_10_uses_deepest_tier() {
+        let w = rarity_weights_for_floor(15);
         assert_eq!(w, [25, 40, 27, 8]);
     }
 }

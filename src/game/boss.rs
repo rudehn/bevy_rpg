@@ -18,12 +18,12 @@ use crate::{
 // --- Constants ---
 
 /// Time thresholds for aspect stage advancement (game ticks).
-const STAGE_1_TIME: u32 = 25_000; // ~250 player turns
-const STAGE_2_TIME: u32 = 60_000; // ~600 turns
-const STAGE_3_TIME: u32 = 100_000; // ~1000 turns
+const STAGE_1_TIME: u32 = 12_500; // ~125 player turns
+const STAGE_2_TIME: u32 = 30_000; // ~300 turns
+const STAGE_3_TIME: u32 = 50_000; // ~500 turns
 
 /// Beyond Stage 3, the Tyrant gains +15 HP and +1 armor per tick of this interval.
-const BEYOND_INTERVAL: u32 = 50_000;
+const BEYOND_INTERVAL: u32 = 25_000;
 
 // --- Components ---
 

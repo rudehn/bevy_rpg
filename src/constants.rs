@@ -7,7 +7,7 @@ pub const Z_ITEM: f32 = 1.0;
 pub const BASE_ACTION_COST: u32 = 100;
 
 /// The deepest floor in the dungeon. The final boss spawns here instead of stairs.
-pub const MAX_FLOOR: i32 = 20;
+pub const MAX_FLOOR: i32 = 10;
 
 /// Damage dice used when no weapon is equipped (bare fists).
 pub const UNARMED_DAMAGE: &str = "1d4";

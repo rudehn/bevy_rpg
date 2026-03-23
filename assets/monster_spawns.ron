@@ -22,7 +22,7 @@
     (monster: "Fire Salamander", min_floor: 6, max_floor: 9, min_group: 1, max_group: 2),
 
     // Cave Bears — slow but powerful
-    (monster: "Cave Bear",     min_floor: 6,  max_floor: 12, min_group: 1, max_group: 1),
+    (monster: "Cave Bear",     min_floor: 6,  max_floor: 10, min_group: 1, max_group: 1),
 
     // Spiders — solo or pairs
     (monster: "Giant Spider",  min_floor: 3,  max_floor: 6,  min_group: 1, max_group: 2),
@@ -33,10 +33,10 @@
     (monster: "Goblin",          min_floor: 1,  max_floor: 10, min_group: 1, max_group: 3),
 
     // Goblin archers — kiting ranged attackers
-    (monster: "Goblin Archer",   min_floor: 2,  max_floor: 12, min_group: 1, max_group: 2),
+    (monster: "Goblin Archer",   min_floor: 2,  max_floor: 10, min_group: 1, max_group: 2),
 
     // Goblin brutes — armored melee
-    (monster: "Goblin Brute",    min_floor: 5,  max_floor: 14, min_group: 1, max_group: 1),
+    (monster: "Goblin Brute",    min_floor: 5,  max_floor: 10, min_group: 1, max_group: 1),
 
     // Goblin shaman — solo
     (monster: "Goblin Shaman",   min_floor: 4,  max_floor: 7),
@@ -51,7 +51,7 @@
         (monster: "Goblin Archer",   min_count: 1, max_count: 2),
     ], min_floor: 5, max_floor: 8, on_leader_death: "scatter"),
 
-    // ==================== ORCS (Floors 6-12) ====================
+    // ==================== ORCS (Floors 6-10) ====================
 
     // Orc warriors
     (monster: "Orc Warrior",     min_floor: 6,  max_floor: 10, min_group: 1, max_group: 3,
@@ -61,103 +61,103 @@
     (monster: "Orc Archer",      min_floor: 7,  max_floor: 10, min_group: 1, max_group: 2),
 
     // Orc shaman — solo
-    (monster: "Orc Shaman",      min_floor: 7,  max_floor: 11),
+    (monster: "Orc Shaman",      min_floor: 7,  max_floor: 10),
 
     // Orc warlord — solo
-    (monster: "Orc Warlord",     min_floor: 9,  max_floor: 12),
+    (monster: "Orc Warlord",     min_floor: 8,  max_floor: 10),
 
     // Orc warband (mixed group)
     (group: [
         (monster: "Orc Warlord",  min_count: 1, max_count: 1),
         (monster: "Orc Warrior",  min_count: 2, max_count: 3),
         (monster: "Orc Archer",   min_count: 1, max_count: 2),
-    ], min_floor: 9, max_floor: 12, on_leader_death: "scatter"),
+    ], min_floor: 8, max_floor: 10, on_leader_death: "scatter"),
 
-    // ==================== FUNGAL (Floors 8-13) ====================
+    // ==================== FUNGAL (Floors 6-9) ====================
 
     // Spore Crawlers — groups (explode on death)
-    (monster: "Spore Crawler",     min_floor: 8,  max_floor: 11, min_group: 2, max_group: 3),
+    (monster: "Spore Crawler",     min_floor: 6,  max_floor: 9, min_group: 2, max_group: 3),
 
     // Fungal Shamblers — solo or pairs (slow + regen tanks)
-    (monster: "Fungal Shambler",   min_floor: 9,  max_floor: 13, min_group: 1, max_group: 2),
+    (monster: "Fungal Shambler",   min_floor: 7,  max_floor: 10, min_group: 1, max_group: 2),
 
     // Shrieking Mushroom — solo (alarm + ranged)
-    (monster: "Shrieking Mushroom", min_floor: 9,  max_floor: 12),
+    (monster: "Shrieking Mushroom", min_floor: 7,  max_floor: 10),
 
     // Mycoid Sovereign — solo
-    (monster: "Mycoid Sovereign",  min_floor: 11, max_floor: 14),
+    (monster: "Mycoid Sovereign",  min_floor: 8, max_floor: 10),
 
     // Fungal cluster (mixed group)
     (group: [
         (monster: "Mycoid Sovereign",  min_count: 1, max_count: 1),
         (monster: "Spore Crawler",     min_count: 2, max_count: 3),
         (monster: "Fungal Shambler",   min_count: 1, max_count: 2),
-    ], min_floor: 11, max_floor: 13),
+    ], min_floor: 8, max_floor: 10),
 
-    // ==================== UNDEAD (Floors 7-14) ====================
+    // ==================== UNDEAD (Floors 5-10) ====================
 
     // Skeletons — groups
-    (monster: "Skeleton",        min_floor: 7,  max_floor: 11, min_group: 1, max_group: 3),
+    (monster: "Skeleton",        min_floor: 5,  max_floor: 9, min_group: 1, max_group: 3),
 
     // Bone Archers
-    (monster: "Bone Archer",     min_floor: 8,  max_floor: 12, min_group: 1, max_group: 2),
+    (monster: "Bone Archer",     min_floor: 6,  max_floor: 10, min_group: 1, max_group: 2),
 
     // Zombies — slow packs
-    (monster: "Zombie",          min_floor: 8,  max_floor: 12, min_group: 1, max_group: 3),
+    (monster: "Zombie",          min_floor: 6,  max_floor: 10, min_group: 1, max_group: 3),
 
     // Wraiths — solo (scary)
-    (monster: "Wraith",          min_floor: 10, max_floor: 14),
+    (monster: "Wraith",          min_floor: 7, max_floor: 10),
 
     // Necromancer — solo
-    (monster: "Necromancer",     min_floor: 11, max_floor: 14),
+    (monster: "Necromancer",     min_floor: 8, max_floor: 10),
 
     // Undead horde (mixed group)
     (group: [
         (monster: "Necromancer",  min_count: 1, max_count: 1),
         (monster: "Skeleton",     min_count: 2, max_count: 3),
         (monster: "Zombie",       min_count: 1, max_count: 2),
-    ], min_floor: 12, max_floor: 14),
+    ], min_floor: 8, max_floor: 10),
 
-    // ==================== GIANTS (Floors 11-17) ====================
+    // ==================== GIANTS (Floors 7-10) ====================
 
     // Ogres — solo
-    (monster: "Ogre",            min_floor: 11, max_floor: 15),
+    (monster: "Ogre",            min_floor: 7, max_floor: 10),
 
     // Trolls — solo (regen makes them tough 1v1)
-    (monster: "Troll",           min_floor: 12, max_floor: 16),
+    (monster: "Troll",           min_floor: 8, max_floor: 10),
 
     // Ogre Mage — solo
-    (monster: "Ogre Mage",       min_floor: 13, max_floor: 16),
+    (monster: "Ogre Mage",       min_floor: 8, max_floor: 10),
 
     // Hill Giant — solo (mini-boss feel)
-    (monster: "Hill Giant",      min_floor: 14, max_floor: 17),
+    (monster: "Hill Giant",      min_floor: 9, max_floor: 10),
 
     // Giant warband (mixed group)
     (group: [
         (monster: "Hill Giant",   min_count: 1, max_count: 1),
         (monster: "Ogre",         min_count: 1, max_count: 2),
         (monster: "Ogre Mage",    min_count: 1, max_count: 1),
-    ], min_floor: 15, max_floor: 17),
+    ], min_floor: 9, max_floor: 10),
 
-    // ==================== DRAGONS (Floors 15-20) ====================
+    // ==================== DRAGONS (Floors 8-10) ====================
 
     // Drakes — solo or pairs
-    (monster: "Drake",           min_floor: 15, max_floor: 18, min_group: 1, max_group: 2),
+    (monster: "Drake",           min_floor: 8, max_floor: 10, min_group: 1, max_group: 2),
 
     // Wyrms — solo (fire breath at range)
-    (monster: "Wyrm",            min_floor: 16, max_floor: 19),
+    (monster: "Wyrm",            min_floor: 9, max_floor: 10),
 
     // Dragon Priest — solo
-    (monster: "Dragon Priest",   min_floor: 17, max_floor: 20),
+    (monster: "Dragon Priest",   min_floor: 9, max_floor: 10),
 
     // Elder Drake — solo (mini-boss feel)
-    (monster: "Elder Drake",     min_floor: 18, max_floor: 20),
+    (monster: "Elder Drake",     min_floor: 9, max_floor: 10),
 
     // Dragon flight (mixed group)
     (group: [
         (monster: "Elder Drake",   min_count: 1, max_count: 1),
         (monster: "Drake",         min_count: 1, max_count: 2),
         (monster: "Wyrm",          min_count: 1, max_count: 1),
-    ], min_floor: 19, max_floor: 20, on_leader_death: "scatter"),
+    ], min_floor: 9, max_floor: 10, on_leader_death: "scatter"),
   ]
 )
