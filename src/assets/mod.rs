@@ -97,6 +97,7 @@ impl Plugin for AssetsPlugin {
                     load_tile_sprites,
                     load_item_sprites,
                     load_prop_sprites,
+                    load_shrine_sprites,
                     check_assets_loaded,
                 )
                     .run_if(in_state(AppState::Loading)),
@@ -321,11 +322,19 @@ pub struct ShrineCategoryDef {
     pub id: String,
     pub name: String,
     pub description: String,
+    #[serde(default = "default_shrine_sprite")]
+    pub sprite: String,
+    #[serde(default)]
+    pub tile_size: Option<UVec2>,
     #[serde(default)]
     pub ascii_glyph: String,
     #[serde(default = "default_white_hex", deserialize_with = "serde_helpers::deserialize_hex_color")]
     pub ascii_color: Color,
     pub effects: Vec<ShrineEffectDef>,
+}
+
+fn default_shrine_sprite() -> String {
+    "sprites/props/totem_pole.png#0".to_string()
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
@@ -873,6 +882,27 @@ fn load_prop_sprites(
                 a.sprite.clone(),
                 a.tile_size.unwrap_or(UVec2::new(16, 16)),
                 a.grid_size.unwrap_or(UVec2::new(4, 1)),
+            )),
+            &sprites.handles,
+        );
+        let s = &mut *sprites;
+        apply_sprite_entries(new, &mut s.handles, &mut s.layouts, &asset_server, &mut layouts);
+    }
+}
+
+fn load_shrine_sprites(
+    asset_server: Res<AssetServer>,
+    catalog_handle: Res<ShrinesCatalogHandle>,
+    catalogs: Res<Assets<ShrinesCatalog>>,
+    mut sprites: ResMut<PropSpriteAssets>,
+    mut layouts: ResMut<Assets<TextureAtlasLayout>>,
+) {
+    if let Some(catalog) = catalogs.get(&catalog_handle.0) {
+        let new = load_sprite_entries(
+            catalog.categories.iter().map(|c| (
+                c.sprite.clone(),
+                c.tile_size.unwrap_or(UVec2::new(447, 447)),
+                UVec2::new(1, 1),
             )),
             &sprites.handles,
         );

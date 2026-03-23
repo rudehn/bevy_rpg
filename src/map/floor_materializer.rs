@@ -477,6 +477,7 @@ pub fn materialize_floor(
                     &s.pos,
                     s.shrine_data.clone(),
                     cat_def,
+                    &entity_assets.prop_sprite_assets,
                     ascii_font,
                 );
             } else {

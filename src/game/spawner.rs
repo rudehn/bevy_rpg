@@ -517,32 +517,57 @@ pub fn spawn_shrine(
     spawn_point: &Point,
     shrine_data: crate::game::shrines::ShrineData,
     category_def: &ShrineCategoryDef,
+    prop_sprite_assets: &Res<PropSpriteAssets>,
     ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
 ) -> Entity {
-    let shrine_entity = commands
-        .spawn((
-            crate::game::shrines::ShrineMarker,
-            shrine_data.clone(),
-            Name(format!("{} Shrine", shrine_data.category_name)),
-            GameEntityMarker,
-            FloorEntityMarker,
-            Collider,
-            Position {
-                x: spawn_point.x,
-                y: spawn_point.y,
+    let (texture_path, index) = crate::assets::parse_sprite_path(&category_def.sprite);
+
+    let tile_size = category_def.tile_size.unwrap_or(UVec2::new(447, 447));
+    let scale_x = TILE_SIZE_X as f32 / tile_size.x as f32;
+    let scale_y = TILE_SIZE_Y as f32 / tile_size.y as f32;
+
+    let mut entity_cmd = commands.spawn((
+        crate::game::shrines::ShrineMarker,
+        Prop,
+        shrine_data.clone(),
+        Name(format!("{} Shrine", shrine_data.category_name)),
+        GameEntityMarker,
+        FloorEntityMarker,
+        Collider,
+        Position {
+            x: spawn_point.x,
+            y: spawn_point.y,
+        },
+        Transform {
+            translation: Vec3::new(
+                spawn_point.x as f32 * GRID_SIZE.x,
+                spawn_point.y as f32 * GRID_SIZE.y,
+                Z_ITEM,
+            ),
+            scale: Vec3::new(scale_x, scale_y, 1.0),
+            ..Default::default()
+        },
+        Visibility::Hidden,
+        RenderLayers::layer(1),
+    ));
+
+    // Attach sprite if the texture is loaded
+    if let (Some(texture_handle), Some(layout_handle)) = (
+        prop_sprite_assets.handles.get(texture_path).cloned(),
+        prop_sprite_assets.layouts.get(texture_path).cloned(),
+    ) {
+        entity_cmd.insert(Sprite::from_atlas_image(
+            texture_handle,
+            TextureAtlas {
+                index,
+                layout: layout_handle,
             },
-            Transform {
-                translation: Vec3::new(
-                    spawn_point.x as f32 * GRID_SIZE.x,
-                    spawn_point.y as f32 * GRID_SIZE.y,
-                    Z_ITEM,
-                ),
-                ..Default::default()
-            },
-            Visibility::Hidden,
-            RenderLayers::layer(1),
-        ))
-        .id();
+        ));
+    } else {
+        warn!("Missing shrine sprite texture: '{}', shrine will have no sprite", texture_path);
+    }
+
+    let shrine_entity = entity_cmd.id();
 
     // ASCII glyph child
     if let Some(font) = ascii_font {
@@ -552,7 +577,7 @@ pub fn spawn_shrine(
             &category_def.ascii_glyph,
             category_def.ascii_color,
             &font.0,
-            Vec3::ONE,
+            Vec3::new(scale_x, scale_y, 1.0),
         );
     }
 
