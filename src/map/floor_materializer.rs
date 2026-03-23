@@ -325,6 +325,41 @@ impl FloorPlan {
         let player_spawn =
             find_adjacent_floor(&cached.map, target_stairs).unwrap_or(target_stairs);
 
+        // Safety: if player_spawn is still not walkable, find ANY walkable tile
+        let player_spawn = {
+            let pt = player_spawn;
+            let in_bounds = pt.x >= 0
+                && pt.y >= 0
+                && pt.x < cached.map.width
+                && pt.y < cached.map.height;
+            if in_bounds {
+                let idx = cached.map.xy_idx(pt.x, pt.y);
+                if is_walkable(cached.map.tiles[idx]) {
+                    pt
+                } else {
+                    find_adjacent_floor(&cached.map, pt).unwrap_or_else(|| {
+                        // Last resort: scan for any walkable tile
+                        cached
+                            .map
+                            .tiles
+                            .iter()
+                            .enumerate()
+                            .find_map(|(i, tile)| {
+                                if is_walkable(*tile) {
+                                    let (x, y) = cached.map.idx_xy(i);
+                                    Some(Point::new(x, y))
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or(pt)
+                    })
+                }
+            } else {
+                pt
+            }
+        };
+
         let monsters = monsters_from_saved(cached.monsters, true);
         let items = items_from_saved(cached.items);
         let props = props_from_saved(cached.props);

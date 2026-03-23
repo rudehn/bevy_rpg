@@ -10,7 +10,7 @@ use crate::map::floor_materializer::{
     EntityAssets, FloorResult, FloorSource, TileAssets, materialize_floor,
 };
 use crate::map::Map;
-use crate::map::tile::TerrainType;
+use crate::map::tile::{TerrainType, is_walkable};
 use crate::player::Player;
 use crate::ui::game_log::GameLogMessage;
 
@@ -209,8 +209,29 @@ fn snapshot_floor(
         })
         .collect();
 
-    let down_stairs_pos = find_down_stairs(map).unwrap_or(Point::new(0, 0));
-    let up_stairs_pos = find_up_stairs(map).unwrap_or(Point::new(0, 0));
+    let fallback_pos = map
+        .tiles
+        .iter()
+        .enumerate()
+        .find_map(|(idx, tile)| {
+            if is_walkable(*tile) {
+                let (x, y) = map.idx_xy(idx);
+                Some(Point::new(x, y))
+            } else {
+                None
+            }
+        })
+        .unwrap_or(Point::new(1, 1));
+
+    if find_down_stairs(map).is_none() {
+        warn!("snapshot_floor: no DownStairs found on floor");
+    }
+    if find_up_stairs(map).is_none() {
+        warn!("snapshot_floor: no UpStairs found on floor");
+    }
+
+    let down_stairs_pos = find_down_stairs(map).unwrap_or(fallback_pos);
+    let up_stairs_pos = find_up_stairs(map).unwrap_or(fallback_pos);
 
     CachedFloor {
         map: map.clone(),
