@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::map::{builders::{BuilderMap, MetaMapBuilder}, map::Map, tile::{is_walkable, LiquidType}};
+use crate::map::{builders::{BuilderMap, MetaMapBuilder}, map::Map, tile::{is_walkable, LiquidType, TerrainType}};
 use bracket_lib::prelude::{Point, RandomNumberGenerator, Rect};
 
 pub struct ItemSpawner;
@@ -56,7 +56,10 @@ fn walkable_room_point(room: &Rect, map: &Map, rng: &mut RandomNumberGenerator) 
             room.y1 + 1
         };
         let idx = map.xy_idx(x, y);
-        if is_walkable(map.tiles[idx]) && map.tiles[idx].liquid == LiquidType::None {
+        if is_walkable(map.tiles[idx])
+            && map.tiles[idx].liquid == LiquidType::None
+            && !matches!(map.tiles[idx].terrain, TerrainType::UpStairs | TerrainType::DownStairs)
+        {
             return Some(Point::new(x, y));
         }
     }

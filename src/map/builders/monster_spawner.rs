@@ -3,7 +3,7 @@ use std::collections::{HashSet, VecDeque};
 use crate::{
     assets::MonsterSpawnInfo,
     game::squad::{LeaderDeathBehavior, SquadConfig},
-    map::{builders::{BuilderMap, MetaMapBuilder, SpawnEntry}, map::Map, tile::{is_walkable, LiquidType}},
+    map::{builders::{BuilderMap, MetaMapBuilder, SpawnEntry}, map::Map, tile::{is_walkable, LiquidType, TerrainType}},
 };
 use bevy::prelude::*;
 use bracket_lib::prelude::{Point, RandomNumberGenerator, Rect};
@@ -51,6 +51,10 @@ impl MonsterSpawner {
             return;
         };
 
+        // Collect spawn entries into a local vec to avoid borrow conflicts
+        // (the map borrow and squad_counter.next() both need build_data).
+        let mut new_spawns: Vec<SpawnEntry> = Vec::new();
+
         let map = &build_data.map;
         for room in rooms.iter() {
                 // 50% chance per room
@@ -59,7 +63,6 @@ impl MonsterSpawner {
                     let monster_info = &possible_spawns[spawn_index];
 
                     if let Some(origin) = self.get_walkable_room_point(room, map, &mut rng) {
-                        // Build the squad config from spawn table entry.
                         let squad_config = SquadConfig {
                             on_leader_death: LeaderDeathBehavior::from_str(
                                 &monster_info.on_leader_death,
@@ -68,7 +71,6 @@ impl MonsterSpawner {
                         };
 
                         if !monster_info.group.is_empty() {
-                            // Mixed group: build a list of names, then cluster-spawn.
                             let mut members: Vec<String> = Vec::new();
                             for gm in &monster_info.group {
                                 let count = if gm.max_count > gm.min_count {
@@ -84,23 +86,16 @@ impl MonsterSpawner {
                             let points =
                                 find_cluster_points(origin, members.len(), map, &occupied);
 
-                            // Mixed groups always get a squad (they have multiple species).
                             let squad_id = build_data.squad_counter.next();
                             for (i, (pt, name)) in
                                 points.iter().zip(members.iter()).enumerate()
                             {
-                                let idx = map.xy_idx(pt.x, pt.y);
-                                occupied.insert(idx);
-                                build_data.spawn_list.push(SpawnEntry::squad(
-                                    *pt,
-                                    name.clone(),
-                                    squad_id,
-                                    squad_config.clone(),
-                                    i == 0, // first member is leader
+                                occupied.insert(map.xy_idx(pt.x, pt.y));
+                                new_spawns.push(SpawnEntry::squad(
+                                    *pt, name.clone(), squad_id, squad_config.clone(), i == 0,
                                 ));
                             }
                         } else {
-                            // Single-species group
                             let group_size =
                                 if monster_info.max_group > monster_info.min_group {
                                     rng.range(monster_info.min_group, monster_info.max_group + 1)
@@ -112,27 +107,18 @@ impl MonsterSpawner {
                                 find_cluster_points(origin, group_size, map, &occupied);
 
                             if points.len() > 1 {
-                                // Multiple monsters → assign squad
                                 let squad_id = build_data.squad_counter.next();
                                 for (i, pt) in points.iter().enumerate() {
-                                    let idx = map.xy_idx(pt.x, pt.y);
-                                    occupied.insert(idx);
-                                    build_data.spawn_list.push(SpawnEntry::squad(
-                                        *pt,
-                                        monster_info.monster.clone(),
-                                        squad_id,
-                                        squad_config.clone(),
-                                        i == 0,
+                                    occupied.insert(map.xy_idx(pt.x, pt.y));
+                                    new_spawns.push(SpawnEntry::squad(
+                                        *pt, monster_info.monster.clone(), squad_id, squad_config.clone(), i == 0,
                                     ));
                                 }
                             } else {
-                                // Solo monster — no squad
                                 for pt in &points {
-                                    let idx = map.xy_idx(pt.x, pt.y);
-                                    occupied.insert(idx);
-                                    build_data.spawn_list.push(SpawnEntry::solo(
-                                        *pt,
-                                        monster_info.monster.clone(),
+                                    occupied.insert(map.xy_idx(pt.x, pt.y));
+                                    new_spawns.push(SpawnEntry::solo(
+                                        *pt, monster_info.monster.clone(),
                                     ));
                                 }
                             }
@@ -140,6 +126,11 @@ impl MonsterSpawner {
                     }
                 }
             }
+
+        // Apply collected spawns via accessor.
+        for entry in new_spawns {
+            build_data.add_monster_spawn(entry);
+        }
     }
 
     fn get_walkable_room_point(
@@ -160,7 +151,10 @@ impl MonsterSpawner {
                 room.y1 + 1
             };
             let idx = map.xy_idx(x, y);
-            if is_walkable(map.tiles[idx]) && map.tiles[idx].liquid == LiquidType::None {
+            if is_walkable(map.tiles[idx])
+                && map.tiles[idx].liquid == LiquidType::None
+                && !matches!(map.tiles[idx].terrain, TerrainType::UpStairs | TerrainType::DownStairs)
+            {
                 return Some(Point::new(x, y));
             }
         }

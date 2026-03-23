@@ -10,7 +10,7 @@ use crate::{
     map::{
         builders::{BuilderMap, MetaMapBuilder, ShrineSpawnEntry},
         map::Map,
-        tile::{is_walkable, LiquidType},
+        tile::{is_walkable, LiquidType, TerrainType},
     },
 };
 
@@ -178,7 +178,10 @@ fn walkable_room_point(room: &Rect, map: &Map, rng: &mut RandomNumberGenerator) 
             room.y1 + 1
         };
         let idx = map.xy_idx(x, y);
-        if is_walkable(map.tiles[idx]) && map.tiles[idx].liquid == LiquidType::None {
+        if is_walkable(map.tiles[idx])
+            && map.tiles[idx].liquid == LiquidType::None
+            && !matches!(map.tiles[idx].terrain, TerrainType::UpStairs | TerrainType::DownStairs)
+        {
             return Some(Point::new(x, y));
         }
     }
