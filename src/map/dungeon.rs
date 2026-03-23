@@ -394,7 +394,7 @@ pub fn spawn_dungeon(
         use crate::save::SavedFloorCache;
 
         commands.insert_resource(crate::game::squad::SquadIdCounter(save_data.squad_id_counter));
-        commands.insert_resource(save_data.tyrant_power.clone());
+        commands.insert_resource(save_data.tyrant_aspects.clone());
 
         let saved_floor_cache: std::collections::HashMap<u32, crate::save::CachedFloorSave> =
             save_data.floor_cache.clone();
@@ -455,6 +455,11 @@ pub fn spawn_dungeon(
         builder.build_map();
         // Write the updated counter back so future floors don't reuse IDs.
         *extras.squad_counter = builder.build_data.squad_counter.clone();
+
+        // Initialize TyrantAspects on new game (floor 1, generate path only)
+        if floor.0 == 1 {
+            commands.insert_resource(crate::game::boss::TyrantAspects::new_random());
+        }
 
         FloorSource::Generate(builder.build_data)
     };
