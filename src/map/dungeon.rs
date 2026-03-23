@@ -456,9 +456,10 @@ pub fn spawn_dungeon(
         // Write the updated counter back so future floors don't reuse IDs.
         *extras.squad_counter = builder.build_data.squad_counter.clone();
 
-        // Initialize TyrantAspects on new game (floor 1, generate path only)
+        // Initialize TyrantAspects and reset RunStats on new game (floor 1, generate path only)
         if floor.0 == 1 {
             commands.insert_resource(crate::game::boss::TyrantAspects::new_random());
+            commands.insert_resource(crate::game::RunStats::default());
         }
 
         FloorSource::Generate(builder.build_data)

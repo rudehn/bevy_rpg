@@ -15,9 +15,11 @@ pub fn essence_award_system(
     mut death_events: MessageReader<DeathEvent>,
     mut player_query: Query<&mut Essence, With<Player>>,
     mut log_writer: MessageWriter<GameLogMessage>,
+    mut run_stats: ResMut<crate::game::RunStats>,
 ) {
     for event in death_events.read() {
         if let Ok(mut essence) = player_query.get_mut(event.attacker) {
+            run_stats.enemies_killed += 1;
             let amount = event.xp;
             if amount > 0 {
                 essence.current += amount;

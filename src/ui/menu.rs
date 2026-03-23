@@ -212,7 +212,7 @@ fn game_over_setup(
     run_summary: Res<RunSummary>,
 ) {
     let font = asset_server.load("fonts/Macondo-Regular.ttf");
-    let floor = run_summary.floor_reached;
+    let summary = run_summary.clone();
 
     commands
         .spawn((
@@ -234,7 +234,7 @@ fn game_over_setup(
                 TextColor(Color::srgb(0.85, 0.1, 0.1)),
             ));
             root.spawn((
-                Text::new("Your legend ends here."),
+                Text::new(summary.cause.clone()),
                 TextFont { font: font.clone(), font_size: 20.0, ..default() },
                 TextColor(Color::srgb(0.5, 0.5, 0.5)),
                 Node { margin: UiRect::top(Val::Px(10.0)), ..default() },
@@ -254,11 +254,25 @@ fn game_over_setup(
                 BackgroundColor(Color::srgba(0.1, 0.0, 0.0, 0.6)),
             ))
             .with_children(|panel| {
+                let stat_color = Color::srgb(0.75, 0.65, 0.65);
+                let stat_font = TextFont { font: font.clone(), font_size: 18.0, ..default() };
+                let stat_node = Node { margin: UiRect::vertical(Val::Px(3.0)), ..default() };
+
                 panel.spawn((
-                    Text::new(format!("Floor reached:  {}", floor)),
-                    TextFont { font: font.clone(), font_size: 18.0, ..default() },
-                    TextColor(Color::srgb(0.75, 0.65, 0.65)),
-                    Node { margin: UiRect::vertical(Val::Px(3.0)), ..default() },
+                    Text::new(format!("Floor reached:  {}", summary.floor_reached)),
+                    stat_font.clone(), TextColor(stat_color), stat_node.clone(),
+                ));
+                panel.spawn((
+                    Text::new(format!("Enemies slain:  {}", summary.enemies_killed)),
+                    stat_font.clone(), TextColor(stat_color), stat_node.clone(),
+                ));
+                panel.spawn((
+                    Text::new(format!("Essence collected:  {}", format_number(summary.essence_collected))),
+                    stat_font.clone(), TextColor(stat_color), stat_node.clone(),
+                ));
+                panel.spawn((
+                    Text::new(format!("Shrines purchased:  {}", summary.shrines_purchased)),
+                    stat_font.clone(), TextColor(stat_color), stat_node,
                 ));
             });
 
@@ -317,7 +331,7 @@ fn victory_setup(
     run_summary: Res<RunSummary>,
 ) {
     let font = asset_server.load("fonts/Macondo-Regular.ttf");
-    let floor = run_summary.floor_reached;
+    let summary = run_summary.clone();
 
     commands
         .spawn((
@@ -365,11 +379,25 @@ fn victory_setup(
                 BackgroundColor(Color::srgba(0.08, 0.06, 0.0, 0.7)),
             ))
             .with_children(|panel| {
+                let stat_color = Color::srgb(0.9, 0.82, 0.5);
+                let stat_font = TextFont { font: font.clone(), font_size: 18.0, ..default() };
+                let stat_node = Node { margin: UiRect::vertical(Val::Px(3.0)), ..default() };
+
                 panel.spawn((
-                    Text::new(format!("Floor reached:  {}", floor)),
-                    TextFont { font: font.clone(), font_size: 18.0, ..default() },
-                    TextColor(Color::srgb(0.9, 0.82, 0.5)),
-                    Node { margin: UiRect::vertical(Val::Px(3.0)), ..default() },
+                    Text::new(format!("Floor reached:  {}", summary.floor_reached)),
+                    stat_font.clone(), TextColor(stat_color), stat_node.clone(),
+                ));
+                panel.spawn((
+                    Text::new(format!("Enemies slain:  {}", summary.enemies_killed)),
+                    stat_font.clone(), TextColor(stat_color), stat_node.clone(),
+                ));
+                panel.spawn((
+                    Text::new(format!("Essence collected:  {}", format_number(summary.essence_collected))),
+                    stat_font.clone(), TextColor(stat_color), stat_node.clone(),
+                ));
+                panel.spawn((
+                    Text::new(format!("Shrines purchased:  {}", summary.shrines_purchased)),
+                    stat_font.clone(), TextColor(stat_color), stat_node,
                 ));
             });
 
@@ -421,6 +449,22 @@ fn victory_action(
 }
 
 // ---- Helper ----
+
+/// Format an integer with comma-separated thousands (e.g. 3250 → "3,250").
+fn format_number(n: i32) -> String {
+    let s = n.abs().to_string();
+    let mut result = String::new();
+    for (i, ch) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(',');
+        }
+        result.push(ch);
+    }
+    if n < 0 {
+        result.push('-');
+    }
+    result.chars().rev().collect()
+}
 
 fn despawn_screen<T: Component>(query: Query<Entity, With<T>>, mut commands: Commands) {
     for entity in &query {

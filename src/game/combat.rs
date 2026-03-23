@@ -459,11 +459,13 @@ fn damage_application_system(
         Has<GodMode>,
         Has<crate::game::magic::SpiritShielded>,
         Option<&mut crate::game::stats::Mana>,
+        Has<Player>,
     )>,
     query_names: Query<(&Name, Has<Player>)>,
+    mut run_stats: ResMut<crate::game::RunStats>,
 ) {
     for message in apply_messages.read() {
-        let Ok((mut target_health, target_name, has_god_mode, has_spirit_shield, mut mana)) =
+        let Ok((mut target_health, target_name, has_god_mode, has_spirit_shield, mut mana, target_is_player)) =
             query_health.get_mut(message.target)
         else {
             continue;
@@ -489,6 +491,11 @@ fn damage_application_system(
         let Ok((attacker_name, is_player)) = query_names.get(message.attacker) else {
             continue;
         };
+
+        // Track last attacker for the death screen cause-of-death line.
+        if target_is_player {
+            run_stats.last_hit_by = attacker_name.0.clone();
+        }
 
         // Spirit Shield: absorb damage from mana first (1 mana = 1 damage)
         let remaining_damage = if has_spirit_shield {
@@ -622,6 +629,9 @@ pub fn death_system(
     mut log_writer: MessageWriter<GameLogMessage>,
     floor: Res<Floor>,
     mut run_summary: ResMut<RunSummary>,
+    run_stats: Res<crate::game::RunStats>,
+    player_essence: Query<&crate::game::essence::Essence, With<Player>>,
+    shrines_purchased: Res<crate::game::shrines::ShrinesPurchased>,
 ) {
     for (entity, mut health, name, is_player, is_monster, is_final_boss, second_wind) in query_dead.iter_mut() {
         if health.current <= 0 {
@@ -643,10 +653,19 @@ pub fn death_system(
                 // Player died — permadeath: erase the save
                 eprintln!("Game Over! You died!");
                 log_writer.write(GameLogMessage("You have died!".to_string()));
+                let essence_total = player_essence.single().ok().map(|e| e.lifetime).unwrap_or(0);
+                let cause = if run_stats.last_hit_by.is_empty() {
+                    "Unknown".to_string()
+                } else {
+                    format!("Slain by a {} on floor {}.", run_stats.last_hit_by, floor.0)
+                };
                 *run_summary = RunSummary {
                     floor_reached: floor.0,
-                    cause: "Unknown".to_string(),
+                    cause,
                     victory: false,
+                    essence_collected: essence_total,
+                    enemies_killed: run_stats.enemies_killed,
+                    shrines_purchased: shrines_purchased.0.len() as u32,
                 };
                 crate::save::delete_save();
                 next_state.set(AppState::GameOver);
@@ -657,10 +676,14 @@ pub fn death_system(
                 commands.entity(entity).despawn();
                 turn_manager.turn_queue.retain(|&(e, _)| e != entity);
 
+                let essence_total = player_essence.single().ok().map(|e| e.lifetime).unwrap_or(0);
                 *run_summary = RunSummary {
                     floor_reached: floor.0,
                     cause: String::new(),
                     victory: true,
+                    essence_collected: essence_total,
+                    enemies_killed: run_stats.enemies_killed,
+                    shrines_purchased: shrines_purchased.0.len() as u32,
                 };
                 crate::save::delete_save();
                 next_state.set(AppState::Victory);

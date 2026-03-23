@@ -33,6 +33,17 @@ pub struct RunSummary {
     pub floor_reached: u32,
     pub cause: String,
     pub victory: bool,
+    pub essence_collected: i32,
+    pub enemies_killed: u32,
+    pub shrines_purchased: u32,
+}
+
+/// Tracks cumulative run statistics (reset each new game).
+#[derive(Resource, Default, Clone)]
+pub struct RunStats {
+    pub enemies_killed: u32,
+    /// Name of the last entity that dealt damage to the player.
+    pub last_hit_by: String,
 }
 pub mod abilities;
 pub mod actions;
@@ -90,6 +101,7 @@ pub struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RunSummary>()
+            .init_resource::<RunStats>()
             .add_sub_state::<InGameState>()
             .add_plugins((
                 LightPlugin,
