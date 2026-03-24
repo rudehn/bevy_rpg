@@ -198,6 +198,8 @@ fn select_next_actor(
         return;
     }
 
+    debug!("select_next_actor: turn_queue has {} entities", turn_manager.turn_queue.len());
+
     // Sort to ensure we always pick the lowest time first
     turn_manager.turn_queue.sort_by_key(|&(_, time)| time);
 
@@ -281,6 +283,10 @@ fn turn_queue_len(tm: &TurnManager) -> usize {
 fn monster_ai_dispatch(world: &mut World) {
     let mut query = world.query_filtered::<Entity, (With<MonsterAI>, With<MyTurn>)>();
     let entities: Vec<Entity> = query.iter(world).collect();
+
+    if !entities.is_empty() {
+        debug!("monster_ai_dispatch: {} monsters with MyTurn", entities.len());
+    }
 
     for entity in entities {
         if let Some(mut monster_ai) = world.entity_mut(entity).take::<MonsterAI>() {
