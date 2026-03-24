@@ -1,4 +1,4 @@
-use bevy::log::warn;
+use bevy::log::{debug, warn};
 use bracket_lib::prelude::{Algorithm2D, DijkstraMap, Point};
 
 use crate::constants::MAX_FLOOR;
@@ -107,15 +107,23 @@ impl DistantExit {
             }
         }
 
-        let (stairs_idx, _) = exit_tile.unwrap();
+        let (stairs_idx, best_dist) = exit_tile.unwrap();
         let stairs_pos = build_data.map.index_to_point2d(stairs_idx);
 
-        if build_data.map.depth == MAX_FLOOR {
+        if build_data.map.depth >= MAX_FLOOR {
             // Boss room handled by BossRoomBuilder — no stairs on final floor
+            debug!(
+                "DistantExit: floor {} is MAX_FLOOR ({}), skipping stair placement",
+                build_data.map.depth, MAX_FLOOR
+            );
             return;
-        } else {
-            build_data.map.set_tile(stairs_pos, TerrainType::DownStairs);
         }
+
+        debug!(
+            "DistantExit: placing DownStairs at ({}, {}) on floor {} (distance {:.1})",
+            stairs_pos.x, stairs_pos.y, build_data.map.depth, best_dist
+        );
+        build_data.map.set_tile(stairs_pos, TerrainType::DownStairs);
 
         build_data.take_snapshot();
     }
