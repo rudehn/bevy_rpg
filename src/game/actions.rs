@@ -367,13 +367,21 @@ pub fn handle_movement(
 
         // 3. Occupant Check (Bump-to-Attack / Block) — must happen before wall check
         //    so that monsters standing on non-walkable tiles can still be attacked.
+        //    Scan ALL entities on the tile — prioritize hostile monsters over props.
         let mut bump_target = None;
         for (e, other_pos, other_is_player, other_is_monster, other_has_collider, other_is_chest, other_is_shrine) in
             actors_query.iter()
         {
             if other_pos.to_point() == target_pt && e != intent.entity {
-                bump_target = Some((e, other_is_player, other_is_monster, other_has_collider, other_is_chest, other_is_shrine));
-                break;
+                if other_is_monster || other_is_player {
+                    // Monster/player takes priority — always bump-to-attack
+                    bump_target = Some((e, other_is_player, other_is_monster, other_has_collider, other_is_chest, other_is_shrine));
+                    break;
+                }
+                // Non-monster occupant (prop, chest, shrine) — store as fallback
+                if bump_target.is_none() {
+                    bump_target = Some((e, other_is_player, other_is_monster, other_has_collider, other_is_chest, other_is_shrine));
+                }
             }
         }
 
