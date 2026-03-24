@@ -363,7 +363,7 @@ PrefabManifest(
                 (x: 2, y: 3, prop: "barrel"),
                 (x: 8, y: 3, prop: "barrel"),
                 (x: 5, y: 2, prop: "watchfire"),
-                (x: 5, y: 0, prop: "small_chest"),
+                (x: 5, y: 0, prop: "chest"),
             ],
             monster_spawns: [
                 (x: 3, y: 1, role: "melee_guard", behavior: Roam(min: (0, 0), max: (10, 5))),

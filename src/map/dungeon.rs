@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::components::{FloorEntityMarker, InInventory, Monster, Name, Position, Item, Prop};
+use crate::constants::MAX_FLOOR;
 use crate::game::{TurnManager, items::ItemStack, turns::TurnMarker};
 use crate::map::floor_materializer::{
     EntityAssets, FloorResult, FloorSource, TileAssets, materialize_floor,
@@ -223,11 +224,11 @@ fn snapshot_floor(
         })
         .unwrap_or(Point::new(1, 1));
 
-    if find_down_stairs(map).is_none() {
-        warn!("snapshot_floor: no DownStairs found on floor");
+    if find_down_stairs(map).is_none() && map.depth < MAX_FLOOR {
+        warn!("snapshot_floor: no DownStairs found on floor {}", map.depth);
     }
-    if find_up_stairs(map).is_none() {
-        warn!("snapshot_floor: no UpStairs found on floor");
+    if find_up_stairs(map).is_none() && map.depth > 1 {
+        warn!("snapshot_floor: no UpStairs found on floor {}", map.depth);
     }
 
     let down_stairs_pos = find_down_stairs(map).unwrap_or(fallback_pos);

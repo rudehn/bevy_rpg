@@ -198,7 +198,7 @@ fn find_cluster_points(
             let nidx = map.xy_idx(nx, ny);
             if !visited.contains(&nidx) {
                 visited.insert(nidx);
-                if is_walkable(map.tiles[nidx]) && !occupied.contains(&nidx) {
+                if is_walkable(map.tiles[nidx]) && map.tiles[nidx].liquid != LiquidType::Lava && !occupied.contains(&nidx) {
                     queue.push_back(Point::new(nx, ny));
                 }
             }
