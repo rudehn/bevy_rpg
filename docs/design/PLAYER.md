@@ -1,127 +1,191 @@
 # Player Design
 
-## Core Stats
+## Overview
 
-| Stat | Abbrev | Governs |
-|------|--------|---------|
-| Strength | STR | Melee damage bonus, carry weight, heavy armor/weapon requirements |
-| Dexterity | DEX | Accuracy, dodge chance, light armor/ranged weapon requirements |
-| Constitution | CON | Max HP, HP gained per level, poison/stun resistance |
-| Agility | AGI | Turn speed (lower delay = more turns per cycle) |
-| Intelligence | INT | Max mana (INT × 5), spell power scaling, spellbook requirements |
-| Perception | PER | Vision range, trap/secret detection, ranged accuracy |
+The player has no attribute stats (no STR, DEX, CON, etc). All character growth
+comes from **equipment** and **shrines**. The player starts as a blank slate with
+base values and becomes powerful through what they find and how they spend essence.
 
-**Starting values:** All stats begin at 10. The player receives 1 stat point per level-up.
+## Base Stats
 
-## Bonus Formula
-
-Every stat uses the same formula: **`bonus = stat - 10`**
-
-This means:
-- At stat **10** (starting baseline): bonus is **+0** — neutral
-- At stat **11**: bonus is **+1** — immediately visible the turn you level up
-- At stat **14**: bonus is **+4** — a meaningful jump after a few floors
-- At stat **8** (debuffed/cursed): bonus is **−2** — noticeable penalty
-
-Every single stat point directly changes derived combat values. There are no "dead" odd-numbered points.
-
-## Derived Values
-
-| Value | Formula |
-|-------|---------|
-| Max HP | `10 + rolled_hp_sum + (CON bonus × level)` |
-| Max Mana | `INT × 5` |
-| Melee Damage | `weapon dice + STR bonus` |
-| Hit Chance | `10 + STR bonus` (roll 1d20 + hit_chance vs 10 + target dodge) |
-| Dodge Chance | `5 + DEX bonus` |
-| Action Delay | `1.0 − (AGI bonus × 0.025)` clamped to [0.5, 2.0] |
-| Vision Range | `(8 + PER bonus).max(2)` tiles |
-
-## Leveling & XP
-
-The player gains XP from killing enemies. XP requirements scale exponentially.
-
-| Level | XP Required (cumulative) | Reward |
-|-------|--------------------------|--------|
-| 1 | 0 (start) | — |
-| 2 | 100 | +1 stat point |
-| 3 | 250 | +1 stat point, **+1 spell slot** |
-| 4 | 450 | +1 stat point |
-| 5 | 700 | +1 stat point, **+1 spell slot** |
-| 6 | 1000 | +1 stat point |
-| 7 | 1400 | +1 stat point |
-| 8 | 1900 | +1 stat point, **+1 spell slot** |
-| 9 | 2500 | +1 stat point |
-| 10 | 3200 | +1 stat point |
-| 11 | 4000 | +1 stat point, **+1 spell slot** |
-| 12 | 5000 | +1 stat point |
-| 13 | 6200 | +1 stat point |
-| 14 | 7600 | +1 stat point, **+1 spell slot** |
-| 15 | 9200 | +1 stat point (max level) |
-
-The player can distribute each stat point to any stat on level-up. Max spell slots = 6 (1 starting + 5 unlocked).
+| Stat | Starting Value | Increased By |
+|------|---------------|--------------|
+| HP | 25 | Equipment, shrines |
+| Mana | 10 | Equipment, shrines |
+| Hit Bonus | 0 | Equipment, shrines |
+| Dodge Bonus | 0 | Equipment, shrines |
+| Armor | 0 | Equipment, shrines |
+| Damage | 1d2 (unarmed) | Weapon equipped |
+| Action Delay | 1.0x (baseline) | Equipment, shrines |
+| Vision Range | 8 tiles (min 4) | Equipment, shrines |
+| Spell Slots | 1 | Shrines |
 
 ## Equipment Slots
 
-The player has 9 equipment slots:
+9 slots total:
 
 | Slot | Examples |
 |------|---------|
 | Weapon | Sword, Dagger, Staff, Bow |
-| Off-hand | Shield, Quiver, Focus orb |
+| Off-hand | Shield, Quiver, Focus Orb |
 | Helm | Iron Helm, Leather Cap |
 | Chest | Plate Armor, Robe, Chainmail |
 | Gloves | Gauntlets, Leather Gloves |
 | Boots | Iron Boots, Soft Boots |
-| Ring (×2) | Two ring slots |
+| Ring (x2) | Two ring slots |
 | Amulet | One amulet slot |
 
-See [ITEMS.md](ITEMS.md) for full equipment details.
-
-## Unified Stat System (Player & Monsters)
-
-The player and all monsters share the same ECS components and formulas. `stat_recalculation_system` runs on every entity with `Attributes` — no special-casing for who is the player. The combat pipeline is fully symmetric.
-
-The only structural differences:
-- **HP source:** Player uses a sum of 1d4 rolls per level (`RolledHp`); monsters use a flat `MonsterBaseHealth` value
-- **Mana:** Only the player has a `Mana` component; monsters have no mana pool
-- **Spell slots:** Player-only feature
-
-This means status effects, debuffs, and buff items work identically whether applied to the player or an enemy. See [BESTIARY.md](BESTIARY.md) for full details on the shared system.
+See ITEMS.md for full equipment details.
 
 ## Combat
 
+### Hit Check (d20)
+
+```
+Attacker rolls: d20 + hit_bonus
+Target number:  4 + target_dodge_bonus
+
+If roll >= target: hit
+If roll < target:  miss (turn still consumed)
+If natural 20:     critical hit (always hits)
+```
+
+Both player and monsters use this formula (symmetric combat).
+
+### Critical Hits
+
+- Triggered by a **natural 20** on the d20 attack roll
+- Always hits regardless of target's dodge
+- **Double damage dice** — roll damage twice, then apply armor and resistances
+  normally. Resistances are never bypassed.
+- Future: skills/abilities may expand crit range to 18-20
+
 ### Melee Attack
-1. Player moves into enemy — triggers melee intent
-2. Hit check: `roll d100 < accuracy%`
-3. On hit: `damage = weapon_base + STR_bonus` minus `enemy_DEF`
-4. On miss: 0 damage, turn still consumed
+
+1. Player bumps into enemy — triggers melee intent
+2. Hit check: `d20 + hit_bonus >= 4 + target_dodge_bonus`
+3. On hit: `damage = weapon_dice + damage_bonus`, reduced by target armor and
+   resistance
+4. On miss: 0 damage, turn consumed
 
 ### Ranged Attack
-- Requires bow equipped and arrows in off-hand
-- Range is limited (default: 8 tiles)
-- Uses DEX instead of STR for accuracy
-- No penalty for ranged attacks, but consumes ammunition
 
-### Magic
-- Casts from active spell slots using mana
-- See [MAGIC.md](MAGIC.md)
+- Requires bow equipped and arrows in off-hand quiver
+- Arrows are consumed on each shot
+- Range limited (default: 8 tiles)
+- Uses the same d20 hit formula
+
+### Damage Pipeline
+
+```
+AttackIntentMessage
+  -> hit_check_system
+      roll d20
+      if roll == 20: is_critical = true, auto-hit
+      else: d20 + hit_bonus >= 4 + target_dodge_bonus
+      -> DamageRollMessage { is_critical, damage_type }
+
+  -> damage_roll_system
+      if is_critical: roll damage dice x2 + damage_bonus
+      else: roll damage dice + damage_bonus
+      -> DamageReductionMessage { raw_damage, damage_type }
+
+  -> damage_reduction_system
+      if Physical:
+          after_armor = (raw - armor).max(0)
+          final = round(after_armor * (1.0 - physical_resist / 100.0))
+      else if Fire/Lightning/Necrotic:
+          final = round(raw * (1.0 - type_resist / 100.0))
+
+      if final < 0  -> HealMessage (absorbed and healed)
+      if final == 0 -> silent (immune)
+      else          -> ApplyDamageMessage { final_damage, is_critical }
+
+  -> damage_application_system
+      apply HP change, check death
+```
+
+### Damage Types
+
+| Type | Armor Applied? | Resistance Applied? | Unique Property |
+|------|---------------|---------------------|-----------------|
+| Physical | Yes (flat subtraction) | Yes (%) | Standard; most melee and basic spells |
+| Fire | No | Yes (%) | Destroys wooden doors; all DoT (burning) is fire-based |
+| Lightning | No | Yes (%) | Can chain jump to additional enemies |
+| Necrotic | No | Yes (%) | Dark magic; Tyrant and undead |
+
+Physical hits the full reduction chain: flat armor first, then percentage
+resistance. Fire, Lightning, and Necrotic skip flat armor — only their
+respective resistance applies.
+
+### Resistances
+
+Percentage-based, stored per damage type (default 0 for all):
+
+| Value | Effect |
+|-------|--------|
+| 0 | No resistance (default) |
+| 50 | 50% damage reduction |
+| 100 | Immune (0 damage, no heal) |
+| >100 | Heals (damage absorbed and converted to healing) |
+| Negative | Vulnerability (takes extra damage) |
+
+Applies symmetrically to player and monsters.
+
+## Health & Regen
+
+- **Starting HP:** 25
+- **Regen:** HP regenerates slowly over time
+- **Regen suppression:** Regen is suppressed for 5 turns after taking damage.
+  This creates a "recover between fights" pacing — the player heals up in
+  corridors, not mid-combat.
+
+## Mana
+
+- **Starting mana:** 10
+- **Mana regen:** 1 per turn (not suppressed by damage)
+- **Spell slots:** Start with 1. Additional slots unlocked via shrines
+  (max 6 total).
+
+See SPELLS.md for the spell system.
 
 ## Speed & Turn Order
 
-The player's turn delay is computed as:
 ```
-delay = base_cost × SpeedStats::delay_multiplier
-delay_multiplier = 1.0 - (AGI_bonus × 0.025)   // clamped [0.5, 2.0]
-AGI_bonus = agility - 10
+action_delay = base_cost * delay_multiplier
+delay_multiplier starts at 1.0
 ```
-At AGI 10 (start): delay = 1.0x (baseline). At AGI 18: delay = 0.8x (20% faster). At AGI 6 (debuffed): delay = 1.1x (slower). Higher AGI = more turns per cycle relative to enemies. Feeds directly into the existing `TurnManager` queue.
 
-## Death & Death Screen
+The player's delay multiplier is fixed at 1.0 unless modified by equipment or
+shrines. Lower delay = more turns per cycle. Feeds into the TurnManager queue
+where all actors (player and monsters) are sorted by game time.
+
+## Symmetric Combat
+
+Player and monsters share the same components and combat formulas. The damage
+pipeline, hit checks, resistances, and speed system work identically for all
+entities. The only structural differences:
+
+- **HP source:** Player has a flat base (25); monsters have per-type base HP
+- **Mana:** Only player has a mana pool
+- **Spell slots:** Player-only feature
+- **Equipment:** Only player equips gear; monsters have stats baked in
+
+Status effects, debuffs, and damage types work the same regardless of target.
+
+## Death
 
 On death, show:
 - Floor reached
-- Level and stats at time of death
-- Last action / cause of death
-- Items carried
-- Total XP / enemies killed
+- Essence collected
+- Equipment carried
+- Shrines purchased
+- Cause of death
+- Enemies killed
+
+## Resolved Decisions
+
+- **Armor can fully negate damage** — `(raw - armor).max(0)`, not `.max(1)`
+- **Mana regen is modifiable** — 1/turn baseline, increased by shrines/equipment
+- **Vision minimum is 4 tiles** — no effects currently lower vision
+- **Single hit bonus** — same hit_bonus for melee and ranged
