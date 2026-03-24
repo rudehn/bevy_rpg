@@ -386,7 +386,8 @@ impl PrefabPlacer {
         }
     }
 
-    /// Try all orientations of a prefab, recording the footprint on success.
+    /// Try orientations of a prefab, recording the footprint on success.
+    /// Limits to MAX_ORIENTATIONS_PER_PREFAB to bound total work.
     fn try_place_oriented(
         &self,
         build_data: &mut BuilderMap,
@@ -394,12 +395,15 @@ impl PrefabPlacer {
         rng: &mut RandomNumberGenerator,
         occupied: &mut Vec<Rect>,
     ) -> bool {
+        const MAX_ORIENTATIONS_PER_PREFAB: usize = 3;
+
         let mut orientations = generate_orientations(prefab);
         let n = orientations.len() as i32;
         for i in (1..n).rev() {
             let j = rng.range(0, i + 1);
             orientations.swap(i as usize, j as usize);
         }
+        orientations.truncate(MAX_ORIENTATIONS_PER_PREFAB);
 
         for oriented in &orientations {
             let try_room = oriented.placement != "wall";
@@ -468,7 +472,9 @@ impl PrefabPlacer {
             candidate_offsets.swap(i as usize, j as usize);
         }
 
-        for (offset_x, offset_y) in &candidate_offsets {
+        // Limit connectivity check attempts to avoid expensive repeated flood fills.
+        let max_stamp_attempts = 5;
+        for (offset_x, offset_y) in candidate_offsets.iter().take(max_stamp_attempts) {
             if self.try_stamp_prefab(build_data, prefab, *offset_x, *offset_y) {
                 return Some(Rect::with_size(*offset_x, *offset_y, prefab.width, prefab.height));
             }
@@ -494,7 +500,7 @@ impl PrefabPlacer {
         let max_y = map_h - prefab.height - 1;
         if max_x < 2 || max_y < 2 { return None; }
 
-        let max_attempts = 200;
+        let max_attempts = 100;
         let mut candidates: Vec<(i32, i32)> = Vec::new();
 
         for _ in 0..max_attempts {
@@ -504,7 +510,7 @@ impl PrefabPlacer {
                 && !overlaps_placed(occupied, ox, oy, prefab.width, prefab.height)
             {
                 candidates.push((ox, oy));
-                if candidates.len() >= 10 { break; } // Enough candidates
+                if candidates.len() >= 5 { break; } // Enough candidates
             }
         }
 
@@ -514,6 +520,9 @@ impl PrefabPlacer {
 
         for (ox, oy) in candidates {
             if let Some(door_pt) = self.find_connection_point(build_data, prefab, ox, oy) {
+                // Pre-compute walkable count before stamping.
+                let walkable_before = count_walkable(&build_data.map);
+                let mut walkable_delta: i32 = 0;
                 let mut snapshot: Vec<(usize, crate::map::tile::Tile)> = Vec::new();
 
                 for (py, row_str) in prefab.tiles.iter().enumerate() {
@@ -523,24 +532,42 @@ impl PrefabPlacer {
                         let pt = Point::new(wx, wy);
                         if !build_data.map.in_bounds(pt) { continue; }
                         let idx = build_data.map.xy_idx(wx, wy);
+                        let old_terrain = build_data.map.tiles[idx].terrain;
                         snapshot.push((idx, build_data.map.tiles[idx]));
 
-                        match ch {
-                            '#' => build_data.map.tiles[idx].terrain = TerrainType::Wall,
-                            '.' => build_data.map.tiles[idx].terrain = TerrainType::Floor,
-                            '+' => build_data.map.tiles[idx].terrain = TerrainType::Door,
-                            _ => {}
+                        let new_terrain = match ch {
+                            '#' => Some(TerrainType::Wall),
+                            '.' => Some(TerrainType::Floor),
+                            '+' => Some(TerrainType::Door),
+                            _ => None,
+                        };
+
+                        if let Some(nt) = new_terrain {
+                            let was_walkable = is_walkable_terrain(old_terrain);
+                            let now_walkable = is_walkable_terrain(nt);
+                            if was_walkable && !now_walkable {
+                                walkable_delta -= 1;
+                            } else if !was_walkable && now_walkable {
+                                walkable_delta += 1;
+                            }
+                            build_data.map.tiles[idx].terrain = nt;
                         }
                     }
                 }
 
                 let door_idx = build_data.map.xy_idx(door_pt.x, door_pt.y);
+                let old_door_terrain = build_data.map.tiles[door_idx].terrain;
                 snapshot.push((door_idx, build_data.map.tiles[door_idx]));
+                if !is_walkable_terrain(old_door_terrain) {
+                    walkable_delta += 1; // Door is walkable
+                }
                 build_data.map.tiles[door_idx].terrain = TerrainType::Door;
+
+                let total_walkable = (walkable_before as i32 + walkable_delta) as usize;
 
                 let start = build_data.starting_position.as_ref().map(|p| Point::new(p.x, p.y));
                 if let Some(start) = start {
-                    if !check_connectivity(&build_data.map, start) {
+                    if !check_connectivity_fast(&build_data.map, start, total_walkable) {
                         for (idx, tile) in &snapshot {
                             build_data.map.tiles[*idx] = *tile;
                         }
@@ -617,7 +644,11 @@ impl PrefabPlacer {
         offset_x: i32,
         offset_y: i32,
     ) -> bool {
+        // Pre-compute walkable count before stamping so we can adjust incrementally.
+        let walkable_before = count_walkable(&build_data.map);
+
         let mut snapshot: Vec<(usize, crate::map::tile::Tile)> = Vec::new();
+        let mut walkable_delta: i32 = 0;
 
         for (py, row_str) in prefab.tiles.iter().enumerate() {
             for (px, ch) in row_str.chars().enumerate() {
@@ -626,22 +657,35 @@ impl PrefabPlacer {
                 let pt = Point::new(wx, wy);
                 if !build_data.map.in_bounds(pt) { continue; }
                 let idx = build_data.map.xy_idx(wx, wy);
+                let old_terrain = build_data.map.tiles[idx].terrain;
                 snapshot.push((idx, build_data.map.tiles[idx]));
 
-                match ch {
-                    '#' => build_data.map.tiles[idx].terrain = TerrainType::Wall,
-                    '.' => build_data.map.tiles[idx].terrain = TerrainType::Floor,
-                    '+' => build_data.map.tiles[idx].terrain = TerrainType::Door,
-                    ' ' => {}
-                    _ => {}
+                let new_terrain = match ch {
+                    '#' => Some(TerrainType::Wall),
+                    '.' => Some(TerrainType::Floor),
+                    '+' => Some(TerrainType::Door),
+                    _ => None,
+                };
+
+                if let Some(nt) = new_terrain {
+                    let was_walkable = is_walkable_terrain(old_terrain);
+                    let now_walkable = is_walkable_terrain(nt);
+                    if was_walkable && !now_walkable {
+                        walkable_delta -= 1;
+                    } else if !was_walkable && now_walkable {
+                        walkable_delta += 1;
+                    }
+                    build_data.map.tiles[idx].terrain = nt;
                 }
             }
         }
 
+        let total_walkable = (walkable_before as i32 + walkable_delta) as usize;
+
         // Connectivity check
         let start = build_data.starting_position.as_ref().map(|p| Point::new(p.x, p.y));
         if let Some(start) = start {
-            if !check_connectivity(&build_data.map, start) {
+            if !check_connectivity_fast(&build_data.map, start, total_walkable) {
                 for (idx, tile) in &snapshot {
                     build_data.map.tiles[*idx] = *tile;
                 }
@@ -771,19 +815,43 @@ impl PrefabPlacer {
     }
 }
 
-/// Flood fill from `start` — returns true if all floor tiles are reachable.
-fn check_connectivity(map: &crate::map::Map, start: Point) -> bool {
-    let total = map.tiles.len();
-    let total_walkable = map.tiles.iter().filter(|t| {
-        matches!(
-            t.terrain,
-            TerrainType::Floor | TerrainType::DownStairs | TerrainType::UpStairs | TerrainType::OpenDoor | TerrainType::Door
-        )
-    }).count();
+/// Count walkable tiles in the map.
+fn count_walkable(map: &crate::map::Map) -> usize {
+    map.tiles
+        .iter()
+        .filter(|t| is_walkable_terrain(t.terrain))
+        .count()
+}
 
+#[inline]
+fn is_walkable_terrain(terrain: TerrainType) -> bool {
+    matches!(
+        terrain,
+        TerrainType::Floor
+            | TerrainType::DownStairs
+            | TerrainType::UpStairs
+            | TerrainType::OpenDoor
+            | TerrainType::Door
+    )
+}
+
+/// Flood fill from `start` — returns true if all floor tiles are reachable.
+/// Accepts a pre-computed walkable count to avoid redundant full-map scans.
+fn check_connectivity_fast(
+    map: &crate::map::Map,
+    start: Point,
+    total_walkable: usize,
+) -> bool {
+    if total_walkable == 0 {
+        return true;
+    }
+
+    let total = map.tiles.len();
     let mut visited = vec![false; total];
     let mut queue = VecDeque::new();
     let mut visited_count = 0usize;
+    let w = map.width;
+    let h = map.height;
 
     if map.in_bounds(start) {
         let idx = map.point2d_to_index(start);
@@ -793,18 +861,22 @@ fn check_connectivity(map: &crate::map::Map, start: Point) -> bool {
 
     while let Some(current) = queue.pop_front() {
         visited_count += 1;
+        // Early exit: already reached all walkable tiles.
+        if visited_count >= total_walkable {
+            return true;
+        }
         let (cx, cy) = map.idx_xy(current);
         for (dx, dy) in [(0i32, 1i32), (0, -1), (1, 0), (-1, 0)] {
             let nx = cx + dx;
             let ny = cy + dy;
-            if nx < 0 || ny < 0 || nx >= map.width || ny >= map.height { continue; }
-            let idx = map.xy_idx(nx, ny);
-            if visited[idx] { continue; }
-            let terrain = map.tiles[idx].terrain;
-            if matches!(
-                terrain,
-                TerrainType::Floor | TerrainType::DownStairs | TerrainType::UpStairs | TerrainType::OpenDoor | TerrainType::Door
-            ) {
+            if nx < 0 || ny < 0 || nx >= w || ny >= h {
+                continue;
+            }
+            let idx = (ny * w + nx) as usize;
+            if idx >= total || visited[idx] {
+                continue;
+            }
+            if is_walkable_terrain(map.tiles[idx].terrain) {
                 visited[idx] = true;
                 queue.push_back(idx);
             }
