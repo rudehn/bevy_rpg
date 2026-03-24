@@ -15,6 +15,7 @@ use crate::{
     map::{
         Map,
         builders::{
+            boss_room::BossRoomBuilder,
             candle_spawner::CandleSpawner,
             cave_eroder::CaveEroder,
             decoration_propagator::DecorationPropagator,
@@ -35,6 +36,7 @@ use crate::{
 };
 
 pub mod algorithms;
+mod boss_room;
 mod brogelike;
 pub mod decoration_propagator;
 mod bsp_dungeon;
@@ -394,6 +396,7 @@ pub fn floor_builder(
     builder.with_named("PillarCuller", PillarCuller::new());
     builder.with_named("FinishDoors", FinishDoors::new());
     builder.with_named("PrefabPlacer", PrefabPlacer::new(prefabs, role_table));
+    builder.with_named("BossRoomBuilder", BossRoomBuilder::new());
     builder.with_named("CandleSpawner", CandleSpawner::new());
     builder.with_named("MonsterSpawner", MonsterSpawner::new(spawn_table));
     builder.with_named("ItemSpawner", ItemSpawner::new());

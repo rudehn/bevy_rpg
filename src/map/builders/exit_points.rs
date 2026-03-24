@@ -1,9 +1,9 @@
-use bevy::log::{info, warn};
+use bevy::log::warn;
 use bracket_lib::prelude::{Algorithm2D, DijkstraMap, Point};
 
 use crate::constants::MAX_FLOOR;
 use crate::map::{
-    builders::{BuilderMap, MetaMapBuilder, SpawnEntry},
+    builders::{BuilderMap, MetaMapBuilder},
     tile::TerrainType,
 };
 
@@ -111,19 +111,8 @@ impl DistantExit {
         let stairs_pos = build_data.map.index_to_point2d(stairs_idx);
 
         if build_data.map.depth == MAX_FLOOR {
-            // Final floor: spawn The Veiled Tyrant + guards, no down stairs
-            info!("DistantExit: Spawning The Veiled Tyrant at ({}, {}) on floor {}", stairs_pos.x, stairs_pos.y, build_data.map.depth);
-            build_data.add_monster_spawn(SpawnEntry::solo(stairs_pos, "The Veiled Tyrant".to_string()));
-            // Guard minions near the boss
-            for (dx, dy) in [(1, 0), (-1, 0), (0, 1)] {
-                let guard_pt = Point::new(stairs_pos.x + dx, stairs_pos.y + dy);
-                if build_data.map.in_bounds(guard_pt) {
-                    let idx = build_data.map.point2d_to_index(guard_pt);
-                    if build_data.map.tiles[idx].terrain == TerrainType::Floor {
-                        build_data.add_monster_spawn(SpawnEntry::solo(guard_pt, "Wraith".to_string()));
-                    }
-                }
-            }
+            // Boss room handled by BossRoomBuilder — no stairs on final floor
+            return;
         } else {
             build_data.map.set_tile(stairs_pos, TerrainType::DownStairs);
         }
