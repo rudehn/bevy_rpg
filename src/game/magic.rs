@@ -46,6 +46,12 @@ impl ActiveSpells {
             slots: vec![None; MAX_SPELL_SLOTS],
         }
     }
+
+    pub fn with_slots(count: usize) -> Self {
+        Self {
+            slots: vec![None; count.min(MAX_SPELL_SLOTS)],
+        }
+    }
 }
 
 /// Counter-based mana regeneration. Every `turns_between_regen` turns, the entity

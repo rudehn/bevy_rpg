@@ -153,7 +153,7 @@ pub fn player_spawn_or_move_system(
             ))
             .insert((
                 KnownSpells::default(),
-                ActiveSpells::new(),
+                ActiveSpells::with_slots(1),
                 SpellCooldowns::default(),
                 Faction(FactionKind::Player),
             ))
