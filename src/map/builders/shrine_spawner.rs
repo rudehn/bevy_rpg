@@ -95,7 +95,7 @@ impl ShrineSpawner {
 }
 
 /// Determine the three rarity slots based on floor depth.
-fn rarity_slots_for_depth(depth: i32, rng: &mut RandomNumberGenerator) -> [Rarity; 3] {
+pub fn rarity_slots_for_depth(depth: i32, rng: &mut RandomNumberGenerator) -> [Rarity; 3] {
     match depth {
         1..=3 => [Rarity::Common, Rarity::Common, Rarity::Uncommon],
         4..=6 => [Rarity::Common, Rarity::Uncommon, Rarity::Uncommon],
@@ -113,7 +113,7 @@ fn rarity_slots_for_depth(depth: i32, rng: &mut RandomNumberGenerator) -> [Rarit
 
 /// Pick a random effect of the target rarity from the category, avoiding
 /// already-purchased unique effects and effects already selected for this shrine.
-fn pick_effect(
+pub fn pick_effect(
     category: &ShrineCategoryDef,
     target_rarity: &Rarity,
     purchased: &[String],
@@ -153,7 +153,7 @@ fn pick_effect(
     Some(to_instance(e))
 }
 
-fn to_instance(e: &ShrineEffectDef) -> ShrineEffectInstance {
+pub fn to_instance(e: &ShrineEffectDef) -> ShrineEffectInstance {
     ShrineEffectInstance {
         id: e.id.clone(),
         name: e.name.clone(),

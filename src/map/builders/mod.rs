@@ -20,7 +20,7 @@ use crate::{
             cave_eroder::CaveEroder,
             decoration_propagator::DecorationPropagator,
             diagonal_culler::DiagonalCuller,
-            shrine_spawner::ShrineSpawner,
+            machine_placer::MachinePlacer,
             exit_points::DistantExit,
             finish_doors::FinishDoors,
             isolated_area_culler::IsolatedAreaCuller,
@@ -42,7 +42,7 @@ pub mod decoration_propagator;
 mod bsp_dungeon;
 mod candle_spawner;
 mod cave_eroder;
-mod choke_map;
+pub(crate) mod choke_map;
 mod corridors;
 mod diagonal_culler;
 mod exit_points;
@@ -51,6 +51,7 @@ mod isolated_area_culler;
 mod pillar_culler;
 pub mod item_spawner;
 mod lake_builder;
+mod machine_placer;
 pub mod monster_spawner;
 pub mod prefab_placer;
 mod room_drawer;
@@ -400,7 +401,7 @@ pub fn floor_builder(
     builder.with_named("CandleSpawner", CandleSpawner::new());
     builder.with_named("MonsterSpawner", MonsterSpawner::new(spawn_table));
     builder.with_named("ItemSpawner", ItemSpawner::new());
-    builder.with_named("ShrineSpawner", ShrineSpawner::new(shrine_categories, shrines_purchased));
+    builder.with_named("MachinePlacer", MachinePlacer::new(shrine_categories, shrines_purchased));
     builder.with_named("IsolatedAreaCuller", IsolatedAreaCuller::new());
     builder.with_named("DistantExit", DistantExit::new());
     builder.with_named("DecorationPropagator", DecorationPropagator::new(
