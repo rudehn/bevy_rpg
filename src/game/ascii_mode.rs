@@ -150,20 +150,29 @@ fn apply_graphics_mode_swap(
     // which branch on GraphicsMode. Player sprite is handled by update_player_ascii_sprite.
 }
 
-/// Set the correct visibility on newly spawned AsciiGlyph entities based on
-/// the current graphics mode. This catches glyphs created after the last
-/// mode toggle (e.g., items spawned from chests at runtime).
+/// Set the correct visibility on newly spawned AsciiGlyph, AsciiBackground,
+/// and LiquidOverlay entities based on the current graphics mode. This catches
+/// entities created after the last mode toggle (e.g., floor transitions, items
+/// spawned from chests at runtime).
 fn init_new_ascii_glyphs(
     mode: Res<GraphicsMode>,
-    mut new_glyphs: Query<&mut Visibility, Added<AsciiGlyph>>,
+    mut new_glyphs: Query<&mut Visibility, (Added<AsciiGlyph>, Without<AsciiBackground>, Without<LiquidOverlay>)>,
+    mut new_bgs: Query<&mut Visibility, (Added<AsciiBackground>, Without<AsciiGlyph>, Without<LiquidOverlay>)>,
+    mut new_liquids: Query<&mut Visibility, (Added<LiquidOverlay>, Without<AsciiGlyph>, Without<AsciiBackground>)>,
 ) {
-    let target = if *mode == GraphicsMode::Ascii {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
+    let is_ascii = *mode == GraphicsMode::Ascii;
+    let glyph_vis = if is_ascii { Visibility::Inherited } else { Visibility::Hidden };
+    let bg_vis = if is_ascii { Visibility::Inherited } else { Visibility::Hidden };
+    let liquid_vis = if is_ascii { Visibility::Hidden } else { Visibility::Inherited };
+
     for mut vis in new_glyphs.iter_mut() {
-        *vis = target;
+        *vis = glyph_vis;
+    }
+    for mut vis in new_bgs.iter_mut() {
+        *vis = bg_vis;
+    }
+    for mut vis in new_liquids.iter_mut() {
+        *vis = liquid_vis;
     }
 }
 
