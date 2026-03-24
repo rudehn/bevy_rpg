@@ -9,7 +9,9 @@ use crate::components::{Chest, GameEntityMarker, InInventory, Item, Monster, Nam
 use crate::game::items::ItemProperties;
 use crate::game::shrines::{ShrineData, ShrineMarker};
 use crate::game::{AppState, InGameState};
+use crate::map::Map;
 use crate::map::map::GRID_SIZE;
+use crate::map::tile::TerrainType;
 use crate::player::Player;
 
 // --- Resources ---
@@ -90,6 +92,7 @@ fn update_nearby_panel(
     asset_server: Res<AssetServer>,
     mode: Res<crate::game::ascii_mode::GraphicsMode>,
     ascii_font_res: Option<Res<crate::game::ascii_mode::AsciiFont>>,
+    map: Res<Map>,
     player_query: Query<(&Viewshed, &Position), (With<Player>, Changed<Viewshed>)>,
     monster_query: Query<(Entity, &Position, &Name, &Sprite, Option<&Children>), With<Monster>>,
     item_query: Query<
@@ -190,6 +193,25 @@ fn update_nearby_panel(
         .collect();
     shrines.sort_by_key(|(_, d, ..)| *d);
 
+    // Collect visible stairs from the map
+    let mut stairs: Vec<(String, i32)> = Vec::new();
+    for pt in &viewshed.visible_tiles {
+        if pt.x < 0 || pt.y < 0 || pt.x >= map.width() || pt.y >= map.height() {
+            continue;
+        }
+        let idx = map.xy_idx(pt.x, pt.y);
+        let terrain = map.tiles[idx].terrain;
+        let name = match terrain {
+            TerrainType::DownStairs => "Down Stairs",
+            TerrainType::UpStairs => "Up Stairs",
+            _ => continue,
+        };
+        let stair_pos = Position { x: pt.x, y: pt.y };
+        let dist = tile_distance(player_pos, &stair_pos);
+        stairs.push((name.to_string(), dist));
+    }
+    stairs.sort_by_key(|(_, d)| *d);
+
     // Update entity list
     nearby_state.entity_list = monsters
         .iter()
@@ -215,7 +237,7 @@ fn update_nearby_panel(
         return;
     };
 
-    if monsters.is_empty() && items.is_empty() && chests.is_empty() && shrines.is_empty() {
+    if monsters.is_empty() && items.is_empty() && chests.is_empty() && shrines.is_empty() && stairs.is_empty() {
         return;
     }
 
@@ -504,6 +526,52 @@ fn update_nearby_panel(
                         }
                         row.spawn((
                             Text::new(format!("{} {}", truncated, dist)),
+                            TextFont { font: font.clone(), font_size: 12.0, ..default() },
+                            TextColor(Color::srgb(0.85, 0.85, 0.85)),
+                            Node { flex_grow: 1.0, ..default() },
+                        ));
+                    });
+            }
+        }
+
+        // --- STAIRS ---
+        if !stairs.is_empty() {
+            parent.spawn((
+                Text::new("STAIRS"),
+                TextFont { font: font.clone(), font_size: 11.0, ..default() },
+                TextColor(Color::srgb(0.5, 0.8, 1.0)),
+                Node { margin: UiRect::top(Val::Px(4.0)), ..default() },
+                NearbyRow { entity: Entity::PLACEHOLDER },
+            ));
+            for (name, dist) in &stairs {
+                parent
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::axes(Val::Px(2.0), Val::Px(1.0)),
+                            margin: UiRect::top(Val::Px(1.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::NONE),
+                        NearbyRow { entity: Entity::PLACEHOLDER },
+                    ))
+                    .with_children(|row| {
+                        // Stair icon: > for down, < for up
+                        let icon = if name.contains("Down") { ">" } else { "<" };
+                        row.spawn((
+                            Text::new(icon),
+                            TextFont { font: font.clone(), font_size: 14.0, ..default() },
+                            TextColor(Color::srgb(0.5, 0.8, 1.0)),
+                            Node {
+                                width: Val::Px(14.0),
+                                margin: UiRect::right(Val::Px(4.0)),
+                                ..default()
+                            },
+                        ));
+                        row.spawn((
+                            Text::new(format!("{} {}", name, dist)),
                             TextFont { font: font.clone(), font_size: 12.0, ..default() },
                             TextColor(Color::srgb(0.85, 0.85, 0.85)),
                             Node { flex_grow: 1.0, ..default() },
