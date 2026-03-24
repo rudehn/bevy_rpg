@@ -1,4 +1,4 @@
-use bevy::log::warn;
+use bevy::log::{info, warn};
 use bracket_lib::prelude::{Algorithm2D, DijkstraMap, Point};
 
 use crate::constants::MAX_FLOOR;
@@ -112,6 +112,7 @@ impl DistantExit {
 
         if build_data.map.depth == MAX_FLOOR {
             // Final floor: spawn The Veiled Tyrant + guards, no down stairs
+            info!("DistantExit: Spawning The Veiled Tyrant at ({}, {}) on floor {}", stairs_pos.x, stairs_pos.y, build_data.map.depth);
             build_data.add_monster_spawn(SpawnEntry::solo(stairs_pos, "The Veiled Tyrant".to_string()));
             // Guard minions near the boss
             for (dx, dy) in [(1, 0), (-1, 0), (0, 1)] {
