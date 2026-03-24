@@ -25,7 +25,7 @@ const MIN_REGION_SIZE: usize = 3;
 const MAX_REGION_SIZE: usize = 25;
 
 /// Minimum Dijkstra distance from player start for a shrine candidate.
-const MIN_SECLUSION: f32 = 10.0;
+const MIN_SECLUSION: f32 = 5.0;
 
 /// A candidate location for a machine (currently shrine-only).
 struct MachineCandidate {
@@ -102,22 +102,29 @@ impl MachinePlacer {
         let h = build_data.map.height;
         let total = (w * h) as usize;
 
+        let mut total_chokepoints = 0usize;
+        let mut passed_size_filter = 0usize;
+        let mut passed_seclusion_filter = 0usize;
+
         for idx in 0..total {
             if !choke_map.chokepoints[idx] {
                 continue;
             }
+            total_chokepoints += 1;
 
             // Quick-reject by choke_value range.
             let cv = choke_map.choke_values[idx] as usize;
             if cv < MIN_REGION_SIZE || cv > MAX_REGION_SIZE {
                 continue;
             }
+            passed_size_filter += 1;
 
             // Seclusion check.
             let seclusion = dijkstra.map[idx];
             if seclusion == f32::MAX || seclusion < MIN_SECLUSION {
                 continue;
             }
+            passed_seclusion_filter += 1;
 
             let choke_pt = build_data.map.index_to_point2d(idx);
 
@@ -144,6 +151,12 @@ impl MachinePlacer {
                 seclusion,
             });
         }
+
+        debug!(
+            "MachinePlacer: {} chokepoints found, {} passed size filter ({}-{}), {} passed seclusion (>= {}), {} final candidates",
+            total_chokepoints, passed_size_filter, MIN_REGION_SIZE, MAX_REGION_SIZE,
+            passed_seclusion_filter, MIN_SECLUSION, candidates.len()
+        );
 
         // 4. Sort by seclusion descending (most remote first).
         candidates.sort_by(|a, b| b.seclusion.partial_cmp(&a.seclusion).unwrap_or(std::cmp::Ordering::Equal));
