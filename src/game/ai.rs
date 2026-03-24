@@ -277,7 +277,21 @@ struct AIContext {
 impl AIContext {
     fn gather(entity: Entity, world: &mut World) -> Option<Self> {
         let monster_pos = world.get::<Position>(entity)?.to_point();
-        let viewshed = world.get::<Viewshed>(entity).cloned().unwrap_or_default();
+        let mut viewshed = world.get::<Viewshed>(entity).cloned().unwrap_or_default();
+
+        // If the viewshed hasn't been computed yet (dirty or empty), calculate it
+        // now so the AI doesn't skip its first turn due to an empty visible_tiles.
+        if viewshed.dirty || viewshed.visible_tiles.is_empty() {
+            let map = world.resource::<Map>();
+            viewshed.visible_tiles =
+                bracket_lib::prelude::field_of_view(monster_pos, viewshed.range, &*map);
+            viewshed.dirty = false;
+            // Write the computed viewshed back to the entity.
+            if let Some(mut vs) = world.get_mut::<Viewshed>(entity) {
+                vs.visible_tiles = viewshed.visible_tiles.clone();
+                vs.dirty = false;
+            }
+        }
 
         let mut player_query = world.query_filtered::<(Entity, &Position), With<Player>>();
         let (player_entity, player_point) = match player_query.iter(world).next() {
