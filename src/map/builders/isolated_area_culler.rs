@@ -9,7 +9,7 @@ use bevy::log::warn;
 
 use super::{BuilderMap, MetaMapBuilder};
 use crate::map::tile::{Decoration, TerrainType, LiquidType, is_passable};
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 
 pub struct IsolatedAreaCuller;
 
@@ -23,73 +23,71 @@ impl MetaMapBuilder for IsolatedAreaCuller {
     fn build_map(&mut self, build_data: &mut BuilderMap) {
         let width = build_data.map.width;
         let height = build_data.map.height;
+        let total = (width * height) as usize;
 
-        // Find all connected regions of passable tiles via flood-fill
-        let mut assigned = vec![false; (width * height) as usize];
-        let mut regions: Vec<HashSet<usize>> = Vec::new();
+        // Region-ID map: 0 = unassigned, 1.. = region IDs
+        let mut region_id = vec![0u32; total];
+        let mut region_sizes: Vec<usize> = Vec::new(); // index = region_id - 1
+        let mut current_id = 0u32;
+        let mut queue = VecDeque::new();
 
         for y in 0..height {
             for x in 0..width {
                 let idx = build_data.map.xy_idx(x, y);
-                if assigned[idx] || !is_passable(build_data.map.tiles[idx]) {
+                if region_id[idx] != 0 || !is_passable(build_data.map.tiles[idx]) {
                     continue;
                 }
 
-                // Flood-fill this region
-                let mut region = HashSet::new();
-                let mut queue = VecDeque::new();
+                current_id += 1;
+                let mut size = 0usize;
                 queue.push_back((x, y));
-                assigned[idx] = true;
-                region.insert(idx);
+                region_id[idx] = current_id;
 
                 while let Some((cx, cy)) = queue.pop_front() {
+                    size += 1;
                     for (dx, dy) in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
                         let nx = cx + dx;
                         let ny = cy + dy;
                         if nx < 0 || ny < 0 || nx >= width || ny >= height { continue; }
                         let n_idx = build_data.map.xy_idx(nx, ny);
-                        if !assigned[n_idx] && is_passable(build_data.map.tiles[n_idx]) {
-                            assigned[n_idx] = true;
-                            region.insert(n_idx);
+                        if region_id[n_idx] == 0 && is_passable(build_data.map.tiles[n_idx]) {
+                            region_id[n_idx] = current_id;
                             queue.push_back((nx, ny));
                         }
                     }
                 }
 
-                regions.push(region);
+                region_sizes.push(size);
             }
         }
 
-        // Prefer the region containing the starting position so the player
-        // is never walled off. Fall back to the largest region.
+        if current_id == 0 { return; }
+
+        // Determine which region to keep
         let start_idx = build_data.starting_position.as_ref().map(|pos| {
             build_data.map.xy_idx(pos.x, pos.y)
         });
 
-        let keep: HashSet<usize> = if let Some(si) = start_idx {
-            if let Some(r) = regions.iter().find(|r| r.contains(&si)) {
-                r.clone()
+        let keep_id = if let Some(si) = start_idx {
+            let rid = region_id[si];
+            if rid != 0 {
+                rid
             } else {
-                // Starting position is on a non-passable tile (e.g. wall) —
-                // this shouldn't happen, but fall back to the largest region.
                 warn!("IsolatedAreaCuller: starting position idx {} is not in any passable region", si);
-                match regions.iter().max_by_key(|r| r.len()) {
-                    Some(r) => r.clone(),
-                    None => return,
-                }
+                // Fall back to the largest region
+                let (max_idx, _) = region_sizes.iter().enumerate().max_by_key(|(_, s)| *s).unwrap();
+                (max_idx + 1) as u32
             }
         } else {
-            match regions.iter().max_by_key(|r| r.len()) {
-                Some(r) => r.clone(),
-                None => return,
-            }
+            let (max_idx, _) = region_sizes.iter().enumerate().max_by_key(|(_, s)| *s).unwrap();
+            (max_idx + 1) as u32
         };
 
         // Cull everything not in the kept region
         for y in 1..height - 1 {
             for x in 1..width - 1 {
                 let idx = build_data.map.xy_idx(x, y);
-                if is_passable(build_data.map.tiles[idx]) && !keep.contains(&idx) {
+                if region_id[idx] != 0 && region_id[idx] != keep_id {
                     build_data.map.tiles[idx].terrain = TerrainType::Wall;
                     build_data.map.tiles[idx].liquid = LiquidType::None;
                     build_data.map.tiles[idx].decoration = Decoration::None;

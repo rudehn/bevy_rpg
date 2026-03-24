@@ -1,4 +1,4 @@
-use bracket_lib::prelude::{Point, Algorithm2D, DijkstraMap, Rect};
+use bracket_lib::prelude::{Point, Algorithm2D, Rect};
 use rand::prelude::*;
 use rand::seq::SliceRandom;
 use crate::map::tile::{is_walkable, Tile, TerrainType};
@@ -373,14 +373,10 @@ impl BrogueLikeBuilder {
 
     pub fn add_loops(&self, tiles: &mut Vec<Tile>, w: i32, h: i32, minimum_path_distance: i32) {
         let total_cells = (w * h) as usize;
-        let mut indices: Vec<usize> = (0..total_cells).collect();
-        indices.shuffle(&mut rand::rng());
-
-        let directions = [(1, 0), (0, 1)]; // Horizontal & vertical checks
 
         // Create a temporary Map instance for Dijkstra calculations
         let mut map_for_dijkstra = Map::new(1, w, h, "tmp");
-        map_for_dijkstra.tiles = tiles.clone(); // Copy current tiles for pathfinding
+        map_for_dijkstra.tiles = tiles.clone();
 
         // Make all doors open in the Dijkstra map for pathfinding
         for i in 0..map_for_dijkstra.tiles.len() {
@@ -389,50 +385,87 @@ impl BrogueLikeBuilder {
             }
         }
 
-        for idx in indices {
-            let (x, y) = map_for_dijkstra.idx_xy(idx); // Use Map's idx_xy
+        let directions = [(1i32, 0i32), (0, 1)];
 
-            // Only consider walls as potential new doors
-            if map_for_dijkstra.tiles[idx].terrain != TerrainType::Wall {
-                continue;
-            }
-
+        // Pre-filter: only consider wall tiles that have walkable tiles on both
+        // sides of at least one axis. This avoids the expensive Dijkstra for
+        // walls that can't possibly be loop doors.
+        let mut candidates: Vec<(usize, i32, i32)> = Vec::new();
+        for idx in 0..total_cells {
+            if map_for_dijkstra.tiles[idx].terrain != TerrainType::Wall { continue; }
+            let (x, y) = map_for_dijkstra.idx_xy(idx);
             for &(dx, dy) in &directions {
                 let nx = x + dx;
                 let ny = y + dy;
                 let ox = x - dx;
                 let oy = y - dy;
-
-                if !map_for_dijkstra.in_bounds(Point::new(nx, ny)) || !map_for_dijkstra.in_bounds(Point::new(ox, oy)) {
-                    continue;
-                }
-
-                // Check if flanking tiles are Floor (open space)
-                let t1 = map_for_dijkstra.tiles[map_for_dijkstra.xy_idx(nx, ny)];
-                let t2 = map_for_dijkstra.tiles[map_for_dijkstra.xy_idx(ox, oy)];
-                if !is_walkable(t1) || !is_walkable(t2)
+                if !map_for_dijkstra.in_bounds(Point::new(nx, ny))
+                    || !map_for_dijkstra.in_bounds(Point::new(ox, oy))
                 {
                     continue;
                 }
-
-                // Compute Dijkstra distance between the two flanking floor tiles
-                let start_idx = map_for_dijkstra.xy_idx(nx, ny);
-                let goal_idx = map_for_dijkstra.xy_idx(ox, oy);
-                
-                // DijkstraMap needs a BaseMap
-                let dijkstra =
-                    DijkstraMap::new(w as usize, h as usize, &[start_idx], &map_for_dijkstra, 3000.0);
-                
-                if let Some(distance) = dijkstra.map.get(goal_idx) {
-                    if *distance > minimum_path_distance as f32 {
-                        // The two areas are far apart — add a connecting door here
-                        tiles[idx].terrain = TerrainType::Door; // Update the actual tiles being built
-                        map_for_dijkstra.tiles[idx].terrain = TerrainType::Door; // Update temp map for consistency
-                        break; // Only add one door per wall tile
-                    }
+                let t1 = map_for_dijkstra.tiles[map_for_dijkstra.xy_idx(nx, ny)];
+                let t2 = map_for_dijkstra.tiles[map_for_dijkstra.xy_idx(ox, oy)];
+                if is_walkable(t1) && is_walkable(t2) {
+                    candidates.push((idx, dx, dy));
                 }
             }
         }
+        candidates.shuffle(&mut rand::rng());
+
+        // Use a single Dijkstra from all walkable tiles would be wrong — we need
+        // per-candidate distance. But we can use BFS which is much faster than
+        // bracket-lib's DijkstraMap for unweighted graphs.
+        for (idx, dx, dy) in candidates {
+            let (x, y) = map_for_dijkstra.idx_xy(idx);
+            // Recheck the wall — a previous iteration may have turned it into a door
+            if map_for_dijkstra.tiles[idx].terrain != TerrainType::Wall { continue; }
+
+            let nx = x + dx;
+            let ny = y + dy;
+            let ox = x - dx;
+            let oy = y - dy;
+
+            let start_idx = map_for_dijkstra.xy_idx(nx, ny);
+            let goal_idx = map_for_dijkstra.xy_idx(ox, oy);
+
+            // BFS from start_idx to goal_idx, treating the candidate wall as impassable
+            let distance = self.bfs_distance(&map_for_dijkstra, start_idx, goal_idx, idx);
+
+            if distance > minimum_path_distance {
+                tiles[idx].terrain = TerrainType::Door;
+                map_for_dijkstra.tiles[idx].terrain = TerrainType::Door;
+            }
+        }
+    }
+
+    /// BFS distance between two tiles, ignoring a blocked tile. Returns i32::MAX if unreachable.
+    fn bfs_distance(&self, map: &Map, start: usize, goal: usize, blocked: usize) -> i32 {
+        let total = map.tiles.len();
+        let mut dist = vec![-1i32; total];
+        let mut queue = std::collections::VecDeque::new();
+        dist[start] = 0;
+        queue.push_back(start);
+
+        while let Some(current) = queue.pop_front() {
+            if current == goal {
+                return dist[current];
+            }
+            let (cx, cy) = map.idx_xy(current);
+            let next_dist = dist[current] + 1;
+            for (dx, dy) in [(0i32, 1i32), (0, -1), (1, 0), (-1, 0)] {
+                let nx = cx + dx;
+                let ny = cy + dy;
+                if nx < 0 || ny < 0 || nx >= map.width || ny >= map.height { continue; }
+                let n_idx = map.xy_idx(nx, ny);
+                if n_idx == blocked { continue; }
+                if dist[n_idx] >= 0 { continue; }
+                if !is_walkable(map.tiles[n_idx]) { continue; }
+                dist[n_idx] = next_dist;
+                queue.push_back(n_idx);
+            }
+        }
+        i32::MAX
     }
 }
 
@@ -465,6 +498,9 @@ impl InitialMapBuilder for BrogueLikeBuilder {
         rooms.push(Rect::with_exact(min_x, min_y, max_x, max_y));
 
         // 2. Iteratively attach normal rooms
+        // Pre-allocate a terrain cache that we update incrementally instead of
+        // cloning every iteration.
+        let mut terrain_cache: Vec<TerrainType> = build_data.map.tiles.iter().map(|t| t.terrain).collect();
         let mut attempts = 0;
         let mut placed = 1;
         while placed < self.profile.target_rooms && attempts < 2000 {
@@ -474,14 +510,13 @@ impl InitialMapBuilder for BrogueLikeBuilder {
 
             // Find all potential door sites in the dungeon
             let mut dungeon_sites = Vec::new();
-            let terrain_slice: Vec<TerrainType> = build_data.map.tiles.iter().map(|t| t.terrain).collect();
-            
+
             for y in 1..self.height - 1 {
                 for x in 1..self.width - 1 {
                     let pt = Point::new(x, y);
                     let idx = build_data.map.xy_idx(x, y);
-                    if build_data.map.tiles[idx].terrain == TerrainType::Wall {
-                        if let Some(dir) = self.direction_of_door_site(&terrain_slice, self.width, self.height, pt) {
+                    if terrain_cache[idx] == TerrainType::Wall {
+                        if let Some(dir) = self.direction_of_door_site(&terrain_cache, self.width, self.height, pt) {
                             dungeon_sites.push((pt, dir));
                         }
                     }
@@ -549,6 +584,10 @@ impl InitialMapBuilder for BrogueLikeBuilder {
 
                             rooms.push(Rect::with_exact(r_min_x, r_min_y, r_max_x, r_max_y));
                             placed += 1;
+                            // Sync terrain cache with actual map tiles
+                            for (i, tile) in build_data.map.tiles.iter().enumerate() {
+                                terrain_cache[i] = tile.terrain;
+                            }
                             break 'attach;
                         }
                     }
@@ -559,15 +598,18 @@ impl InitialMapBuilder for BrogueLikeBuilder {
         // 3. Place Reward Room using ChokeMap
         let chokemap = ChokeMap::generate(&build_data.map);
         let mut reward_candidates = Vec::new();
-        let terrain_slice: Vec<TerrainType> = build_data.map.tiles.iter().map(|t| t.terrain).collect();
+        // Reuse terrain_cache (already synced after room placement loop)
+        for (i, tile) in build_data.map.tiles.iter().enumerate() {
+            terrain_cache[i] = tile.terrain;
+        }
 
         for y in 1..self.height - 1 {
             for x in 1..self.width - 1 {
                 let idx = build_data.map.xy_idx(x, y);
                 // We look for wall tiles that could be doors (direction_of_door_site)
                 // and prioritize those with high choke values (isolated regions)
-                if build_data.map.tiles[idx].terrain == TerrainType::Wall {
-                    if let Some(dir) = self.direction_of_door_site(&terrain_slice, self.width, self.height, Point::new(x, y)) {
+                if terrain_cache[idx] == TerrainType::Wall {
+                    if let Some(dir) = self.direction_of_door_site(&terrain_cache, self.width, self.height, Point::new(x, y)) {
                         let choke_val = chokemap.choke_values[idx];
                         if choke_val > 10 && choke_val < 29000 { // Isolated but not infinite
                             reward_candidates.push((Point::new(x, y), dir, choke_val));

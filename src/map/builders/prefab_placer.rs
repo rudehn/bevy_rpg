@@ -488,26 +488,28 @@ impl PrefabPlacer {
         let map_w = build_data.map.width;
         let map_h = build_data.map.height;
 
+        // Instead of exhaustively scanning every position, use random sampling
+        // with a reasonable attempt limit. This avoids O(map_w * map_h) per prefab.
+        let max_x = map_w - prefab.width - 1;
+        let max_y = map_h - prefab.height - 1;
+        if max_x < 2 || max_y < 2 { return None; }
+
+        let max_attempts = 200;
         let mut candidates: Vec<(i32, i32)> = Vec::new();
 
-        for oy in 1..map_h - prefab.height - 1 {
-            for ox in 1..map_w - prefab.width - 1 {
-                if self.wall_carve_fits(build_data, prefab, ox, oy)
-                    && !overlaps_placed(occupied, ox, oy, prefab.width, prefab.height)
-                {
-                    candidates.push((ox, oy));
-                }
+        for _ in 0..max_attempts {
+            let ox = rng.range(1, max_x);
+            let oy = rng.range(1, max_y);
+            if self.wall_carve_fits(build_data, prefab, ox, oy)
+                && !overlaps_placed(occupied, ox, oy, prefab.width, prefab.height)
+            {
+                candidates.push((ox, oy));
+                if candidates.len() >= 10 { break; } // Enough candidates
             }
         }
 
         if candidates.is_empty() {
             return None;
-        }
-
-        let n = candidates.len() as i32;
-        for i in (1..n).rev() {
-            let j = rng.range(0, i + 1);
-            candidates.swap(i as usize, j as usize);
         }
 
         for (ox, oy) in candidates {
@@ -771,6 +773,7 @@ impl PrefabPlacer {
 
 /// Flood fill from `start` — returns true if all floor tiles are reachable.
 fn check_connectivity(map: &crate::map::Map, start: Point) -> bool {
+    let total = map.tiles.len();
     let total_walkable = map.tiles.iter().filter(|t| {
         matches!(
             t.terrain,
@@ -778,34 +781,35 @@ fn check_connectivity(map: &crate::map::Map, start: Point) -> bool {
         )
     }).count();
 
-    let mut visited = HashSet::new();
+    let mut visited = vec![false; total];
     let mut queue = VecDeque::new();
+    let mut visited_count = 0usize;
 
     if map.in_bounds(start) {
-        queue.push_back(start);
-        visited.insert(map.point2d_to_index(start));
+        let idx = map.point2d_to_index(start);
+        queue.push_back(idx);
+        visited[idx] = true;
     }
 
-    while let Some(pt) = queue.pop_front() {
-        for (dx, dy) in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
-            let np = Point::new(pt.x + dx, pt.y + dy);
-            if !map.in_bounds(np) {
-                continue;
-            }
-            let idx = map.point2d_to_index(np);
-            if visited.contains(&idx) {
-                continue;
-            }
+    while let Some(current) = queue.pop_front() {
+        visited_count += 1;
+        let (cx, cy) = map.idx_xy(current);
+        for (dx, dy) in [(0i32, 1i32), (0, -1), (1, 0), (-1, 0)] {
+            let nx = cx + dx;
+            let ny = cy + dy;
+            if nx < 0 || ny < 0 || nx >= map.width || ny >= map.height { continue; }
+            let idx = map.xy_idx(nx, ny);
+            if visited[idx] { continue; }
             let terrain = map.tiles[idx].terrain;
             if matches!(
                 terrain,
                 TerrainType::Floor | TerrainType::DownStairs | TerrainType::UpStairs | TerrainType::OpenDoor | TerrainType::Door
             ) {
-                visited.insert(idx);
-                queue.push_back(np);
+                visited[idx] = true;
+                queue.push_back(idx);
             }
         }
     }
 
-    visited.len() >= total_walkable
+    visited_count >= total_walkable
 }

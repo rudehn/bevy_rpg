@@ -4,6 +4,8 @@ use bracket_lib::{
 };
 
 use std::collections::HashMap;
+use std::time::Instant;
+use bevy::log::debug;
 
 use crate::{
     assets::{ItemSpawnInfo, MonsterAsset, MonsterSpawnInfo, PrefabTemplate, ShrineCategoryDef},
@@ -199,8 +201,8 @@ impl BuilderMap {
 }
 
 pub struct BuilderChain {
-    starter: Option<Box<dyn InitialMapBuilder>>,
-    builders: Vec<Box<dyn MetaMapBuilder>>,
+    starter: Option<(&'static str, Box<dyn InitialMapBuilder>)>,
+    builders: Vec<(&'static str, Box<dyn MetaMapBuilder>)>,
     pub build_data: BuilderMap,
 }
 
@@ -228,28 +230,41 @@ impl BuilderChain {
 
     pub fn start_with(&mut self, starter: Box<dyn InitialMapBuilder>) {
         match self.starter {
-            None => self.starter = Some(starter),
+            None => self.starter = Some(("starter", starter)),
             Some(_) => panic!("You can only have one starting builder."),
         };
     }
 
     pub fn with(&mut self, metabuilder: Box<dyn MetaMapBuilder>) {
-        self.builders.push(metabuilder);
+        self.builders.push(("", metabuilder));
+    }
+
+    /// Register a meta builder with a display name (used for timing logs).
+    fn with_named(&mut self, name: &'static str, metabuilder: Box<dyn MetaMapBuilder>) {
+        self.builders.push((name, metabuilder));
     }
 
     pub fn build_map(&mut self) {
+        let total_start = Instant::now();
+
         match &mut self.starter {
             None => panic!("Cannot run a map builder chain without a starting build system"),
-            Some(starter) => {
-                // Build the starting map
+            Some((name, starter)) => {
+                let start = Instant::now();
                 starter.build_map(&mut self.build_data);
+                debug!("Builder [{}]: {:.1}ms", name, start.elapsed().as_secs_f64() * 1000.0);
             }
         }
 
         // Build additional layers in turn
-        for metabuilder in self.builders.iter_mut() {
+        for (i, (name, metabuilder)) in self.builders.iter_mut().enumerate() {
+            let label = if name.is_empty() { format!("meta_{}", i) } else { name.to_string() };
+            let start = Instant::now();
             metabuilder.build_map(&mut self.build_data);
+            debug!("Builder [{}]: {:.1}ms", label, start.elapsed().as_secs_f64() * 1000.0);
         }
+
+        debug!("Total build_map: {:.1}ms", total_start.elapsed().as_secs_f64() * 1000.0);
     }
 
     // pub fn spawn_entities(&mut self, ecs: &mut World) {
@@ -372,20 +387,20 @@ pub fn floor_builder(
     builder.start_with(brogelike::BrogueLikeBuilder::dungeon(
         new_depth, width, height, profile,
     ));
-    builder.with(DiagonalCuller::new());
-    builder.with(StartPointBuilder::new());
-    builder.with(LakeBuilder::new(new_depth));
-    builder.with(DiagonalCuller::new());   // run again after lakes carve new openings
-    builder.with(PillarCuller::new());
-    builder.with(FinishDoors::new());
-    builder.with(PrefabPlacer::new(prefabs, role_table));
-    builder.with(CandleSpawner::new());
-    builder.with(MonsterSpawner::new(spawn_table));
-    builder.with(ItemSpawner::new());
-    builder.with(ShrineSpawner::new(shrine_categories, shrines_purchased));
-    builder.with(IsolatedAreaCuller::new());  // replaces UnseenCuller — culls ALL disconnected areas
-    builder.with(DistantExit::new());
-    builder.with(DecorationPropagator::new(
+    builder.with_named("DiagonalCuller", DiagonalCuller::new());
+    builder.with_named("StartPoint", StartPointBuilder::new());
+    builder.with_named("LakeBuilder", LakeBuilder::new(new_depth));
+    builder.with_named("DiagonalCuller2", DiagonalCuller::new());
+    builder.with_named("PillarCuller", PillarCuller::new());
+    builder.with_named("FinishDoors", FinishDoors::new());
+    builder.with_named("PrefabPlacer", PrefabPlacer::new(prefabs, role_table));
+    builder.with_named("CandleSpawner", CandleSpawner::new());
+    builder.with_named("MonsterSpawner", MonsterSpawner::new(spawn_table));
+    builder.with_named("ItemSpawner", ItemSpawner::new());
+    builder.with_named("ShrineSpawner", ShrineSpawner::new(shrine_categories, shrines_purchased));
+    builder.with_named("IsolatedAreaCuller", IsolatedAreaCuller::new());
+    builder.with_named("DistantExit", DistantExit::new());
+    builder.with_named("DecorationPropagator", DecorationPropagator::new(
         decoration_rules,
         new_depth,
         profile.decoration_density,

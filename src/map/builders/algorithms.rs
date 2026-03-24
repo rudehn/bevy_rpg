@@ -1,5 +1,5 @@
-use std::collections::{VecDeque, HashSet};
-use rand::Rng; // Add this for rng.gen_range
+use std::collections::VecDeque;
+use rand::Rng;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -165,10 +165,11 @@ pub fn flood_fill_region<T>(
     connectivity: u8,
     floor_val: T,
     wall_val: T,
-) -> FloodFillResult 
+) -> FloodFillResult
 where T: Copy + Clone + PartialEq + Default
 {
-    let mut visited: HashSet<usize> = HashSet::new();
+    let size = grid.data.len();
+    let mut visited = vec![false; size];
     let mut queue: VecDeque<usize> = VecDeque::new();
     let mut region_tiles: Vec<usize> = Vec::new();
 
@@ -178,29 +179,26 @@ where T: Copy + Clone + PartialEq + Default
 
     let start_idx = grid.xy_idx(start_x, start_y);
     queue.push_back(start_idx);
-    visited.insert(start_idx);
+    visited[start_idx] = true;
 
-    let deltas: Vec<(i32, i32)> = if connectivity == 4 {
-        vec![(0, -1), (0, 1), (-1, 0), (1, 0)]
-    } else { // 8-connectivity
-        (-1..=1)
-            .flat_map(|dy| (-1..=1).map(move |dx| (dx, dy)))
-            .filter(|(dx, dy)| !(*dx == 0 && *dy == 0))
-            .collect()
+    let deltas: &[(i32, i32)] = if connectivity == 4 {
+        &[(0, -1), (0, 1), (-1, 0), (1, 0)]
+    } else {
+        &[(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
     };
 
     while let Some(current_idx) = queue.pop_front() {
         region_tiles.push(current_idx);
         let (cx, cy) = grid.idx_to_xy(current_idx);
 
-        for (dx, dy) in &deltas {
+        for &(dx, dy) in deltas {
             let nx = cx + dx;
             let ny = cy + dy;
 
             if grid.in_bounds(nx, ny) {
                 let n_idx = grid.xy_idx(nx, ny);
-                if !visited.contains(&n_idx) && *grid.at(nx, ny).unwrap() == floor_val {
-                    visited.insert(n_idx);
+                if !visited[n_idx] && grid.data[n_idx] == floor_val {
+                    visited[n_idx] = true;
                     queue.push_back(n_idx);
                 }
             }
@@ -213,20 +211,20 @@ where T: Copy + Clone + PartialEq + Default
     }
 }
 
-pub fn get_all_regions<T>(grid: &Grid<T>, floor_val: T, wall_val: T) -> Vec<FloodFillResult> 
+pub fn get_all_regions<T>(grid: &Grid<T>, floor_val: T, wall_val: T) -> Vec<FloodFillResult>
 where T: Copy + Clone + PartialEq + Default
 {
     let mut regions: Vec<FloodFillResult> = Vec::new();
-    let mut visited_all: HashSet<usize> = HashSet::new();
+    let mut visited_all = vec![false; grid.data.len()];
 
     for y in 0..grid.height {
         for x in 0..grid.width {
             let idx = grid.xy_idx(x, y);
-            if *grid.at(x, y).unwrap() == floor_val && !visited_all.contains(&idx) {
-                let result = flood_fill_region(grid, x, y, 8, floor_val, wall_val); 
+            if grid.data[idx] == floor_val && !visited_all[idx] {
+                let result = flood_fill_region(grid, x, y, 8, floor_val, wall_val);
                 if result.size > 0 {
                     for &i in &result.tiles {
-                        visited_all.insert(i);
+                        visited_all[i] = true;
                     }
                     regions.push(result);
                 }
@@ -236,12 +234,15 @@ where T: Copy + Clone + PartialEq + Default
     regions
 }
 
-pub fn retain_specific_region<T>(grid: &mut Grid<T>, region: &FloodFillResult, wall_val: T) 
+pub fn retain_specific_region<T>(grid: &mut Grid<T>, region: &FloodFillResult, wall_val: T)
 where T: Copy + Clone + PartialEq + Default
 {
-    let region_set: HashSet<usize> = region.tiles.iter().cloned().collect();
+    let mut keep = vec![false; grid.data.len()];
+    for &idx in &region.tiles {
+        keep[idx] = true;
+    }
     for idx in 0..grid.len() {
-        if !region_set.contains(&idx) {
+        if !keep[idx] {
             grid.data[idx] = wall_val;
         }
     }
@@ -260,16 +261,16 @@ pub fn size_score(width: i32, height: i32, min_w: i32, min_h: i32, max_w: i32, m
 }
 
 pub fn create_blob<T>(
-    initial_grid: &Grid<T>, 
+    initial_grid: &Grid<T>,
     config: &BlobGenConfig,
     floor_val: T,
     wall_val: T,
-) -> (Grid<T>, i32, i32, i32, i32) 
+) -> (Grid<T>, i32, i32, i32, i32)
 where T: Copy + Clone + PartialEq + Default
 {
-    let mut best_blob: Option<(Grid<T>, i32, i32, i32, i32, f32)> = None; 
+    let mut best_blob: Option<(Grid<T>, i32, i32, i32, i32, f32)> = None;
 
-    for _ in 0..50 { 
+    for _ in 0..50 {
         let mut current_grid = Grid::new(initial_grid.width, initial_grid.height, wall_val);
 
         randomize_grid(&mut current_grid, config.initial_alive_percent, floor_val, wall_val);
@@ -284,9 +285,6 @@ where T: Copy + Clone + PartialEq + Default
         }
 
         for region in regions {
-            let mut blob_grid = current_grid.clone();
-            retain_specific_region(&mut blob_grid, &region, wall_val);
-
             let (min_x, max_x, min_y, max_y) = region.tiles.iter().fold(
                 (initial_grid.width, 0, initial_grid.height, 0),
                 |(min_x, max_x, min_y, max_y), &idx| {
@@ -307,32 +305,31 @@ where T: Copy + Clone + PartialEq + Default
                 config.max_blob_height,
             );
 
-            match &best_blob {
-                Some((_, _, _, _, _, best_score)) if *best_score >= score => {}
-                _ => {
-                    best_blob = Some((
-                        blob_grid.clone(), 
-                        min_x,
-                        min_y,
-                        blob_width,
-                        blob_height,
-                        score,
-                    ));
-                }
-            }
-
-            if blob_width >= config.min_blob_width
+            let perfect_fit = blob_width >= config.min_blob_width
                 && blob_height >= config.min_blob_height
                 && blob_width <= config.max_blob_width
-                && blob_height <= config.max_blob_height
-            {
-                return (blob_grid.clone(), min_x, min_y, blob_width, blob_height);
+                && blob_height <= config.max_blob_height;
+
+            let dominated = match &best_blob {
+                Some((_, _, _, _, _, best_score)) => *best_score >= score,
+                None => false,
+            };
+
+            if perfect_fit || !dominated {
+                let mut blob_grid = current_grid.clone();
+                retain_specific_region(&mut blob_grid, &region, wall_val);
+
+                if perfect_fit {
+                    return (blob_grid, min_x, min_y, blob_width, blob_height);
+                }
+
+                best_blob = Some((blob_grid, min_x, min_y, blob_width, blob_height, score));
             }
         }
     }
 
     if let Some((grid, min_x, min_y, blob_width, blob_height, _)) = best_blob {
-        (grid.clone(), min_x, min_y, blob_width, blob_height)
+        (grid, min_x, min_y, blob_width, blob_height)
     } else {
         (
             Grid::new(initial_grid.width, initial_grid.height, wall_val),

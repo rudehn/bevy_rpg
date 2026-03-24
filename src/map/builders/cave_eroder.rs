@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 
 use bracket_lib::prelude::{Algorithm2D, Point};
 
@@ -114,6 +114,7 @@ impl CaveEroder {
     }
 
     fn check_connectivity(&self, map: &crate::map::Map, start: Point) -> bool {
+        let total = map.tiles.len();
         let total_walkable = map.tiles.iter().filter(|t| {
             matches!(
                 t.terrain,
@@ -122,32 +123,37 @@ impl CaveEroder {
             )
         }).count();
 
-        let mut visited = HashSet::new();
+        let mut visited = vec![false; total];
         let mut queue = VecDeque::new();
+        let mut visited_count = 0usize;
 
         if map.in_bounds(start) {
-            queue.push_back(start);
-            visited.insert(map.point2d_to_index(start));
+            let idx = map.point2d_to_index(start);
+            queue.push_back(idx);
+            visited[idx] = true;
         }
 
-        while let Some(pt) = queue.pop_front() {
-            for (dx, dy) in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
-                let np = Point::new(pt.x + dx, pt.y + dy);
-                if !map.in_bounds(np) { continue; }
-                let idx = map.point2d_to_index(np);
-                if visited.contains(&idx) { continue; }
+        while let Some(current) = queue.pop_front() {
+            visited_count += 1;
+            let (cx, cy) = map.idx_xy(current);
+            for (dx, dy) in [(0i32, 1i32), (0, -1), (1, 0), (-1, 0)] {
+                let nx = cx + dx;
+                let ny = cy + dy;
+                if nx < 0 || ny < 0 || nx >= map.width || ny >= map.height { continue; }
+                let idx = map.xy_idx(nx, ny);
+                if visited[idx] { continue; }
                 let terrain = map.tiles[idx].terrain;
                 if matches!(
                     terrain,
                     TerrainType::Floor | TerrainType::DownStairs | TerrainType::UpStairs
                     | TerrainType::OpenDoor | TerrainType::Door
                 ) {
-                    visited.insert(idx);
-                    queue.push_back(np);
+                    visited[idx] = true;
+                    queue.push_back(idx);
                 }
             }
         }
 
-        visited.len() >= total_walkable
+        visited_count >= total_walkable
     }
 }

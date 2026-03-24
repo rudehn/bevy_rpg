@@ -1,7 +1,7 @@
 use bracket_lib::prelude::{Point, Algorithm2D};
 use crate::map::map::Map;
 use crate::map::tile::is_passable;
-use std::collections::{VecDeque, HashSet};
+use std::collections::VecDeque;
 
 /// Maximum region size reported by the flood fill. Regions larger than this
 /// are treated as "open" and capped at this value. All three uses (flood-fill
@@ -188,27 +188,31 @@ impl ChokeMap {
     }
 
     fn flood_fill_count_with_block(map: &Map, start: Point, block: Point) -> i32 {
-        let mut visited = HashSet::new();
+        let total = (map.width * map.height) as usize;
+        let mut visited = vec![false; total];
         let mut queue = VecDeque::new();
         let mut count = 0;
 
-        queue.push_back(start);
-        visited.insert(start);
+        let start_idx = map.xy_idx(start.x, start.y);
+        let block_idx = map.xy_idx(block.x, block.y);
+        queue.push_back(start_idx);
+        visited[start_idx] = true;
 
-        while let Some(current) = queue.pop_front() {
+        while let Some(current_idx) = queue.pop_front() {
             count += 1;
             if count >= FLOOD_FILL_CAP { break; }
 
-            for dir in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
-                let next = Point::new(current.x + dir.0, current.y + dir.1);
-                if map.in_bounds(next) 
-                    && is_passable(map.tiles[map.xy_idx(next.x, next.y)]) 
-                    && next != block 
-                    && !visited.contains(&next) 
-                {
-                    visited.insert(next);
-                    queue.push_back(next);
-                }
+            let (cx, cy) = map.idx_xy(current_idx);
+            for (dx, dy) in [(0i32, 1i32), (0, -1), (1, 0), (-1, 0)] {
+                let nx = cx + dx;
+                let ny = cy + dy;
+                if nx < 0 || ny < 0 || nx >= map.width || ny >= map.height { continue; }
+                let n_idx = map.xy_idx(nx, ny);
+                if n_idx == block_idx { continue; }
+                if visited[n_idx] { continue; }
+                if !is_passable(map.tiles[n_idx]) { continue; }
+                visited[n_idx] = true;
+                queue.push_back(n_idx);
             }
         }
         count
