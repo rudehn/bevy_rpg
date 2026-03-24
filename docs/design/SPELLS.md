@@ -149,10 +149,10 @@ Scroll of Teleport follows the same rule.
 
 | Tier | Floors | Available Spells |
 |------|--------|-----------------|
-| 1 | 1-5 | Spark, Magic Missile, Fire Dart, Minor Heal, Enrage, Fortify, Weaken |
-| 2 | 6-10 | Ignite, Heal, Haste, Slow |
-| 3 | 11-15 | Lightning Bolt, Fireball, Chain Lightning, Greater Heal, Curse, Teleport |
-| 4 | 16-20 | Death Coil |
+| 1 | 1-3 | Spark, Magic Missile, Fire Dart, Minor Heal, Enrage, Fortify, Weaken |
+| 2 | 4-6 | Ignite, Heal, Haste, Slow |
+| 3 | 7-9 | Lightning Bolt, Fireball, Chain Lightning, Greater Heal, Curse, Teleport |
+| 4 | 10 | Death Coil |
 
 Spellbooks are uncommon — expect 0-2 spell acquisition opportunities per floor
 across both monster drops and spell shrines.

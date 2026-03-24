@@ -100,7 +100,7 @@ Am I excited to open a chest? Does finding a Long Sword feel meaningful?
 
 ## Phase 4: Shrines & Spells
 
-*Build identity emerges. My floor 10 character is different from floor 1.*
+*Build identity emerges. My floor 5 character is different from floor 1.*
 
 ### Shrines to Implement (8 of 30)
 
@@ -146,7 +146,7 @@ Am I excited to open a chest? Does finding a Long Sword feel meaningful?
 - ENEMIES.md: Goblin Shaman stats
 
 ### Playtest Gate
-Does my floor 10 character feel meaningfully different from floor 1?
+Does my floor 5 character feel meaningfully different from floor 1?
 Do I make real choices at shrines?
 
 ---
@@ -203,20 +203,20 @@ Do I want to explore each floor? Are machines worth entering?
 
 - [ ] Tyrant base stats: 120 HP, 2d8+4, 4 hit, 2 dodge, 3 armor, 0.9x delay
 - [ ] Aspect selection (3 random from 4 at run start)
-- [ ] Hunger clock (global game time, thresholds at 25k/60k/100k)
+- [ ] Hunger clock (global game time, thresholds at 12.5k/30k/50k)
 - [ ] Aspect stage advancement when clock crosses thresholds
 - [ ] Whisper messages in game log on stage transitions
 - [ ] Tyrant ability application (read Aspects, apply abilities at spawn)
-- [ ] Floor 20 generation with throne room constraint
+- [ ] Floor 10 generation with throne room constraint
 - [ ] Victory screen on Tyrant death
 - [ ] Death screen with run summary (floor, essence, shrines, equipment, cause)
 - [ ] Permadeath (delete save on death)
-- [ ] Beyond Stage 3 scaling (+15 HP, +1 armor per 50k time)
+- [ ] Beyond Stage 3 scaling (+15 HP, +1 armor per 25k time)
 
 ### Reference Docs
 - TYRANT.md: Aspect pool, hunger clock, base stats
 - GAME.md: Win/lose conditions
-- DUNGEON.md: Floor 20 generation
+- DUNGEON.md: Floor 10 generation
 
 ### Playtest Gate
 Is the boss fight a satisfying conclusion? Does the hunger clock create tension?
@@ -272,7 +272,7 @@ Do I want to play again with different Aspects?
 - [ ] Deep water item sweep (Brogue-style)
 - [ ] Lava instant death (fire resist = 15 HP/turn instead)
 - [ ] Lake placement as thematic encounters (fewer, larger)
-- [ ] Lava lakes starting floor 8, increasing probability
+- [ ] Lava lakes starting floor 5, increasing probability
 - [ ] Decoration future: burnable grass, visibility-blocking tall grass
 
 ### 7g: Deferred Systems

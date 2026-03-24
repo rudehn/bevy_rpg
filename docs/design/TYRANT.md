@@ -209,12 +209,12 @@ have 2 stat shrines and 1 spell shrine, or 3 stat shrines and 0 spell shrines.
 
 Each of the 3 shrine slots per floor rolls independently:
 
-| Rarity | Chance | Avg per Run (60 slots) | Essence Cost |
+| Rarity | Chance | Avg per Run (30 slots) | Essence Cost |
 |--------|--------|----------------------|-------------|
-| Common | 50% | ~30 | 30-50 |
-| Uncommon | 30% | ~18 | 60-80 |
-| Rare | 15% | ~9 | 80-120 |
-| Legendary | 5% | ~3 | 125-175 |
+| Common | 50% | ~15 | 30-50 |
+| Uncommon | 30% | ~9 | 60-80 |
+| Rare | 15% | ~4-5 | 80-120 |
+| Legendary | 5% | ~1-2 | 125-175 |
 
 ### Shrine Appearance Rules
 
@@ -285,21 +285,20 @@ instantly debuggable. A Giant Rat (5 HP) drops 5 essence. A Cave Troll (28 HP)
 drops 28. A Dragon Whelp (24 HP) drops 24. Out-of-depth kills award 2x essence.
 
 **Income estimates:**
-- Floors 1-5: ~15-25 kills/floor, avg 5-8 HP = ~75-200 essence/floor
-- Floors 6-10: ~15-20 kills, avg 10-15 HP = ~150-300 essence/floor
-- Floors 11-15: ~12-18 kills, avg 15-20 HP = ~180-360 essence/floor
-- Floors 16-19: ~10-15 kills, avg 20-30 HP = ~200-450 essence/floor
-- **Run total: ~3,000-6,000 essence**
+- Floors 1-3: ~15-25 kills/floor, avg 5-8 HP = ~75-200 essence/floor
+- Floors 4-6: ~15-20 kills, avg 10-15 HP = ~150-300 essence/floor
+- Floors 7-9: ~12-18 kills, avg 15-20 HP = ~180-360 essence/floor
+- **Run total: ~1,500-3,000 essence**
 
 **Spending:**
-- Shrines: player sees ~60, can afford ~8-15 across the run
+- Shrines: player sees ~30, can afford ~4-8 across the run
 - A player buying mostly commons/uncommons spends ~500-800 on shrines
 - A player saving for 2 legendaries + some uncommons spends ~500-600
 - Remaining essence has no other sink — intentional, prevents "buy everything"
   pressure
 
 **Backtracking economics:** Returning 4 floors for a Legendary shrine costs
-~6,000-12,000 game time. At 100,000 for Stage 3, that's 6-12% of the clock.
+~6,000-12,000 game time. At 50,000 for Stage 3, that's 12-24% of the clock.
 Worth it for a build-defining shrine found early. Not worth it for Vitality.
 
 ### Example Builds

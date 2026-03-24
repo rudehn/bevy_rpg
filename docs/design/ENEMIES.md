@@ -451,7 +451,7 @@ merge or recruit dynamically.
 Occasionally, a monster from a deeper floor range spawns on a shallower floor.
 These are rare (5-10% chance per floor) and serve as:
 
-- **Warning signs** — a dragon whelp on floor 8 tells you "this is coming"
+- **Warning signs** — a dragon whelp on floor 4 tells you "this is coming"
 - **Avoidance puzzles** — the player must recognize they can't win and route around
 - **Reward for strong builds** — a well-equipped player who kills an out-of-depth
   enemy gets **2x essence** reward

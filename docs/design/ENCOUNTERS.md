@@ -98,22 +98,22 @@ where."
 
 ```
 horde_spawns.ron:
-  { horde: "rat_pack",          min_floor: 1,  max_floor: 8  }
-  { horde: "bat_colony",        min_floor: 1,  max_floor: 6  }
-  { horde: "goblin_patrol",     min_floor: 2,  max_floor: 10 }
-  { horde: "goblin_archers",    min_floor: 3,  max_floor: 14 }
-  { horde: "wolf_pack",         min_floor: 3,  max_floor: 10 }
-  { horde: "salamander_pair",   min_floor: 3,  max_floor: 9  }
-  { horde: "bloat_cluster",     min_floor: 2,  max_floor: 10 }
-  { horde: "goblin_squad",      min_floor: 5,  max_floor: 14 }
-  { horde: "spider_nest",       min_floor: 5,  max_floor: 12 }
-  { horde: "jelly_blob",        min_floor: 3,  max_floor: 14 }
-  { horde: "goblin_casters",    min_floor: 8,  max_floor: 18 }
-  { horde: "troll_den",         min_floor: 8,  max_floor: 15 }
-  { horde: "sentinel_post",     min_floor: 4,  max_floor: 20 }
-  { horde: "dragon_guard",      min_floor: 10, max_floor: 18 }
-  { horde: "goblin_war_party",  min_floor: 13, max_floor: 19 }
-  { horde: "young_dragon_lair", min_floor: 16, max_floor: 19 }
+  { horde: "rat_pack",          min_floor: 1,  max_floor: 4  }
+  { horde: "bat_colony",        min_floor: 1,  max_floor: 3  }
+  { horde: "goblin_patrol",     min_floor: 1,  max_floor: 5  }
+  { horde: "goblin_archers",    min_floor: 2,  max_floor: 7  }
+  { horde: "wolf_pack",         min_floor: 2,  max_floor: 5  }
+  { horde: "salamander_pair",   min_floor: 2,  max_floor: 5  }
+  { horde: "bloat_cluster",     min_floor: 1,  max_floor: 5  }
+  { horde: "goblin_squad",      min_floor: 3,  max_floor: 7  }
+  { horde: "spider_nest",       min_floor: 3,  max_floor: 6  }
+  { horde: "jelly_blob",        min_floor: 2,  max_floor: 7  }
+  { horde: "goblin_casters",    min_floor: 4,  max_floor: 9  }
+  { horde: "troll_den",         min_floor: 4,  max_floor: 8  }
+  { horde: "sentinel_post",     min_floor: 2,  max_floor: 10 }
+  { horde: "dragon_guard",      min_floor: 5,  max_floor: 9  }
+  { horde: "goblin_war_party",  min_floor: 7,  max_floor: 9  }
+  { horde: "young_dragon_lair", min_floor: 8,  max_floor: 9  }
 ```
 
 ## Layer 3: Machines
@@ -188,11 +188,10 @@ gating + population.
 
 | Floors | Machine Budget |
 |--------|---------------|
-| 1-5 | 2-3 |
-| 6-10 | 2-4 |
-| 11-15 | 3-4 |
-| 16-19 | 3-5 |
-| 20 | Special (Tyrant floor) |
+| 1-3 | 2-3 |
+| 4-6 | 2-4 |
+| 7-9 | 3-5 |
+| 10 | Special (Tyrant floor) |
 
 ---
 
@@ -202,7 +201,7 @@ gating + population.
 
 **Goblin Scuffle**
 ```
-floors: 2-5, gate: Open, seclusion: 5-999, interior: 8-20
+floors: 1-3, gate: Open, seclusion: 5-999, interior: 8-20
 hordes:
   - tag: patrol (NearGate, guard)
 items: [chest (DeepInterior)]
@@ -210,7 +209,7 @@ items: [chest (DeepInterior)]
 
 **Goblin Camp**
 ```
-floors: 4-10, gate: Open, seclusion: 10-999, interior: 12-35
+floors: 2-5, gate: Open, seclusion: 10-999, interior: 12-35
 hordes:
   - tag: guard (NearGate, guard)
   - tag: ranged (AlongWalls, guard)
@@ -220,7 +219,7 @@ items: [chest (DeepInterior)]
 
 **Goblin Outpost**
 ```
-floors: 8-14, gate: Open, seclusion: 15-999, interior: 20-50, prep: Open
+floors: 4-7, gate: Open, seclusion: 15-999, interior: 20-50, prep: Open
 hordes:
   - tag: guard (NearGate, guard)
   - tag: ranged (AlongWalls, guard)
@@ -231,7 +230,7 @@ items: [chest (DeepInterior)]
 
 **Goblin Fort**
 ```
-floors: 13-19, gate: Locked ("Fort Key"), seclusion: 20-999, interior: 35-70, prep: Open
+floors: 7-9, gate: Locked ("Fort Key"), seclusion: 20-999, interior: 35-70, prep: Open
 hordes:
   - tag: elite (Center, guard)
   - tag: guard (NearGate, guard)
@@ -246,7 +245,7 @@ sub_machines: [Inner Treasury (DeepInterior)]
 
 **Treasure Vault**
 ```
-floors: 4-20, gate: Locked ("Vault Key"), seclusion: 30-999, interior: 8-40, prep: Purge
+floors: 2-10, gate: Locked ("Vault Key"), seclusion: 30-999, interior: 8-40, prep: Purge
 hordes:
   - tag: guard (Center, guard)
 items: [chest (DeepInterior), chest (DeepInterior)]
@@ -254,21 +253,21 @@ items: [chest (DeepInterior), chest (DeepInterior)]
 
 **Hidden Armory**
 ```
-floors: 3-20, gate: Hidden, seclusion: 5-999, interior: 5-20, prep: Purge
+floors: 2-10, gate: Hidden, seclusion: 5-999, interior: 5-20, prep: Purge
 hordes: (none — no tag requirements, always places)
 items: [chest (DeepInterior)]
 ```
 
 **Inner Treasury** *(sub-machine only)*
 ```
-floors: 10-20, gate: Locked ("Treasury Key"), seclusion: 0-999, interior: 4-15, prep: Purge
+floors: 5-10, gate: Locked ("Treasury Key"), seclusion: 0-999, interior: 4-15, prep: Purge
 hordes: (none)
 items: [chest (DeepInterior)]
 ```
 
 **Guardian Corridor**
 ```
-floors: 6-20, gate: Open, seclusion: 8-999, interior: 5-15
+floors: 3-10, gate: Open, seclusion: 8-999, interior: 5-15
 hordes:
   - tag: brute (AtGate, guard)
 items: [chest (DeepInterior)]
@@ -278,7 +277,7 @@ items: [chest (DeepInterior)]
 
 **Flooded Chamber**
 ```
-floors: 5-15, gate: Open, seclusion: 15-999, interior: 10-50, prep: Purge
+floors: 3-8, gate: Open, seclusion: 15-999, interior: 10-50, prep: Purge
 fill: ShallowWater
 hordes: (none)
 items: [chest (DeepInterior)]
@@ -286,7 +285,7 @@ items: [chest (DeepInterior)]
 
 **Fungal Grotto**
 ```
-floors: 6-18, gate: Hidden, seclusion: 15-999, interior: 10-40
+floors: 3-9, gate: Hidden, seclusion: 15-999, interior: 10-40
 fill_decoration: Fungus
 hordes:
   - tag: threat (Random, roam)
@@ -294,7 +293,7 @@ hordes:
 
 **Bone Crypt**
 ```
-floors: 8-20, gate: Locked ("Crypt Key"), seclusion: 20-999, interior: 10-40, prep: Purge
+floors: 4-10, gate: Locked ("Crypt Key"), seclusion: 20-999, interior: 10-40, prep: Purge
 fill_decoration: Bloodstain
 hordes:
   - tag: guard (NearGate, guard)
@@ -303,7 +302,7 @@ items: [chest (DeepInterior)]
 
 **Lava Vault**
 ```
-floors: 10-20, gate: Locked ("Molten Key"), seclusion: 20-999, interior: 10-40, prep: Purge
+floors: 5-10, gate: Locked ("Molten Key"), seclusion: 20-999, interior: 10-40, prep: Purge
 fill: Lava
 hordes:
   - tag: brute (NearGate, guard)
@@ -314,7 +313,7 @@ items: [chest (DeepInterior), chest (DeepInterior)]
 
 **Monster Den**
 ```
-floors: 3-19, gate: Open, seclusion: 10-999, interior: 15-60
+floors: 2-9, gate: Open, seclusion: 10-999, interior: 15-60
 hordes:
   - tag: threat (Random, roam)
   - tag: swarm (Random, roam)
@@ -324,7 +323,7 @@ items: [chest (DeepInterior)]
 
 **Ambush Room**
 ```
-floors: 5-16, gate: Hidden, seclusion: 10-999, interior: 8-25
+floors: 3-8, gate: Hidden, seclusion: 10-999, interior: 8-25
 hordes:
   - tag: ambush (AlongWalls, guard)
 items: [chest (Center)]

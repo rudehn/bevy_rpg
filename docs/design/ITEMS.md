@@ -157,10 +157,10 @@ Rarity weights shift toward better tiers on deeper floors:
 
 | Floors | Common% | Uncommon% | Rare% | Legendary% |
 |--------|---------|-----------|-------|-----------|
-| 1-5 | 70% | 24% | 5% | 1% |
-| 6-10 | 55% | 32% | 11% | 2% |
-| 11-15 | 40% | 38% | 18% | 4% |
-| 16-20 | 25% | 40% | 27% | 8% |
+| 1-3 | 70% | 24% | 5% | 1% |
+| 4-6 | 55% | 32% | 11% | 2% |
+| 7-9 | 40% | 38% | 18% | 4% |
+| 10 | 25% | 40% | 27% | 8% |
 
 Typed damage weapons (fire, lightning) only appear at Rare or above.
 
