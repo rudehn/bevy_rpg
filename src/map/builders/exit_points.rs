@@ -4,7 +4,7 @@ use bracket_lib::prelude::{Algorithm2D, DijkstraMap, Point};
 use crate::constants::MAX_FLOOR;
 use crate::map::{
     builders::{BuilderMap, MetaMapBuilder},
-    tile::TerrainType,
+    tile::{LiquidType, TerrainType},
 };
 
 #[derive(Clone)]
@@ -59,9 +59,11 @@ impl DistantExit {
             for x in 0..build_data.map.width() {
                 let pt = Point::new(x, y);
                 let idx = build_data.map.point2d_to_index(pt);
-                let terrain = build_data.map.get_tile(pt).map(|t| t.terrain);
-                // Consider any walkable non-stair tile as exit candidate
-                if terrain == Some(TerrainType::Floor) {
+                let tile = build_data.map.get_tile(pt);
+                // Consider any dry, walkable non-stair tile as exit candidate
+                if tile.map(|t| t.terrain) == Some(TerrainType::Floor)
+                    && tile.map(|t| t.liquid) == Some(LiquidType::None)
+                {
                     let distance_to_start = dijkstra_map.map[idx];
                     if distance_to_start != std::f32::MAX && distance_to_start > 0.0 {
                         let better = match exit_tile {
@@ -87,7 +89,10 @@ impl DistantExit {
                 for x in 0..build_data.map.width() {
                     let pt = Point::new(x, y);
                     let idx = build_data.map.point2d_to_index(pt);
-                    if build_data.map.get_tile(pt).map(|t| t.terrain) == Some(TerrainType::Floor) {
+                    let tile = build_data.map.get_tile(pt);
+                    if tile.map(|t| t.terrain) == Some(TerrainType::Floor)
+                        && tile.map(|t| t.liquid) == Some(LiquidType::None)
+                    {
                         let dist = (x - starting_pos.x).abs() + (y - starting_pos.y).abs();
                         let better = match best {
                             None => true,
