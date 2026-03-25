@@ -133,36 +133,17 @@ pub struct FloorResult {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Returns the target point itself if walkable, otherwise the nearest walkable
-/// tile (BFS outward). Stair tiles are now allowed — the `StairCooldown`
-/// component on the player prevents `player_stair_system` from re-triggering
-/// immediately after a floor transition.
-fn find_adjacent_floor(map: &Map, target: Point) -> Option<Point> {
-    // If the target itself is walkable, just use it directly.
+/// Returns `target` if walkable, otherwise BFS outward to find the nearest
+/// walkable tile. Stair tiles are allowed — `StairCooldown` prevents
+/// `player_stair_system` from re-triggering after a floor transition.
+fn nearest_walkable(map: &Map, target: Point) -> Point {
+    // Fast path: target itself is fine.
     if let Some(tile) = map.get_tile(target) {
         if is_walkable(tile) {
-            return Some(target);
+            return target;
         }
     }
-    // Check 4 cardinal neighbors first
-    for (dx, dy) in [(0i32, 1i32), (1, 0), (0, -1), (-1, 0)] {
-        let pt = Point::new(target.x + dx, target.y + dy);
-        if let Some(tile) = map.get_tile(pt) {
-            if is_walkable(tile) {
-                return Some(pt);
-            }
-        }
-    }
-    // Check 8 neighbors (including diagonals)
-    for (dx, dy) in [(-1i32, -1i32), (-1, 1), (1, -1), (1, 1)] {
-        let pt = Point::new(target.x + dx, target.y + dy);
-        if let Some(tile) = map.get_tile(pt) {
-            if is_walkable(tile) {
-                return Some(pt);
-            }
-        }
-    }
-    // BFS outward from target to find the NEAREST walkable tile
+    // BFS outward through all terrain to find the nearest walkable tile.
     let total = (map.width * map.height) as usize;
     let mut visited = vec![false; total];
     let mut queue = std::collections::VecDeque::new();
@@ -178,15 +159,15 @@ fn find_adjacent_floor(map: &Map, target: Point) -> Option<Point> {
             let nidx = map.xy_idx(nx, ny);
             if visited[nidx] { continue; }
             visited[nidx] = true;
-            let tile = map.tiles[nidx];
-            if is_walkable(tile) {
-                return Some(Point::new(nx, ny));
+            if is_walkable(map.tiles[nidx]) {
+                return Point::new(nx, ny);
             }
-            // Continue BFS through any terrain (even walls) to find nearest floor
             queue.push_back(nidx);
         }
     }
-    None
+    // Absolute last resort — should never happen on a valid map.
+    warn!("nearest_walkable: no walkable tile found anywhere on map!");
+    target
 }
 
 pub(crate) fn spawn_tiles_into_ecs(
@@ -286,26 +267,7 @@ impl FloorPlan {
         });
 
         let starting_pt = Point::new(starting_pos.x, starting_pos.y);
-        let player_spawn = if let Some(tile) = build_data.map.get_tile(starting_pt) {
-            if tile.terrain == TerrainType::UpStairs {
-                // Player can land on stairs — StairCooldown prevents re-trigger.
-                // Still use find_adjacent_floor in case the tile is unwalkable for
-                // another reason (e.g. liquid overlay).
-                find_adjacent_floor(&build_data.map, starting_pt).unwrap_or(starting_pt)
-            } else if !is_walkable(tile) {
-                // Starting position is not walkable (e.g. a later builder turned
-                // it into a wall or lake). Find the nearest walkable tile.
-                warn!(
-                    "Player start ({}, {}) is not walkable (terrain={:?}, liquid={:?}); scanning for nearby floor.",
-                    starting_pt.x, starting_pt.y, tile.terrain, tile.liquid
-                );
-                find_adjacent_floor(&build_data.map, starting_pt).unwrap_or(starting_pt)
-            } else {
-                starting_pt
-            }
-        } else {
-            starting_pt
-        };
+        let player_spawn = nearest_walkable(&build_data.map, starting_pt);
 
         let monsters = build_data
             .spawn_list
@@ -405,43 +367,7 @@ impl FloorPlan {
                 })
                 .unwrap_or(stored_pos)
         };
-        let player_spawn =
-            find_adjacent_floor(&cached.map, target_stairs).unwrap_or(target_stairs);
-
-        // Safety: if player_spawn is still not walkable, find ANY walkable tile
-        let player_spawn = {
-            let pt = player_spawn;
-            let in_bounds = pt.x >= 0
-                && pt.y >= 0
-                && pt.x < cached.map.width
-                && pt.y < cached.map.height;
-            if in_bounds {
-                let idx = cached.map.xy_idx(pt.x, pt.y);
-                if is_walkable(cached.map.tiles[idx]) {
-                    pt
-                } else {
-                    find_adjacent_floor(&cached.map, pt).unwrap_or_else(|| {
-                        // Last resort: scan for any walkable tile
-                        cached
-                            .map
-                            .tiles
-                            .iter()
-                            .enumerate()
-                            .find_map(|(i, tile)| {
-                                if is_walkable(*tile) {
-                                    let (x, y) = cached.map.idx_xy(i);
-                                    Some(Point::new(x, y))
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or(pt)
-                    })
-                }
-            } else {
-                pt
-            }
-        };
+        let player_spawn = nearest_walkable(&cached.map, target_stairs);
 
         let monsters = monsters_from_saved(cached.monsters, true);
         let items = items_from_saved(cached.items);
