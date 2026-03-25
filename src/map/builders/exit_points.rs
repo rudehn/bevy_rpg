@@ -1,4 +1,4 @@
-use bevy::log::{debug, warn};
+use bevy::log::{debug, info, warn};
 use bracket_lib::prelude::{Algorithm2D, DijkstraMap, Point};
 
 use crate::constants::MAX_FLOOR;
@@ -124,11 +124,18 @@ impl DistantExit {
             return;
         }
 
-        debug!(
-            "DistantExit: placing DownStairs at ({}, {}) on floor {} (distance {:.1})",
-            stairs_pos.x, stairs_pos.y, build_data.map.depth, best_dist
+        info!(
+            "DistantExit: placing DownStairs at ({}, {}) on floor {} (distance {:.1} from start ({}, {}))",
+            stairs_pos.x, stairs_pos.y, build_data.map.depth, best_dist,
+            starting_pos.x, starting_pos.y
         );
         build_data.map.set_tile(stairs_pos, TerrainType::DownStairs);
+
+        // Verify the tile was actually set
+        let verify = build_data.map.get_tile(stairs_pos);
+        if verify.map(|t| t.terrain) != Some(TerrainType::DownStairs) {
+            warn!("DistantExit: set_tile FAILED! Tile at ({}, {}) is {:?}", stairs_pos.x, stairs_pos.y, verify);
+        }
 
         build_data.take_snapshot();
     }
