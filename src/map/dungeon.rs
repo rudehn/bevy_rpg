@@ -498,7 +498,16 @@ pub fn spawn_dungeon(
     }
 
     *map = result.map;
-    commands.insert_resource(PlayerSpawnPoint(result.player_spawn));
+    let spawn = result.player_spawn;
+    let spawn_idx = map.xy_idx(spawn.x, spawn.y);
+    let spawn_tile = map.tiles[spawn_idx];
+    if !crate::map::tile::is_walkable(spawn_tile) {
+        warn!(
+            "Player spawn ({}, {}) is NOT walkable! terrain={:?} liquid={:?}",
+            spawn.x, spawn.y, spawn_tile.terrain, spawn_tile.liquid
+        );
+    }
+    commands.insert_resource(PlayerSpawnPoint(spawn));
 
     if let Some(player_save) = result.pending_player_load {
         pending_player_load.0 = Some(player_save);
