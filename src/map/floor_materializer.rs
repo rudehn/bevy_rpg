@@ -133,16 +133,22 @@ pub struct FloorResult {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Returns the first orthogonally adjacent walkable, non-stair tile to `target`.
-/// Stair tiles are excluded so the player doesn't immediately re-trigger a
-/// floor transition upon being placed there.
+/// Returns the target point itself if walkable, otherwise the nearest walkable
+/// tile (BFS outward). Stair tiles are now allowed — the `StairCooldown`
+/// component on the player prevents `player_stair_system` from re-triggering
+/// immediately after a floor transition.
 fn find_adjacent_floor(map: &Map, target: Point) -> Option<Point> {
-    use TerrainType::{DownStairs, UpStairs};
+    // If the target itself is walkable, just use it directly.
+    if let Some(tile) = map.get_tile(target) {
+        if is_walkable(tile) {
+            return Some(target);
+        }
+    }
     // Check 4 cardinal neighbors first
     for (dx, dy) in [(0i32, 1i32), (1, 0), (0, -1), (-1, 0)] {
         let pt = Point::new(target.x + dx, target.y + dy);
         if let Some(tile) = map.get_tile(pt) {
-            if is_walkable(tile) && tile.terrain != DownStairs && tile.terrain != UpStairs {
+            if is_walkable(tile) {
                 return Some(pt);
             }
         }
@@ -151,12 +157,12 @@ fn find_adjacent_floor(map: &Map, target: Point) -> Option<Point> {
     for (dx, dy) in [(-1i32, -1i32), (-1, 1), (1, -1), (1, 1)] {
         let pt = Point::new(target.x + dx, target.y + dy);
         if let Some(tile) = map.get_tile(pt) {
-            if is_walkable(tile) && tile.terrain != DownStairs && tile.terrain != UpStairs {
+            if is_walkable(tile) {
                 return Some(pt);
             }
         }
     }
-    // BFS outward from target to find the NEAREST walkable floor tile
+    // BFS outward from target to find the NEAREST walkable tile
     let total = (map.width * map.height) as usize;
     let mut visited = vec![false; total];
     let mut queue = std::collections::VecDeque::new();
@@ -173,7 +179,7 @@ fn find_adjacent_floor(map: &Map, target: Point) -> Option<Point> {
             if visited[nidx] { continue; }
             visited[nidx] = true;
             let tile = map.tiles[nidx];
-            if is_walkable(tile) && tile.terrain != DownStairs && tile.terrain != UpStairs {
+            if is_walkable(tile) {
                 return Some(Point::new(nx, ny));
             }
             // Continue BFS through any terrain (even walls) to find nearest floor
@@ -282,7 +288,9 @@ impl FloorPlan {
         let starting_pt = Point::new(starting_pos.x, starting_pos.y);
         let player_spawn = if let Some(tile) = build_data.map.get_tile(starting_pt) {
             if tile.terrain == TerrainType::UpStairs {
-                // Don't place player directly on stairs — find adjacent floor
+                // Player can land on stairs — StairCooldown prevents re-trigger.
+                // Still use find_adjacent_floor in case the tile is unwalkable for
+                // another reason (e.g. liquid overlay).
                 find_adjacent_floor(&build_data.map, starting_pt).unwrap_or(starting_pt)
             } else if !is_walkable(tile) {
                 // Starting position is not walkable (e.g. a later builder turned

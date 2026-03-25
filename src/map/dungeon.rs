@@ -92,6 +92,13 @@ pub struct PendingPlayerLoad(pub Option<crate::save::PlayerSaveData>);
 #[derive(Resource, Default)]
 pub struct AutoSavePending(pub bool);
 
+/// Marker component added to the player after a floor transition.
+/// Prevents `player_stair_system` from immediately re-triggering when
+/// the player spawns on a stair tile. Removed on the first position change
+/// after spawning.
+#[derive(Component)]
+pub struct StairCooldown;
+
 #[derive(Resource)]
 pub struct PlayerSpawnPoint(pub Point);
 
@@ -267,13 +274,20 @@ fn despawn_floor_entities(
 // ---------------------------------------------------------------------------
 
 fn player_stair_system(
-    player_query: Query<&Position, (With<Player>, Changed<Position>)>,
+    mut commands: Commands,
+    player_query: Query<(Entity, &Position, Has<StairCooldown>), (With<Player>, Changed<Position>)>,
     map: Res<Map>,
     floor: Res<Floor>,
     mut down_writer: MessageWriter<MapTransitionMessage>,
     mut up_writer: MessageWriter<AscendStairsMessage>,
 ) {
-    for pos in player_query.iter() {
+    for (entity, pos, has_cooldown) in player_query.iter() {
+        if has_cooldown {
+            // First position change after floor transition — consume the cooldown
+            // and skip the stair check so we don't immediately re-trigger.
+            commands.entity(entity).remove::<StairCooldown>();
+            continue;
+        }
         if map.in_bounds(pos.to_point()) {
             let idx = map.xy_idx(pos.x, pos.y);
             match map.tiles[idx].terrain {

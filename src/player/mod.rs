@@ -24,7 +24,7 @@ use crate::{
         spawn_item,
         stats::{Armor, DamageBonus, Dodge, HitBonus, Mana},
     },
-    map::dungeon::{PlayerSpawnPoint, SpawnDungeonMessage, SpawnDungeonSet},
+    map::dungeon::{PlayerSpawnPoint, SpawnDungeonMessage, SpawnDungeonSet, StairCooldown},
     map::map::GRID_SIZE,
 };
 
@@ -76,12 +76,15 @@ pub fn player_spawn_or_move_system(
         y: spawn_point.0.y,
     };
 
-    if let Ok((_player_entity, mut player_tf, mut player_pos)) = q_player.single_mut() {
+    if let Ok((player_entity, mut player_tf, mut player_pos)) = q_player.single_mut() {
         // Update Transform immediately so move_camera snaps this frame without
         // waiting for sync_entity_transforms, which may run before this system.
         player_tf.translation.x = spawn_point.0.x as f32 * GRID_SIZE.x;
         player_tf.translation.y = spawn_point.0.y as f32 * GRID_SIZE.y;
         *player_pos = new_grid_pos;
+        // Prevent player_stair_system from immediately re-triggering if
+        // the player spawns on a stair tile (floor transitions).
+        commands.entity(player_entity).insert(StairCooldown);
     } else {
         let (texture_path, index) = crate::assets::parse_sprite_path(&player_asset.sprite);
 
