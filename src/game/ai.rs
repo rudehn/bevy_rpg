@@ -279,9 +279,13 @@ impl AIContext {
         let monster_pos = world.get::<Position>(entity)?.to_point();
         let mut viewshed = world.get::<Viewshed>(entity).cloned().unwrap_or_default();
 
-        // If the viewshed hasn't been computed yet (dirty or empty), calculate it
-        // now so the AI doesn't skip its first turn due to an empty visible_tiles.
-        if viewshed.dirty || viewshed.visible_tiles.is_empty() {
+        // If the viewshed hasn't been computed yet, calculate it now so the AI
+        // doesn't skip its first turn due to an empty visible_tiles.
+        // NOTE: We only check `dirty` here, NOT `visible_tiles.is_empty()`.
+        // A monster in a sealed room may legitimately have an empty viewshed
+        // after computation; re-checking is_empty() would force an expensive
+        // field_of_view() call every single turn for such monsters.
+        if viewshed.dirty {
             let map = world.resource::<Map>();
             viewshed.visible_tiles =
                 bracket_lib::prelude::field_of_view(monster_pos, viewshed.range, &*map);
