@@ -138,6 +138,7 @@ pub struct FloorResult {
 /// floor transition upon being placed there.
 fn find_adjacent_floor(map: &Map, target: Point) -> Option<Point> {
     use TerrainType::{DownStairs, UpStairs};
+    // Check 4 cardinal neighbors first
     for (dx, dy) in [(0i32, 1i32), (1, 0), (0, -1), (-1, 0)] {
         let pt = Point::new(target.x + dx, target.y + dy);
         if let Some(tile) = map.get_tile(pt) {
@@ -146,15 +147,40 @@ fn find_adjacent_floor(map: &Map, target: Point) -> Option<Point> {
             }
         }
     }
-    // Fallback: search the whole map for any plain floor tile.
-    map.tiles.iter().enumerate().find_map(|(idx, tile)| {
-        if is_walkable(*tile) && tile.terrain != DownStairs && tile.terrain != UpStairs {
-            let (x, y) = map.idx_xy(idx);
-            Some(Point::new(x, y))
-        } else {
-            None
+    // Check 8 neighbors (including diagonals)
+    for (dx, dy) in [(-1i32, -1i32), (-1, 1), (1, -1), (1, 1)] {
+        let pt = Point::new(target.x + dx, target.y + dy);
+        if let Some(tile) = map.get_tile(pt) {
+            if is_walkable(tile) && tile.terrain != DownStairs && tile.terrain != UpStairs {
+                return Some(pt);
+            }
         }
-    })
+    }
+    // BFS outward from target to find the NEAREST walkable floor tile
+    let total = (map.width * map.height) as usize;
+    let mut visited = vec![false; total];
+    let mut queue = std::collections::VecDeque::new();
+    let start_idx = map.xy_idx(target.x, target.y);
+    visited[start_idx] = true;
+    queue.push_back(start_idx);
+    while let Some(idx) = queue.pop_front() {
+        let (x, y) = map.idx_xy(idx);
+        for (dx, dy) in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
+            let nx = x + dx;
+            let ny = y + dy;
+            if nx < 0 || ny < 0 || nx >= map.width || ny >= map.height { continue; }
+            let nidx = map.xy_idx(nx, ny);
+            if visited[nidx] { continue; }
+            visited[nidx] = true;
+            let tile = map.tiles[nidx];
+            if is_walkable(tile) && tile.terrain != DownStairs && tile.terrain != UpStairs {
+                return Some(Point::new(nx, ny));
+            }
+            // Continue BFS through any terrain (even walls) to find nearest floor
+            queue.push_back(nidx);
+        }
+    }
+    None
 }
 
 pub(crate) fn spawn_tiles_into_ecs(
