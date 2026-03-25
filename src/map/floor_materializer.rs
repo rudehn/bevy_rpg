@@ -267,6 +267,13 @@ impl FloorPlan {
         });
 
         let starting_pt = Point::new(starting_pos.x, starting_pos.y);
+        let start_tile = build_data.map.get_tile(starting_pt);
+        info!(
+            "from_builder: starting_position=({}, {}), terrain={:?}, liquid={:?}",
+            starting_pt.x, starting_pt.y,
+            start_tile.map(|t| t.terrain),
+            start_tile.map(|t| t.liquid),
+        );
         let player_spawn = nearest_walkable(&build_data.map, starting_pt);
 
         let monsters = build_data
