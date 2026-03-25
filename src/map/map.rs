@@ -72,9 +72,15 @@ pub struct DungeonECSMap; // Tag for entity holding the active ECS map marker
 pub fn handle_reveal_map_system(
     mut messages: MessageReader<RevealMapMessage>,
     mut tile_render_query: Query<(&mut TileExplored, &mut Sprite, &mut Visibility)>,
+    mut map: ResMut<Map>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     for _ in messages.read() {
+        // Mark all tiles as explored in the Map resource so the state
+        // survives save/load and floor transitions.
+        for flag in map.explored_tiles.iter_mut() {
+            *flag = true;
+        }
         for (mut tile_explored, mut sprite, mut visibility) in tile_render_query.iter_mut() {
             *tile_explored = TileExplored::Explored;
             *visibility = Visibility::Visible;
