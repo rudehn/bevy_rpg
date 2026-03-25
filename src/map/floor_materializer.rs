@@ -325,10 +325,51 @@ impl FloorPlan {
     }
 
     fn from_cache(cached: CachedFloor, ascending: bool) -> Self {
-        let target_stairs = if ascending {
+        // When ascending (going UP), land near the DownStairs (where the
+        // player originally descended from this floor).
+        // When descending (going DOWN) to a previously visited floor, land
+        // near the UpStairs (where the player originally arrived).
+        let stored_pos = if ascending {
             cached.down_stairs_pos
         } else {
             cached.up_stairs_pos
+        };
+
+        // Validate: the stored position should actually be the expected stair
+        // type on the map. If not (e.g. save-compat default [0,0] or stale
+        // data), re-scan the map for the correct stair tile.
+        let expected_terrain = if ascending {
+            TerrainType::DownStairs
+        } else {
+            TerrainType::UpStairs
+        };
+        let target_stairs = if cached
+            .map
+            .get_tile(stored_pos)
+            .map(|t| t.terrain == expected_terrain)
+            .unwrap_or(false)
+        {
+            stored_pos
+        } else {
+            // Stored position doesn't match — scan the map for the stair tile.
+            warn!(
+                "from_cache: stored stair pos ({}, {}) does not contain {:?}; re-scanning map",
+                stored_pos.x, stored_pos.y, expected_terrain
+            );
+            cached
+                .map
+                .tiles
+                .iter()
+                .enumerate()
+                .find_map(|(idx, tile)| {
+                    if tile.terrain == expected_terrain {
+                        let (x, y) = cached.map.idx_xy(idx);
+                        Some(Point::new(x, y))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(stored_pos)
         };
         let player_spawn =
             find_adjacent_floor(&cached.map, target_stairs).unwrap_or(target_stairs);
