@@ -254,13 +254,21 @@ impl FloorPlan {
         });
 
         let starting_pt = Point::new(starting_pos.x, starting_pos.y);
-        let player_spawn = if build_data
-            .map
-            .get_tile(starting_pt)
-            .map(|t| t.terrain == TerrainType::UpStairs)
-            .unwrap_or(false)
-        {
-            find_adjacent_floor(&build_data.map, starting_pt).unwrap_or(starting_pt)
+        let player_spawn = if let Some(tile) = build_data.map.get_tile(starting_pt) {
+            if tile.terrain == TerrainType::UpStairs {
+                // Don't place player directly on stairs — find adjacent floor
+                find_adjacent_floor(&build_data.map, starting_pt).unwrap_or(starting_pt)
+            } else if !is_walkable(tile) {
+                // Starting position is not walkable (e.g. a later builder turned
+                // it into a wall or lake). Find the nearest walkable tile.
+                warn!(
+                    "Player start ({}, {}) is not walkable (terrain={:?}, liquid={:?}); scanning for nearby floor.",
+                    starting_pt.x, starting_pt.y, tile.terrain, tile.liquid
+                );
+                find_adjacent_floor(&build_data.map, starting_pt).unwrap_or(starting_pt)
+            } else {
+                starting_pt
+            }
         } else {
             starting_pt
         };
