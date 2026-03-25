@@ -102,6 +102,12 @@ pub struct StairCooldown;
 #[derive(Resource)]
 pub struct PlayerSpawnPoint(pub Point);
 
+impl Default for PlayerSpawnPoint {
+    fn default() -> Self {
+        Self(Point::new(0, 0))
+    }
+}
+
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SpawnDungeonSet;
 
@@ -118,6 +124,7 @@ impl Plugin for DungeonPlugin {
             .add_message::<SpawnDungeonMessage>()
             .add_message::<MapTransitionMessage>()
             .add_message::<AscendStairsMessage>()
+            .init_resource::<PlayerSpawnPoint>()
             .configure_sets(Update, SpawnDungeonSet)
             .add_systems(
                 OnEnter(AppState::InGame),
@@ -391,6 +398,7 @@ pub fn spawn_dungeon(
     mut pending_restore: ResMut<PendingFloorRestore>,
     mut pending_game_load: ResMut<PendingGameLoad>,
     mut pending_player_load: ResMut<PendingPlayerLoad>,
+    mut player_spawn_point: ResMut<PlayerSpawnPoint>,
     assets: EntityAssets,
     tile_assets: TileAssets,
     mut extras: SpawnDungeonExtras,
@@ -507,7 +515,7 @@ pub fn spawn_dungeon(
             spawn.x, spawn.y, spawn_tile.terrain, spawn_tile.liquid
         );
     }
-    commands.insert_resource(PlayerSpawnPoint(spawn));
+    player_spawn_point.0 = spawn;
 
     if let Some(player_save) = result.pending_player_load {
         pending_player_load.0 = Some(player_save);
