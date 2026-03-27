@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::{Equipped, FloorEntityMarker, GameEntityMarker, InInventory, Inventory, Item, Name, Position};
 use crate::constants::{BASE_ACTION_COST, UNARMED_DAMAGE, Z_ITEM};
-use crate::game::actions::ActionFinishedEvent;
+use crate::game::actions::{finish_turn, ActionFinishedEvent};
 use crate::game::effects::Effect;
 use crate::game::stats::Armor;
 use crate::player::Player;
@@ -256,11 +256,10 @@ fn apply_item_effects(
     damage: &mut crate::game::combat::Damage,
 ) {
     armor.0 += props.defense;
-    if props.kind == ItemKind::Weapon {
-        if let Some(dmg) = &props.damage {
+    if props.kind == ItemKind::Weapon
+        && let Some(dmg) = &props.damage {
             damage.0 = dmg.clone();
         }
-    }
 }
 
 /// Equips an item from the player's inventory into the appropriate slot.
@@ -328,7 +327,7 @@ pub fn handle_equip_item(
         apply_item_effects(props, &mut armor, &mut damage);
 
         log_writer.write(GameLogMessage(format!("You equip the {}.", name.0)));
-        finish_writer.write(ActionFinishedEvent { entity: player_entity, base_cost: BASE_ACTION_COST });
+        finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST);
     }
 }
 
@@ -365,7 +364,7 @@ pub fn handle_unequip_item(
         unapply_item_effects(props, &mut armor, &mut damage);
 
         log_writer.write(GameLogMessage(format!("You unequip the {}.", name.0)));
-        finish_writer.write(ActionFinishedEvent { entity: player_entity, base_cost: BASE_ACTION_COST });
+        finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST);
     }
 }
 
@@ -412,8 +411,8 @@ pub fn handle_drop_item(
         log_writer.write(GameLogMessage(format!("You drop the {}.", item_name.0)));
 
         // For stackable items with count > 1, split off one item to the floor.
-        if let Some(stack) = item_stack {
-            if stack.count > 1 {
+        if let Some(stack) = item_stack
+            && stack.count > 1 {
                 let new_count = stack.count - 1;
                 let max_stack = stack.max_stack;
 
@@ -443,10 +442,9 @@ pub fn handle_drop_item(
                     RenderLayers::layer(1),
                 ));
 
-                finish_writer.write(ActionFinishedEvent { entity: player_entity, base_cost: BASE_ACTION_COST });
+                finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST);
                 continue;
             }
-        }
 
         // Single item (or non-stackable): move the entity itself to the floor.
         inv.items.remove(idx);
@@ -457,7 +455,7 @@ pub fn handle_drop_item(
             .insert(FloorEntityMarker)
             .remove::<InInventory>();
 
-        finish_writer.write(ActionFinishedEvent { entity: player_entity, base_cost: BASE_ACTION_COST });
+        finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST);
     }
 }
 

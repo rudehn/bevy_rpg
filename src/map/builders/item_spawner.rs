@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use crate::map::{builders::{BuilderMap, MetaMapBuilder}, map::Map, tile::{is_walkable, LiquidType, TerrainType}};
+use crate::map::{builders::{BuilderMap, BuilderPhase, MetaMapBuilder}, map::Map, tile::{is_walkable, LiquidType, TerrainType}};
 use bracket_lib::prelude::{Point, RandomNumberGenerator, Rect};
 
 pub struct ItemSpawner;
@@ -8,6 +8,8 @@ impl MetaMapBuilder for ItemSpawner {
     fn build_map(&mut self, build_data: &mut BuilderMap) {
         self.spawn_chests(build_data);
     }
+
+    fn phase(&self) -> Option<BuilderPhase> { Some(BuilderPhase::Spawning) }
 }
 
 impl ItemSpawner {

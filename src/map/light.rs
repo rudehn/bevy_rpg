@@ -52,7 +52,7 @@ impl Plugin for LightPlugin {
 /// Rebuilds the full-floor light map when:
 /// - New candles are spawned (floor load / save restore), OR
 /// - The Map resource changes (door opened, terrain updated)
-/// Skips if no candles are present yet to avoid rebuilding with empty data on floor-load frames.
+///   Skips if no candles are present yet to avoid rebuilding with empty data on floor-load frames.
 pub fn rebuild_light_map_system(
     added_candles: Query<(), Added<Candle>>,
     all_candles: Query<&Position, With<Candle>>,
@@ -137,11 +137,10 @@ fn has_los(map: &Map, x0: i32, y0: i32, x1: i32, y1: i32) -> bool {
             return true;
         }
         // Skip the candle's own tile; check everything else
-        if !(x == x0 && y == y0) && map.in_bounds(Point::new(x, y)) {
-            if is_opaque(map.tiles[map.xy_idx(x, y)]) {
+        if !(x == x0 && y == y0) && map.in_bounds(Point::new(x, y))
+            && is_opaque(map.tiles[map.xy_idx(x, y)]) {
                 return false;
             }
-        }
         let e2 = 2 * err;
         if e2 > -dy {
             err -= dy;

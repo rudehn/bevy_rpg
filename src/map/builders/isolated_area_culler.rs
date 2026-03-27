@@ -7,7 +7,7 @@
 
 use bevy::log::warn;
 
-use super::{BuilderMap, MetaMapBuilder};
+use super::{BuilderMap, BuilderPhase, MetaMapBuilder};
 use crate::map::tile::{Decoration, TerrainType, LiquidType, is_passable};
 use std::collections::VecDeque;
 
@@ -95,6 +95,8 @@ impl MetaMapBuilder for IsolatedAreaCuller {
             }
         }
     }
+
+    fn phase(&self) -> Option<BuilderPhase> { Some(BuilderPhase::ConnectivityCull) }
 }
 
 #[cfg(test)]

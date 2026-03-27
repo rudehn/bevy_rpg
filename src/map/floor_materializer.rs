@@ -6,8 +6,8 @@ use crate::assets::{
     DecorationCatalog, DecorationCatalogHandle, ItemManifest, ItemManifestHandle, ItemSpawnTable,
     ItemSpawnTableHandle, ItemSpriteAssets, MonsterManifest, MonsterManifestHandle,
     MonsterSpawnTable, MonsterSpawnTableHandle, MonsterSpriteAssets, PrefabManifest,
-    PrefabManifestHandle, PropManifest, PropManifestHandle, PropSpriteAssets, ShrinesCatalog,
-    ShrinesCatalogHandle, TileManifest, TileManifestHandle, TileSpriteAssets,
+    PrefabManifestHandle, PropManifest, PropManifestHandle, PropSpriteAssets, TileManifest,
+    TileManifestHandle, TileSpriteAssets,
 };
 use crate::components::Position;
 use crate::game::ai::PatrolRoute;
@@ -16,7 +16,7 @@ use crate::game::squad::{SquadConfig, SquadId, SquadLeader};
 use crate::game::TurnManager;
 use crate::game::{spawn_item, spawn_monster_by_name, spawn_prop};
 use crate::map::builders::BuilderMap;
-use crate::map::tile::{is_walkable, spawn_tile_entity, TerrainType};
+use crate::map::tile::{is_walkable, spawn_tile_entity, TerrainType, TileEntityIndex};
 use crate::map::Map;
 use crate::save::{
     save_data_to_map, GameSaveData, SavedHp, SavedItem, SavedMonster, SavedProp,
@@ -57,8 +57,6 @@ pub struct EntityAssets<'w> {
     pub prefab_manifest_handle: Res<'w, PrefabManifestHandle>,
     pub decoration_catalogs: Res<'w, Assets<DecorationCatalog>>,
     pub decoration_catalog_handle: Res<'w, DecorationCatalogHandle>,
-    pub shrines_catalogs: Res<'w, Assets<ShrinesCatalog>>,
-    pub shrines_catalog_handle: Res<'w, ShrinesCatalogHandle>,
 }
 
 // ---------------------------------------------------------------------------
@@ -86,18 +84,11 @@ struct PropPlan {
     name: String,
 }
 
-struct ShrinePlan {
-    pos: Point,
-    shrine_data: crate::game::shrines::ShrineData,
-    category_id: String,
-}
-
 struct FloorPlan {
     map: Map,
     monsters: Vec<MonsterPlan>,
     items: Vec<ItemPlan>,
     props: Vec<PropPlan>,
-    shrines: Vec<ShrinePlan>,
     player_spawn: Point,
     /// Carried through from the Load path for the caller.
     pending_player_load: Option<crate::save::PlayerSaveData>,
@@ -138,11 +129,10 @@ pub struct FloorResult {
 /// `player_stair_system` from re-triggering after a floor transition.
 fn nearest_walkable(map: &Map, target: Point) -> Point {
     // Fast path: target itself is fine.
-    if let Some(tile) = map.get_tile(target) {
-        if is_walkable(tile) {
+    if let Some(tile) = map.get_tile(target)
+        && is_walkable(tile) {
             return target;
         }
-    }
     // BFS outward through all terrain to find the nearest walkable tile.
     let total = (map.width * map.height) as usize;
     let mut visited = vec![false; total];
@@ -175,12 +165,15 @@ pub(crate) fn spawn_tiles_into_ecs(
     map_entity: Entity,
     game_map: &Map,
     tile_assets: &TileAssets,
+    tile_index: &mut TileEntityIndex,
     ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
 ) {
     let tile_manifest = tile_assets
         .manifests
         .get(&tile_assets.manifest_handle.0)
         .expect("Tile manifest not loaded");
+
+    tile_index.0.clear();
 
     for y in 0..game_map.height() {
         for x in 0..game_map.width() {
@@ -199,6 +192,7 @@ pub(crate) fn spawn_tiles_into_ecs(
             commands
                 .entity(tile_entity)
                 .insert(Position { x: pt.x, y: pt.y });
+            tile_index.0.insert((x, y), tile_entity);
         }
     }
 }
@@ -306,22 +300,11 @@ impl FloorPlan {
             .map(|(pt, name)| PropPlan { pos: pt, name })
             .collect();
 
-        let shrines = build_data
-            .shrine_spawn_list
-            .into_iter()
-            .map(|entry| ShrinePlan {
-                pos: entry.pos,
-                shrine_data: entry.shrine_data,
-                category_id: entry.category_id,
-            })
-            .collect();
-
         FloorPlan {
             map: build_data.map,
             monsters,
             items,
             props,
-            shrines,
             player_spawn,
             pending_player_load: None,
         }
@@ -385,7 +368,6 @@ impl FloorPlan {
             monsters,
             items,
             props,
-            shrines: Vec::new(),
             player_spawn,
             pending_player_load: None,
         }
@@ -405,7 +387,6 @@ impl FloorPlan {
             monsters,
             items,
             props,
-            shrines: Vec::new(),
             player_spawn,
             pending_player_load: Some(save_data.player),
         }
@@ -426,6 +407,7 @@ pub fn materialize_floor(
     map_entity: Entity,
     entity_assets: &EntityAssets,
     tile_assets: &TileAssets,
+    tile_index: &mut TileEntityIndex,
     turn_manager: &mut ResMut<TurnManager>,
     ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
     source: FloorSource,
@@ -439,7 +421,7 @@ pub fn materialize_floor(
     let mut warnings = Vec::new();
 
     // Spawn tiles
-    spawn_tiles_into_ecs(commands, map_entity, &plan.map, tile_assets, ascii_font);
+    spawn_tiles_into_ecs(commands, map_entity, &plan.map, tile_assets, tile_index, ascii_font);
 
     // Spawn monsters
     for m in &plan.monsters {
@@ -458,7 +440,10 @@ pub fn materialize_floor(
                     .entity(entity)
                     .insert((SquadId(squad_id), squad_config));
                 if m.is_leader {
-                    commands.entity(entity).insert(SquadLeader);
+                    commands.entity(entity).insert((
+                        SquadLeader,
+                        crate::game::squad::SquadBlackboard::default(),
+                    ));
                 }
             }
             if let Some(patrol_route) = m.patrol_route.clone() {
@@ -513,30 +498,6 @@ pub fn materialize_floor(
         .is_none()
         {
             warnings.push(format!("Failed to spawn prop '{}'", p.name));
-        }
-    }
-
-    // Spawn shrines
-    if let Some(catalog) = entity_assets
-        .shrines_catalogs
-        .get(&entity_assets.shrines_catalog_handle.0)
-    {
-        for s in &plan.shrines {
-            if let Some(cat_def) = catalog.categories.iter().find(|c| c.id == s.category_id) {
-                crate::game::spawn_shrine(
-                    commands,
-                    &s.pos,
-                    s.shrine_data.clone(),
-                    cat_def,
-                    &entity_assets.prop_sprite_assets,
-                    ascii_font,
-                );
-            } else {
-                warnings.push(format!(
-                    "Shrine category '{}' not found in catalog",
-                    s.category_id
-                ));
-            }
         }
     }
 

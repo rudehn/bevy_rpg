@@ -25,7 +25,7 @@ impl Plugin for SpellsPlugin {
                 Update,
                 update_spells_ui.run_if(in_state(InGameState::Spells)),
             )
-            .add_systems(OnExit(InGameState::Spells), despawn_spells_ui);
+            .add_systems(OnExit(InGameState::Spells), crate::ui::modal::despawn_screen::<OnSpellsScreen>);
     }
 }
 
@@ -52,107 +52,60 @@ fn spells_input_system(
     state: Res<State<InGameState>>,
     mut next_state: ResMut<NextState<InGameState>>,
 ) {
-    if keys.just_pressed(KeyCode::KeyS) {
-        match state.get() {
-            InGameState::Running => next_state.set(InGameState::Spells),
-            InGameState::Spells => next_state.set(InGameState::Running),
-            _ => {}
-        }
-    }
-    if keys.just_pressed(KeyCode::Escape) && *state.get() == InGameState::Spells {
-        next_state.set(InGameState::Running);
-    }
+    crate::ui::modal::toggle_screen(&keys, &state, &mut next_state, KeyCode::KeyS, InGameState::Spells);
 }
 
 fn spawn_spells_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
+    use crate::ui::modal::{spawn_modal, ModalConfig};
     let font = asset_server.load("fonts/Macondo-Regular.ttf");
 
-    commands
-        .spawn((
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                position_type: PositionType::Absolute,
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
+    spawn_modal(&mut commands, OnSpellsScreen, &font, &ModalConfig {
+        title: "SPELLBOOK",
+        title_color: Color::srgb(0.4, 0.6, 1.0),
+        footer: "↑/↓ Navigate  |  1–6 Assign to slot  |  S/Esc Close",
+        ..Default::default()
+    }, |panel, font| {
+        panel
+            .spawn(Node {
+                flex_direction: FlexDirection::Row,
+                flex_grow: 1.0,
+                column_gap: Val::Px(20.0),
                 ..default()
-            },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
-            ZIndex(200),
-            OnSpellsScreen,
-        ))
-        .with_children(|root| {
-            root.spawn((
-                Node {
-                    width: Val::Px(700.0),
-                    height: Val::Px(520.0),
+            })
+            .with_children(|cols| {
+                cols.spawn(Node {
                     flex_direction: FlexDirection::Column,
-                    padding: UiRect::all(Val::Px(20.0)),
-                    border: UiRect::all(Val::Px(2.0)),
+                    width: Val::Px(320.0),
                     ..default()
-                },
-                BackgroundColor(Color::BLACK),
-                BorderColor::all(Color::WHITE),
-            ))
-            .with_children(|panel| {
-                panel.spawn((
-                    Text::new("SPELLBOOK"),
-                    TextFont { font: font.clone(), font_size: 28.0, ..default() },
-                    TextColor(Color::srgb(0.4, 0.6, 1.0)),
-                ));
+                })
+                .with_children(|list| {
+                    for i in 0..10 {
+                        list.spawn((
+                            Text::new(format!("{:2}. ---", i + 1)),
+                            TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                            TextColor(Color::srgb(0.5, 0.5, 0.5)),
+                            SpellRowText(i),
+                        ));
+                    }
+                });
 
-                panel.spawn(Node { height: Val::Px(10.0), ..default() });
-
-                panel
-                    .spawn(Node {
-                        flex_direction: FlexDirection::Row,
-                        flex_grow: 1.0,
-                        column_gap: Val::Px(20.0),
-                        ..default()
-                    })
-                    .with_children(|cols| {
-                        cols.spawn(Node {
-                            flex_direction: FlexDirection::Column,
-                            width: Val::Px(320.0),
-                            ..default()
-                        })
-                        .with_children(|list| {
-                            for i in 0..10 {
-                                list.spawn((
-                                    Text::new(format!("{:2}. ---", i + 1)),
-                                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
-                                    TextColor(Color::srgb(0.5, 0.5, 0.5)),
-                                    SpellRowText(i),
-                                ));
-                            }
-                        });
-
-                        cols.spawn(Node {
-                            flex_direction: FlexDirection::Column,
-                            flex_grow: 1.0,
-                            border: UiRect::all(Val::Px(1.0)),
-                            padding: UiRect::all(Val::Px(10.0)),
-                            ..default()
-                        })
-                        .with_children(|detail| {
-                            detail.spawn((
-                                Text::new("Select a spell to see its details.\n\nPress 1–6 to assign\nthe highlighted spell to a slot."),
-                                TextFont { font: font.clone(), font_size: 16.0, ..default() },
-                                TextColor(Color::srgb(0.6, 0.6, 0.6)),
-                                SpellDetailText,
-                            ));
-                        });
-                    });
-
-                panel.spawn(Node { height: Val::Px(10.0), ..default() });
-
-                panel.spawn((
-                    Text::new("↑/↓ Navigate  |  1–6 Assign to slot  |  S/Esc Close"),
-                    TextFont { font: font.clone(), font_size: 14.0, ..default() },
-                    TextColor(Color::srgb(0.5, 0.5, 0.5)),
-                ));
+                cols.spawn(Node {
+                    flex_direction: FlexDirection::Column,
+                    flex_grow: 1.0,
+                    border: UiRect::all(Val::Px(1.0)),
+                    padding: UiRect::all(Val::Px(10.0)),
+                    ..default()
+                })
+                .with_children(|detail| {
+                    detail.spawn((
+                        Text::new("Select a spell to see its details.\n\nPress 1–6 to assign\nthe highlighted spell to a slot."),
+                        TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                        TextColor(Color::srgb(0.6, 0.6, 0.6)),
+                        SpellDetailText,
+                    ));
+                });
             });
-        });
+    });
 }
 
 fn update_spells_ui(
@@ -174,16 +127,14 @@ fn update_spells_ui(
     let spell_count = known.spells.len();
 
     // Navigate
-    if keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyK) {
-        if spell_count > 0 && selected.0 > 0 {
+    if (keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyK))
+        && spell_count > 0 && selected.0 > 0 {
             selected.0 -= 1;
         }
-    }
-    if keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::KeyJ) {
-        if spell_count > 0 && selected.0 + 1 < spell_count {
+    if (keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::KeyJ))
+        && spell_count > 0 && selected.0 + 1 < spell_count {
             selected.0 += 1;
         }
-    }
 
     // Assign highlighted spell to slot 1–6
     let slot_keys = [
@@ -267,8 +218,4 @@ fn update_spells_ui(
     }
 }
 
-fn despawn_spells_ui(mut commands: Commands, query: Query<Entity, With<OnSpellsScreen>>) {
-    for entity in query.iter() {
-        commands.entity(entity).despawn();
-    }
-}
+// Despawn handled by modal::despawn_screen::<OnSpellsScreen>

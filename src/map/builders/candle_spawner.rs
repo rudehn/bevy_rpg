@@ -3,7 +3,7 @@ use bracket_lib::prelude::{Algorithm2D, Point, RandomNumberGenerator, Rect};
 
 use crate::map::tile::TerrainType;
 
-use super::{BuilderMap, MetaMapBuilder};
+use super::{BuilderMap, BuilderPhase, MetaMapBuilder};
 
 pub struct CandleSpawner;
 
@@ -11,6 +11,8 @@ impl MetaMapBuilder for CandleSpawner {
     fn build_map(&mut self, build_data: &mut BuilderMap) {
         self.build(build_data);
     }
+
+    fn phase(&self) -> Option<BuilderPhase> { Some(BuilderPhase::Spawning) }
 }
 
 impl CandleSpawner {
@@ -36,7 +38,7 @@ impl CandleSpawner {
             }
 
             // One candle per ~20 floor tiles, at least 1, at most 4.
-            let candle_count = ((floor_count / 20).max(1)).min(4) as usize;
+            let candle_count = (floor_count / 20).clamp(1, 4) as usize;
 
             // Valid positions: wall tiles adjacent to at least one floor tile.
             let candidates = wall_tiles_adjacent_to_floor(room, build_data);

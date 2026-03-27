@@ -1,5 +1,7 @@
 use crate::game::abilities::AbilitiesPlugin;
-use crate::game::boss::BossPlugin;
+use crate::game::effects::EffectsPlugin;
+use crate::game::factions::FactionsPlugin;
+use crate::game::ranged::RangedPlugin;
 use crate::game::squad::SquadPlugin;
 use crate::game::targeting::TargetingPlugin;
 use crate::{
@@ -33,9 +35,7 @@ pub struct RunSummary {
     pub floor_reached: u32,
     pub cause: String,
     pub victory: bool,
-    pub essence_collected: i32,
     pub enemies_killed: u32,
-    pub shrines_purchased: u32,
 }
 
 /// Tracks cumulative run statistics (reset each new game).
@@ -48,23 +48,21 @@ pub struct RunStats {
 pub mod abilities;
 pub mod actions;
 pub mod ai;
-pub mod ai_behaviors;
 pub mod ascii_mode;
-pub mod boss;
 pub mod camera;
 pub mod combat;
 pub mod effects;
-pub mod essence;
+pub mod factions;
+pub mod goap;
 pub mod items;
 pub mod magic;
 pub mod particles;
 pub mod ranged;
 pub mod spawner;
-pub mod shrines;
 pub mod spells;
 pub mod squad;
 pub mod stats;
-mod systems;
+pub mod systems;
 pub mod targeting;
 pub mod turns;
 pub use ai::*;
@@ -94,13 +92,13 @@ pub enum InGameState {
     Spells,
     Targeting,
     LogHistory,
-    Shrine,
 }
 
 pub struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RunSummary>()
+            .init_resource::<systems::Omniscient>()
             .init_resource::<RunStats>()
             .add_sub_state::<InGameState>()
             .add_plugins((
@@ -114,13 +112,14 @@ impl Plugin for GamePlugin {
                 ItemsPlugin,
                 MagicPlugin,
                 ParticlesPlugin,
-                BossPlugin,
                 SquadPlugin,
                 TargetingPlugin,
                 AbilitiesPlugin,
             ))
             .add_plugins((
-                shrines::ShrinesPlugin,
+                RangedPlugin,
+                EffectsPlugin,
+                FactionsPlugin,
                 ascii_mode::AsciiModePlugin,
             ))
             // Position→Transform sync and camera run whenever in-game, including Targeting state.
@@ -151,8 +150,8 @@ impl Plugin for GamePlugin {
                         .run_if(|query: Query<(), Changed<Viewshed>>| !query.is_empty())
                         .after(fov_update_system),
                     loot_drop_system.after(CombatDamageSet),
-                    death_system.after(loot_drop_system),
-                    essence::essence_award_system.after(CombatDamageSet),
+                    crate::game::combat::drop_inventory_on_death.after(CombatDamageSet),
+                    death_system.after(loot_drop_system).after(crate::game::combat::drop_inventory_on_death),
                 )
                     .run_if(in_state(InGameState::Running)),
             )
@@ -198,8 +197,8 @@ fn loot_drop_system(
                     &item_manifest_handle,
                     &item_sprite_assets,
                     None,
-                ) {
-                    if count > 1 {
+                )
+                    && count > 1 {
                         let max_stack = item_manifests
                             .get(&item_manifest_handle.0)
                             .and_then(|m| m.items.get(entry.item.as_str()))
@@ -207,7 +206,6 @@ fn loot_drop_system(
                             .unwrap_or(1);
                         commands.entity(entity).insert(crate::game::items::ItemStack { count, max_stack });
                     }
-                }
                 let count_str = if count > 1 { format!(" (x{})", count) } else { String::new() };
                 log_writer.write(GameLogMessage(format!(
                     "{} dropped a {}{}.", name.0, entry.item, count_str

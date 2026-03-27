@@ -7,7 +7,7 @@ use crate::game::actions::SpeedStats;
 use crate::game::camera::{MainCamera, UiCamera};
 use crate::game::combat::{Damage, Health, HealthRegen};
 use crate::game::magic::{
-    Burning, Hasted, KnownSpells, Slowed, SpiritShielded, Stunned,
+    KnownSpells, StatusEffects,
 };
 use crate::game::stats::Armor;
 use crate::game::spells::SpellRegistry;
@@ -98,13 +98,7 @@ fn update_monster_info_panel(
     // Query 2: spells (looked up by entity after focus is determined)
     q_spells: Query<Option<&KnownSpells>>,
     // Query 3: active status effects (looked up by entity after focus is determined)
-    q_statuses: Query<(
-        Option<&Burning>,
-        Option<&Slowed>,
-        Option<&Hasted>,
-        Option<&Stunned>,
-        Option<&SpiritShielded>,
-    )>,
+    q_statuses: Query<Option<&StatusEffects>>,
     nearby_state: Res<NearbyState>,
     pos_query: Query<(Entity, &Position), Or<(With<Monster>, With<Player>, With<crate::components::Item>, With<crate::components::Prop>)>>,
     name_query: Query<&Name>,
@@ -134,8 +128,8 @@ fn update_monster_info_panel(
     // Grid-based lookup: convert mouse to grid coords, then find a matching
     // Monster/Player entity at that position. Only iterates pos_query (lightweight)
     // instead of unpacking all q_base components for every entity.
-    if let Some(screen_pos) = window.cursor_position() {
-        if let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, screen_pos) {
+    if let Some(screen_pos) = window.cursor_position()
+        && let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, screen_pos) {
             let grid_x = (world_pos.x / TILE_SIZE_X as f32 + 0.5).floor() as i32;
             let grid_y = (world_pos.y / TILE_SIZE_X as f32 + 0.5).floor() as i32;
 
@@ -164,12 +158,11 @@ fn update_monster_info_panel(
                 }
             }
         }
-    }
 
     // Fallback: nearby list selection (works for monsters, items, and props)
-    if focused_entity.is_none() {
-        if let Some(idx) = nearby_state.selected_idx {
-            if let Some(&entity) = nearby_state.entity_list.get(idx) {
+    if focused_entity.is_none()
+        && let Some(idx) = nearby_state.selected_idx
+            && let Some(&entity) = nearby_state.entity_list.get(idx) {
                 {
                     focused_entity = Some(entity);
                     if let Ok((_, pos)) = pos_query.get(entity) {
@@ -184,8 +177,6 @@ fn update_monster_info_panel(
                     }
                 }
             }
-        }
-    }
 
     let Some(entity) = focused_entity else {
         *panel_visibility = Visibility::Hidden;
@@ -240,11 +231,10 @@ fn update_monster_info_panel(
     }
 
     // Skip full rebuild if we're already showing this entity with the same HP
-    if let Some(target) = current_target {
-        if target.entity == entity && target.last_hp == health.current {
+    if let Some(target) = current_target
+        && target.entity == entity && target.last_hp == health.current {
             return;
         }
-    }
 
     // Clear existing content children and update tracking
     commands.entity(content_entity).despawn_related::<Children>();
@@ -267,8 +257,8 @@ fn update_monster_info_panel(
     // Collect spells
     let mut spell_entries: Vec<(String, String)> = Vec::new();
 
-    if let Ok(known_spells) = q_spells.get(entity) {
-        if let Some(spells) = known_spells {
+    if let Ok(known_spells) = q_spells.get(entity)
+        && let Some(spells) = known_spells {
             let registry = spell_registry_handle
                 .as_ref()
                 .and_then(|h| spell_registries.get(&h.0));
@@ -286,13 +276,10 @@ fn update_monster_info_panel(
                 spell_entries.push((spell_name, spell_desc));
             }
         }
-    }
 
     // Collect active status effects
-    let status_effects = if let Ok((burning, slowed, hasted, stunned, spirit_shielded)) = q_statuses.get(entity) {
-        crate::ui::collect_status_effects(
-            burning, slowed, hasted, stunned, spirit_shielded,
-        )
+    let status_effects = if let Ok(status) = q_statuses.get(entity) {
+        crate::ui::collect_status_effects(status)
     } else {
         Vec::new()
     };
@@ -312,15 +299,14 @@ fn update_monster_info_panel(
 
         // Health
         let mut health_str = format!("HP: {}/{}", health_current, health_max);
-        if let Some(rate) = regen_rate {
-            if rate > 0 {
+        if let Some(rate) = regen_rate
+            && rate > 0 {
                 if rate >= 100 {
                     health_str.push_str(&format!(" (+{}/t)", rate / 100));
                 } else {
                     health_str.push_str(&format!(" (+1/{}t)", 100 / rate));
                 }
             }
-        }
         parent.spawn((
             Text::new(health_str),
             TextFont {
@@ -343,8 +329,8 @@ fn update_monster_info_panel(
         ));
 
         // Speed trait
-        if let Some(delay) = speed_delay {
-            if let Some((label, color)) = super::get_speed_trait(delay, "Action") {
+        if let Some(delay) = speed_delay
+            && let Some((label, color)) = super::get_speed_trait(delay, "Action") {
                 parent.spawn((
                     Text::new(label),
                     TextFont {
@@ -355,7 +341,6 @@ fn update_monster_info_panel(
                     TextColor(color),
                 ));
             }
-        }
 
         // Armor
         if armor_val > 0 {

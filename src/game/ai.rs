@@ -1,12 +1,11 @@
 use crate::{
     assets::SpellRegistryHandle,
     components::{Faction, FactionKind, Position, Viewshed},
+    game::factions::FactionMatrix,
     game::{
         actions::{Direction, MovementIntent, RangedAttackIntent, WaitIntent},
-        ai_behaviors,
-        boss::BossAI,
         combat::Health,
-        magic::{ActiveSpells, CastSpellMessage, Hasted, Slowed, SpellCooldowns},
+        magic::{ActiveSpells, CastSpellMessage, SpellCooldowns, StatusEffects},
         ranged::RangedCapable,
         spells::{SpellRegistry, SpellTarget},
         stats::Mana,
@@ -133,10 +132,10 @@ impl MonsterAI {
         // --- Flee check (highest priority behavior) ---
         // Only flee when the player is visible — a monster that rounds a corner
         // and loses sight of the threat should stop fleeing and resume normal AI.
-        if self.mode == MonsterAIMode::Hunting && self.flee_at_hp_percent > 0.0 && ctx.is_player_visible {
-            if let Some(health) = world.get::<Health>(entity) {
-                if ai_behaviors::should_flee(health.current, health.max, self.flee_at_hp_percent) {
-                    if let Some(intent) = try_flee_movement(
+        if self.mode == MonsterAIMode::Hunting && self.flee_at_hp_percent > 0.0 && ctx.is_player_visible
+            && let Some(health) = world.get::<Health>(entity)
+                && should_flee(health.current, health.max, self.flee_at_hp_percent)
+                    && let Some(intent) = try_flee_movement(
                         entity, ctx.monster_pos, ctx.player_point, world,
                     ) {
                         world.write_message(intent);
@@ -144,9 +143,6 @@ impl MonsterAI {
                     }
                     // All flee directions blocked (cornered) — fall through to
                     // normal behavior so the monster can still attack or act.
-                }
-            }
-        }
 
         // Try special actions (spell, ranged) before kiting.
         // Ranged monsters fire first, THEN kite on their next turn.
@@ -161,27 +157,25 @@ impl MonsterAI {
 
         // --- Kite check (ranged monsters retreat when player is too close) ---
         // Runs AFTER ranged attack so archers shoot-then-retreat, not retreat-forever.
-        if self.mode == MonsterAIMode::Hunting && self.kites && ctx.is_player_visible {
-            if ai_behaviors::should_kite_retreat(
+        if self.mode == MonsterAIMode::Hunting && self.kites && ctx.is_player_visible
+            && should_kite_retreat(
                 ctx.monster_pos.x, ctx.monster_pos.y,
                 ctx.player_point.x, ctx.player_point.y,
                 self.kite_distance,
-            ) {
-                if let Some(intent) = try_flee_movement(
+            )
+                && let Some(intent) = try_flee_movement(
                     entity, ctx.monster_pos, ctx.player_point, world,
                 ) {
                     world.write_message(intent);
                     return;
                 }
                 // Retreat blocked — fall through to normal pathfinding.
-            }
-        }
 
         // --- Erratic movement check (before normal pathfinding) ---
         if self.mode == MonsterAIMode::Hunting && self.erratic_chance > 0.0 {
             let mut rng_inst = rng();
             let roll: f32 = rand::Rng::random(&mut rng_inst);
-            if ai_behaviors::should_move_erratically(self.erratic_chance, roll) {
+            if should_move_erratically(self.erratic_chance, roll) {
                 let map = world.resource::<Map>();
                 let mut directions = [Direction::N, Direction::E, Direction::S, Direction::W].to_vec();
                 directions.shuffle(&mut rng_inst);
@@ -234,7 +228,7 @@ impl MonsterAI {
                     self.chase_distance += 1;
 
                     // Chase leash: give up if chased too far without seeing player
-                    if ai_behaviors::should_give_up_chase(self.chase_distance, self.chase_leash) {
+                    if should_give_up_chase(self.chase_distance, self.chase_leash) {
                         self.mode = MonsterAIMode::Idle;
                         self.last_known_player_position = None;
                         self.chase_distance = 0;
@@ -288,7 +282,7 @@ impl AIContext {
         if viewshed.dirty {
             let map = world.resource::<Map>();
             viewshed.visible_tiles =
-                bracket_lib::prelude::field_of_view(monster_pos, viewshed.range, &*map);
+                bracket_lib::prelude::field_of_view(monster_pos, viewshed.range, map);
             viewshed.dirty = false;
             // Write the computed viewshed back to the entity.
             if let Some(mut vs) = world.get_mut::<Viewshed>(entity) {
@@ -310,27 +304,25 @@ impl AIContext {
 
 /// Snap waypoint patrols to the nearest waypoint after a hunt ends.
 fn snap_to_nearest_waypoint(entity: Entity, monster_pos: Point, world: &mut World) {
-    if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity) {
-        if let PatrolState::Waypoint { ref points, ref mut current_index } = patrol.state {
-            if !points.is_empty() {
+    if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity)
+        && let PatrolState::Waypoint { ref points, ref mut current_index } = patrol.state
+            && !points.is_empty() {
                 *current_index = points.iter().enumerate()
                     .min_by_key(|(_, p)| (p.0 - monster_pos.x).abs() + (p.1 - monster_pos.y).abs())
                     .map(|(i, _)| i)
                     .unwrap_or(0);
             }
-        }
-    }
 }
 
 /// Try to move away from the threat position (used for fleeing and kiting).
 /// Tries the primary flee direction first, then perpendicular directions.
-fn try_flee_movement(
+pub fn try_flee_movement(
     entity: Entity,
     monster_pos: Point,
     threat_pos: Point,
     world: &mut World,
 ) -> Option<MovementIntent> {
-    let (dx, dy) = ai_behaviors::flee_direction(
+    let (dx, dy) = flee_direction(
         monster_pos.x, monster_pos.y,
         threat_pos.x, threat_pos.y,
     );
@@ -372,8 +364,11 @@ fn try_flee_movement(
 }
 
 /// If the entity is stunned, emit a wait + visual feedback and return true.
-fn try_stun_skip(entity: Entity, world: &mut World) -> bool {
-    if world.get::<crate::game::magic::Stunned>(entity).is_none() {
+pub fn try_stun_skip(entity: Entity, world: &mut World) -> bool {
+    let Some(effects) = world.get::<StatusEffects>(entity) else {
+        return false;
+    };
+    if !effects.is_stunned() {
         return false;
     }
     let name = world
@@ -397,6 +392,17 @@ fn try_stun_skip(entity: Entity, world: &mut World) -> bool {
 }
 
 /// Try to cast a spell. Returns true if a spell was cast (caller should return).
+/// Public entry point for GOAP entities to attempt casting their best spell.
+/// Looks up position and player entity, then delegates to the internal spell scorer.
+pub fn try_cast_spell_world(entity: Entity, world: &mut World) -> bool {
+    let pos = world.get::<Position>(entity).map(|p| p.to_point()).unwrap_or(Point::new(0, 0));
+    let player_entity = {
+        let mut q = world.query_filtered::<Entity, With<Player>>();
+        q.iter(world).next()
+    };
+    try_cast_spell(entity, pos, player_entity, world)
+}
+
 fn try_cast_spell(entity: Entity, monster_pos: Point, player_entity: Option<Entity>, world: &mut World) -> bool {
     if let Some((spell_slot, target)) = choose_spell(entity, monster_pos, player_entity, world) {
         world.write_message(CastSpellMessage {
@@ -425,12 +431,11 @@ fn try_ranged_attack(
     };
     let range = ranged_capable.range;
     let dist = DistanceAlg::Pythagoras.distance2d(monster_pos, player_point);
-    if dist > 1.5 && dist <= range as f32 {
-        if let Some(p_entity) = player_entity {
+    if dist > 1.5 && dist <= range as f32
+        && let Some(p_entity) = player_entity {
             world.write_message(RangedAttackIntent { attacker: entity, target: p_entity });
             return true;
         }
-    }
     false
 }
 
@@ -476,7 +481,7 @@ fn resolve_movement(
             } else {
                 let mut rng = rng();
                 let map = world.resource::<Map>();
-                drop(map);
+                let _ = map;
                 idle_movement(entity, monster_pos, world, &mut rng)
             }
         }
@@ -485,7 +490,7 @@ fn resolve_movement(
 }
 
 /// A* pathfind one step toward `target` and return a MovementIntent.
-fn pathfind_toward(entity: Entity, from: Point, target: Point, world: &mut World) -> Option<MovementIntent> {
+pub fn pathfind_toward(entity: Entity, from: Point, target: Point, world: &mut World) -> Option<MovementIntent> {
     let map = world.resource::<Map>();
     let path = a_star_search(
         map.point2d_to_index(from),
@@ -519,28 +524,10 @@ struct NearbyEntity {
 /// Spells gated by boss phase. The boss has all spells in its list, but only
 /// considers certain ones based on HP-driven phase. Spells NOT in this list
 /// (e.g. tier-granted fireball, haste) are always available.
-const BOSS_PHASE_SPELLS: &[(&str, u8)] = &[
-    ("shadow_bolt", 1),
-    ("mana_drain", 1),
-    ("heal_self", 1),
-    ("chain_lightning", 2),
-    ("spirit_shield", 2),
-    ("death_coil", 3),
-    ("enrage", 3),
-];
-
-/// Returns the minimum boss phase required to use a spell, or 0 if ungated.
-fn boss_spell_min_phase(spell_id: &str) -> u8 {
-    BOSS_PHASE_SPELLS
-        .iter()
-        .find(|(id, _)| *id == spell_id)
-        .map(|(_, phase)| *phase)
-        .unwrap_or(0) // Ungated spells (fireball, haste, etc.) always available
-}
 
 /// Dispatch idle movement for a monster based on its `PatrolRoute` component.
 /// Sentry: jitter near home. Waypoint: walk route. AreaRoam: bounded random walk. None: free wander.
-fn idle_movement(
+pub fn idle_movement(
     entity: Entity,
     monster_pos: Point,
     world: &mut World,
@@ -590,12 +577,11 @@ fn idle_movement(
             let target = Point::new(points[*current_index].0, points[*current_index].1);
             if monster_pos == target {
                 // Arrived — advance index.
-                drop(map);
-                if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity) {
-                    if let PatrolState::Waypoint { ref points, ref mut current_index } = patrol.state {
+                let _ = map;
+                if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity)
+                    && let PatrolState::Waypoint { ref points, ref mut current_index } = patrol.state {
                         *current_index = (*current_index + 1) % points.len();
                     }
-                }
                 // Re-borrow and pathfind to next waypoint.
                 let patrol = world.get::<PatrolRoute>(entity).cloned();
                 let map = world.resource::<Map>();
@@ -631,12 +617,11 @@ fn idle_movement(
                     Some(MovementIntent { entity, dir })
                 } else {
                     // Pathfinding failed — skip to next waypoint.
-                    drop(map);
-                    if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity) {
-                        if let PatrolState::Waypoint { ref points, ref mut current_index } = patrol.state {
+                    let _ = map;
+                    if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity)
+                        && let PatrolState::Waypoint { ref points, ref mut current_index } = patrol.state {
                             *current_index = (*current_index + 1) % points.len();
                         }
-                    }
                     None
                 }
             }
@@ -693,9 +678,6 @@ fn choose_spell(
     // --- Gather caster data upfront ---
     let caster_faction = world.get::<Faction>(caster)?.0.clone();
 
-    // Boss phase filtering: if the caster has BossAI, only allow spells up to the current phase.
-    let boss_phase = world.get::<BossAI>(caster).map(|b| b.phase);
-
     let (active_slots, cooldowns, mana_current, caster_hp, caster_max_hp) = {
         let active = world.get::<ActiveSpells>(caster)?;
         let cooldowns = world.get::<SpellCooldowns>(caster).cloned().unwrap_or_default();
@@ -704,14 +686,15 @@ fn choose_spell(
         (active.slots.clone(), cooldowns, mana, hp.0, hp.1)
     };
 
-    let caster_has_haste = world.get::<Hasted>(caster).is_some();
+    let caster_effects = world.get::<StatusEffects>(caster);
+    let caster_has_haste = caster_effects.map(|e| e.is_hasted()).unwrap_or(false);
     let hp_pct = caster_hp as f32 / caster_max_hp.max(1) as f32;
 
     // Collect all nearby entities with faction info for targeting decisions.
     let nearby: Vec<NearbyEntity> = {
         let mut result = Vec::new();
-        let mut query = world.query::<(Entity, &Position, &Faction, &Health, Option<&Mana>, Option<&Slowed>, Option<&Hasted>)>();
-        for (ent, pos, faction, health, mana, slowed, hasted) in query.iter(world) {
+        let mut query = world.query::<(Entity, &Position, &Faction, &Health, Option<&Mana>, Option<&StatusEffects>)>();
+        for (ent, pos, faction, health, mana, effects) in query.iter(world) {
             if ent == caster {
                 continue;
             }
@@ -722,16 +705,17 @@ fn choose_spell(
                 hp_current: health.current,
                 hp_max: health.max,
                 mana_current: mana.map(|m| m.current).unwrap_or(0),
-                has_slow: slowed.is_some(),
-                has_haste: hasted.is_some(),
+                has_slow: effects.map(|e| e.is_slowed()).unwrap_or(false),
+                has_haste: effects.map(|e| e.is_hasted()).unwrap_or(false),
             });
         }
         result
     };
 
     // Partition nearby entities by relationship to caster.
-    let enemies: Vec<&NearbyEntity> = nearby.iter().filter(|n| caster_faction.is_hostile_to(&n.faction)).collect();
-    let allies: Vec<&NearbyEntity> = nearby.iter().filter(|n| caster_faction.is_allied_to(&n.faction)).collect();
+    let faction_matrix = world.resource::<FactionMatrix>();
+    let enemies: Vec<&NearbyEntity> = nearby.iter().filter(|n| faction_matrix.is_hostile_to(&caster_faction.0, &n.faction.0)).collect();
+    let allies: Vec<&NearbyEntity> = nearby.iter().filter(|n| faction_matrix.is_allied_to(&caster_faction.0, &n.faction.0)).collect();
 
     // Find the best enemy target (nearest visible enemy for single-target offensive spells).
     let nearest_enemy = enemies.iter()
@@ -753,9 +737,7 @@ fn choose_spell(
         let assets = world.resource::<Assets<SpellRegistry>>();
         assets.get(&registry_handle).cloned()
     };
-    let Some(registry) = registry else {
-        return None;
-    };
+    let registry = registry?;
 
     let mut best_score: f32 = 0.0;
     let mut best_slot: Option<usize> = None;
@@ -772,14 +754,6 @@ fn choose_spell(
         }
         if mana_current < spell.mana_cost {
             continue;
-        }
-
-        // Boss phase gating: skip spells the boss hasn't unlocked yet.
-        if let Some(phase) = boss_phase {
-            let min_phase = boss_spell_min_phase(spell_id);
-            if min_phase > 0 && phase < min_phase {
-                continue;
-            }
         }
 
         // Resolve the primary target based on SpellTarget and available entities.
@@ -857,7 +831,7 @@ fn choose_spell(
             .filter(|n| n.entity != scoring_target.entity)
             .map(|n| crate::game::spells::ScoringNearby {
                 pos: (n.pos.x, n.pos.y),
-                is_enemy: caster_faction.is_hostile_to(&n.faction),
+                is_enemy: faction_matrix.is_hostile_to(&caster_faction.0, &n.faction.0),
             })
             .collect();
 
@@ -901,4 +875,153 @@ fn choose_spell(
     }
 }
 
-// avg_dice moved to spells.rs as a shared utility
+// =====================================================================
+// AI Behavior Helpers (pure decision functions)
+// =====================================================================
+
+/// Should this monster flee? Returns true if current HP ratio is below the threshold.
+fn should_flee(current_hp: i32, max_hp: i32, flee_threshold: f32) -> bool {
+    if flee_threshold <= 0.0 || max_hp <= 0 {
+        return false;
+    }
+    (current_hp as f32 / max_hp as f32) < flee_threshold
+}
+
+/// Should this monster move erratically this turn?
+fn should_move_erratically(erratic_chance: f32, roll: f32) -> bool {
+    erratic_chance > 0.0 && roll < erratic_chance
+}
+
+/// Should this monster give up chasing and return to idle?
+fn should_give_up_chase(chase_distance: u32, chase_leash: u32) -> bool {
+    chase_leash > 0 && chase_distance >= chase_leash
+}
+
+/// Should a kiting monster retreat from the player?
+fn should_kite_retreat(
+    monster_x: i32, monster_y: i32, player_x: i32, player_y: i32, kite_distance: u32,
+) -> bool {
+    let dx = (monster_x - player_x).abs();
+    let dy = (monster_y - player_y).abs();
+    (dx * dx + dy * dy) < (kite_distance as i32 * kite_distance as i32)
+}
+
+/// Pick the best cardinal direction to flee AWAY from a threat position.
+pub fn flee_direction(monster_x: i32, monster_y: i32, threat_x: i32, threat_y: i32) -> (i32, i32) {
+    let dx = monster_x - threat_x;
+    let dy = monster_y - threat_y;
+    if dx == 0 && dy == 0 {
+        return (0, 0);
+    }
+    if dx.abs() >= dy.abs() { (dx.signum(), 0) } else { (0, dy.signum()) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flee_when_below_threshold() {
+        assert!(should_flee(2, 10, 0.3));
+    }
+
+    #[test]
+    fn no_flee_when_above_threshold() {
+        assert!(!should_flee(5, 10, 0.3));
+    }
+
+    #[test]
+    fn no_flee_when_threshold_zero() {
+        assert!(!should_flee(1, 10, 0.0));
+    }
+
+    #[test]
+    fn no_flee_when_at_exact_threshold() {
+        assert!(!should_flee(3, 10, 0.3));
+    }
+
+    #[test]
+    fn no_flee_when_max_hp_zero() {
+        assert!(!should_flee(0, 0, 0.5));
+    }
+
+    #[test]
+    fn erratic_with_low_roll() {
+        assert!(should_move_erratically(0.3, 0.1));
+    }
+
+    #[test]
+    fn not_erratic_with_high_roll() {
+        assert!(!should_move_erratically(0.3, 0.5));
+    }
+
+    #[test]
+    fn never_erratic_when_chance_zero() {
+        assert!(!should_move_erratically(0.0, 0.0));
+    }
+
+    #[test]
+    fn give_up_when_leash_exceeded() {
+        assert!(should_give_up_chase(10, 8));
+    }
+
+    #[test]
+    fn keep_chasing_within_leash() {
+        assert!(!should_give_up_chase(5, 8));
+    }
+
+    #[test]
+    fn give_up_at_exact_leash() {
+        assert!(should_give_up_chase(8, 8));
+    }
+
+    #[test]
+    fn never_give_up_when_leash_zero() {
+        assert!(!should_give_up_chase(100, 0));
+    }
+
+    #[test]
+    fn kite_when_adjacent() {
+        assert!(should_kite_retreat(5, 5, 6, 5, 3));
+    }
+
+    #[test]
+    fn kite_when_close() {
+        assert!(should_kite_retreat(5, 5, 7, 5, 3));
+    }
+
+    #[test]
+    fn no_kite_when_at_distance() {
+        assert!(!should_kite_retreat(5, 5, 8, 5, 3));
+    }
+
+    #[test]
+    fn no_kite_when_far() {
+        assert!(!should_kite_retreat(5, 5, 10, 5, 3));
+    }
+
+    #[test]
+    fn flee_away_east() {
+        assert_eq!(flee_direction(5, 5, 2, 5), (1, 0));
+    }
+
+    #[test]
+    fn flee_away_west() {
+        assert_eq!(flee_direction(5, 5, 8, 5), (-1, 0));
+    }
+
+    #[test]
+    fn flee_away_north() {
+        assert_eq!(flee_direction(5, 5, 5, 8), (0, -1));
+    }
+
+    #[test]
+    fn flee_away_south() {
+        assert_eq!(flee_direction(5, 5, 5, 2), (0, 1));
+    }
+
+    #[test]
+    fn flee_on_top_of_threat() {
+        assert_eq!(flee_direction(5, 5, 5, 5), (0, 0));
+    }
+}

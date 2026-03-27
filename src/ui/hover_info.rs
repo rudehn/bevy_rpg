@@ -50,29 +50,25 @@ fn update_hover_description(
     let mut nearby_entity: Option<Entity> = None;
 
     // Mouse hover → grid position
-    if let (Ok(window), Ok((camera, camera_transform))) = (windows.single(), q_camera.single()) {
-        if let Some(screen_pos) = window.cursor_position() {
-            if let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, screen_pos) {
+    if let (Ok(window), Ok((camera, camera_transform))) = (windows.single(), q_camera.single())
+        && let Some(screen_pos) = window.cursor_position()
+            && let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, screen_pos) {
                 let gx = (world_pos.x / TILE_SIZE_X as f32 + 0.5).floor() as i32;
                 let gy = (world_pos.y / TILE_SIZE_X as f32 + 0.5).floor() as i32;
                 if map.in_bounds(bracket_lib::prelude::Point::new(gx, gy)) {
                     grid_pos = Some((gx, gy));
                 }
             }
-        }
-    }
 
     // Fallback: nearby panel selection
-    if grid_pos.is_none() {
-        if let Some(idx) = nearby_state.selected_idx {
-            if let Some(&entity) = nearby_state.entity_list.get(idx) {
+    if grid_pos.is_none()
+        && let Some(idx) = nearby_state.selected_idx
+            && let Some(&entity) = nearby_state.entity_list.get(idx) {
                 nearby_entity = Some(entity);
                 if let Ok(pos) = pos_query.get(entity) {
                     grid_pos = Some((pos.x, pos.y));
                 }
             }
-        }
-    }
 
     if let Some((gx, gy)) = grid_pos {
         let idx = map.xy_idx(gx, gy);
@@ -102,7 +98,7 @@ fn update_hover_description(
         if !found_entity {
             for pos in player_query.iter() {
                 if pos.x == gx && pos.y == gy {
-                    parts.push("You".to_string());
+                    parts.push(format!("You ({}, {})", pos.x, pos.y));
                     found_entity = true;
                     break;
                 }
@@ -133,14 +129,12 @@ fn update_hover_description(
 
         // If we came from the nearby panel and didn't find anything at grid pos,
         // use the nearby entity's name directly
-        if !found_entity {
-            if let Some(entity) = nearby_entity {
-                if let Ok(name) = name_query.get(entity) {
+        if !found_entity
+            && let Some(entity) = nearby_entity
+                && let Ok(name) = name_query.get(entity) {
                     parts.push(name.0.clone());
                     found_entity = true;
                 }
-            }
-        }
 
         // Tile description
         let terrain_desc = match tile.terrain {
@@ -198,14 +192,14 @@ fn update_hover_description(
         if parts.is_empty() {
             description = None;
         } else {
-            // Capitalize first letter
+            // Capitalize first letter, append grid coordinates for debugging
             let desc = parts.join(" ");
             let mut chars = desc.chars();
             let capitalized = match chars.next() {
                 Some(c) => c.to_uppercase().to_string() + chars.as_str(),
                 None => desc,
             };
-            description = Some(capitalized);
+            description = Some(format!("{} ({}, {})", capitalized, gx, gy));
         }
     }
 

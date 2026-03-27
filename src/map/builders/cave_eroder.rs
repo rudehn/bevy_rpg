@@ -24,6 +24,7 @@ impl CaveEroder {
         Box::new(Self { erosion_percent: 40 })
     }
 
+    #[allow(dead_code)]
     pub fn with_profile(profile: FloorProfile) -> Box<Self> {
         Box::new(Self { erosion_percent: profile.erosion_percent })
     }

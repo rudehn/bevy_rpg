@@ -264,14 +264,6 @@ fn game_over_setup(
                 ));
                 panel.spawn((
                     Text::new(format!("Enemies slain:  {}", summary.enemies_killed)),
-                    stat_font.clone(), TextColor(stat_color), stat_node.clone(),
-                ));
-                panel.spawn((
-                    Text::new(format!("Essence collected:  {}", format_number(summary.essence_collected))),
-                    stat_font.clone(), TextColor(stat_color), stat_node.clone(),
-                ));
-                panel.spawn((
-                    Text::new(format!("Shrines purchased:  {}", summary.shrines_purchased)),
                     stat_font.clone(), TextColor(stat_color), stat_node,
                 ));
             });
@@ -389,14 +381,6 @@ fn victory_setup(
                 ));
                 panel.spawn((
                     Text::new(format!("Enemies slain:  {}", summary.enemies_killed)),
-                    stat_font.clone(), TextColor(stat_color), stat_node.clone(),
-                ));
-                panel.spawn((
-                    Text::new(format!("Essence collected:  {}", format_number(summary.essence_collected))),
-                    stat_font.clone(), TextColor(stat_color), stat_node.clone(),
-                ));
-                panel.spawn((
-                    Text::new(format!("Shrines purchased:  {}", summary.shrines_purchased)),
                     stat_font.clone(), TextColor(stat_color), stat_node,
                 ));
             });

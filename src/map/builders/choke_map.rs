@@ -29,9 +29,9 @@ impl ChokeMap {
         let mut choke_values = vec![FLOOD_FILL_CAP; size];
 
         // 1. Initial loop marking: all passable tiles are potentially in a loop
-        for i in 0..size {
+        for (i, in_loop_val) in in_loop.iter_mut().enumerate().take(size) {
             if is_passable(map.tiles[i]) {
-                in_loop[i] = true;
+                *in_loop_val = true;
             }
         }
 
@@ -43,12 +43,11 @@ impl ChokeMap {
             for y in 1..height - 1 {
                 for x in 1..width - 1 {
                     let idx = map.xy_idx(x, y);
-                    if in_loop[idx] {
-                        if !Self::is_part_of_loop(map, &in_loop, x, y) {
+                    if in_loop[idx]
+                        && !Self::is_part_of_loop(map, &in_loop, x, y) {
                             in_loop[idx] = false;
                             changed = true;
                         }
-                    }
                 }
             }
         }
@@ -123,8 +122,7 @@ impl ChokeMap {
 
         // Find an unloopy neighbor to start
         let mut start_dir = None;
-        for i in 0..8 {
-            let (dx, dy) = neighbors[i];
+        for (i, &(dx, dy)) in neighbors.iter().enumerate() {
             let nx = x + dx;
             let ny = y + dy;
             if !map.in_bounds(Point::new(nx, ny)) || !in_loop[map.xy_idx(nx, ny)] {
@@ -153,12 +151,10 @@ impl ChokeMap {
                     num_strings += 1;
                     in_string = true;
                 }
-            } else {
-                if in_string {
-                    max_string_len = max_string_len.max(current_string_len);
-                    current_string_len = 0;
-                    in_string = false;
-                }
+            } else if in_string {
+                max_string_len = max_string_len.max(current_string_len);
+                current_string_len = 0;
+                in_string = false;
             }
         }
         max_string_len = max_string_len.max(current_string_len);

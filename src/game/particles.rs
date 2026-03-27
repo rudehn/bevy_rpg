@@ -622,11 +622,10 @@ pub fn particle_spawn_system(
                         }
 
                         // FOV check: only render if within the player's visible tiles
-                        if let Some(vs) = viewshed {
-                            if !vs.visible_tiles.contains(&Point::new(tx, ty)) {
+                        if let Some(vs) = viewshed
+                            && !vs.visible_tiles.contains(&Point::new(tx, ty)) {
                                 continue;
                             }
-                        }
 
                         let world_pos = grid_to_world(tx, ty);
                         commands.spawn((

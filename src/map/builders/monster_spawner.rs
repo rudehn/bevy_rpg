@@ -3,7 +3,7 @@ use std::collections::{HashSet, VecDeque};
 use crate::{
     assets::MonsterSpawnInfo,
     game::squad::{LeaderDeathBehavior, SquadConfig},
-    map::{builders::{BuilderMap, MetaMapBuilder, SpawnEntry}, map::Map, tile::{is_walkable, LiquidType, TerrainType}},
+    map::{builders::{BuilderMap, BuilderPhase, MetaMapBuilder, SpawnEntry}, map::Map, tile::{is_walkable, LiquidType, TerrainType}},
 };
 use bevy::prelude::*;
 use bracket_lib::prelude::{Point, RandomNumberGenerator, Rect};
@@ -16,6 +16,8 @@ impl MetaMapBuilder for MonsterSpawner {
     fn build_map(&mut self, build_data: &mut BuilderMap) {
         self.spawn_monsters(build_data);
     }
+
+    fn phase(&self) -> Option<BuilderPhase> { Some(BuilderPhase::Spawning) }
 }
 
 impl MonsterSpawner {

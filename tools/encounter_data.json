@@ -1,0 +1,128 @@
+{
+  "hordes": {
+    "rat_pack":          { "tag": "swarm",    "monsters": ["giant_rat x2-4"] },
+    "bat_colony":        { "tag": "swarm",    "monsters": ["giant_bat x2-4"] },
+    "goblin_patrol":     { "tag": "patrol",   "monsters": ["goblin x2-3"] },
+    "goblin_squad":      { "tag": "guard",    "monsters": ["goblin x2-3", "goblin_brute x1"] },
+    "goblin_archers":    { "tag": "ranged",   "monsters": ["goblin_archer x1-2"] },
+    "goblin_casters":    { "tag": "support",  "monsters": ["goblin_shaman x1", "goblin_totem x0-1"] },
+    "goblin_war_party":  { "tag": "elite",    "monsters": ["goblin_warchief x1", "goblin_brute x1-2", "goblin_firebomber x0-1"] },
+    "spider_nest":       { "tag": "ambush",   "monsters": ["giant_spider x1-2"] },
+    "wolf_pack":         { "tag": "patrol",   "monsters": ["wolf x2-3"] },
+    "salamander_pair":   { "tag": "threat",   "monsters": ["fire_salamander x1-2"] },
+    "jelly_blob":        { "tag": "threat",   "monsters": ["jelly x1"] },
+    "bloat_cluster":     { "tag": "hazard",   "monsters": ["bloat x1-2"] },
+    "troll_den":         { "tag": "brute",    "monsters": ["cave_troll x1"] },
+    "sentinel_post":     { "tag": "guardian",  "monsters": ["stone_sentinel x1"] },
+    "dragon_guard":      { "tag": "elite",    "monsters": ["dragon_whelp x1"] },
+    "young_dragon_lair": { "tag": "apex",     "monsters": ["young_dragon x1"] }
+  },
+
+  "horde_spawns": [
+    { "horde": "rat_pack",          "min_floor": 1,  "max_floor": 8  },
+    { "horde": "bat_colony",        "min_floor": 1,  "max_floor": 6  },
+    { "horde": "goblin_patrol",     "min_floor": 2,  "max_floor": 10 },
+    { "horde": "goblin_archers",    "min_floor": 3,  "max_floor": 14 },
+    { "horde": "wolf_pack",         "min_floor": 3,  "max_floor": 10 },
+    { "horde": "salamander_pair",   "min_floor": 3,  "max_floor": 9  },
+    { "horde": "bloat_cluster",     "min_floor": 2,  "max_floor": 10 },
+    { "horde": "goblin_squad",      "min_floor": 5,  "max_floor": 14 },
+    { "horde": "spider_nest",       "min_floor": 5,  "max_floor": 12 },
+    { "horde": "jelly_blob",        "min_floor": 3,  "max_floor": 14 },
+    { "horde": "goblin_casters",    "min_floor": 8,  "max_floor": 18 },
+    { "horde": "troll_den",         "min_floor": 8,  "max_floor": 15 },
+    { "horde": "sentinel_post",     "min_floor": 4,  "max_floor": 20 },
+    { "horde": "dragon_guard",      "min_floor": 10, "max_floor": 18 },
+    { "horde": "goblin_war_party",  "min_floor": 13, "max_floor": 19 },
+    { "horde": "young_dragon_lair", "min_floor": 16, "max_floor": 19 }
+  ],
+
+  "machines": {
+    "Goblin Scuffle": {
+      "min_floor": 2, "max_floor": 5,
+      "slots": [
+        { "tag": "patrol", "hint": "NearGate" }
+      ]
+    },
+    "Goblin Camp": {
+      "min_floor": 4, "max_floor": 10,
+      "slots": [
+        { "tag": "guard", "hint": "NearGate" },
+        { "tag": "ranged", "hint": "AlongWalls" }
+      ]
+    },
+    "Goblin Outpost": {
+      "min_floor": 8, "max_floor": 14,
+      "slots": [
+        { "tag": "guard", "hint": "NearGate" },
+        { "tag": "ranged", "hint": "AlongWalls" },
+        { "tag": "support", "hint": "Center" }
+      ]
+    },
+    "Goblin Fort": {
+      "min_floor": 13, "max_floor": 19,
+      "slots": [
+        { "tag": "elite", "hint": "Center" },
+        { "tag": "guard", "hint": "NearGate" },
+        { "tag": "ranged", "hint": "AlongWalls" },
+        { "tag": "support", "hint": "DeepInterior" }
+      ]
+    },
+    "Treasure Vault": {
+      "min_floor": 4, "max_floor": 20,
+      "slots": [
+        { "tag": "guard", "hint": "Center" }
+      ]
+    },
+    "Hidden Armory": {
+      "min_floor": 3, "max_floor": 20,
+      "slots": []
+    },
+    "Inner Treasury": {
+      "min_floor": 10, "max_floor": 20,
+      "slots": [],
+      "sub_machine_only": true
+    },
+    "Guardian Corridor": {
+      "min_floor": 6, "max_floor": 20,
+      "slots": [
+        { "tag": "brute", "hint": "AtGate" }
+      ]
+    },
+    "Flooded Chamber": {
+      "min_floor": 5, "max_floor": 15,
+      "slots": []
+    },
+    "Fungal Grotto": {
+      "min_floor": 6, "max_floor": 18,
+      "slots": [
+        { "tag": "threat", "hint": "Random" }
+      ]
+    },
+    "Bone Crypt": {
+      "min_floor": 8, "max_floor": 20,
+      "slots": [
+        { "tag": "guard", "hint": "NearGate" }
+      ]
+    },
+    "Lava Vault": {
+      "min_floor": 10, "max_floor": 20,
+      "slots": [
+        { "tag": "brute", "hint": "NearGate" }
+      ]
+    },
+    "Monster Den": {
+      "min_floor": 3, "max_floor": 19,
+      "slots": [
+        { "tag": "threat", "hint": "Random" },
+        { "tag": "swarm", "hint": "Random" }
+      ]
+    },
+    "Ambush Room": {
+      "min_floor": 5, "max_floor": 16,
+      "slots": [
+        { "tag": "ambush", "hint": "AlongWalls" }
+      ]
+    }
+  }
+}

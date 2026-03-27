@@ -12,7 +12,8 @@ use crate::game::combat::{
     ApplyDamageMessage, CombatDamageSet, DamageSource, DamageType, DeathEvent, GameRng,
     HealMessage,
 };
-use crate::game::magic::{Burning, Slowed, Stunned};
+use crate::game::factions::FactionMatrix;
+use crate::game::magic::{StatusEffectKind, StatusEffects};
 use crate::map::map::Map;
 use crate::map::tile::is_walkable;
 use crate::ui::game_log::GameLogMessage;
@@ -35,6 +36,7 @@ pub struct OnHitTriggerMessage {
 pub struct OnBeingHitTriggerMessage {
     pub attacker: Entity,
     pub defender: Entity,
+    #[allow(dead_code)]
     pub final_damage: i32,
     pub source: DamageSource,
 }
@@ -88,12 +90,6 @@ pub struct RoughBody {
 #[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct Enrage {
     pub threshold_percent: u32,
-}
-
-/// +50% damage multiplier. Inserted by Enrage trigger or War Cry.
-#[derive(Component, Debug, Clone)]
-pub struct Enraged {
-    pub turns_remaining: u32,
 }
 
 /// On death: deal AoE damage in a radius.
@@ -153,11 +149,10 @@ pub struct Terrified;
 /// Burning Strike: on hit, chance to apply Burning DoT.
 pub fn handle_burning_strike(
     mut messages: MessageReader<OnHitTriggerMessage>,
-    mut commands: Commands,
     mut game_rng: ResMut<GameRng>,
     attacker_query: Query<(&Name, &BurningStrike)>,
     defender_query: Query<&Name>,
-    mut burning_query: Query<&mut Burning>,
+    mut status_query: Query<&mut StatusEffects>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     for msg in messages.read() {
@@ -167,13 +162,8 @@ pub fn handle_burning_strike(
 
         let roll = game_rng.0.roll_dice(1, 100);
         if roll <= burning_strike.chance as i32 {
-            if let Ok(mut existing) = burning_query.get_mut(msg.defender) {
-                existing.turns_remaining = existing.turns_remaining.max(burning_strike.duration);
-            } else {
-                commands.entity(msg.defender).insert(Burning {
-                    damage_per_turn: burning_strike.damage_per_turn,
-                    turns_remaining: burning_strike.duration,
-                });
+            if let Ok(mut effects) = status_query.get_mut(msg.defender) {
+                effects.add(StatusEffectKind::Burning { damage_per_turn: burning_strike.damage_per_turn }, burning_strike.duration);
             }
             log_writer.write(GameLogMessage(format!(
                 "{}'s attack sets {} ablaze!",
@@ -186,11 +176,10 @@ pub fn handle_burning_strike(
 /// Stunning Blow: on hit, chance to stun target.
 pub fn handle_stunning_blow(
     mut messages: MessageReader<OnHitTriggerMessage>,
-    mut commands: Commands,
     mut game_rng: ResMut<GameRng>,
     attacker_query: Query<(&Name, &StunningBlow)>,
     defender_query: Query<&Name>,
-    mut stunned_query: Query<&mut Stunned>,
+    mut status_query: Query<&mut StatusEffects>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     for msg in messages.read() {
@@ -200,12 +189,8 @@ pub fn handle_stunning_blow(
 
         let roll = game_rng.0.roll_dice(1, 100);
         if roll <= stun.chance as i32 {
-            if let Ok(mut existing) = stunned_query.get_mut(msg.defender) {
-                existing.turns_remaining = existing.turns_remaining.max(stun.duration);
-            } else {
-                commands.entity(msg.defender).insert(Stunned {
-                    turns_remaining: stun.duration,
-                });
+            if let Ok(mut effects) = status_query.get_mut(msg.defender) {
+                effects.add(StatusEffectKind::Stunned, stun.duration);
             }
             log_writer.write(GameLogMessage(format!(
                 "{}'s blow stuns {}!",
@@ -293,11 +278,10 @@ pub fn handle_knockback(
 /// Slow Strike: on hit, chance to slow target.
 pub fn handle_slow_strike(
     mut messages: MessageReader<OnHitTriggerMessage>,
-    mut commands: Commands,
     mut game_rng: ResMut<GameRng>,
     attacker_query: Query<(&Name, &SlowStrike)>,
     defender_query: Query<&Name>,
-    mut slowed_query: Query<&mut Slowed>,
+    mut status_query: Query<&mut StatusEffects>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     for msg in messages.read() {
@@ -307,12 +291,8 @@ pub fn handle_slow_strike(
 
         let roll = game_rng.0.roll_dice(1, 100);
         if roll <= slow.chance as i32 {
-            if let Ok(mut existing) = slowed_query.get_mut(msg.defender) {
-                existing.turns_remaining = existing.turns_remaining.max(slow.duration);
-            } else {
-                commands.entity(msg.defender).insert(Slowed {
-                    turns_remaining: slow.duration,
-                });
+            if let Ok(mut effects) = status_query.get_mut(msg.defender) {
+                effects.add(StatusEffectKind::Slowed, slow.duration);
             }
             log_writer.write(GameLogMessage(format!(
                 "{}'s attack slows {}!",
@@ -352,19 +332,22 @@ pub fn handle_rough_body(
 /// Enrage: when HP drops below threshold, gain Enraged (+50% damage).
 pub fn handle_enrage(
     mut messages: MessageReader<OnBeingHitTriggerMessage>,
-    mut commands: Commands,
-    query: Query<(&Name, &crate::game::combat::Health, &Enrage, Has<Enraged>)>,
+    query: Query<(&Name, &crate::game::combat::Health, &Enrage)>,
+    mut status_query: Query<&mut StatusEffects>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     for msg in messages.read() {
-        let Ok((name, health, enrage, already_enraged)) = query.get(msg.defender) else { continue; };
-        if already_enraged { continue; }
+        let Ok((name, health, enrage)) = query.get(msg.defender) else { continue; };
+
+        // Check if already enraged via StatusEffects
+        if let Ok(effects) = status_query.get(msg.defender)
+            && effects.is_enraged() { continue; }
 
         let threshold_hp = health.max * enrage.threshold_percent as i32 / 100;
         if health.current <= threshold_hp && health.current > 0 {
-            commands.entity(msg.defender).insert(Enraged {
-                turns_remaining: 99,
-            });
+            if let Ok(mut effects) = status_query.get_mut(msg.defender) {
+                effects.add(StatusEffectKind::Enraged, 99);
+            }
             log_writer.write(GameLogMessage(format!(
                 "{} flies into a rage!",
                 name.0
@@ -465,10 +448,11 @@ pub fn handle_summon_on_death(
 /// For simplicity, we activate on first OnHitTrigger where the monster is the attacker.
 pub fn handle_war_cry(
     mut messages: MessageReader<OnHitTriggerMessage>,
-    mut commands: Commands,
     mut query: Query<(&Name, &Position, &mut WarCry, &crate::components::Faction)>,
     ally_query: Query<(Entity, &Position, &crate::components::Faction), With<crate::components::Monster>>,
+    mut status_query: Query<&mut StatusEffects>,
     mut log_writer: MessageWriter<GameLogMessage>,
+    faction_matrix: Res<FactionMatrix>,
 ) {
     for msg in messages.read() {
         let Ok((name, pos, mut war_cry, faction)) = query.get_mut(msg.attacker) else { continue; };
@@ -482,13 +466,12 @@ pub fn handle_war_cry(
 
         for (ally_entity, ally_pos, ally_faction) in ally_query.iter() {
             if ally_entity == msg.attacker { continue; }
-            if !faction.0.is_allied_to(&ally_faction.0) { continue; }
+            if !faction_matrix.is_allied_to(&faction.0.0, &ally_faction.0.0) { continue; }
             let dist = (ally_pos.x - pos.x).abs() + (ally_pos.y - pos.y).abs();
-            if dist <= war_cry.radius {
-                commands.entity(ally_entity).insert(Enraged {
-                    turns_remaining: war_cry.duration,
-                });
-            }
+            if dist <= war_cry.radius
+                && let Ok(mut effects) = status_query.get_mut(ally_entity) {
+                    effects.add(StatusEffectKind::Enraged, war_cry.duration);
+                }
         }
     }
 }
@@ -502,6 +485,7 @@ pub fn handle_pack_tactics(
     ally_query: Query<(&Position, &crate::components::Faction), With<crate::components::Monster>>,
     mut damage_writer: MessageWriter<ApplyDamageMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
+    faction_matrix: Res<FactionMatrix>,
 ) {
     for msg in messages.read() {
         if msg.source != DamageSource::Melee { continue; }
@@ -510,7 +494,7 @@ pub fn handle_pack_tactics(
 
         // Check if any allied monster (not self) is adjacent to the defender
         let has_flanking_ally = ally_query.iter().any(|(ally_pos, ally_faction)| {
-            if !attacker_faction.0.is_allied_to(&ally_faction.0) { return false; }
+            if !faction_matrix.is_allied_to(&attacker_faction.0.0, &ally_faction.0.0) { return false; }
             let dist = (ally_pos.x - defender_pos.x).abs() + (ally_pos.y - defender_pos.y).abs();
             dist == 1
         });
@@ -539,6 +523,7 @@ pub fn rally_aura_system(
     mut commands: Commands,
     leaders: Query<(&Position, &Rally, &crate::components::Faction)>,
     allies: Query<(Entity, &Position, &crate::components::Faction), With<crate::components::Monster>>,
+    faction_matrix: Res<FactionMatrix>,
 ) {
     for _ in turn_end.read() {
         // Clear old rally buffs
@@ -549,7 +534,7 @@ pub fn rally_aura_system(
         // Apply new rally buffs
         for (leader_pos, rally, leader_faction) in leaders.iter() {
             for (ally_entity, ally_pos, ally_faction) in allies.iter() {
-                if !leader_faction.0.is_allied_to(&ally_faction.0) { continue; }
+                if !faction_matrix.is_allied_to(&leader_faction.0.0, &ally_faction.0.0) { continue; }
                 let dist = (ally_pos.x - leader_pos.x).abs() + (ally_pos.y - leader_pos.y).abs();
                 if dist <= rally.radius {
                     commands.entity(ally_entity).insert(RallyBuff {
@@ -567,6 +552,7 @@ pub fn terrify_aura_system(
     mut commands: Commands,
     sources: Query<(&Position, &Terrify, &crate::components::Faction)>,
     targets: Query<(Entity, &Position, &crate::components::Faction), With<crate::game::combat::Health>>,
+    faction_matrix: Res<FactionMatrix>,
 ) {
     for _ in turn_end.read() {
         // Clear old terrify markers
@@ -577,27 +563,11 @@ pub fn terrify_aura_system(
         // Apply terrify to enemies in range
         for (source_pos, terrify, source_faction) in sources.iter() {
             for (target_entity, target_pos, target_faction) in targets.iter() {
-                if source_faction.0.is_allied_to(&target_faction.0) { continue; }
+                if faction_matrix.is_allied_to(&source_faction.0.0, &target_faction.0.0) { continue; }
                 let dist = (target_pos.x - source_pos.x).abs() + (target_pos.y - source_pos.y).abs();
                 if dist <= terrify.radius {
                     commands.entity(target_entity).insert(Terrified);
                 }
-            }
-        }
-    }
-}
-
-/// Tick Enraged duration: decrement, remove when expired.
-pub fn tick_enraged_system(
-    mut turn_end: MessageReader<crate::game::turns::TurnEndEvent>,
-    mut commands: Commands,
-    mut query: Query<(Entity, &mut Enraged)>,
-) {
-    for _ in turn_end.read() {
-        for (entity, mut enraged) in query.iter_mut() {
-            enraged.turns_remaining = enraged.turns_remaining.saturating_sub(1);
-            if enraged.turns_remaining == 0 {
-                commands.entity(entity).remove::<Enraged>();
             }
         }
     }
@@ -633,7 +603,6 @@ impl Plugin for AbilitiesPlugin {
                     // Aura systems (run on turn end)
                     rally_aura_system,
                     terrify_aura_system,
-                    tick_enraged_system,
                 )
                     .run_if(in_state(crate::game::AppState::InGame)),
             );

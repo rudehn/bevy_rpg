@@ -3,11 +3,7 @@ use bracket_lib::random::{RandomNumberGenerator, parse_dice_string};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::components::{FinalBoss, Monster, Name, GodMode, Position};
-use crate::game::shrines::{
-    BloodlustAbility, CleaveAbility, FirstStrikeAbility, GamblersMarkAbility, LuckyAbility,
-    SecondWindAbility,
-};
+use crate::components::{FloorEntityMarker, InInventory, Inventory, Monster, Name, GodMode, Position};
 use crate::game::stats::{Armor, DamageBonus, Dodge, HitBonus};
 use crate::game::turns::TurnEndEvent;
 use crate::game::{AppState, RunSummary, TurnManager};
@@ -101,14 +97,6 @@ pub struct RegenSuppression(pub u32);
 #[derive(Component, Debug)]
 pub struct Damage(pub String);
 
-/// Marker: this enemy has been hit by the player before (used by FirstStrike).
-#[derive(Component, Debug)]
-pub struct HitByPlayer;
-
-/// Temporary marker: the entity missed with GamblersMark active, so their
-/// next ActionFinishedEvent should have its cost doubled.
-#[derive(Component, Debug)]
-pub struct GamblerMissPenalty;
 
 // --- Messages ---
 
@@ -273,27 +261,17 @@ fn hit_check_system(
     mut miss_writer: MessageWriter<MissMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut game_rng: ResMut<GameRng>,
-    query: Query<(&Name, Option<&Dodge>, Option<&HitBonus>, Has<Player>, Has<LuckyAbility>, Has<GamblersMarkAbility>)>,
+    query: Query<(&Name, Option<&Dodge>, Option<&HitBonus>, Has<Player>)>,
 ) {
     for intent in intents.read() {
-        let Ok((attacker_name, _, attacker_hit_bonus, is_player, has_lucky, has_gamblers_mark)) = query.get(intent.attacker) else {
+        let Ok((attacker_name, _, attacker_hit_bonus, is_player)) = query.get(intent.attacker) else {
             continue;
         };
-        let Ok((target_name, target_dodge, _, _, _, _)) = query.get(intent.target) else {
+        let Ok((target_name, target_dodge, _, _)) = query.get(intent.target) else {
             continue;
         };
 
-        let mut hit_roll = game_rng.0.roll_dice(1, 20);
-
-        // Lucky: reroll low attack rolls (1-3)
-        if has_lucky && hit_roll <= 3 {
-            let reroll = game_rng.0.roll_dice(1, 20);
-            log_writer.write(GameLogMessage(format!(
-                "Lucky! Rerolled {} -> {}.",
-                hit_roll, reroll
-            )));
-            hit_roll = reroll;
-        }
+        let hit_roll = game_rng.0.roll_dice(1, 20);
 
         let hit_bonus = attacker_hit_bonus.map(|h| h.0).unwrap_or(0);
         let dodge_val = target_dodge.map(|d| d.0).unwrap_or(0);
@@ -318,14 +296,6 @@ fn hit_check_system(
                 attacker: intent.attacker,
                 target: intent.target,
             });
-
-            // GamblersMark: misses cost double action time
-            if has_gamblers_mark {
-                commands.entity(intent.attacker).insert(GamblerMissPenalty);
-                log_writer.write(GameLogMessage(
-                    "Gambler's Mark: miss costs double action time!".to_string(),
-                ));
-            }
         }
     }
 }
@@ -339,48 +309,27 @@ fn damage_roll_system(
     mut game_rng: ResMut<GameRng>,
     query: Query<(
         &Damage,
-        Has<crate::game::abilities::Enraged>,
+        Option<&crate::game::magic::StatusEffects>,
         Has<crate::game::abilities::Terrified>,
         Option<&DamageBonus>,
-        Has<GamblersMarkAbility>,
-        Has<FirstStrikeAbility>,
     )>,
-    target_query: Query<Has<HitByPlayer>>,
 ) {
     for message in roll_messages.read() {
-        let Ok((damage_dice, is_enraged, is_terrified, damage_bonus, has_gamblers_mark, has_first_strike)) = query.get(message.attacker) else {
+        let Ok((damage_dice, status_effects, is_terrified, damage_bonus)) = query.get(message.attacker) else {
             continue;
         };
 
         let base_roll = roll_dice(&damage_dice.0, &mut game_rng.0);
         let rolled_damage = if message.is_crit {
-            if has_gamblers_mark {
-                // GamblersMark: crits deal triple instead of double
-                base_roll + roll_dice(&damage_dice.0, &mut game_rng.0) + roll_dice(&damage_dice.0, &mut game_rng.0)
-            } else {
-                base_roll + roll_dice(&damage_dice.0, &mut game_rng.0)
-            }
+            base_roll + roll_dice(&damage_dice.0, &mut game_rng.0)
         } else {
             base_roll
         };
 
         let bonus = damage_bonus.map(|d| d.0).unwrap_or(0);
 
-        // FirstStrike: +2 damage on first hit vs each enemy
-        let first_strike_bonus = if has_first_strike {
-            let already_hit = target_query.get(message.target).unwrap_or(false);
-            if !already_hit {
-                commands.entity(message.target).insert(HitByPlayer);
-                log_writer.write(GameLogMessage("First Strike! +2 damage.".to_string()));
-                2
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
-        let raw_damage = apply_damage_multipliers(rolled_damage + bonus + first_strike_bonus, is_enraged, is_terrified);
+        let is_enraged = status_effects.map(|e| e.is_enraged()).unwrap_or(false);
+        let raw_damage = apply_damage_multipliers(rolled_damage + bonus, is_enraged, is_terrified);
 
         reduction_writer.write(DamageReductionMessage {
             attacker: message.attacker,
@@ -445,7 +394,7 @@ fn armor_reduction_system(
 }
 
 /// 4. Damage Application: Update health and log the result.
-/// Absorb resistance: negative final_damage means heal instead.
+///    Absorb resistance: negative final_damage means heal instead.
 fn damage_application_system(
     mut commands: Commands,
     mut apply_messages: MessageReader<ApplyDamageMessage>,
@@ -457,7 +406,7 @@ fn damage_application_system(
         &mut Health,
         &Name,
         Has<GodMode>,
-        Has<crate::game::magic::SpiritShielded>,
+        Option<&crate::game::magic::StatusEffects>,
         Option<&mut crate::game::stats::Mana>,
         Has<Player>,
     )>,
@@ -465,7 +414,7 @@ fn damage_application_system(
     mut run_stats: ResMut<crate::game::RunStats>,
 ) {
     for message in apply_messages.read() {
-        let Ok((mut target_health, target_name, has_god_mode, has_spirit_shield, mut mana, target_is_player)) =
+        let Ok((mut target_health, target_name, has_god_mode, status_effects, mut mana, target_is_player)) =
             query_health.get_mut(message.target)
         else {
             continue;
@@ -498,6 +447,7 @@ fn damage_application_system(
         }
 
         // Spirit Shield: absorb damage from mana first (1 mana = 1 damage)
+        let has_spirit_shield = status_effects.map(|e| e.has_spirit_shield()).unwrap_or(false);
         let remaining_damage = if has_spirit_shield {
             if let Some(ref mut mana) = mana {
                 let (overflow, absorbed) = compute_spirit_shield(message.final_damage, mana.current);
@@ -620,40 +570,44 @@ pub fn handle_toggle_god_mode_system(
     }
 }
 
+/// Drop all held inventory items at the entity's death position.
+/// Runs before `death_system` so items are placed before the entity is despawned.
+pub fn drop_inventory_on_death(
+    mut commands: Commands,
+    query: Query<(Entity, &Health, &Position, &Inventory)>,
+) {
+    for (entity, health, pos, inventory) in query.iter() {
+        if health.current > 0 || inventory.items.is_empty() {
+            continue;
+        }
+        for &item_entity in &inventory.items {
+            commands
+                .entity(item_entity)
+                .remove::<InInventory>()
+                .insert(Position { x: pos.x, y: pos.y })
+                .insert(Visibility::Inherited)
+                .insert(FloorEntityMarker);
+        }
+    }
+}
+
 /// System that checks for entities with Health <= 0 and handles death.
 pub fn death_system(
     mut commands: Commands,
-    mut query_dead: Query<(Entity, &mut Health, &Name, Option<&Player>, Option<&Monster>, Has<FinalBoss>, Option<&mut SecondWindAbility>)>,
+    mut query_dead: Query<(Entity, &mut Health, &Name, Option<&Player>, Option<&Monster>)>,
     mut next_state: ResMut<NextState<AppState>>,
     mut turn_manager: ResMut<TurnManager>,
     mut log_writer: MessageWriter<GameLogMessage>,
     floor: Res<Floor>,
     mut run_summary: ResMut<RunSummary>,
-    run_stats: Res<crate::game::RunStats>,
-    player_essence: Query<&crate::game::essence::Essence, With<Player>>,
-    shrines_purchased: Res<crate::game::shrines::ShrinesPurchased>,
+    mut run_stats: ResMut<crate::game::RunStats>,
 ) {
-    for (entity, mut health, name, is_player, is_monster, is_final_boss, second_wind) in query_dead.iter_mut() {
+    for (entity, mut health, name, is_player, is_monster) in query_dead.iter_mut() {
         if health.current <= 0 {
-            // SecondWind: survive lethal hit once per floor
-            if is_player.is_some() {
-                if let Some(mut sw) = second_wind {
-                    if sw.available {
-                        sw.available = false;
-                        health.current = 1;
-                        log_writer.write(GameLogMessage(
-                            "Second Wind saves you! You cling to life at 1 HP.".to_string(),
-                        ));
-                        continue;
-                    }
-                }
-            }
-
             if is_player.is_some() {
                 // Player died — permadeath: erase the save
                 eprintln!("Game Over! You died!");
                 log_writer.write(GameLogMessage("You have died!".to_string()));
-                let essence_total = player_essence.single().ok().map(|e| e.lifetime).unwrap_or(0);
                 let cause = if run_stats.last_hit_by.is_empty() {
                     "Unknown".to_string()
                 } else {
@@ -663,118 +617,19 @@ pub fn death_system(
                     floor_reached: floor.0,
                     cause,
                     victory: false,
-                    essence_collected: essence_total,
                     enemies_killed: run_stats.enemies_killed,
-                    shrines_purchased: shrines_purchased.0.len() as u32,
                 };
                 crate::save::delete_save();
                 next_state.set(AppState::GameOver);
-            } else if is_final_boss {
-                // Final boss defeated — VICTORY!
-                info!("Final boss {:?} defeated!", entity);
-                log_writer.write(GameLogMessage("The Veiled Tyrant falls! Freedom at last!".to_string()));
-                commands.entity(entity).despawn();
-                turn_manager.turn_queue.retain(|&(e, _)| e != entity);
-
-                let essence_total = player_essence.single().ok().map(|e| e.lifetime).unwrap_or(0);
-                *run_summary = RunSummary {
-                    floor_reached: floor.0,
-                    cause: String::new(),
-                    victory: true,
-                    essence_collected: essence_total,
-                    enemies_killed: run_stats.enemies_killed,
-                    shrines_purchased: shrines_purchased.0.len() as u32,
-                };
-                crate::save::delete_save();
-                next_state.set(AppState::Victory);
             } else if is_monster.is_some() {
                 // Monster died
+                run_stats.enemies_killed += 1;
                 info!("Monster {:?} died!", entity);
                 log_writer.write(GameLogMessage(format!("{} dies.", name.0)));
                 commands.entity(entity).despawn();
                 // Remove from turn queue if present
                 turn_manager.turn_queue.retain(|&(e, _)| e != entity);
             }
-        }
-    }
-}
-
-// --- Shrine Effect Systems ---
-
-/// Bloodlust: heal player for 3 HP on kill.
-fn bloodlust_on_kill_system(
-    mut death_events: MessageReader<DeathEvent>,
-    mut heal_writer: MessageWriter<HealMessage>,
-    mut log_writer: MessageWriter<GameLogMessage>,
-    player_query: Query<Has<BloodlustAbility>, With<Player>>,
-) {
-    for event in death_events.read() {
-        if let Ok(has_bloodlust) = player_query.get(event.attacker) {
-            if has_bloodlust {
-                heal_writer.write(HealMessage {
-                    entity: event.attacker,
-                    amount: 3,
-                });
-                log_writer.write(GameLogMessage("Bloodlust! You heal 3 HP.".to_string()));
-            }
-        }
-    }
-}
-
-/// Cleave: after a melee hit, damage all enemies adjacent to the target.
-/// Uses `DamageSource::Environment` for cleave damage so on-hit abilities
-/// don't re-trigger (preventing infinite cleave loops).
-fn cleave_on_hit_system(
-    mut messages: MessageReader<crate::game::abilities::OnHitTriggerMessage>,
-    attacker_query: Query<(Has<CleaveAbility>, Has<Player>)>,
-    target_query: Query<&Position>,
-    adjacent_enemies: Query<(Entity, &Position), With<Monster>>,
-    mut damage_writer: MessageWriter<ApplyDamageMessage>,
-    mut log_writer: MessageWriter<GameLogMessage>,
-) {
-    for msg in messages.read() {
-        // Only trigger on melee hits (cleave damage uses Environment source,
-        // so it won't re-enter this handler).
-        if msg.source != DamageSource::Melee {
-            continue;
-        }
-
-        let Ok((has_cleave, is_player)) = attacker_query.get(msg.attacker) else {
-            continue;
-        };
-        if !has_cleave || !is_player {
-            continue;
-        }
-
-        let Ok(target_pos) = target_query.get(msg.defender) else {
-            continue;
-        };
-
-        let mut cleave_count = 0;
-        for (adj_entity, adj_pos) in adjacent_enemies.iter() {
-            if adj_entity == msg.defender {
-                continue;
-            }
-            let dist = (adj_pos.x - target_pos.x).abs() + (adj_pos.y - target_pos.y).abs();
-            if dist <= 1 {
-                // Deal half of the original hit's damage as cleave damage
-                let cleave_damage = (msg.final_damage / 2).max(1);
-                damage_writer.write(ApplyDamageMessage {
-                    attacker: msg.attacker,
-                    target: adj_entity,
-                    final_damage: cleave_damage,
-                    damage_type: DamageType::Physical,
-                    source: DamageSource::Environment,
-                });
-                cleave_count += 1;
-            }
-        }
-
-        if cleave_count > 0 {
-            log_writer.write(GameLogMessage(format!(
-                "Cleave! Hit {} adjacent enemies.",
-                cleave_count
-            )));
         }
     }
 }
@@ -820,8 +675,6 @@ impl Plugin for CombatPlugin {
                     tick_regen_suppression,
                     handle_heal_system,
                     handle_toggle_god_mode_system,
-                    bloodlust_on_kill_system.after(CombatDamageSet),
-                    cleave_on_hit_system.after(CombatDamageSet),
                 )
                     .run_if(in_state(AppState::InGame)),
             );

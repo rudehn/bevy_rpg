@@ -212,9 +212,10 @@ impl BrogueLikeBuilder {
     }
 
     fn fill_rect(&self, tiles: &mut [TerrainType], w: i32, rect: Rect, tile: TerrainType) {
+        let h = tiles.len() as i32 / w;
         for x in rect.x1..=rect.x2 {
             for y in rect.y1..=rect.y2 {
-                if x >= 0 && x < w && y >= 0 && y < tiles.len() as i32 / w {
+                if x >= 0 && x < w && y >= 0 && y < h {
                     tiles[(y * w + x) as usize] = tile;
                 }
             }
@@ -226,11 +227,10 @@ impl BrogueLikeBuilder {
         for y in 1..h - 1 {
             for x in 1..w - 1 {
                 let pt = Point::new(x, y);
-                if tiles[(y * w + x) as usize] == TerrainType::Wall {
-                    if let Some(dir) = self.direction_of_door_site(tiles, w, h, pt) {
+                if tiles[(y * w + x) as usize] == TerrainType::Wall
+                    && let Some(dir) = self.direction_of_door_site(tiles, w, h, pt) {
                         sites.push((pt, dir));
                     }
-                }
             }
         }
         sites
@@ -244,12 +244,10 @@ impl BrogueLikeBuilder {
 
             if neighbor.x >= 0 && neighbor.x < w && neighbor.y >= 0 && neighbor.y < h
                 && opp.x >= 0 && opp.x < w && opp.y >= 0 && opp.y < h
-            {
-                if tiles[(opp.y * w + opp.x) as usize] == TerrainType::Floor {
+                && tiles[(opp.y * w + opp.x) as usize] == TerrainType::Floor {
                     if solution.is_some() { return None; } // Multiple floor neighbors = not a door site
                     solution = Some(dir);
                 }
-            }
         }
         solution
     }
@@ -286,7 +284,7 @@ impl BrogueLikeBuilder {
                 } else {
                     perp_right
                 };
-                curr = curr + step_dir.offset();
+                curr += step_dir.offset();
             }
 
             design.door_sites = vec![(curr, primary_dir)];
@@ -371,12 +369,12 @@ impl BrogueLikeBuilder {
         true
     }
 
-    pub fn add_loops(&self, tiles: &mut Vec<Tile>, w: i32, h: i32, minimum_path_distance: i32) {
+    pub fn add_loops(&self, tiles: &mut [Tile], w: i32, h: i32, minimum_path_distance: i32) {
         let total_cells = (w * h) as usize;
 
         // Create a temporary Map instance for Dijkstra calculations
         let mut map_for_dijkstra = Map::new(1, w, h, "tmp");
-        map_for_dijkstra.tiles = tiles.clone();
+        map_for_dijkstra.tiles = tiles.to_vec();
 
         // Make all doors open in the Dijkstra map for pathfinding
         for i in 0..map_for_dijkstra.tiles.len() {
@@ -515,11 +513,10 @@ impl InitialMapBuilder for BrogueLikeBuilder {
                 for x in 1..self.width - 1 {
                     let pt = Point::new(x, y);
                     let idx = build_data.map.xy_idx(x, y);
-                    if terrain_cache[idx] == TerrainType::Wall {
-                        if let Some(dir) = self.direction_of_door_site(&terrain_cache, self.width, self.height, pt) {
+                    if terrain_cache[idx] == TerrainType::Wall
+                        && let Some(dir) = self.direction_of_door_site(&terrain_cache, self.width, self.height, pt) {
                             dungeon_sites.push((pt, dir));
                         }
-                    }
                 }
             }
             dungeon_sites.shuffle(&mut rng);
@@ -608,14 +605,13 @@ impl InitialMapBuilder for BrogueLikeBuilder {
                 let idx = build_data.map.xy_idx(x, y);
                 // We look for wall tiles that could be doors (direction_of_door_site)
                 // and prioritize those with high choke values (isolated regions)
-                if terrain_cache[idx] == TerrainType::Wall {
-                    if let Some(dir) = self.direction_of_door_site(&terrain_cache, self.width, self.height, Point::new(x, y)) {
+                if terrain_cache[idx] == TerrainType::Wall
+                    && let Some(dir) = self.direction_of_door_site(&terrain_cache, self.width, self.height, Point::new(x, y)) {
                         let choke_val = chokemap.choke_values[idx];
                         if choke_val > 10 && choke_val < 29000 { // Isolated but not infinite
                             reward_candidates.push((Point::new(x, y), dir, choke_val));
                         }
                     }
-                }
             }
         }
 

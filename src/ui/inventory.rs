@@ -29,7 +29,7 @@ impl Plugin for InventoryPlugin {
             Update,
             update_inventory_ui.run_if(in_state(InGameState::Inventory)),
         )
-        .add_systems(OnExit(InGameState::Inventory), despawn_inventory_ui);
+        .add_systems(OnExit(InGameState::Inventory), crate::ui::modal::despawn_screen::<OnInventoryScreen>);
     }
 }
 
@@ -51,16 +51,7 @@ fn inventory_input_system(
     state: Res<State<InGameState>>,
     mut next_state: ResMut<NextState<InGameState>>,
 ) {
-    if keys.just_pressed(KeyCode::KeyI) {
-        match state.get() {
-            InGameState::Running => next_state.set(InGameState::Inventory),
-            InGameState::Inventory => next_state.set(InGameState::Running),
-            _ => {}
-        }
-    }
-    if keys.just_pressed(KeyCode::Escape) && *state.get() == InGameState::Inventory {
-        next_state.set(InGameState::Running);
-    }
+    crate::ui::modal::toggle_screen(&keys, &state, &mut next_state, KeyCode::KeyI, InGameState::Inventory);
 }
 
 fn reset_inventory_selection(mut slot: ResMut<SelectedInventorySlot>) {
@@ -68,94 +59,56 @@ fn reset_inventory_selection(mut slot: ResMut<SelectedInventorySlot>) {
 }
 
 fn spawn_inventory_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
+    use crate::ui::modal::{spawn_modal, ModalConfig};
     let font = asset_server.load("fonts/Macondo-Regular.ttf");
 
-    commands
-        .spawn((
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                position_type: PositionType::Absolute,
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
+    spawn_modal(&mut commands, OnInventoryScreen, &font, &ModalConfig {
+        title: "INVENTORY",
+        title_color: Color::srgb(1.0, 0.84, 0.0),
+        footer: "↑/↓ Navigate  |  E - Equip/Unequip  |  U - Use  |  D - Drop  |  I/Esc - Close",
+        ..Default::default()
+    }, |panel, font| {
+        panel
+            .spawn(Node {
+                flex_direction: FlexDirection::Row,
+                flex_grow: 1.0,
+                column_gap: Val::Px(20.0),
                 ..default()
-            },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
-            ZIndex(200),
-            OnInventoryScreen,
-        ))
-        .with_children(|root| {
-            root.spawn((
-                Node {
-                    width: Val::Px(700.0),
-                    height: Val::Px(520.0),
+            })
+            .with_children(|cols| {
+                cols.spawn(Node {
                     flex_direction: FlexDirection::Column,
-                    padding: UiRect::all(Val::Px(20.0)),
-                    border: UiRect::all(Val::Px(2.0)),
+                    width: Val::Px(320.0),
                     ..default()
-                },
-                BackgroundColor(Color::BLACK),
-                BorderColor::all(Color::WHITE),
-            ))
-            .with_children(|panel| {
-                panel.spawn((
-                    Text::new("INVENTORY"),
-                    TextFont { font: font.clone(), font_size: 28.0, ..default() },
-                    TextColor(Color::srgb(1.0, 0.84, 0.0)),
-                ));
+                })
+                .with_children(|list| {
+                    for i in 0..20 {
+                        list.spawn((
+                            Text::new(format!("{:2}. ---", i + 1)),
+                            TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                            TextColor(Color::srgb(0.5, 0.5, 0.5)),
+                            InventorySlotText(i),
+                        ));
+                    }
+                });
 
-                panel.spawn(Node { height: Val::Px(10.0), ..default() });
-
-                panel
-                    .spawn(Node {
-                        flex_direction: FlexDirection::Row,
-                        flex_grow: 1.0,
-                        column_gap: Val::Px(20.0),
-                        ..default()
-                    })
-                    .with_children(|cols| {
-                        cols.spawn(Node {
-                            flex_direction: FlexDirection::Column,
-                            width: Val::Px(320.0),
-                            ..default()
-                        })
-                        .with_children(|list| {
-                            for i in 0..20 {
-                                list.spawn((
-                                    Text::new(format!("{:2}. ---", i + 1)),
-                                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
-                                    TextColor(Color::srgb(0.5, 0.5, 0.5)),
-                                    InventorySlotText(i),
-                                ));
-                            }
-                        });
-
-                        cols.spawn(Node {
-                            flex_direction: FlexDirection::Column,
-                            flex_grow: 1.0,
-                            border: UiRect::all(Val::Px(1.0)),
-                            padding: UiRect::all(Val::Px(10.0)),
-                            ..default()
-                        })
-                        .with_children(|detail| {
-                            detail.spawn((
-                                Text::new("Select an item to\nsee its details."),
-                                TextFont { font: font.clone(), font_size: 16.0, ..default() },
-                                TextColor(Color::srgb(0.6, 0.6, 0.6)),
-                                InventoryDetailText,
-                            ));
-                        });
-                    });
-
-                panel.spawn(Node { height: Val::Px(10.0), ..default() });
-
-                panel.spawn((
-                    Text::new("↑/↓ Navigate  |  E - Equip/Unequip  |  U - Use  |  D - Drop  |  I/Esc - Close"),
-                    TextFont { font: font.clone(), font_size: 14.0, ..default() },
-                    TextColor(Color::srgb(0.5, 0.5, 0.5)),
-                ));
+                cols.spawn(Node {
+                    flex_direction: FlexDirection::Column,
+                    flex_grow: 1.0,
+                    border: UiRect::all(Val::Px(1.0)),
+                    padding: UiRect::all(Val::Px(10.0)),
+                    ..default()
+                })
+                .with_children(|detail| {
+                    detail.spawn((
+                        Text::new("Select an item to\nsee its details."),
+                        TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                        TextColor(Color::srgb(0.6, 0.6, 0.6)),
+                        InventoryDetailText,
+                    ));
+                });
             });
-        });
+    });
 }
 
 /// Handles inventory navigation and item actions.
@@ -180,22 +133,20 @@ fn update_inventory_ui(
     let item_count = inv.items.len();
 
     // Navigation (no turn cost, stays in inventory)
-    if keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyK) {
-        if item_count > 0 && slot.0 > 0 {
+    if (keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyK))
+        && item_count > 0 && slot.0 > 0 {
             slot.0 -= 1;
         }
-    }
-    if keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::KeyJ) {
-        if item_count > 0 && slot.0 + 1 < item_count {
+    if (keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::KeyJ))
+        && item_count > 0 && slot.0 + 1 < item_count {
             slot.0 += 1;
         }
-    }
 
     // Equip / Unequip — costs a turn
-    if keys.just_pressed(KeyCode::KeyE) {
-        if let Some(&item_entity) = inv.items.get(slot.0) {
-            if let Ok((_, props, is_equipped, _)) = item_query.get(item_entity) {
-                if Equipment::slot_for(props).is_some() {
+    if keys.just_pressed(KeyCode::KeyE)
+        && let Some(&item_entity) = inv.items.get(slot.0)
+            && let Ok((_, props, is_equipped, _)) = item_query.get(item_entity)
+                && Equipment::slot_for(props).is_some() {
                     let action = if is_equipped {
                         Action::UnequipItem { item: item_entity }
                     } else {
@@ -206,13 +157,10 @@ fn update_inventory_ui(
                     next_turn.set(TurnState::Processing);
                     return;
                 }
-            }
-        }
-    }
 
     // Drop — costs a turn
-    if keys.just_pressed(KeyCode::KeyD) {
-        if let Some(&item_entity) = inv.items.get(slot.0) {
+    if keys.just_pressed(KeyCode::KeyD)
+        && let Some(&item_entity) = inv.items.get(slot.0) {
             if slot.0 > 0 && slot.0 >= item_count.saturating_sub(1) {
                 slot.0 -= 1;
             }
@@ -221,13 +169,12 @@ fn update_inventory_ui(
             next_turn.set(TurnState::Processing);
             return;
         }
-    }
 
     // Use / consume — costs a turn (consumables only)
-    if keys.just_pressed(KeyCode::KeyU) {
-        if let Some(&item_entity) = inv.items.get(slot.0) {
-            if let Ok((_, props, _, _)) = item_query.get(item_entity) {
-                if props.kind == ItemKind::Consumable || props.kind == ItemKind::Spellbook {
+    if keys.just_pressed(KeyCode::KeyU)
+        && let Some(&item_entity) = inv.items.get(slot.0)
+            && let Ok((_, props, _, _)) = item_query.get(item_entity)
+                && (props.kind == ItemKind::Consumable || props.kind == ItemKind::Spellbook) {
                     if slot.0 > 0 && slot.0 >= item_count.saturating_sub(1) {
                         slot.0 -= 1;
                     }
@@ -236,9 +183,6 @@ fn update_inventory_ui(
                     next_turn.set(TurnState::Processing);
                     return;
                 }
-            }
-        }
-    }
 
     // Update slot list
     for (mut text, mut color, slot_marker) in &mut slot_texts {
@@ -282,11 +226,10 @@ fn update_inventory_ui(
                     format!("{} — {}", kind_str, props.rarity),
                 ];
 
-                if let Some(s) = stack {
-                    if s.max_stack > 1 {
+                if let Some(s) = stack
+                    && s.max_stack > 1 {
                         lines.push(format!("Quantity: {}/{}", s.count, s.max_stack));
                     }
-                }
 
                 if is_equipped {
                     lines.push("[ EQUIPPED ]".to_string());
@@ -319,11 +262,4 @@ fn update_inventory_ui(
     }
 }
 
-fn despawn_inventory_ui(
-    mut commands: Commands,
-    query: Query<Entity, With<OnInventoryScreen>>,
-) {
-    for entity in query.iter() {
-        commands.entity(entity).despawn();
-    }
-}
+// Despawn handled by modal::despawn_screen::<OnInventoryScreen>

@@ -7,7 +7,7 @@ use crate::{
     components::{Name, Position},
     constants::BASE_ACTION_COST,
     game::{
-        actions::ActionFinishedEvent,
+        actions::{ActionFinishedEvent, finish_turn},
         combat::{ApplyDamageMessage, DamageSource, DamageType, GameRng, HealMessage},
         particles::{ParticleRequest, damage_type_color, grid_to_world_center},
         spells::{SpellEffect, SpellRegistry, roll_dice_expr},
@@ -41,12 +41,6 @@ pub struct ActiveSpells {
 pub const MAX_SPELL_SLOTS: usize = 6;
 
 impl ActiveSpells {
-    pub fn new() -> Self {
-        Self {
-            slots: vec![None; MAX_SPELL_SLOTS],
-        }
-    }
-
     pub fn with_slots(count: usize) -> Self {
         Self {
             slots: vec![None; count.min(MAX_SPELL_SLOTS)],
@@ -96,40 +90,130 @@ impl SpellCooldowns {
     }
 }
 
-/// +50% speed (delay x 0.5) for N turns.
-#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
-#[reflect(Component)]
-pub struct Hasted {
+// =====================================================================
+// Unified Status Effects
+// =====================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Reflect)]
+pub enum StatusEffectKind {
+    Hasted,
+    Slowed,
+    Stunned,
+    Burning { damage_per_turn: i32 },
+    SpiritShielded,
+    Enraged,
+}
+
+impl StatusEffectKind {
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Hasted => "Hasted",
+            Self::Slowed => "Slowed",
+            Self::Stunned => "Stunned",
+            Self::Burning { .. } => "Burning",
+            Self::SpiritShielded => "Spirit Shield",
+            Self::Enraged => "Enraged",
+        }
+    }
+
+    pub fn color(&self) -> Color {
+        match self {
+            Self::Hasted => Color::srgb(1.0, 1.0, 0.3),
+            Self::Slowed => Color::srgb(0.5, 0.5, 0.9),
+            Self::Stunned => Color::srgb(1.0, 1.0, 0.0),
+            Self::Burning { .. } => Color::srgb(1.0, 0.5, 0.1),
+            Self::SpiritShielded => Color::srgb(0.4, 0.6, 1.0),
+            Self::Enraged => Color::srgb(0.9, 0.2, 0.2),
+        }
+    }
+
+    fn same_kind(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
+pub struct ActiveStatusEffect {
+    pub kind: StatusEffectKind,
     pub turns_remaining: u32,
 }
 
-/// -50% speed (delay x 1.5) for N turns.
-#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
+/// Unified container for all status effects on an entity.
+#[derive(Component, Debug, Clone, Default, Serialize, Deserialize, Reflect)]
 #[reflect(Component)]
-pub struct Slowed {
-    pub turns_remaining: u32,
-}
+pub struct StatusEffects(pub Vec<ActiveStatusEffect>);
 
-/// Stunned: entity skips its turn.
-#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
-#[reflect(Component)]
-pub struct Stunned {
-    pub turns_remaining: u32,
-}
+impl StatusEffects {
+    /// Add or refresh a status effect. If the same kind already exists, takes the longer duration.
+    pub fn add(&mut self, kind: StatusEffectKind, turns: u32) {
+        if let Some(existing) = self.0.iter_mut().find(|e| e.kind.same_kind(&kind)) {
+            existing.turns_remaining = existing.turns_remaining.max(turns);
+            if let StatusEffectKind::Burning { damage_per_turn: ref mut old } = existing.kind
+                && let StatusEffectKind::Burning { damage_per_turn: new } = kind {
+                    *old = (*old).max(new);
+                }
+        } else {
+            self.0.push(ActiveStatusEffect { kind, turns_remaining: turns });
+        }
+    }
 
-/// Fire damage-over-time effect.
-#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
-#[reflect(Component)]
-pub struct Burning {
-    pub damage_per_turn: i32,
-    pub turns_remaining: u32,
-}
+    pub fn remove_kind(&mut self, matcher: impl Fn(&StatusEffectKind) -> bool) {
+        self.0.retain(|e| !matcher(&e.kind));
+    }
 
-/// Spirit Shield: damage is absorbed by mana (1:1) for N turns.
-#[derive(Component, Debug, Clone, Reflect, Serialize, Deserialize)]
-#[reflect(Component)]
-pub struct SpiritShielded {
-    pub turns_remaining: u32,
+    pub fn is_stunned(&self) -> bool {
+        self.0.iter().any(|e| matches!(e.kind, StatusEffectKind::Stunned))
+    }
+
+    pub fn is_hasted(&self) -> bool {
+        self.0.iter().any(|e| matches!(e.kind, StatusEffectKind::Hasted))
+    }
+
+    pub fn is_slowed(&self) -> bool {
+        self.0.iter().any(|e| matches!(e.kind, StatusEffectKind::Slowed))
+    }
+
+    pub fn is_enraged(&self) -> bool {
+        self.0.iter().any(|e| matches!(e.kind, StatusEffectKind::Enraged))
+    }
+
+    pub fn has_spirit_shield(&self) -> bool {
+        self.0.iter().any(|e| matches!(e.kind, StatusEffectKind::SpiritShielded))
+    }
+
+    pub fn burning_damage(&self) -> Option<i32> {
+        self.0.iter().find_map(|e| match e.kind {
+            StatusEffectKind::Burning { damage_per_turn } => Some(damage_per_turn),
+            _ => None,
+        })
+    }
+
+    pub fn speed_delay_multiplier(&self) -> f32 {
+        let mut delay = 1.0f32;
+        if self.is_hasted() { delay *= 0.5; }
+        if self.is_slowed() { delay *= 1.5; }
+        delay.clamp(0.5, 2.0)
+    }
+
+    /// Tick all effects, decrementing turns_remaining. Returns expired effects.
+    pub fn tick_all(&mut self) -> Vec<StatusEffectKind> {
+        let mut expired = Vec::new();
+        self.0.retain_mut(|effect| {
+            effect.turns_remaining = effect.turns_remaining.saturating_sub(1);
+            if effect.turns_remaining == 0 {
+                expired.push(effect.kind);
+                false
+            } else {
+                true
+            }
+        });
+        expired
+    }
+
+    /// Returns display entries for UI rendering: (name, color) pairs.
+    pub fn display_entries(&self) -> Vec<(&str, Color)> {
+        self.0.iter().map(|e| (e.kind.name(), e.kind.color())).collect()
+    }
 }
 
 // =====================================================================
@@ -156,9 +240,8 @@ pub fn handle_cast_spell(
     mut messages: MessageReader<CastSpellMessage>,
     spell_registry_handle: Res<SpellRegistryHandle>,
     spell_registries: Res<Assets<SpellRegistry>>,
-    caster_ro: Query<(&ActiveSpells, Option<&Name>, Has<crate::game::shrines::QuickCastAbility>, Has<crate::game::shrines::BloodMageAbility>)>,
-    mut caster_resources: Query<(&mut Mana, &mut SpellCooldowns)>,
-    mut caster_health: Query<&mut crate::game::combat::Health>,
+    caster_ro: Query<(&ActiveSpells, Option<&Name>)>,
+    mut caster_resources: Query<(&mut Mana, &mut SpellCooldowns, &mut crate::game::combat::Health)>,
     positions: Query<&Position>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
@@ -168,6 +251,7 @@ pub fn handle_cast_spell(
     mut game_rng: ResMut<GameRng>,
     all_positions: Query<(Entity, &Position)>,
     map: Res<Map>,
+    mut status_query: Query<&mut StatusEffects>,
 ) {
     let Some(registry) = spell_registries.get(&spell_registry_handle.0) else {
         return;
@@ -179,7 +263,7 @@ pub fn handle_cast_spell(
         .collect();
 
     for (caster_entity, slot, target_entity, target_pos) in messages {
-        let Ok((active_spells, caster_name, has_quick_cast, has_blood_mage)) = caster_ro.get(caster_entity) else {
+        let Ok((active_spells, caster_name)) = caster_ro.get(caster_entity) else {
             continue;
         };
 
@@ -187,20 +271,14 @@ pub fn handle_cast_spell(
             Some(id) => id.clone(),
             None => {
                 log_writer.write(GameLogMessage(format!("No spell in slot {}.", slot + 1)));
-                finish_writer.write(ActionFinishedEvent {
-                    entity: caster_entity,
-                    base_cost: BASE_ACTION_COST,
-                });
+                finish_turn(&mut commands, &mut finish_writer, caster_entity, BASE_ACTION_COST);
                 continue;
             }
         };
 
         let Some(spell) = registry.spells.get(&spell_id) else {
             log_writer.write(GameLogMessage(format!("Unknown spell: {}.", spell_id)));
-            finish_writer.write(ActionFinishedEvent {
-                entity: caster_entity,
-                base_cost: BASE_ACTION_COST,
-            });
+            finish_turn(&mut commands, &mut finish_writer, caster_entity, BASE_ACTION_COST);
             continue;
         };
 
@@ -209,64 +287,28 @@ pub fn handle_cast_spell(
             .map(|n| n.0.clone())
             .unwrap_or_else(|| "Someone".to_string());
 
-        // Check mana/HP and cooldown before acting.
+        // Check mana and cooldown before acting.
         {
-            let Ok((mana, cooldowns)) = caster_resources.get(caster_entity) else {
+            let Ok((mana, cooldowns, _health)) = caster_resources.get(caster_entity) else {
                 continue;
             };
-            if has_blood_mage {
-                // BloodMage: spells cost HP instead of mana (ceil(mana_cost / 2))
-                let hp_cost = (spell.mana_cost + 1) / 2;
-                let current_hp = caster_health
-                    .get(caster_entity)
-                    .map(|h| h.current)
-                    .unwrap_or(0);
-                if current_hp <= hp_cost {
-                    log_writer.write(GameLogMessage(format!(
-                        "Not enough HP to blood-cast {} (need {} HP).",
-                        spell.name, hp_cost
-                    )));
-                    finish_writer.write(ActionFinishedEvent {
-                        entity: caster_entity,
-                        base_cost: BASE_ACTION_COST,
-                    });
-                    continue;
-                }
-            } else if mana.current < spell.mana_cost {
+            if mana.current < spell.mana_cost {
                 log_writer.write(GameLogMessage(format!(
                     "Not enough mana to cast {} ({}/{} MP).",
                     spell.name, mana.current, mana.max
                 )));
-                finish_writer.write(ActionFinishedEvent {
-                    entity: caster_entity,
-                    base_cost: BASE_ACTION_COST,
-                });
+                finish_turn(&mut commands, &mut finish_writer, caster_entity, BASE_ACTION_COST);
                 continue;
             }
             if !cooldowns.is_ready(&spell_id) {
                 log_writer.write(GameLogMessage(format!("{} is not ready yet.", spell.name)));
-                finish_writer.write(ActionFinishedEvent {
-                    entity: caster_entity,
-                    base_cost: BASE_ACTION_COST,
-                });
+                finish_turn(&mut commands, &mut finish_writer, caster_entity, BASE_ACTION_COST);
                 continue;
             }
         }
 
-        // Deduct mana (or HP for BloodMage) and set cooldown.
-        if has_blood_mage {
-            let hp_cost = (spell.mana_cost + 1) / 2;
-            if let Ok(mut health) = caster_health.get_mut(caster_entity) {
-                health.current -= hp_cost;
-                log_writer.write(GameLogMessage(format!(
-                    "You pay {} HP to blood-cast {}.",
-                    hp_cost, spell.name
-                )));
-            }
-            if let Ok((_, mut cooldowns)) = caster_resources.get_mut(caster_entity) {
-                cooldowns.set(&spell_id, spell.cooldown);
-            }
-        } else if let Ok((mut mana, mut cooldowns)) = caster_resources.get_mut(caster_entity) {
+        // Deduct mana and set cooldown.
+        if let Ok((mut mana, mut cooldowns, _)) = caster_resources.get_mut(caster_entity) {
             mana.current -= spell.mana_cost;
             cooldowns.set(&spell_id, spell.cooldown);
         }
@@ -299,23 +341,31 @@ pub fn handle_cast_spell(
                         &mut damage_writer, &mut log_writer, &mut particle_writer);
                 }
                 SpellEffect::ApplyHaste { duration } => {
-                    effect_apply_haste(&mut commands, target_entity, *duration, &mut log_writer);
+                    if let Ok(mut effects) = status_query.get_mut(target_entity) {
+                        effect_apply_haste(&mut effects, *duration, &mut log_writer);
+                    }
                 }
                 SpellEffect::ApplySlow { duration } => {
-                    effect_apply_slow(&mut commands, target_entity, *duration, &mut log_writer);
+                    if let Ok(mut effects) = status_query.get_mut(target_entity) {
+                        effect_apply_slow(&mut effects, *duration, &mut log_writer);
+                    }
                 }
                 SpellEffect::DrainMana { amount, .. } => {
                     effect_drain_mana(&mut commands, caster_entity, target_entity, *amount, &caster_label);
                 }
                 SpellEffect::SpiritShield { duration } => {
-                    effect_spirit_shield(&mut commands, caster_entity, *duration, &caster_label, &mut log_writer);
+                    if let Ok(mut effects) = status_query.get_mut(caster_entity) {
+                        effect_spirit_shield(&mut effects, *duration, &caster_label, &mut log_writer);
+                    }
                 }
                 SpellEffect::Teleport { range } => {
                     effect_teleport(&mut commands, caster_entity, *range, target_pos, &caster_label,
                         &mut game_rng, &map, &mut log_writer);
                 }
                 SpellEffect::ApplyEnrage { duration } => {
-                    effect_apply_enrage(&mut commands, target_entity, *duration, &caster_label, &mut log_writer);
+                    if let Ok(mut effects) = status_query.get_mut(target_entity) {
+                        effect_apply_enrage(&mut effects, *duration, &caster_label, &mut log_writer);
+                    }
                 }
                 SpellEffect::SummonAlly { monster, count } => {
                     if let Ok(pos) = positions.get(caster_entity) {
@@ -330,17 +380,7 @@ pub fn handle_cast_spell(
             }
         }
 
-        // QuickCast: spells cost 50% action time
-        let spell_cost = if has_quick_cast {
-            BASE_ACTION_COST / 2
-        } else {
-            BASE_ACTION_COST
-        };
-
-        finish_writer.write(ActionFinishedEvent {
-            entity: caster_entity,
-            base_cost: spell_cost,
-        });
+        finish_turn(&mut commands, &mut finish_writer, caster_entity, BASE_ACTION_COST);
     }
 }
 
@@ -530,32 +570,22 @@ fn effect_chain_damage(
 }
 
 fn effect_apply_haste(
-    commands: &mut Commands,
-    target: Entity,
+    effects: &mut StatusEffects,
     duration: u32,
     log_writer: &mut MessageWriter<GameLogMessage>,
 ) {
-    commands.entity(target).insert(Hasted { turns_remaining: duration }).remove::<Slowed>();
+    effects.remove_kind(|k| matches!(k, StatusEffectKind::Slowed));
+    effects.add(StatusEffectKind::Hasted, duration);
     log_writer.write(GameLogMessage("Haste granted!".to_string()));
 }
 
 fn effect_apply_slow(
-    commands: &mut Commands,
-    target: Entity,
+    effects: &mut StatusEffects,
     duration: u32,
     log_writer: &mut MessageWriter<GameLogMessage>,
 ) {
-    commands.queue(move |world: &mut World| {
-        if let Some(mut existing) = world.get_mut::<Slowed>(target) {
-            existing.turns_remaining = existing.turns_remaining.max(duration);
-        } else if let Ok(mut entity_mut) = world.get_entity_mut(target) {
-            entity_mut.insert(Slowed { turns_remaining: duration });
-        }
-        // Remove Hasted regardless
-        if let Ok(mut entity_mut) = world.get_entity_mut(target) {
-            entity_mut.remove::<Hasted>();
-        }
-    });
+    effects.remove_kind(|k| matches!(k, StatusEffectKind::Hasted));
+    effects.add(StatusEffectKind::Slowed, duration);
     log_writer.write(GameLogMessage("Target is slowed!".to_string()));
 }
 
@@ -578,23 +608,21 @@ fn effect_drain_mana(
                 0
             }
         };
-        if actual_drain > 0 {
-            if let Some(mut caster_mana) = world.get_mut::<Mana>(caster) {
+        if actual_drain > 0
+            && let Some(mut caster_mana) = world.get_mut::<Mana>(caster) {
                 caster_mana.current = (caster_mana.current + actual_drain).min(caster_mana.max);
             }
-        }
         world.write_message(GameLogMessage(format!("{} drains {} mana!", label, actual_drain)));
     });
 }
 
 fn effect_spirit_shield(
-    commands: &mut Commands,
-    caster: Entity,
+    effects: &mut StatusEffects,
     duration: u32,
     caster_label: &str,
     log_writer: &mut MessageWriter<GameLogMessage>,
 ) {
-    commands.entity(caster).insert(SpiritShielded { turns_remaining: duration });
+    effects.add(StatusEffectKind::SpiritShielded, duration);
     log_writer.write(GameLogMessage(format!(
         "{} is shielded by spirit energy! (mana absorbs damage for {} turns)",
         caster_label, duration
@@ -629,13 +657,12 @@ fn effect_teleport(
 }
 
 fn effect_apply_enrage(
-    commands: &mut Commands,
-    target: Entity,
+    effects: &mut StatusEffects,
     duration: u32,
     caster_label: &str,
     log_writer: &mut MessageWriter<GameLogMessage>,
 ) {
-    commands.entity(target).insert(crate::game::abilities::Enraged { turns_remaining: duration });
+    effects.add(StatusEffectKind::Enraged, duration);
     log_writer.write(GameLogMessage(format!(
         "{} enters a rage! (+50% damage for {} turns)",
         caster_label, duration
@@ -675,129 +702,64 @@ pub fn tick_cooldowns_system(
     }
 }
 
-/// Tick haste/slow: decrement durations, remove expired components.
-pub fn tick_speed_effects_system(
+/// Unified tick system for all status effects via `StatusEffects` component.
+pub fn tick_status_effects_system(
     mut turn_end: MessageReader<TurnEndEvent>,
-    mut commands: Commands,
-    mut hasted: Query<(Entity, &mut Hasted)>,
-    mut slowed: Query<(Entity, &mut Slowed)>,
-) {
-    for _ in turn_end.read() {
-        for (entity, mut h) in hasted.iter_mut() {
-            h.turns_remaining = h.turns_remaining.saturating_sub(1);
-            if h.turns_remaining == 0 {
-                commands.entity(entity).remove::<Hasted>();
-            }
-        }
-        for (entity, mut s) in slowed.iter_mut() {
-            s.turns_remaining = s.turns_remaining.saturating_sub(1);
-            if s.turns_remaining == 0 {
-                commands.entity(entity).remove::<Slowed>();
-            }
-        }
-    }
-}
-
-/// Apply haste/slow speed multipliers.
-pub fn apply_speed_effects_system(
-    mut query: Query<
-        (
-            &mut crate::game::actions::SpeedStats,
-            Option<&Hasted>,
-            Option<&Slowed>,
-        ),
-    >,
-) {
-    for (mut speed, hasted, slowed) in query.iter_mut() {
-        let mut delay = 1.0f32;
-        if hasted.is_some() {
-            delay *= 0.5;
-        }
-        if slowed.is_some() {
-            delay *= 1.5;
-        }
-        speed.delay = delay.clamp(0.5, 2.0);
-    }
-}
-
-/// Tick stun duration: decrement, remove when expired.
-pub fn tick_stunned_system(
-    mut turn_end: MessageReader<TurnEndEvent>,
-    mut commands: Commands,
-    mut query: Query<(Entity, &mut Stunned)>,
-    mut log_writer: MessageWriter<GameLogMessage>,
-    names: Query<&Name>,
-) {
-    for _ in turn_end.read() {
-        for (entity, mut stunned) in query.iter_mut() {
-            stunned.turns_remaining = stunned.turns_remaining.saturating_sub(1);
-            if stunned.turns_remaining == 0 {
-                commands.entity(entity).remove::<Stunned>();
-                if let Ok(name) = names.get(entity) {
-                    log_writer.write(GameLogMessage(format!(
-                        "{} is no longer stunned.",
-                        name.0
-                    )));
-                }
-            }
-        }
-    }
-}
-
-/// Process burning damage each turn.
-pub fn process_burning_system(
-    mut turn_end: MessageReader<TurnEndEvent>,
-    mut commands: Commands,
-    mut query: Query<(Entity, &mut Burning, &Name)>,
+    mut query: Query<(Entity, &mut StatusEffects, &Name)>,
     mut damage_writer: MessageWriter<ApplyDamageMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     for _ in turn_end.read() {
-        for (entity, mut burning, name) in query.iter_mut() {
-            log_writer.write(GameLogMessage(format!(
-                "{} takes {} fire damage from burning!",
-                name.0, burning.damage_per_turn
-            )));
-            damage_writer.write(ApplyDamageMessage {
-                attacker: entity,
-                target: entity,
-                final_damage: burning.damage_per_turn,
-                damage_type: DamageType::Fire,
-                source: DamageSource::Environment,
-            });
-            burning.turns_remaining = burning.turns_remaining.saturating_sub(1);
-            if burning.turns_remaining == 0 {
-                commands.entity(entity).remove::<Burning>();
+        for (entity, mut effects, name) in query.iter_mut() {
+            // Process burning damage before ticking
+            if let Some(dmg) = effects.burning_damage() {
                 log_writer.write(GameLogMessage(format!(
-                    "{} is no longer burning.",
-                    name.0
+                    "{} takes {} fire damage from burning!",
+                    name.0, dmg
                 )));
+                damage_writer.write(ApplyDamageMessage {
+                    attacker: entity,
+                    target: entity,
+                    final_damage: dmg,
+                    damage_type: DamageType::Fire,
+                    source: DamageSource::Environment,
+                });
+            }
+
+            let expired = effects.tick_all();
+            for kind in expired {
+                match kind {
+                    StatusEffectKind::Stunned => {
+                        log_writer.write(GameLogMessage(format!(
+                            "{} is no longer stunned.",
+                            name.0
+                        )));
+                    }
+                    StatusEffectKind::SpiritShielded => {
+                        log_writer.write(GameLogMessage(format!(
+                            "{}'s spirit shield fades.",
+                            name.0
+                        )));
+                    }
+                    StatusEffectKind::Burning { .. } => {
+                        log_writer.write(GameLogMessage(format!(
+                            "{} is no longer burning.",
+                            name.0
+                        )));
+                    }
+                    _ => {}
+                }
             }
         }
     }
 }
 
-/// Tick spirit shield duration: decrement, remove when expired.
-pub fn tick_spirit_shield_system(
-    mut turn_end: MessageReader<TurnEndEvent>,
-    mut commands: Commands,
-    mut query: Query<(Entity, &mut SpiritShielded)>,
-    mut log_writer: MessageWriter<GameLogMessage>,
-    names: Query<&Name>,
+/// Apply speed multipliers from unified StatusEffects.
+pub fn apply_speed_effects_system(
+    mut query: Query<(&mut crate::game::actions::SpeedStats, &StatusEffects)>,
 ) {
-    for _ in turn_end.read() {
-        for (entity, mut shield) in query.iter_mut() {
-            shield.turns_remaining = shield.turns_remaining.saturating_sub(1);
-            if shield.turns_remaining == 0 {
-                commands.entity(entity).remove::<SpiritShielded>();
-                if let Ok(name) = names.get(entity) {
-                    log_writer.write(GameLogMessage(format!(
-                        "{}'s spirit shield fades.",
-                        name.0
-                    )));
-                }
-            }
-        }
+    for (mut speed, effects) in query.iter_mut() {
+        speed.delay = effects.speed_delay_multiplier();
     }
 }
 
@@ -883,11 +845,9 @@ impl Plugin for MagicPlugin {
         app.register_type::<KnownSpells>()
             .register_type::<ActiveSpells>()
             .register_type::<ManaRegen>()
-            .register_type::<Hasted>()
-            .register_type::<Slowed>()
-            .register_type::<Stunned>()
-            .register_type::<Burning>()
-            .register_type::<SpiritShielded>()
+            .register_type::<StatusEffects>()
+            .register_type::<StatusEffectKind>()
+            .register_type::<ActiveStatusEffect>()
             .add_message::<CastSpellMessage>()
             .add_systems(
                 Update,
@@ -898,14 +858,171 @@ impl Plugin for MagicPlugin {
                 (
                     mana_regen_system,
                     tick_cooldowns_system,
-                    tick_speed_effects_system,
-                    tick_stunned_system,
-                    process_burning_system,
-                    tick_spirit_shield_system,
+                    tick_status_effects_system,
                     apply_speed_effects_system,
                     process_pending_summon,
                 )
                     .run_if(in_state(AppState::InGame)),
             );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_effects() -> StatusEffects {
+        StatusEffects::default()
+    }
+
+    #[test]
+    fn add_new_effect() {
+        let mut fx = empty_effects();
+        fx.add(StatusEffectKind::Hasted, 5);
+        assert!(fx.is_hasted());
+        assert_eq!(fx.0.len(), 1);
+        assert_eq!(fx.0[0].turns_remaining, 5);
+    }
+
+    #[test]
+    fn add_refreshes_with_longer_duration() {
+        let mut fx = empty_effects();
+        fx.add(StatusEffectKind::Stunned, 3);
+        fx.add(StatusEffectKind::Stunned, 5);
+        assert_eq!(fx.0.len(), 1);
+        assert_eq!(fx.0[0].turns_remaining, 5);
+    }
+
+    #[test]
+    fn add_does_not_shorten_duration() {
+        let mut fx = empty_effects();
+        fx.add(StatusEffectKind::Stunned, 5);
+        fx.add(StatusEffectKind::Stunned, 2);
+        assert_eq!(fx.0[0].turns_remaining, 5);
+    }
+
+    #[test]
+    fn add_burning_takes_higher_damage() {
+        let mut fx = empty_effects();
+        fx.add(StatusEffectKind::Burning { damage_per_turn: 3 }, 5);
+        fx.add(StatusEffectKind::Burning { damage_per_turn: 7 }, 2);
+        assert_eq!(fx.0.len(), 1);
+        assert_eq!(fx.burning_damage(), Some(7));
+        assert_eq!(fx.0[0].turns_remaining, 5); // kept longer duration
+    }
+
+    #[test]
+    fn remove_kind_removes_matching() {
+        let mut fx = empty_effects();
+        fx.add(StatusEffectKind::Hasted, 5);
+        fx.add(StatusEffectKind::Slowed, 3);
+        fx.remove_kind(|k| matches!(k, StatusEffectKind::Slowed));
+        assert!(fx.is_hasted());
+        assert!(!fx.is_slowed());
+        assert_eq!(fx.0.len(), 1);
+    }
+
+    #[test]
+    fn is_queries_correct() {
+        let mut fx = empty_effects();
+        assert!(!fx.is_stunned());
+        assert!(!fx.is_hasted());
+        assert!(!fx.has_spirit_shield());
+        assert!(!fx.is_enraged());
+
+        fx.add(StatusEffectKind::Stunned, 1);
+        fx.add(StatusEffectKind::SpiritShielded, 3);
+        fx.add(StatusEffectKind::Enraged, 99);
+
+        assert!(fx.is_stunned());
+        assert!(fx.has_spirit_shield());
+        assert!(fx.is_enraged());
+        assert!(!fx.is_hasted());
+    }
+
+    #[test]
+    fn burning_damage_returns_none_when_absent() {
+        let fx = empty_effects();
+        assert_eq!(fx.burning_damage(), None);
+    }
+
+    #[test]
+    fn speed_delay_no_effects() {
+        let fx = empty_effects();
+        assert!((fx.speed_delay_multiplier() - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn speed_delay_hasted() {
+        let mut fx = empty_effects();
+        fx.add(StatusEffectKind::Hasted, 5);
+        assert!((fx.speed_delay_multiplier() - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn speed_delay_slowed() {
+        let mut fx = empty_effects();
+        fx.add(StatusEffectKind::Slowed, 5);
+        assert!((fx.speed_delay_multiplier() - 1.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn speed_delay_hasted_and_slowed_cancel() {
+        let mut fx = empty_effects();
+        fx.add(StatusEffectKind::Hasted, 5);
+        fx.add(StatusEffectKind::Slowed, 5);
+        // 0.5 * 1.5 = 0.75
+        assert!((fx.speed_delay_multiplier() - 0.75).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn tick_all_decrements_and_expires() {
+        let mut fx = empty_effects();
+        fx.add(StatusEffectKind::Hasted, 2);
+        fx.add(StatusEffectKind::Stunned, 1);
+
+        let expired = fx.tick_all();
+        assert_eq!(expired.len(), 1);
+        assert!(matches!(expired[0], StatusEffectKind::Stunned));
+        assert_eq!(fx.0.len(), 1);
+        assert!(fx.is_hasted());
+        assert_eq!(fx.0[0].turns_remaining, 1);
+
+        let expired = fx.tick_all();
+        assert_eq!(expired.len(), 1);
+        assert!(matches!(expired[0], StatusEffectKind::Hasted));
+        assert!(fx.0.is_empty());
+    }
+
+    #[test]
+    fn tick_all_empty_is_noop() {
+        let mut fx = empty_effects();
+        let expired = fx.tick_all();
+        assert!(expired.is_empty());
+    }
+
+    #[test]
+    fn display_entries_returns_all() {
+        let mut fx = empty_effects();
+        fx.add(StatusEffectKind::Hasted, 3);
+        fx.add(StatusEffectKind::Burning { damage_per_turn: 5 }, 2);
+        let entries = fx.display_entries();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].0, "Hasted");
+        assert_eq!(entries[1].0, "Burning");
+    }
+
+    #[test]
+    fn multiple_different_effects_coexist() {
+        let mut fx = empty_effects();
+        fx.add(StatusEffectKind::Hasted, 5);
+        fx.add(StatusEffectKind::Burning { damage_per_turn: 3 }, 3);
+        fx.add(StatusEffectKind::SpiritShielded, 4);
+        fx.add(StatusEffectKind::Enraged, 99);
+        assert_eq!(fx.0.len(), 4);
+        assert!(fx.is_hasted());
+        assert_eq!(fx.burning_damage(), Some(3));
+        assert!(fx.has_spirit_shield());
+        assert!(fx.is_enraged());
     }
 }

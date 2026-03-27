@@ -8,6 +8,7 @@ use crate::{
         actions::Action,
         actions::PendingPlayerAction,
         combat::Health,
+        factions::FactionMatrix,
         turns::TurnState,
         InGameState,
     },
@@ -55,6 +56,45 @@ impl Default for TargetingContext {
     }
 }
 
+// --- Spell targeting decision ---
+
+use crate::game::spells::{SpellData, SpellEffect, SpellTarget};
+
+/// Result of determining the targeting mode for a spell.
+pub enum SpellTargetingResult {
+    /// Enter targeting UI with this mode.
+    EnterTargeting(TargetingMode),
+    /// Cast immediately (self-targeting spell).
+    CastImmediate { slot: usize },
+}
+
+/// Determines the appropriate targeting mode for a spell based on its effects and target type.
+/// Centralizes the decision so `handle_player_input` doesn't need to know about spell internals.
+pub fn targeting_mode_for_spell(spell: &SpellData, slot: usize) -> SpellTargetingResult {
+    // Tile-targeted spells (e.g., Blink: Teleport with range > 0).
+    let tile_range = spell.effects.iter().find_map(|e| match e {
+        SpellEffect::Teleport { range } if *range > 0 => Some(*range),
+        _ => None,
+    });
+
+    if let Some(range) = tile_range {
+        return SpellTargetingResult::EnterTargeting(
+            TargetingMode::Tile { slot, range, radius: 0 },
+        );
+    }
+
+    match spell.target {
+        SpellTarget::Enemy => SpellTargetingResult::EnterTargeting(TargetingMode::Spell { slot }),
+        SpellTarget::Ally => SpellTargetingResult::EnterTargeting(
+            TargetingMode::SpellAlly { slot, include_self: false },
+        ),
+        SpellTarget::AllyOrSelf => SpellTargetingResult::EnterTargeting(
+            TargetingMode::SpellAlly { slot, include_self: true },
+        ),
+        SpellTarget::Castor => SpellTargetingResult::CastImmediate { slot },
+    }
+}
+
 // --- Components ---
 
 /// Marker component for the targeting cursor entity.
@@ -71,6 +111,7 @@ fn setup_targeting(
     monsters: Query<&Position, With<Monster>>,
     allies_query: Query<(&Position, &Faction, &Health), Without<Player>>,
     mut game_log: ResMut<GameLog>,
+    faction_matrix: Res<FactionMatrix>,
 ) {
     let Ok((player_pos, viewshed, player_faction)) = player_query.single() else {
         return;
@@ -82,7 +123,7 @@ fn setup_targeting(
             let best_ally = allies_query
                 .iter()
                 .filter(|(pos, faction, health)| {
-                    faction.0.is_allied_to(&player_faction.0)
+                    faction_matrix.is_allied_to(&faction.0.0, &player_faction.0.0)
                         && health.current < health.max
                         && viewshed.visible_tiles.contains(&Point::new(pos.x, pos.y))
                 })
@@ -174,6 +215,7 @@ fn handle_targeting_input(
     mut next_turn_state: ResMut<NextState<TurnState>>,
     mut next_ingame_state: ResMut<NextState<InGameState>>,
     mut log_writer: MessageWriter<GameLogMessage>,
+    faction_matrix: Res<FactionMatrix>,
 ) {
     let Ok(mut cursor_pos) = cursor_query.single_mut() else {
         return;
@@ -243,7 +285,7 @@ fn handle_targeting_input(
                     self_target.or_else(|| {
                         faction_entities.iter()
                             .find(|(_, pos, faction)| {
-                                pos.x == target_pos.x && pos.y == target_pos.y && pf.is_allied_to(&faction.0)
+                                pos.x == target_pos.x && pos.y == target_pos.y && faction_matrix.is_allied_to(&pf.0, &faction.0.0)
                             })
                             .map(|(e, _, _)| e)
                     })
@@ -333,5 +375,88 @@ impl Plugin for TargetingPlugin {
                     .chain()
                     .run_if(in_state(InGameState::Targeting)),
             );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::combat::DamageType;
+
+    fn make_spell(target: SpellTarget, effects: Vec<SpellEffect>) -> SpellData {
+        SpellData {
+            name: "Test".to_string(),
+            mana_cost: 5,
+            cooldown: 0,
+            description: String::new(),
+            target,
+            range: 5,
+            effects,
+            damage_type: DamageType::Physical,
+        }
+    }
+
+    #[test]
+    fn castor_spell_returns_cast_immediate() {
+        let spell = make_spell(SpellTarget::Castor, vec![SpellEffect::ApplyHaste { duration: 5 }]);
+        let result = targeting_mode_for_spell(&spell, 2);
+        assert!(matches!(result, SpellTargetingResult::CastImmediate { slot: 2 }));
+    }
+
+    #[test]
+    fn enemy_spell_enters_targeting() {
+        let spell = make_spell(SpellTarget::Enemy, vec![SpellEffect::Damage { dice: "2d6".into(), int_scaling: false }]);
+        let result = targeting_mode_for_spell(&spell, 0);
+        assert!(matches!(result, SpellTargetingResult::EnterTargeting(TargetingMode::Spell { slot: 0 })));
+    }
+
+    #[test]
+    fn ally_spell_excludes_self() {
+        let spell = make_spell(SpellTarget::Ally, vec![SpellEffect::Heal { dice: "1d8".into(), int_scaling: false }]);
+        let result = targeting_mode_for_spell(&spell, 1);
+        assert!(matches!(
+            result,
+            SpellTargetingResult::EnterTargeting(TargetingMode::SpellAlly { slot: 1, include_self: false })
+        ));
+    }
+
+    #[test]
+    fn ally_or_self_spell_includes_self() {
+        let spell = make_spell(SpellTarget::AllyOrSelf, vec![SpellEffect::Heal { dice: "1d8".into(), int_scaling: false }]);
+        let result = targeting_mode_for_spell(&spell, 3);
+        assert!(matches!(
+            result,
+            SpellTargetingResult::EnterTargeting(TargetingMode::SpellAlly { slot: 3, include_self: true })
+        ));
+    }
+
+    #[test]
+    fn teleport_with_range_enters_tile_targeting() {
+        let spell = make_spell(SpellTarget::Castor, vec![SpellEffect::Teleport { range: 5 }]);
+        let result = targeting_mode_for_spell(&spell, 4);
+        assert!(matches!(
+            result,
+            SpellTargetingResult::EnterTargeting(TargetingMode::Tile { slot: 4, range: 5, radius: 0 })
+        ));
+    }
+
+    #[test]
+    fn teleport_zero_range_is_immediate() {
+        let spell = make_spell(SpellTarget::Castor, vec![SpellEffect::Teleport { range: 0 }]);
+        let result = targeting_mode_for_spell(&spell, 0);
+        assert!(matches!(result, SpellTargetingResult::CastImmediate { slot: 0 }));
+    }
+
+    #[test]
+    fn teleport_overrides_target_type() {
+        let spell = make_spell(SpellTarget::Enemy, vec![
+            SpellEffect::Damage { dice: "1d4".into(), int_scaling: false },
+            SpellEffect::Teleport { range: 3 },
+        ]);
+        let result = targeting_mode_for_spell(&spell, 1);
+        assert!(matches!(
+            result,
+            SpellTargetingResult::EnterTargeting(TargetingMode::Tile { slot: 1, range: 3, .. })
+        ));
     }
 }

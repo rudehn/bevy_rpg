@@ -11,13 +11,10 @@ use crate::{
     components::{Equipped, FloorEntityMarker, InInventory, Inventory, Item, Monster, Name, Position, Prop, Viewshed},
     game::{
         AppState,
-        boss::TyrantAspects,
         combat::{Damage, Health},
-        essence::Essence,
         items::{Equipment, ItemProperties, ItemStack},
         magic::{
-            ActiveSpells, Hasted, KnownSpells, ManaRegen, Slowed,
-            SpellCooldowns, Stunned,
+            ActiveSpells, KnownSpells, ManaRegen, SpellCooldowns, StatusEffects,
         },
         spawner::spawn_item,
         squad::{SquadConfig, SquadId, SquadIdCounter, SquadLeader},
@@ -185,8 +182,6 @@ pub struct GameSaveData {
     pub floor_cache: HashMap<u32, SavedFloorData>,
     #[serde(default)]
     pub squad_id_counter: u64,
-    #[serde(default)]
-    pub tyrant_aspects: TyrantAspects,
 }
 
 // ---------------------------------------------------------------------------
@@ -263,8 +258,6 @@ pub struct PlayerSaveData {
     pub hp: i32,
     pub armor: i32,
     pub dodge: i32,
-    pub essence_current: i32,
-    pub essence_lifetime: i32,
     pub viewshed_range: i32,
     pub damage: String,
     pub mana_current: i32,
@@ -277,11 +270,7 @@ pub struct PlayerSaveData {
     #[serde(default)]
     pub spell_cooldowns: SpellCooldowns,
     #[serde(default)]
-    pub hasted: Option<Hasted>,
-    #[serde(default)]
-    pub slowed: Option<Slowed>,
-    #[serde(default)]
-    pub stunned: Option<Stunned>,
+    pub status_effects: StatusEffects,
     pub inventory: Vec<InventoryItemSave>,
 }
 
@@ -367,7 +356,6 @@ pub fn auto_save_system(
             &Health,
             &Armor,
             &Dodge,
-            &Essence,
             &Inventory,
             &Equipment,
             &Damage,
@@ -382,9 +370,7 @@ pub fn auto_save_system(
             &ActiveSpells,
             &ManaRegen,
             &SpellCooldowns,
-            Option<&Hasted>,
-            Option<&Slowed>,
-            Option<&Stunned>,
+            &StatusEffects,
         ),
         With<Player>,
     >,
@@ -393,11 +379,10 @@ pub fn auto_save_system(
     squad_counter: Res<SquadIdCounter>,
     floor_item_query: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     prop_query: Query<(&Position, &Name), With<Prop>>,
-    tyrant_aspects: Res<TyrantAspects>,
 ) {
     auto_save_pending.0 = false;
 
-    let Ok((pos, health, armor, dodge, essence, inventory, equipment, damage, viewshed, mana)) =
+    let Ok((pos, health, armor, dodge, inventory, equipment, damage, viewshed, mana)) =
         player_query.single()
     else {
         warn!("Auto-save skipped: no player entity found.");
@@ -455,24 +440,16 @@ pub fn auto_save_system(
         .collect();
 
     // Magic state
-    let (known_spells, active_spells, mana_regen, spell_cooldowns, hasted, slowed, stunned) =
-        if let Ok((ks, as_, mr, sc, h, sl, st)) = player_magic_query.single() {
-            (
-                ks.clone(),
-                as_.clone(),
-                mr.clone(),
-                sc.clone(),
-                h.cloned(),
-                sl.cloned(),
-                st.cloned(),
-            )
+    let (known_spells, active_spells, mana_regen, spell_cooldowns, status_effects) =
+        if let Ok((ks, as_, mr, sc, se)) = player_magic_query.single() {
+            (ks.clone(), as_.clone(), mr.clone(), sc.clone(), se.clone())
         } else {
             (
                 KnownSpells::default(),
                 ActiveSpells::default(),
                 ManaRegen::default(),
                 SpellCooldowns::default(),
-                None, None, None,
+                StatusEffects::default(),
             )
         };
 
@@ -499,8 +476,6 @@ pub fn auto_save_system(
             hp: health.current,
             armor: armor.0,
             dodge: dodge.0,
-            essence_current: essence.current,
-            essence_lifetime: essence.lifetime,
             viewshed_range: viewshed.range,
             damage: damage.0.clone(),
             mana_current: mana.current,
@@ -508,9 +483,7 @@ pub fn auto_save_system(
             active_spells,
             mana_regen,
             spell_cooldowns,
-            hasted,
-            slowed,
-            stunned,
+            status_effects,
             inventory: inv_saves,
         },
         monsters,
@@ -518,7 +491,6 @@ pub fn auto_save_system(
         props,
         floor_cache: floor_cache_save,
         squad_id_counter: squad_counter.0,
-        tyrant_aspects: tyrant_aspects.clone(),
     };
 
     match ron::ser::to_string_pretty(&save_data, ron::ser::PrettyConfig::default()) {
@@ -544,7 +516,6 @@ pub fn apply_player_load_system(
             &mut Health,
             &mut Armor,
             &mut Dodge,
-            &mut Essence,
             &mut Inventory,
             &mut Equipment,
             &mut Damage,
@@ -568,7 +539,6 @@ pub fn apply_player_load_system(
         mut health,
         mut armor,
         mut dodge,
-        mut essence,
         mut inventory,
         mut equipment,
         mut damage,
@@ -588,11 +558,9 @@ pub fn apply_player_load_system(
     // --- Health ---
     health.current = player_data.hp;
 
-    // --- Armor / Dodge / Essence ---
+    // --- Armor / Dodge ---
     armor.0 = player_data.armor;
     dodge.0 = player_data.dodge;
-    essence.current = player_data.essence_current;
-    essence.lifetime = player_data.essence_lifetime;
 
     // --- Damage / Viewshed / Mana ---
     damage.0 = player_data.damage.clone();
@@ -606,17 +574,8 @@ pub fn apply_player_load_system(
             .insert(player_data.known_spells.clone())
             .insert(player_data.active_spells.clone())
             .insert(player_data.mana_regen.clone())
-            .insert(player_data.spell_cooldowns.clone());
-
-        if let Some(ref h) = player_data.hasted {
-            commands.entity(player_entity).insert(h.clone());
-        }
-        if let Some(ref s) = player_data.slowed {
-            commands.entity(player_entity).insert(s.clone());
-        }
-        if let Some(ref st) = player_data.stunned {
-            commands.entity(player_entity).insert(st.clone());
-        }
+            .insert(player_data.spell_cooldowns.clone())
+            .insert(player_data.status_effects.clone());
     }
 
     // --- Inventory ---

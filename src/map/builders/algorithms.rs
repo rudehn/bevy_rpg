@@ -113,11 +113,10 @@ where T: Copy + Clone + PartialEq + Default
             if dx == 0 && dy == 0 { continue; }
             let nx = x + dx;
             let ny = y + dy;
-            if grid.in_bounds(nx, ny) {
-                if *grid.at(nx, ny).unwrap() == floor_val {
+            if grid.in_bounds(nx, ny)
+                && *grid.at(nx, ny).unwrap() == floor_val {
                     count += 1;
                 }
-            }
         }
     }
     count
@@ -149,10 +148,8 @@ where T: Copy + Clone + PartialEq + Default
                 if neighbors >= birth_threshold {
                     grid.data[idx] = floor_val; 
                 }
-            } else {
-                if neighbors < survival_threshold {
-                    grid.data[idx] = wall_val; 
-                }
+            } else if neighbors < survival_threshold {
+                grid.data[idx] = wall_val; 
             }
         }
     }
@@ -241,8 +238,8 @@ where T: Copy + Clone + PartialEq + Default
     for &idx in &region.tiles {
         keep[idx] = true;
     }
-    for idx in 0..grid.len() {
-        if !keep[idx] {
+    for (idx, &kept) in keep.iter().enumerate().take(grid.len()) {
+        if !kept {
             grid.data[idx] = wall_val;
         }
     }

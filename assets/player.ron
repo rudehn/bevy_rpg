@@ -2,6 +2,17 @@
     name: "You",
     sprite: "sprites/hero.png",
     damage: "1d4",
+    max_hp: 25,
+    regen_rate: 10,
+    armor: 0,
+    dodge: 0,
+    viewshed_range: 8,
+    starting_items: [
+        (name: "Short Bow"),
+        (name: "Arrow", count: 20),
+        (name: "Tome of Fire Dart"),
+        (name: "Tome of Spark"),
+    ],
     ascii_char: "@",
     ascii_fg: "#FFFFFF",
 )

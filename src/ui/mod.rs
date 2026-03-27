@@ -5,10 +5,8 @@ use crate::game::camera::UiCamera;
 use crate::game::{
     AppState,
     combat::{Health, HealthRegen},
-    essence::Essence,
     magic::{
-        ActiveSpells, Burning, Hasted, Slowed, SpellCooldowns,
-        SpiritShielded, Stunned,
+        ActiveSpells, SpellCooldowns, StatusEffects,
     },
     stats::Mana,
 };
@@ -25,7 +23,6 @@ pub mod menu;
 pub mod modal;
 pub mod monster_info;
 pub mod nearby;
-pub mod shrine_ui;
 pub mod spells;
 
 use character_info::CharacterInfoPlugin;
@@ -61,8 +58,6 @@ pub struct PlayerManaText;
 pub struct PlayerManaBar;
 #[derive(Component)]
 pub struct FloorDepthText;
-#[derive(Component)]
-pub struct PlayerEssenceText;
 /// Marker for a spell slot label in the HUD. Contains 0-based slot index.
 #[derive(Component)]
 pub struct SpellSlotHudLabel(pub usize);
@@ -208,19 +203,6 @@ fn spawn_player_stats_ui(
                 FloorDepthText,
             ));
 
-            // Essence text
-            parent.spawn((
-                Text::new("Essence: 0"),
-                TextFont {
-                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                    font_size: 16.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(0.6, 0.9, 0.6)),
-                Node { margin: UiRect::top(Val::Px(8.0)), ..default() },
-                PlayerEssenceText,
-            ));
-
             // Status effects container (dynamically populated)
             parent.spawn((
                 Node {
@@ -319,8 +301,8 @@ fn update_player_stats_ui(
 
     if let Ok(mut text) = health_text_query.single_mut() {
         let mut health_str = format!("Health: {}/{}", player_health.current, player_health.max);
-        if let Some(regen) = player_regen {
-            if regen.regen_rate > 0 {
+        if let Some(regen) = player_regen
+            && regen.regen_rate > 0 {
                 if regen.regen_rate >= 100 {
                     health_str.push_str(&format!(" (+{}/t)", regen.regen_rate / 100));
                 } else {
@@ -328,7 +310,6 @@ fn update_player_stats_ui(
                     health_str.push_str(&format!(" (+1/{}t)", turns));
                 }
             }
-        }
         text.0 = health_str;
     }
 
@@ -359,16 +340,6 @@ fn update_floor_ui(
     if !floor.is_changed() { return }
     if let Ok(mut text) = text_query.single_mut() {
         text.0 = format!("Floor: {}", floor.0);
-    }
-}
-
-fn update_essence_ui(
-    player_query: Query<&Essence, (With<Player>, Changed<Essence>)>,
-    mut text_query: Query<&mut Text, With<PlayerEssenceText>>,
-) {
-    let Ok(essence) = player_query.single() else { return };
-    if let Ok(mut text) = text_query.single_mut() {
-        text.0 = format!("Essence: {}", essence.current);
     }
 }
 
@@ -410,47 +381,10 @@ fn update_spell_slots_ui(
 }
 
 /// Collects active status effects as (label, color) tuples.
-pub fn collect_status_effects(
-    burning: Option<&Burning>,
-    slowed: Option<&Slowed>,
-    hasted: Option<&Hasted>,
-    stunned: Option<&Stunned>,
-    spirit_shielded: Option<&SpiritShielded>,
-) -> Vec<(String, Color)> {
-    let mut effects = Vec::new();
-
-    if let Some(b) = burning {
-        effects.push((
-            format!("Burning ({}t)", b.turns_remaining),
-            Color::srgb(1.0, 0.5, 0.1),
-        ));
-    }
-    if let Some(s) = slowed {
-        effects.push((
-            format!("Slowed ({}t)", s.turns_remaining),
-            Color::srgb(0.5, 0.5, 0.9),
-        ));
-    }
-    if let Some(h) = hasted {
-        effects.push((
-            format!("Hasted ({}t)", h.turns_remaining),
-            Color::srgb(1.0, 1.0, 0.3),
-        ));
-    }
-    if let Some(s) = stunned {
-        effects.push((
-            format!("Stunned ({}t)", s.turns_remaining),
-            Color::srgb(1.0, 1.0, 0.0),
-        ));
-    }
-    if let Some(ss) = spirit_shielded {
-        effects.push((
-            format!("Spirit Shield ({}t)", ss.turns_remaining),
-            Color::srgb(0.4, 0.6, 1.0),
-        ));
-    }
-
+pub fn collect_status_effects(effects: Option<&StatusEffects>) -> Vec<(String, Color)> {
     effects
+        .map(|e| e.display_entries().into_iter().map(|(n, c)| (n.to_string(), c)).collect())
+        .unwrap_or_default()
 }
 
 #[allow(clippy::type_complexity)]
@@ -459,28 +393,18 @@ fn update_player_status_effects_ui(
     asset_server: Res<AssetServer>,
     mut q_container: Query<(Entity, &mut PlayerStatusEffectsContainer)>,
     player_query: Query<
-        (
-            Option<&Burning>,
-            Option<&Slowed>,
-            Option<&Hasted>,
-            Option<&Stunned>,
-            Option<&SpiritShielded>,
-        ),
+        Option<&StatusEffects>,
         With<Player>,
     >,
 ) {
     let Ok((container, mut tracker)) = q_container.single_mut() else {
         return;
     };
-    let Ok((burning, slowed, hasted, stunned, spirit_shielded)) =
-        player_query.single()
-    else {
+    let Ok(status_effects) = player_query.single() else {
         return;
     };
 
-    let effects = collect_status_effects(
-        burning, slowed, hasted, stunned, spirit_shielded,
-    );
+    let effects = collect_status_effects(status_effects);
 
     // Quick hash: combine effect count with sum of turns to detect changes
     use std::hash::Hash;
@@ -563,7 +487,7 @@ impl Plugin for UiPlugin {
             .add_plugins((
                 CharacterInfoPlugin, CheatMenuPlugin, InventoryPlugin, LogHistoryPlugin,
                 MenuPlugin, NearbyPlugin, SpellsPlugin, monster_info::MonsterInfoPlugin,
-                hover_info::HoverInfoPlugin, shrine_ui::ShrineUiPlugin,
+                hover_info::HoverInfoPlugin,
             ))
             .add_systems(
                 OnEnter(AppState::InGame),
@@ -578,7 +502,6 @@ impl Plugin for UiPlugin {
                     update_player_stats_ui,
                     update_player_mana_ui,
                     update_floor_ui,
-                    update_essence_ui,
                     update_spell_slots_ui,
                     update_player_status_effects_ui,
                     add_log_message_system,

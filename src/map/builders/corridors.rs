@@ -86,6 +86,7 @@ impl NearestCorridors {
                 corridors.push(corridor);
             }
         }
-        build_data.corridors = Some(corridors);
+        // corridors vec computed but not stored — corridor data was unused downstream.
+        let _ = corridors;
     }
 }

@@ -18,9 +18,8 @@ use crate::{
         TurnManager,
         actions::SpeedStats,
         combat::{Damage, Health, HealthRegen},
-        essence::Essence,
         items::Equipment,
-        magic::{ActiveSpells, KnownSpells, ManaRegen, SpellCooldowns},
+        magic::{ActiveSpells, KnownSpells, ManaRegen, SpellCooldowns, StatusEffects},
         spawn_item,
         stats::{Armor, DamageBonus, Dodge, HitBonus, Mana},
     },
@@ -77,6 +76,10 @@ pub fn player_spawn_or_move_system(
     };
 
     if let Ok((player_entity, mut player_tf, mut player_pos)) = q_player.single_mut() {
+        info!(
+            "player_spawn_or_move: teleporting from ({}, {}) to ({}, {})",
+            player_pos.x, player_pos.y, spawn_point.0.x, spawn_point.0.y
+        );
         // Update Transform immediately so move_camera snaps this frame without
         // waiting for sync_entity_transforms, which may run before this system.
         player_tf.translation.x = spawn_point.0.x as f32 * GRID_SIZE.x;
@@ -152,13 +155,13 @@ pub fn player_spawn_or_move_system(
                     max: 10,
                 },
                 ManaRegen::default(),
-                Essence::default(),
             ))
             .insert((
                 KnownSpells::default(),
                 ActiveSpells::with_slots(1),
                 SpellCooldowns::default(),
-                Faction(FactionKind::Player),
+                StatusEffects::default(),
+                Faction(FactionKind::player()),
             ))
             .insert((
                 Sprite::from_atlas_image(

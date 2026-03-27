@@ -1,3 +1,5 @@
+use bevy::prelude::warn;
+
 use crate::{
     components::Position,
     map::{
@@ -45,16 +47,19 @@ impl StartPointBuilder {
     }
 
     fn build(&mut self, build_data: &mut BuilderMap) {
-        let rooms = build_data.require_rooms("StartPointBuilder");
-        let first_room = rooms.first().unwrap_or_else(||
-            panic!("StartPointBuilder requires at least one room"));
+        let Some(rooms) = build_data.rooms_or_warn("StartPointBuilder") else { return; };
+        let Some(first_room) = rooms.first() else {
+            warn!("StartPointBuilder: rooms list is empty — skipping");
+            return;
+        };
         let start_pos = first_room.center();
-        build_data.starting_position = Some(Position {
+        build_data.set_starting_position(Position {
             x: start_pos.x,
             y: start_pos.y,
         });
         if build_data.map.depth() > 1 {
             build_data.map.set_tile(start_pos, TerrainType::UpStairs);
+            build_data.map.set_liquid(start_pos, crate::map::tile::LiquidType::None);
         }
     }
 }

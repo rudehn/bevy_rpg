@@ -134,13 +134,8 @@ impl Plugin for DungeonPlugin {
             )
             .add_systems(
                 Update,
-                (
-                    spawn_dungeon
-                        .run_if(on_message::<SpawnDungeonMessage>),
-                    apply_floor_entry_shrine_effects
-                        .run_if(on_message::<SpawnDungeonMessage>)
-                        .after(spawn_dungeon),
-                )
+                spawn_dungeon
+                    .run_if(on_message::<SpawnDungeonMessage>)
                     .in_set(SpawnDungeonSet),
             )
             .add_systems(
@@ -383,11 +378,10 @@ fn ascend_stairs_system(
 /// Groups extra resources for `spawn_dungeon` to stay within Bevy's
 /// 16-SystemParam limit.
 #[derive(bevy::ecs::system::SystemParam)]
-struct SpawnDungeonExtras<'w> {
+pub(crate) struct SpawnDungeonExtras<'w> {
     auto_save_pending: ResMut<'w, AutoSavePending>,
     needs_explored_init: ResMut<'w, NeedsExploredInit>,
     squad_counter: ResMut<'w, crate::game::squad::SquadIdCounter>,
-    shrines_purchased: Res<'w, crate::game::shrines::ShrinesPurchased>,
 }
 
 pub fn spawn_dungeon(
@@ -402,8 +396,9 @@ pub fn spawn_dungeon(
     assets: EntityAssets,
     tile_assets: TileAssets,
     mut extras: SpawnDungeonExtras,
+    mut tile_index: ResMut<crate::map::tile::TileEntityIndex>,
     mut log_writer: MessageWriter<GameLogMessage>,
-    player_query: Query<Entity, With<Player>>,
+    mut player_query: Query<(Entity, &mut Position, &mut Transform), With<Player>>,
     turn_marker_query: Query<Entity, (With<TurnMarker>, Without<Player>)>,
     ascii_font: Option<Res<crate::game::ascii_mode::AsciiFont>>,
 ) {
@@ -417,7 +412,6 @@ pub fn spawn_dungeon(
         use crate::save::SavedFloorCache;
 
         commands.insert_resource(crate::game::squad::SquadIdCounter(save_data.squad_id_counter));
-        commands.insert_resource(save_data.tyrant_aspects.clone());
 
         let saved_floor_cache: std::collections::HashMap<u32, crate::save::CachedFloorSave> =
             save_data.floor_cache.clone();
@@ -456,11 +450,6 @@ pub fn spawn_dungeon(
             .get(&assets.decoration_catalog_handle.0)
             .map(|c| c.rules.clone())
             .unwrap_or_default();
-        let shrine_categories = assets
-            .shrines_catalogs
-            .get(&assets.shrines_catalog_handle.0)
-            .map(|c| c.categories.clone())
-            .unwrap_or_default();
 
         let mut builder = level_builder(
             floor.0 as i32,
@@ -472,16 +461,13 @@ pub fn spawn_dungeon(
             prefabs,
             &monster_manifest.monsters,
             decoration_rules,
-            shrine_categories,
-            &extras.shrines_purchased,
         );
         builder.build_map();
         // Write the updated counter back so future floors don't reuse IDs.
         *extras.squad_counter = builder.build_data.squad_counter.clone();
 
-        // Initialize TyrantAspects and reset RunStats on new game (floor 1, generate path only)
+        // Reset RunStats on new game (floor 1, generate path only)
         if floor.0 == 1 {
-            commands.insert_resource(crate::game::boss::TyrantAspects::new_random());
             commands.insert_resource(crate::game::RunStats::default());
         }
 
@@ -496,6 +482,7 @@ pub fn spawn_dungeon(
         map_entity,
         &assets,
         &tile_assets,
+        &mut tile_index,
         &mut turn_manager,
         ascii_font.as_deref(),
         source,
@@ -515,14 +502,27 @@ pub fn spawn_dungeon(
             spawn.x, spawn.y, spawn_tile.terrain, spawn_tile.liquid
         );
     }
+    info!(
+        "spawn_dungeon: floor={}, player_spawn=({}, {}), tile={:?}",
+        floor.0, spawn.x, spawn.y, spawn_tile.terrain
+    );
     player_spawn_point.0 = spawn;
 
     if let Some(player_save) = result.pending_player_load {
         pending_player_load.0 = Some(player_save);
     }
 
-    // Re-add persistent actors (player + global turn marker) to the turn queue.
-    if let Ok(player_entity) = player_query.single() {
+    // Teleport the player to the spawn point and prevent stair re-trigger.
+    if let Ok((player_entity, mut player_pos, mut player_tf)) = player_query.single_mut() {
+        info!(
+            "spawn_dungeon: teleporting player from ({}, {}) to ({}, {})",
+            player_pos.x, player_pos.y, spawn.x, spawn.y
+        );
+        player_pos.x = spawn.x;
+        player_pos.y = spawn.y;
+        player_tf.translation.x = spawn.x as f32 * crate::map::map::GRID_SIZE.x;
+        player_tf.translation.y = spawn.y as f32 * crate::map::map::GRID_SIZE.y;
+        commands.entity(player_entity).insert(crate::map::dungeon::StairCooldown);
         turn_manager.add_entity(player_entity);
     }
     for marker_entity in turn_marker_query.iter() {
@@ -534,11 +534,7 @@ pub fn spawn_dungeon(
     // First floor intro — set the atmosphere.
     if floor.0 == 1 {
         log_writer.write(GameLogMessage(
-            "The stone steps descend into darkness. Somewhere far below, the Veiled Tyrant stirs."
-                .to_string(),
-        ));
-        log_writer.write(GameLogMessage(
-            "Its power grows with every passing moment. You must reach the depths before it becomes unstoppable."
+            "The stone steps descend into darkness. You must find a way out."
                 .to_string(),
         ));
     }
@@ -549,40 +545,3 @@ pub fn spawn_dungeon(
     extras.auto_save_pending.0 = true;
 }
 
-/// Apply shrine effects that trigger on floor entry:
-/// - ManaWell: restore mana to max
-/// - SecondWind: reset availability
-fn apply_floor_entry_shrine_effects(
-    mut player_query: Query<(
-        Option<&crate::game::shrines::ManaWellAbility>,
-        Option<&mut crate::game::shrines::SecondWindAbility>,
-        Option<&mut crate::game::stats::Mana>,
-    ), With<Player>>,
-    mut log_writer: MessageWriter<GameLogMessage>,
-) {
-    let Ok((mana_well, second_wind, mana)) = player_query.single_mut() else {
-        return;
-    };
-
-    // ManaWell: full mana on floor entry
-    if mana_well.is_some() {
-        if let Some(mut mana) = mana {
-            if mana.current < mana.max {
-                mana.current = mana.max;
-                log_writer.write(GameLogMessage(
-                    "Mana Well: your mana is fully restored!".to_string(),
-                ));
-            }
-        }
-    }
-
-    // SecondWind: reset availability on new floor
-    if let Some(mut sw) = second_wind {
-        if !sw.available {
-            sw.available = true;
-            log_writer.write(GameLogMessage(
-                "Second Wind is available again.".to_string(),
-            ));
-        }
-    }
-}

@@ -2,23 +2,22 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::{
-    components::{Chest, Collider, InInventory, Inventory, Monster, Name, Position, Viewshed, Item},
+    components::{Chest, Collider, Faction, InInventory, Inventory, Name, Position, Item},
     constants::BASE_ACTION_COST,
     game::{
         combat::{AttackIntentMessage, DamageType, DamageTypeTag, DamageSource},
+        factions::FactionMatrix,
         effects::UseItemMessage,
         items::{DropItemMessage, EquipItemMessage, ItemStack, UnequipItemMessage},
         magic::CastSpellMessage,
-        shrines::{ActiveShrine, ShrineMarker},
         spawner::spawn_item,
         turns::MyTurn,
     },
-    map::{Map, tile::{is_walkable, TerrainType, TileMarker}},
+    map::{Map, tile::{is_walkable, TerrainType, TileMutationMessage, TileMarker}},
     map::dungeon::Floor,
     player::Player,
     assets::{
         ItemManifest, ItemManifestHandle, ItemSpawnTable, ItemSpawnTableHandle, ItemSpriteAssets,
-        TileManifest, TileManifestHandle, TileSpriteAssets,
     },
     ui::game_log::GameLogMessage,
 };
@@ -117,6 +116,35 @@ pub struct FreeActionEvent {
 #[derive(Resource, Default)]
 pub struct PendingPlayerAction(pub Option<Action>);
 
+/// Marker inserted on an entity when it begins processing an action.
+/// Removed by `finish_turn()` / `free_turn()`. If still present at the end of
+/// the Cleanup phase, the safety-net system emits a fallback `ActionFinishedEvent`
+/// and logs a warning.
+#[derive(Component)]
+pub struct ActionGuard;
+
+/// Emit `ActionFinishedEvent` and clear the `ActionGuard`. Every action handler
+/// should call this (or `free_turn`) instead of writing `ActionFinishedEvent` directly.
+pub fn finish_turn(
+    commands: &mut Commands,
+    finish_writer: &mut MessageWriter<ActionFinishedEvent>,
+    entity: Entity,
+    base_cost: u32,
+) {
+    finish_writer.write(ActionFinishedEvent { entity, base_cost });
+    commands.entity(entity).remove::<ActionGuard>();
+}
+
+/// Emit `FreeActionEvent` (player only — no turn consumed) and clear the `ActionGuard`.
+pub fn free_turn(
+    commands: &mut Commands,
+    free_writer: &mut MessageWriter<FreeActionEvent>,
+    entity: Entity,
+) {
+    free_writer.write(FreeActionEvent { entity });
+    commands.entity(entity).remove::<ActionGuard>();
+}
+
 // --- Systems ---
 
 /// Converts the pending player action into the appropriate intent message.
@@ -139,6 +167,8 @@ pub fn dispatch_player_action(
     let Ok(player_entity) = query.single() else {
         return;
     };
+
+    commands.entity(player_entity).insert(ActionGuard);
 
     if let Some(action) = pending.0.take() {
         match action {
@@ -240,6 +270,7 @@ pub fn handle_pickup(
     actors_query: Query<(Entity, &Position, Has<Player>)>,
     items_query: Query<(Entity, &Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
     mut inv_query: Query<&mut Inventory, With<Player>>,
+    mut monster_inv_query: Query<&mut Inventory, Without<Player>>,
     inv_stacks_query: Query<(&Name, &ItemStack), With<InInventory>>,
 ) {
     for intent in intents.read() {
@@ -294,25 +325,122 @@ pub fn handle_pickup(
                         break;
                     }
                 }
+            } else if let Ok(mut inv) = monster_inv_query.get_mut(actor_entity) {
+                // Monster with inventory: add item to their inventory.
+                inv.items.push(item_entity);
+                commands
+                    .entity(item_entity)
+                    .insert(InInventory)
+                    .insert(Visibility::Hidden)
+                    .remove::<crate::components::FloorEntityMarker>();
+                break;
             } else {
+                // Entity without inventory: just despawn the item.
                 commands.entity(item_entity).despawn();
-                picked_up = true;
                 break;
             }
         }
 
-        if picked_up || is_player {
-            finish_writer.write(ActionFinishedEvent {
-                entity: actor_entity,
-                base_cost: BASE_ACTION_COST,
-            });
-        }
+        // Always finish — even if nothing was picked up, the turn is consumed.
+        finish_turn(&mut commands, &mut finish_writer, actor_entity, BASE_ACTION_COST);
     }
 }
 
 /// Handles movement. If a collision with a hostile entity is detected,
 /// it converts the movement into a MeleeIntent instead.
 /// If the target tile is a closed door, it converts it into an OpenDoorIntent.
+/// Result of resolving what occupies a target tile.
+enum BumpResult {
+    /// Tile is free — move into it.
+    Empty,
+    /// Target is outside map bounds.
+    OutOfBounds,
+    /// Tile is a wall or unwalkable terrain.
+    Wall,
+    /// Tile has a closed door.
+    Door(Point),
+    /// Tile has a hostile entity — convert to melee.
+    HostileEntity(Entity),
+    /// Tile has a chest — open it.
+    Chest(Entity),
+    /// Tile has a non-hostile entity with a Collider.
+    BlockedByCollider,
+}
+
+/// Determines what happens when an actor tries to move into `target_pt`.
+fn resolve_bump(
+    actor: Entity,
+    actor_faction: Option<&Faction>,
+    actor_is_player: bool,
+    target_pt: Point,
+    map: &Map,
+    faction_matrix: &FactionMatrix,
+    actors_query: &Query<(
+        Entity,
+        &mut Position,
+        Has<Player>,
+        Option<&Faction>,
+        Has<Collider>,
+        Has<Chest>,
+    ), (Without<TileMarker>, Without<Item>)>,
+) -> BumpResult {
+    // 1. Bounds check
+    if !map.in_bounds(target_pt) {
+        return BumpResult::OutOfBounds;
+    }
+
+    let target_tile = map.tiles[map.xy_idx(target_pt.x, target_pt.y)];
+
+    // 2. Closed door
+    if target_tile.terrain == TerrainType::Door {
+        return BumpResult::Door(target_pt);
+    }
+
+    // 3. Occupant scan — prioritize hostile entities over props.
+    let mut bump_target = None;
+    for (e, other_pos, _other_is_player, other_faction, other_has_collider, other_is_chest) in
+        actors_query.iter()
+    {
+        if other_pos.to_point() == target_pt && e != actor {
+            // Faction-bearing entities (player/monsters) take priority over props.
+            if other_faction.is_some() {
+                bump_target = Some((e, other_faction, other_has_collider, other_is_chest));
+                break;
+            }
+            if bump_target.is_none() {
+                bump_target = Some((e, other_faction, other_has_collider, other_is_chest));
+            }
+        }
+    }
+
+    if let Some((target_entity, target_faction, target_has_collider, target_is_chest)) =
+        bump_target
+    {
+        let is_hostile = match (actor_faction, target_faction) {
+            (Some(a), Some(b)) => faction_matrix.is_hostile_to(&a.0.0, &b.0.0),
+            _ => false,
+        };
+
+        if is_hostile {
+            return BumpResult::HostileEntity(target_entity);
+        } else if target_is_chest && actor_is_player {
+            // Only the player opens chests via bump. GOAP entities (kobolds) emit
+            // OpenChestIntent directly from their AI dispatch.
+            return BumpResult::Chest(target_entity);
+        } else if target_has_collider {
+            return BumpResult::BlockedByCollider;
+        }
+        // Non-hostile, non-blocking occupant — fall through to walkability check.
+    }
+
+    // 4. Wall/obstacle check
+    if !is_walkable(target_tile) {
+        return BumpResult::Wall;
+    }
+
+    BumpResult::Empty
+}
+
 pub fn handle_movement(
     mut commands: Commands,
     mut intents: MessageReader<MovementIntent>,
@@ -325,139 +453,65 @@ pub fn handle_movement(
         Entity,
         &mut Position,
         Has<Player>,
-        Has<Monster>,
+        Option<&Faction>,
         Has<Collider>,
         Has<Chest>,
-        Has<ShrineMarker>,
     ), (Without<TileMarker>, Without<Item>)>,
     map: Res<Map>,
-    mut next_ingame: ResMut<NextState<crate::game::InGameState>>,
+    faction_matrix: Res<FactionMatrix>,
 ) {
     for intent in intents.read() {
-        let Ok((_, pos, is_player, _, _, _, _)) = actors_query.get(intent.entity) else {
-            finish_writer.write(ActionFinishedEvent {
-                entity: intent.entity,
-                base_cost: BASE_ACTION_COST,
-            });
+        let Ok((_, pos, is_player, actor_faction, _, _)) = actors_query.get(intent.entity) else {
+            finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
             continue;
         };
+        let actor_faction = actor_faction.cloned();
 
         let target_pt = pos.to_point() + intent.dir.offset();
+        let result = resolve_bump(intent.entity, actor_faction.as_ref(), is_player, target_pt, &map, &faction_matrix, &actors_query);
 
-        // 1. Bounds check
-        if !map.in_bounds(target_pt) {
-            if is_player {
-                free_writer.write(FreeActionEvent { entity: intent.entity });
-            } else {
-                finish_writer.write(ActionFinishedEvent { entity: intent.entity, base_cost: BASE_ACTION_COST });
-            }
-            continue;
-        }
-
-        let target_tile = map.tiles[map.xy_idx(target_pt.x, target_pt.y)];
-
-        // 2. Closed Door Check
-        if target_tile.terrain == TerrainType::Door {
-            open_door_writer.write(OpenDoorIntent {
-                entity: intent.entity,
-                door_pos: target_pt,
-            });
-            continue;
-        }
-
-        // 3. Occupant Check (Bump-to-Attack / Block) — must happen before wall check
-        //    so that monsters standing on non-walkable tiles can still be attacked.
-        //    Scan ALL entities on the tile — prioritize hostile monsters over props.
-        let mut bump_target = None;
-        for (e, other_pos, other_is_player, other_is_monster, other_has_collider, other_is_chest, other_is_shrine) in
-            actors_query.iter()
-        {
-            if other_pos.to_point() == target_pt && e != intent.entity {
-                if other_is_monster || other_is_player {
-                    // Monster/player takes priority — always bump-to-attack
-                    bump_target = Some((e, other_is_player, other_is_monster, other_has_collider, other_is_chest, other_is_shrine));
-                    break;
+        match result {
+            BumpResult::Empty => {
+                if let Ok((_, mut pos, _, _, _, _)) = actors_query.get_mut(intent.entity) {
+                    pos.x = target_pt.x;
+                    pos.y = target_pt.y;
                 }
-                // Non-monster occupant (prop, chest, shrine) — store as fallback
-                if bump_target.is_none() {
-                    bump_target = Some((e, other_is_player, other_is_monster, other_has_collider, other_is_chest, other_is_shrine));
-                }
+                finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
             }
-        }
-
-        if let Some((target_entity, target_is_player, target_is_monster, target_has_collider, target_is_chest, target_is_shrine)) =
-            bump_target
-        {
-            let actor_is_player = actors_query
-                .get(intent.entity)
-                .map(|(_, _, p, _, _, _, _)| p)
-                .unwrap_or(false);
-            let actor_is_monster = actors_query
-                .get(intent.entity)
-                .map(|(_, _, _, m, _, _, _)| m)
-                .unwrap_or(false);
-
-            let is_hostile =
-                (actor_is_player && target_is_monster) || (actor_is_monster && target_is_player);
-
-            if is_hostile {
+            BumpResult::Door(door_pos) => {
+                open_door_writer.write(OpenDoorIntent {
+                    entity: intent.entity,
+                    door_pos,
+                });
+                // ActionGuard cleared by handle_door_open via finish_turn.
+            }
+            BumpResult::HostileEntity(target) => {
                 melee_writer.write(MeleeIntent {
                     attacker: intent.entity,
-                    target: target_entity,
+                    target,
                 });
-                continue;
-            } else if target_is_shrine && actor_is_player {
-                // Player bumps a shrine — open shrine UI (free action, no turn consumed)
-                commands.insert_resource(ActiveShrine(target_entity));
-                next_ingame.set(crate::game::InGameState::Shrine);
-                free_writer.write(FreeActionEvent { entity: intent.entity });
-                continue;
-            } else if target_is_chest && actor_is_player {
-                // Player bumps a chest — open it
+                // ActionGuard cleared by handle_melee via finish_turn.
+            }
+            BumpResult::Chest(chest_entity) => {
                 open_chest_writer.write(OpenChestIntent {
                     entity: intent.entity,
-                    chest_entity: target_entity,
+                    chest_entity,
                 });
-                continue;
-            } else if target_has_collider {
-                // Blocked by friendly/neutral with a Collider — free for player, costs turn for monster
-                if actor_is_player {
-                    free_writer.write(FreeActionEvent { entity: intent.entity });
+                // ActionGuard cleared by handle_open_chest via finish_turn.
+            }
+            BumpResult::OutOfBounds | BumpResult::Wall | BumpResult::BlockedByCollider => {
+                if is_player {
+                    free_turn(&mut commands, &mut free_writer, intent.entity);
                 } else {
-                    finish_writer.write(ActionFinishedEvent { entity: intent.entity, base_cost: BASE_ACTION_COST });
+                    finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
                 }
-                continue;
             }
-            // If neither hostile nor blocking collider, fall through to movement
         }
-
-        // 4. Wall/Obstacle Check
-        if !is_walkable(target_tile) {
-            let actor_is_player = actors_query
-                .get(intent.entity)
-                .map(|(_, _, p, _, _, _, _)| p)
-                .unwrap_or(false);
-            if actor_is_player {
-                free_writer.write(FreeActionEvent { entity: intent.entity });
-            } else {
-                finish_writer.write(ActionFinishedEvent { entity: intent.entity, base_cost: BASE_ACTION_COST });
-            }
-            continue;
-        }
-
-        // 5. Apply Movement
-        if let Ok((_, mut pos, _, _, _, _, _)) = actors_query.get_mut(intent.entity) {
-            pos.x = target_pt.x;
-            pos.y = target_pt.y;
-        }
-        finish_writer.write(ActionFinishedEvent {
-            entity: intent.entity,
-            base_cost: BASE_ACTION_COST,
-        });
     }
 }
 
 pub fn handle_melee(
+    mut commands: Commands,
     mut intents: MessageReader<MeleeIntent>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut attack_writer: MessageWriter<AttackIntentMessage>,
@@ -476,22 +530,17 @@ pub fn handle_melee(
             damage_type,
             source: DamageSource::Melee,
         });
-        finish_writer.write(ActionFinishedEvent {
-            entity: intent.attacker,
-            base_cost: BASE_ACTION_COST,
-        });
+        finish_turn(&mut commands, &mut finish_writer, intent.attacker, BASE_ACTION_COST);
     }
 }
 
 pub fn handle_wait(
+    mut commands: Commands,
     mut intents: MessageReader<WaitIntent>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
 ) {
     for intent in intents.read() {
-        finish_writer.write(ActionFinishedEvent {
-            entity: intent.entity,
-            base_cost: BASE_ACTION_COST,
-        });
+        finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
     }
 }
 
@@ -499,73 +548,19 @@ pub fn handle_door_open(
     mut commands: Commands,
     mut intents: MessageReader<OpenDoorIntent>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
-    mut map: ResMut<Map>,
-    mut tile_query: Query<(Entity, &Position, &mut TerrainType, &mut Sprite, Option<&Children>)>,
-    mut glyph_query: Query<&mut Text2d, With<crate::game::ascii_mode::AsciiGlyph>>,
-    mut viewshed_query: Query<&mut Viewshed>,
-    tile_manifests: Res<Assets<TileManifest>>,
-    tile_manifest_handle: Res<TileManifestHandle>,
-    tile_sprite_assets: Res<TileSpriteAssets>,
+    mut tile_mutation_writer: MessageWriter<TileMutationMessage>,
 ) {
-    let Some(tile_manifest) = tile_manifests.get(&tile_manifest_handle.0) else {
-        return;
-    };
-
     for intent in intents.read() {
-        let idx = map.xy_idx(intent.door_pos.x, intent.door_pos.y);
-        
-        // Logical Update
-        map.tiles[idx].terrain = TerrainType::OpenDoor;
-
-        // Visual Update by querying for the tile entity at the correct position
-        for (tile_entity, pos, mut terrain_type, mut sprite, children) in tile_query.iter_mut() {
-            if pos.x == intent.door_pos.x && pos.y == intent.door_pos.y {
-                *terrain_type = TerrainType::OpenDoor;
-
-                if let Some(asset) = tile_manifest.tiles.get(TerrainType::OpenDoor.name()) {
-                    let (texture_path, index) = crate::assets::parse_sprite_path(&asset.sprite);
-
-                    // Update Sprite image, index, and layout
-                    if let Some(texture_handle) = tile_sprite_assets.handles.get(texture_path) {
-                        sprite.image = texture_handle.clone();
-                    }
-                    if let Some(layout_handle) = tile_sprite_assets.layouts.get(texture_path) {
-                        if let Some(ref mut texture_atlas) = sprite.texture_atlas {
-                            texture_atlas.index = index;
-                            texture_atlas.layout = layout_handle.clone();
-                        }
-                    }
-
-                    // Update ASCII glyph to open door character
-                    if let Some(children) = children {
-                        let new_char = if asset.ascii_char.is_empty() { "'" } else { &asset.ascii_char };
-                        for child in children.iter() {
-                            if let Ok(mut text) = glyph_query.get_mut(child) {
-                                **text = new_char.to_string();
-                            }
-                        }
-                    }
-                }
-
-                // Remove collider so we can walk through it
-                commands.entity(tile_entity).remove::<Collider>();
-                break;
-            }
-        }
-
-        // Trigger vision refresh for everyone
-        for mut viewshed in viewshed_query.iter_mut() {
-            viewshed.dirty = true;
-        }
-
-        finish_writer.write(ActionFinishedEvent {
-            entity: intent.entity,
-            base_cost: BASE_ACTION_COST,
+        tile_mutation_writer.write(TileMutationMessage {
+            position: intent.door_pos,
+            new_terrain: TerrainType::OpenDoor,
         });
+        finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[allow(clippy::enum_variant_names)]
 pub enum Direction {
     NW,
     N,
@@ -674,13 +669,14 @@ pub fn handle_open_chest(
     item_manifest_handle: Res<ItemManifestHandle>,
     item_sprite_assets: Res<ItemSpriteAssets>,
     ascii_font: Option<Res<crate::game::ascii_mode::AsciiFont>>,
-    scavenger_query: Query<Has<crate::game::shrines::ScavengerAbility>, With<Player>>,
+    player_check: Query<&Name, With<Player>>,
 ) {
     use bracket_lib::prelude::RandomNumberGenerator;
     use crate::game::items::Rarity;
 
     for intent in intents.read() {
         let Ok(chest_pos) = chest_query.get(intent.chest_entity) else {
+            finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
             continue;
         };
         let pos = *chest_pos;
@@ -690,12 +686,12 @@ pub fn handle_open_chest(
 
         // Pick random items from the spawn table.
         let Some(spawn_table) = item_spawn_tables.get(&item_spawn_table_handle.0) else {
-            finish_writer.write(ActionFinishedEvent { entity: intent.entity, base_cost: BASE_ACTION_COST });
+            finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
             continue;
         };
 
         let Some(item_manifest) = item_manifests.get(&item_manifest_handle.0) else {
-            finish_writer.write(ActionFinishedEvent { entity: intent.entity, base_cost: BASE_ACTION_COST });
+            finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
             continue;
         };
 
@@ -704,9 +700,13 @@ pub fn handle_open_chest(
             .filter(|s| depth >= s.min_floor && depth <= s.max_floor)
             .collect();
 
+        let is_player = player_check.get(intent.entity).is_ok();
+
         if floor_candidates.is_empty() {
-            log_writer.write(GameLogMessage("You open the chest but it's empty!".to_string()));
-            finish_writer.write(ActionFinishedEvent { entity: intent.entity, base_cost: BASE_ACTION_COST });
+            if is_player {
+                log_writer.write(GameLogMessage("You open the chest but it's empty!".to_string()));
+            }
+            finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
             continue;
         }
 
@@ -717,9 +717,9 @@ pub fn handle_open_chest(
         let mut rng = RandomNumberGenerator::new();
         let item_count = rng.range(1, 4); // 1-3 items
 
-        log_writer.write(GameLogMessage("You open the chest!".to_string()));
-
-        let has_scavenger = scavenger_query.single().unwrap_or(false);
+        if is_player {
+            log_writer.write(GameLogMessage("You open the chest!".to_string()));
+        }
 
         for _ in 0..item_count {
             // Roll a rarity tier using floor-scaled weights.
@@ -732,16 +732,6 @@ pub fn handle_open_chest(
                     chosen_rarity = rarity_tiers[i].clone();
                     break;
                 }
-            }
-
-            // Scavenger: boost rarity by one tier
-            if has_scavenger {
-                chosen_rarity = match chosen_rarity {
-                    Rarity::Common => Rarity::Uncommon,
-                    Rarity::Uncommon => Rarity::Rare,
-                    Rarity::Rare => Rarity::Legendary,
-                    Rarity::Legendary => Rarity::Legendary,
-                };
             }
 
             // Filter candidates to the chosen rarity, falling back to lower tiers.
@@ -798,15 +788,14 @@ pub fn handle_open_chest(
                     &item_sprite_assets,
                     ascii_font.as_deref(),
                 ) {
-                    log_writer.write(GameLogMessage(format!("  Found: {}", spawn_info.item)));
+                    if is_player {
+                        log_writer.write(GameLogMessage(format!("  Found: {}", spawn_info.item)));
+                    }
                 }
             }
         }
 
-        finish_writer.write(ActionFinishedEvent {
-            entity: intent.entity,
-            base_cost: BASE_ACTION_COST,
-        });
+        finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
     }
 }
 

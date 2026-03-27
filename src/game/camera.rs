@@ -130,7 +130,6 @@ pub fn move_camera(
 
         ortho.scale = ortho.scale.clamp(0.25, 1.0);
 
-        let z = camera_transform.translation.z;
-        camera_transform.translation.z = z;
+        // Preserve Z (no-op removed; Z is already correct)
     }
 }

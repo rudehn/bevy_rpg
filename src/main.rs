@@ -1,3 +1,11 @@
+// Bevy systems inherently have many parameters and complex query types.
+// Enum variant naming uses SCREAMING_CASE for legacy bracket-lib compatibility.
+#![allow(
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::upper_case_acronyms
+)]
+
 use bevy::asset::AssetMetaCheck;
 use bevy::diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin};
 use bevy::prelude::*;
@@ -26,7 +34,7 @@ fn main() {
                     ..default()
                 }),
             (LoadingPlugin, SavePlugin, GamePlugin, UiPlugin),
-            (FrameTimeDiagnosticsPlugin::default(), LogDiagnosticsPlugin::default()),
+            FrameTimeDiagnosticsPlugin::default(),
         ))
         .init_state::<AppState>()
         .run();

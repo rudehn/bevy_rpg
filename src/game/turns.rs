@@ -5,20 +5,17 @@ use crate::components::GameEntityMarker;
 use crate::constants::BASE_ACTION_COST;
 use crate::game::AppState;
 use crate::game::actions::{
-    Action, ActionFinishedEvent, Direction, FreeActionEvent, MeleeIntent, MovementIntent,
-    OpenChestIntent, OpenDoorIntent, PendingPlayerAction, PickUpIntent, RangedAttackIntent,
-    SpeedStats, WaitIntent,
+    Action, ActionFinishedEvent, ActionGuard, Direction, FreeActionEvent, MeleeIntent, MovementIntent,
+    OpenChestIntent, OpenDoorIntent, PendingPlayerAction, PickUpIntent,
+    SpeedStats, WaitIntent, finish_turn,
     dispatch_player_action,
     handle_door_open, handle_melee, handle_movement, handle_open_chest, handle_pickup, handle_wait,
 };
 use crate::map::map::populate_blocked_tiles;
 use crate::game::ai::MonsterAI;
-use crate::game::effects::{UseItemMessage, handle_use_item};
-use crate::game::ranged::handle_ranged_attack;
-use crate::game::targeting::TargetingMode;
-use crate::game::spells::{SpellEffect, SpellRegistry, SpellTarget};
-use crate::game::targeting::TargetingContext;
-use crate::game::magic::ActiveSpells;
+use crate::game::targeting::{TargetingContext, TargetingMode, SpellTargetingResult, targeting_mode_for_spell};
+use crate::game::spells::SpellRegistry;
+use crate::game::magic::{ActiveSpells, StatusEffects};
 use crate::game::InGameState;
 use crate::player::{MovementTimer, Player};
 
@@ -97,8 +94,12 @@ impl Plugin for TurnOrderPlugin {
             .add_message::<PickUpIntent>()
             .add_message::<OpenDoorIntent>()
             .add_message::<OpenChestIntent>()
-            .add_message::<RangedAttackIntent>()
-            .add_message::<UseItemMessage>()
+            // RangedAttackIntent registered by RangedPlugin.
+            // UseItemMessage registered by EffectsPlugin.
+            // Tile mutation message (syncs Map resource ↔ ECS tile entities).
+            .add_message::<crate::map::tile::TileMutationMessage>()
+            // GOAP action messages.
+            .add_message::<crate::game::goap::DropAtHoardMessage>()
             // Turn-lifecycle messages.
             .add_message::<ActionFinishedEvent>()
             .add_message::<FreeActionEvent>()
@@ -134,7 +135,9 @@ impl Plugin for TurnOrderPlugin {
                 Update,
                 (
                     populate_blocked_tiles,
+                    crate::game::squad::squad_coordinator_system,
                     dispatch_player_action,
+                    crate::game::goap::goap_ai_dispatch,
                     monster_ai_dispatch,
                     marker_dispatch,
                 )
@@ -151,12 +154,13 @@ impl Plugin for TurnOrderPlugin {
                 Update,
                 (
                     handle_melee,
-                    handle_ranged_attack,
+                    // handle_ranged_attack registered by RangedPlugin.
                     handle_door_open,
                     handle_open_chest,
                     handle_pickup,
                     handle_wait,
-                    handle_use_item,
+                    crate::game::goap::handle_drop_at_hoard,
+                    // handle_use_item registered by EffectsPlugin.
                 )
                     .in_set(ProcessingPhase::ResolveActions),
             )
@@ -164,6 +168,8 @@ impl Plugin for TurnOrderPlugin {
             .add_systems(
                 Update,
                 (
+                    crate::map::tile::apply_tile_mutations,
+                    action_guard_safety_net,
                     resolve_free_actions,
                     resolve_turn_end,
                     continue_turn_processing,
@@ -284,6 +290,7 @@ fn monster_ai_dispatch(world: &mut World) {
 
     for entity in entities {
         if let Some(mut monster_ai) = world.entity_mut(entity).take::<MonsterAI>() {
+            world.entity_mut(entity).insert(ActionGuard);
             monster_ai.execute(entity, world);
             world.entity_mut(entity).insert(monster_ai);
             world.entity_mut(entity).remove::<MyTurn>();
@@ -300,11 +307,27 @@ fn marker_dispatch(
 ) {
     for entity in query.iter() {
         finish_writer.write(ActionFinishedEvent {
-            entity: entity,
+            entity,
             base_cost: BASE_ACTION_COST,
         });
         turn_end_writer.write(TurnEndEvent);
         commands.entity(entity).remove::<MyTurn>();
+    }
+}
+
+/// Safety net: if any entity still has `ActionGuard` after all handlers ran,
+/// it means a handler forgot to call `finish_turn()`. Emit a fallback event
+/// so the turn loop doesn't stall, and log a warning to surface the bug.
+fn action_guard_safety_net(
+    mut commands: Commands,
+    mut finish_writer: MessageWriter<ActionFinishedEvent>,
+    query: Query<Entity, With<ActionGuard>>,
+) {
+    for entity in query.iter() {
+        warn!(
+            "ActionGuard still present on {entity:?} — a handler forgot to call finish_turn(). Emitting fallback."
+        );
+        finish_turn(&mut commands, &mut finish_writer, entity, BASE_ACTION_COST);
     }
 }
 
@@ -326,23 +349,15 @@ fn resolve_free_actions(
 }
 
 fn resolve_turn_end(
-    mut commands: Commands,
     mut events: MessageReader<ActionFinishedEvent>,
     mut turn_manager: ResMut<TurnManager>,
     stats_query: Query<&SpeedStats>,
-    gambler_penalty_query: Query<Has<crate::game::combat::GamblerMissPenalty>>,
 ) {
     let current_time = turn_manager.current_time;
     let mut any = false;
     for event in events.read() {
         let stats = stats_query.get(event.entity).cloned().unwrap_or_default();
-        let mut cost = (event.base_cost as f32 * stats.delay).round() as u32;
-
-        // GamblersMark: double cost on miss
-        if gambler_penalty_query.get(event.entity).unwrap_or(false) {
-            cost *= 2;
-            commands.entity(event.entity).remove::<crate::game::combat::GamblerMissPenalty>();
-        }
+        let cost = (event.base_cost as f32 * stats.delay).round() as u32;
 
         turn_manager.turn_queue.push((event.entity, current_time + cost));
         any = true;
@@ -408,15 +423,18 @@ fn continue_turn_processing(
 /// Pre-check: if the player is stunned, skip their input and go straight to Processing.
 /// This keeps stun logic out of the turn system — it's a status effect concern.
 fn player_stun_check(
-    query: Query<(Entity, &crate::components::Position), (With<Player>, With<MyTurn>, With<crate::game::magic::Stunned>)>,
+    query: Query<(Entity, &crate::components::Position, &StatusEffects), (With<Player>, With<MyTurn>)>,
     mut log_writer: MessageWriter<crate::ui::game_log::GameLogMessage>,
     mut particle_writer: MessageWriter<crate::game::particles::ParticleRequest>,
     mut wait_writer: MessageWriter<WaitIntent>,
     mut next_state: ResMut<NextState<TurnState>>,
 ) {
-    let Ok((entity, pos)) = query.single() else {
+    let Ok((entity, pos, effects)) = query.single() else {
         return;
     };
+    if !effects.is_stunned() {
+        return;
+    }
     log_writer.write(crate::ui::game_log::GameLogMessage(
         "You are stunned and cannot act!".to_string(),
     ));
@@ -481,46 +499,23 @@ fn handle_player_input(
     ];
     for (i, &key) in spell_keys.iter().enumerate() {
         if keys.just_pressed(key) {
-            // Look up the spell data for targeting decisions.
             let spell_info = player_active_spells.single().ok().and_then(|active| {
                 let spell_id = active.slots.get(i)?.as_deref()?;
                 let registry = spell_registries.get(&spell_registry_handle.0)?;
-                let spell = registry.spells.get(spell_id)?;
-                Some(spell.clone())
+                registry.spells.get(spell_id).cloned()
             });
 
             if let Some(spell) = spell_info {
-                // Check for tile-targeted spells (Blink: Teleport with range > 0).
-                let needs_tile_targeting = spell.effects.iter().any(|e| matches!(e, SpellEffect::Teleport { range } if *range > 0));
-
-                if needs_tile_targeting {
-                    let range = spell.effects.iter().find_map(|e| match e {
-                        SpellEffect::Teleport { range } if *range > 0 => Some(*range),
-                        _ => None,
-                    }).unwrap_or(3);
-                    targeting_context.mode = TargetingMode::Tile { slot: i, range, radius: 0 };
-                    next_ingame.set(InGameState::Targeting);
-                } else {
-                    match spell.target {
-                        SpellTarget::Enemy => {
-                            targeting_context.mode = TargetingMode::Spell { slot: i };
-                            next_ingame.set(InGameState::Targeting);
-                        }
-                        SpellTarget::Ally => {
-                            targeting_context.mode = TargetingMode::SpellAlly { slot: i, include_self: false };
-                            next_ingame.set(InGameState::Targeting);
-                        }
-                        SpellTarget::AllyOrSelf => {
-                            targeting_context.mode = TargetingMode::SpellAlly { slot: i, include_self: true };
-                            next_ingame.set(InGameState::Targeting);
-                        }
-                        SpellTarget::Castor => {
-                            action = Some(Action::CastSpell { slot: i, target: None, target_pos: None });
-                        }
+                match targeting_mode_for_spell(&spell, i) {
+                    SpellTargetingResult::EnterTargeting(mode) => {
+                        targeting_context.mode = mode;
+                        next_ingame.set(InGameState::Targeting);
+                    }
+                    SpellTargetingResult::CastImmediate { slot } => {
+                        action = Some(Action::CastSpell { slot, target: None, target_pos: None });
                     }
                 }
             } else {
-                // No spell in this slot — still try to cast (will show "no spell" message)
                 action = Some(Action::CastSpell { slot: i, target: None, target_pos: None });
             }
             break;

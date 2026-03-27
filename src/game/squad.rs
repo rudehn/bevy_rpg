@@ -18,7 +18,7 @@
 //!    - `Scatter` — remaining members lose their target and wander.
 //!    - `Enrage` — remaining members gain a temporary damage bonus.
 //!    - `Nothing` — no special effect.
-//!    A new leader is promoted from the survivors.
+//!      A new leader is promoted from the survivors.
 //!
 //! 4. **Collective flee** — cowardly squad members check the *group's* total HP
 //!    ratio (not just their own) against [`SquadConfig::flee_threshold`]. When
@@ -69,6 +69,24 @@ use crate::{
 /// alerting and morale. Solo monsters have no `SquadId` component.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct SquadId(pub u64);
+
+/// Per-entity morale value (0.0 = routed, 1.0 = confident). Persists across
+/// floor transitions. The squad coordinator modifies morale based on shared
+/// events; individual GOAP planners read it for flee/retreat decisions.
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
+pub struct Morale(pub f32);
+
+impl Default for Morale {
+    fn default() -> Self { Self(0.6) }
+}
+
+impl Morale {
+    pub fn new(value: f32) -> Self { Self(value.clamp(0.0, 1.0)) }
+
+    pub fn modify(&mut self, delta: f32) {
+        self.0 = (self.0 + delta).clamp(0.0, 1.0);
+    }
+}
 
 /// Marker for the squad's current leader. When the leader dies, effects from
 /// [`SquadConfig::on_leader_death`] trigger and a new leader is promoted.
@@ -270,12 +288,182 @@ fn squad_leader_death_system(
             LeaderDeathBehavior::Nothing => {}
         }
 
-        // Promote a new leader from surviving members.
+        // Promote a new leader from surviving members, transferring the blackboard.
         for (entity, sid, _ai) in members.iter() {
             if sid == squad_id && entity != leader_entity {
-                commands.entity(entity).insert(SquadLeader);
+                commands.entity(entity).insert((SquadLeader, SquadBlackboard::default()));
                 break;
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Squad Blackboard — Shared state for coordinated squad AI
+// ---------------------------------------------------------------------------
+
+/// Alert level for a squad, set by the coordinator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum AlertLevel {
+    /// Squad has not detected the player.
+    #[default]
+    Unaware,
+    /// At least one member has seen the player, but no combat yet.
+    Alerted,
+    /// Squad is actively engaged in combat with the player.
+    InCombat,
+}
+
+/// Tactical role assigned to a squad member by the coordinator.
+/// How each role behaves is defined by per-archetype GOAP actions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SquadRole {
+    /// Go find and alert nearby same-faction sleeping monsters.
+    Scout,
+    /// Stay between the leader and the threat.
+    Guard,
+    /// Circle around to attack from the side.
+    Flanker,
+    /// Stay adjacent to the leader.
+    Bodyguard,
+    /// Shoot and reposition behind allies (ranged).
+    Skirmisher,
+    /// Heal, buff, stay in the back line.
+    Support,
+    /// The leader — issues orders, stays behind the front line.
+    Commander,
+}
+
+/// Shared tactical state for a squad, attached to the squad leader entity.
+/// Updated each processing cycle by `squad_coordinator_system`.
+/// Generic — any faction can use it. Faction-specific behavior comes from
+/// GOAP goal/action configurations reading this data.
+#[derive(Component, Debug, Clone, Default)]
+pub struct SquadBlackboard {
+    // --- Awareness ---
+    pub alert_level: AlertLevel,
+    pub known_player_pos: Option<bracket_lib::prelude::Point>,
+    pub turns_since_contact: u32,
+
+    // --- Tactical state ---
+    pub retreat_ordered: bool,
+    pub fallback_point: Option<bracket_lib::prelude::Point>,
+
+    // --- Role assignments ---
+    pub roles: std::collections::HashMap<Entity, SquadRole>,
+
+    // --- Position reservation (for chokepoint defense) ---
+    pub reserved_positions: std::collections::HashMap<bracket_lib::prelude::Point, Entity>,
+}
+
+// ---------------------------------------------------------------------------
+// Squad Coordinator System
+// ---------------------------------------------------------------------------
+
+/// Updates `SquadBlackboard` for each squad that has one.
+/// Runs in `ProcessingPhase::Brain` before `goap_ai_dispatch` so GOAP
+/// entities can read the blackboard when gathering world state.
+pub fn squad_coordinator_system(
+    mut blackboard_query: Query<(Entity, &SquadId, &mut SquadBlackboard), With<SquadLeader>>,
+    member_query: Query<(Entity, &SquadId, &Position, &Health, Option<&Viewshed>, Has<SquadLeader>), With<Monster>>,
+    mut morale_query: Query<&mut Morale>,
+    player_query: Query<&Position, With<Player>>,
+) {
+    let player_pos = player_query.single().ok().map(|p| p.to_point());
+
+    for (_leader_entity, squad_id, mut bb) in blackboard_query.iter_mut() {
+        // Gather all living members of this squad.
+        let members: Vec<_> = member_query.iter()
+            .filter(|(_, sid, _, health, _, _)| **sid == *squad_id && health.current > 0)
+            .collect();
+
+        if members.is_empty() {
+            continue;
+        }
+
+        let member_count = members.len();
+
+        // --- Awareness ---
+        let any_sees_player = player_pos.map(|pp| {
+            members.iter().any(|(_, _, _, _, viewshed, _)| {
+                viewshed.map(|v| v.visible_tiles.contains(&pp)).unwrap_or(false)
+            })
+        }).unwrap_or(false);
+
+        if any_sees_player {
+            bb.alert_level = AlertLevel::InCombat;
+            bb.known_player_pos = player_pos;
+            bb.turns_since_contact = 0;
+        } else if bb.alert_level == AlertLevel::InCombat {
+            bb.turns_since_contact += 1;
+            if bb.turns_since_contact > 10 {
+                bb.alert_level = AlertLevel::Alerted;
+            }
+        }
+
+        // --- Morale modifiers (applied to each member) ---
+        let has_leader = members.iter().any(|(_, _, _, _, _, is_leader)| *is_leader);
+        // TODO: detect healer role once role assignment is implemented (Phase 4)
+        let has_healer = false;
+
+        let total_hp: i32 = members.iter().map(|(_, _, _, h, _, _)| h.current).sum();
+        let total_max_hp: i32 = members.iter().map(|(_, _, _, h, _, _)| h.max).sum();
+        let squad_hp_ratio = if total_max_hp > 0 { total_hp as f32 / total_max_hp as f32 } else { 1.0 };
+
+        for (entity, _, _, health, _, _) in &members {
+            if let Ok(mut morale) = morale_query.get_mut(*entity) {
+                let mut modifier = 0.0f32;
+
+                // Squad bonuses
+                if has_leader { modifier += 0.2; }
+                if has_healer { modifier += 0.1; }
+                if member_count >= 3 { modifier += 0.15; }
+                else if member_count >= 2 { modifier += 0.05; }
+
+                // Squad HP penalties
+                if squad_hp_ratio < 0.25 { modifier -= 0.2; }
+                else if squad_hp_ratio < 0.5 { modifier -= 0.1; }
+
+                // Personal HP penalties
+                let hp_ratio = if health.max > 0 { health.current as f32 / health.max as f32 } else { 1.0 };
+                if hp_ratio < 0.25 { modifier -= 0.15; }
+                else if hp_ratio < 0.5 { modifier -= 0.1; }
+
+                // Out-of-combat recovery
+                if bb.turns_since_contact > 5 { modifier += 0.05; }
+
+                // Apply modifier toward a target morale (smooth, not instant)
+                let target = (morale.0 + modifier).clamp(0.0, 1.0);
+                // Blend toward target — faster when dropping, slower when recovering
+                if target < morale.0 {
+                    morale.0 = (morale.0 - 0.05).max(target); // drop quickly
+                } else {
+                    morale.0 = (morale.0 + 0.02).min(target); // recover slowly
+                }
+                morale.0 = morale.0.clamp(0.0, 1.0);
+            }
+        }
+
+        // --- Retreat decision ---
+        let avg_morale: f32 = {
+            let morales: Vec<f32> = members.iter()
+                .filter_map(|(e, _, _, _, _, _)| morale_query.get(*e).ok().map(|m| m.0))
+                .collect();
+            if morales.is_empty() { 0.5 } else { morales.iter().sum::<f32>() / morales.len() as f32 }
+        };
+
+        if avg_morale < 0.15 {
+            // Rout — squad dissolves, handled by existing scatter logic
+            bb.retreat_ordered = false;
+        } else if avg_morale < 0.3 && !bb.retreat_ordered {
+            // Order retreat
+            bb.retreat_ordered = true;
+            // Fallback to leader's spawn position (set by spawner on MonsterAI)
+            // For now, use known_player_pos inverse — flee away from player
+            // Full fallback point logic comes with Dijkstra maps (Phase 8)
+        }
+        if avg_morale > 0.5 {
+            bb.retreat_ordered = false; // Morale recovered — cancel retreat
         }
     }
 }
@@ -285,7 +473,7 @@ fn squad_leader_death_system(
 // ---------------------------------------------------------------------------
 
 /// Compute the collective HP ratio for a squad. Returns `(total_current, total_max)`.
-/// Used by the cowardly flee logic in `MonsterAI::execute()`.
+#[allow(dead_code)]
 pub fn compute_squad_hp(squad_id: SquadId, world: &mut World) -> (i32, i32) {
     let mut total_current = 0i32;
     let mut total_max = 0i32;

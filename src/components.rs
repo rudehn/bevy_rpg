@@ -13,7 +13,7 @@ pub struct Position {
 }
 
 impl Position {
-    pub fn to_point(&self) -> Point {
+    pub fn to_point(self) -> Point {
         Point::new(self.x, self.y)
     }
 
@@ -91,10 +91,6 @@ pub struct Equipped;
 #[derive(Component, Debug, Default)]
 pub struct Ammo;
 
-/// Marker component for the final boss entity. Death triggers victory.
-#[derive(Component, Debug, Default)]
-pub struct FinalBoss;
-
 /// Marker component for props — non-item, non-monster world entities
 /// (watchfires, totem poles, barricades, etc.).
 #[derive(Component, Debug, Default)]
@@ -108,23 +104,21 @@ pub struct Chest;
 // --- Faction ---
 
 /// Determines how this entity relates to others for AI targeting and spell scoring.
+/// Hostility is resolved via the `FactionMatrix` resource, not by comparing kinds directly.
 #[derive(Component, Clone, PartialEq, Eq, Debug)]
 pub struct Faction(pub FactionKind);
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum FactionKind {
-    Player,
-    Monster,
-}
+/// String-based faction identifier. Hostility between factions is determined
+/// by the `FactionMatrix` resource loaded from `factions.ron`.
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
+pub struct FactionKind(pub String);
 
 impl FactionKind {
-    /// Returns true if `other` is a valid hostile target for `self`.
-    pub fn is_hostile_to(&self, other: &FactionKind) -> bool {
-        self != other
-    }
+    pub const PLAYER: &str = "Player";
+    pub const MONSTER: &str = "Monster";
+    pub const KOBOLD: &str = "Kobold";
 
-    /// Returns true if `other` is on the same side as `self`.
-    pub fn is_allied_to(&self, other: &FactionKind) -> bool {
-        self == other
-    }
+    pub fn player() -> Self { Self(Self::PLAYER.to_string()) }
+    pub fn monster() -> Self { Self(Self::MONSTER.to_string()) }
+    pub fn kobold() -> Self { Self(Self::KOBOLD.to_string()) }
 }

@@ -17,12 +17,12 @@ impl Plugin for LogHistoryPlugin {
                         .and(in_state(TurnState::PlayerInput).or(in_state(InGameState::LogHistory))),
                 ),
             )
-            .add_systems(OnEnter(InGameState::LogHistory), spawn_log_history_ui)
+            .add_systems(OnEnter(InGameState::LogHistory), (reset_scroll_offset, spawn_log_history_ui).chain())
             .add_systems(
                 Update,
                 update_log_history_ui.run_if(in_state(InGameState::LogHistory)),
             )
-            .add_systems(OnExit(InGameState::LogHistory), despawn_log_history_ui);
+            .add_systems(OnExit(InGameState::LogHistory), crate::ui::modal::despawn_screen::<OnLogHistoryScreen>);
     }
 }
 
@@ -45,6 +45,10 @@ struct LogHistoryText;
 #[derive(Component)]
 struct LogHistoryScrollLabel;
 
+fn reset_scroll_offset(mut offset: ResMut<LogScrollOffset>) {
+    offset.0 = 0;
+}
+
 fn log_history_input(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -55,20 +59,7 @@ fn log_history_input(
     game_log: Res<GameLog>,
 ) {
     // Toggle open/close.
-    if keys.just_pressed(KeyCode::KeyL) {
-        match state.get() {
-            InGameState::Running => {
-                offset.0 = 0; // open at bottom (most recent)
-                next_state.set(InGameState::LogHistory);
-            }
-            InGameState::LogHistory => next_state.set(InGameState::Running),
-            _ => {}
-        }
-        return;
-    }
-
-    if keys.just_pressed(KeyCode::Escape) && *state.get() == InGameState::LogHistory {
-        next_state.set(InGameState::Running);
+    if crate::ui::modal::toggle_screen(&keys, &state, &mut next_state, KeyCode::KeyL, InGameState::LogHistory) {
         return;
     }
 
@@ -214,11 +205,4 @@ fn update_log_history_ui(
     }
 }
 
-fn despawn_log_history_ui(
-    mut commands: Commands,
-    query: Query<Entity, With<OnLogHistoryScreen>>,
-) {
-    for entity in query.iter() {
-        commands.entity(entity).despawn();
-    }
-}
+// Despawn handled by modal::despawn_screen::<OnLogHistoryScreen>

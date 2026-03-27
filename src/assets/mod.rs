@@ -5,7 +5,6 @@ use std::collections::HashMap;
 
 use crate::game::effects::Effect;
 use crate::game::items::{ArmorSlot, ItemKind, Rarity};
-use crate::game::shrines::ShrineEffectKind;
 use crate::game::spells::SpellRegistry;
 
 use crate::game::{AppState, camera};
@@ -73,7 +72,6 @@ impl Plugin for AssetsPlugin {
             .init_resource::<PropManifestHandle>()
             .init_resource::<PrefabManifestHandle>()
             .init_resource::<DecorationCatalogHandle>()
-            .init_resource::<ShrinesCatalogHandle>()
             .add_systems(
                 OnEnter(AppState::Loading),
                 (
@@ -87,7 +85,7 @@ impl Plugin for AssetsPlugin {
                     load_prop_manifest,
                     load_prefab_manifest,
                     load_decoration_catalog,
-                    load_shrines_catalog,
+                    load_faction_matrix,
                 ),
             )
             .add_systems(
@@ -97,7 +95,6 @@ impl Plugin for AssetsPlugin {
                     load_tile_sprites,
                     load_item_sprites,
                     load_prop_sprites,
-                    load_shrine_sprites,
                     check_assets_loaded,
                 )
                     .run_if(in_state(AppState::Loading)),
@@ -120,7 +117,7 @@ impl Plugin for LoadingPlugin {
             RonAssetPlugin::<PropManifest>::new(&["props.ron"]),
             RonAssetPlugin::<PrefabManifest>::new(&["prefabs.ron"]),
             RonAssetPlugin::<DecorationCatalog>::new(&["decorations.ron"]),
-            RonAssetPlugin::<ShrinesCatalog>::new(&["shrines.ron"]),
+            RonAssetPlugin::<crate::game::factions::FactionMatrixAsset>::new(&["factions.ron"]),
         ))
         .add_systems(Startup, (camera::setup_camera, set_clear_color))
         .init_resource::<MonsterSpriteAssets>()
@@ -195,16 +192,15 @@ pub struct PrefabPropEntry {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+#[derive(Default)]
 pub enum MonsterBehavior {
     Sentry,
     Patrol(Vec<(i32, i32)>),
     Roam { min: (i32, i32), max: (i32, i32) },
+    #[default]
     Wander,
 }
 
-impl Default for MonsterBehavior {
-    fn default() -> Self { MonsterBehavior::Wander }
-}
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct PrefabMonsterSpawn {
@@ -274,6 +270,7 @@ pub struct DecorationChain {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct DecorationRule {
+    #[allow(dead_code)]
     pub name: String,
     pub min_floor: i32,
     pub max_floor: i32,
@@ -304,46 +301,6 @@ pub struct DecorationCatalog {
 
 #[derive(Resource, Default)]
 pub struct DecorationCatalogHandle(pub Handle<DecorationCatalog>);
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct ShrineEffectDef {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub rarity: Rarity,
-    pub cost: i32,
-    pub kind: ShrineEffectKind,
-    #[serde(default)]
-    pub unique: bool,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct ShrineCategoryDef {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    #[serde(default = "default_shrine_sprite")]
-    pub sprite: String,
-    #[serde(default)]
-    pub tile_size: Option<UVec2>,
-    #[serde(default)]
-    pub ascii_glyph: String,
-    #[serde(default = "default_white_hex", deserialize_with = "serde_helpers::deserialize_hex_color")]
-    pub ascii_color: Color,
-    pub effects: Vec<ShrineEffectDef>,
-}
-
-fn default_shrine_sprite() -> String {
-    "sprites/props/totem_pole.png#0".to_string()
-}
-
-#[derive(Asset, TypePath, Deserialize, Debug, Clone)]
-pub struct ShrinesCatalog {
-    pub categories: Vec<ShrineCategoryDef>,
-}
-
-#[derive(Resource, Default)]
-pub struct ShrinesCatalogHandle(pub Handle<ShrinesCatalog>);
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct StartingItemDef {
@@ -421,10 +378,6 @@ pub struct MonsterAsset {
     #[serde(default)]
     pub spells: Vec<String>,
 
-    /// Ranged attack range in tiles (0 = melee only).
-    #[serde(default)]
-    pub ranged_range: u32,
-
     /// Melee damage type (e.g. "physical", "fire", "poison"). Default: "physical".
     #[serde(default)]
     pub damage_type: String,
@@ -437,17 +390,9 @@ pub struct MonsterAsset {
     #[serde(default)]
     pub base_armor: i32,
 
-    /// Whether this monster is a boss (gets FinalBoss + BossAI components).
-    #[serde(default)]
-    pub is_boss: bool,
-
-    /// Faction tag for prefab role resolution (e.g. "goblin", "orc", "undead").
-    #[serde(default)]
-    pub faction_tag: String,
-
-    /// Combat role for prefab role resolution (e.g. "melee_guard", "ranged", "caster", "leader", "brute").
-    #[serde(default)]
-    pub role: String,
+    /// ECS faction for hostility checks. Defaults to "Monster".
+    #[serde(default = "default_faction")]
+    pub faction: String,
 
     /// Monster abilities — passive, on-hit, on-death, and aura effects.
     #[serde(default)]
@@ -457,25 +402,9 @@ pub struct MonsterAsset {
     #[serde(default = "default_white_hex", deserialize_with = "serde_helpers::deserialize_hex_color")]
     pub ascii_fg: Color,
 
-    /// HP percentage (0.0-1.0) at which this monster flees. 0.0 = never flees.
+    /// AI behavior configuration (FSM or GOAP). Defaults to standard FSM with no special behaviors.
     #[serde(default)]
-    pub flee_at_hp_percent: f32,
-
-    /// Chance (0.0-1.0) per turn to move in a random direction instead of toward target.
-    #[serde(default)]
-    pub erratic_chance: f32,
-
-    /// Max tiles this monster will chase before giving up and returning to idle. 0 = no limit.
-    #[serde(default)]
-    pub chase_leash: u32,
-
-    /// If true, ranged monsters try to maintain distance from the player.
-    #[serde(default)]
-    pub kites: bool,
-
-    /// Minimum distance a kiting monster tries to maintain from the player.
-    #[serde(default = "default_kite_distance")]
-    pub kite_distance: u32,
+    pub ai: AiConfig,
 
     /// Base dodge value for this monster. Default: 0.
     #[serde(default)]
@@ -484,6 +413,24 @@ pub struct MonsterAsset {
     /// Action delay multiplier. 1.0 = normal speed, >1.0 = slower, <1.0 = faster.
     #[serde(default = "default_delay")]
     pub delay: f32,
+}
+
+/// Infer the combat role of a monster from its asset data (replaces the old
+/// explicit `role` field). Used by prefab placement for faction-role resolution.
+pub fn infer_role(asset: &MonsterAsset) -> &'static str {
+    // Check if any ability implies leadership
+    if asset.abilities.iter().any(|a| matches!(a, AbilityDef::WarCry { .. } | AbilityDef::Rally { .. })) {
+        return "leader";
+    }
+    // Check for ranged from AI config
+    let has_ranged = match &asset.ai {
+        AiConfig::Fsm { ranged_range, .. } => *ranged_range > 0,
+        AiConfig::Goap { traits, .. } => traits.iter().any(|t| matches!(t, AiTrait::Ranged { .. })),
+    };
+    if !asset.spells.is_empty() && !has_ranged { return "caster"; }
+    if has_ranged { return "ranged"; }
+    if asset.base_armor >= 2 { return "brute"; }
+    "melee_guard"
 }
 
 /// Ability definition for RON deserialization.
@@ -572,9 +519,11 @@ pub struct ItemSpawnInfo {
     pub weight: i32,
     /// Minimum number of items to spawn in a single batch (e.g., arrows).
     #[serde(default = "default_count_one")]
+    #[allow(dead_code)]
     pub min_count: u32,
     /// Maximum number of items to spawn in a single batch.
     #[serde(default = "default_count_one")]
+    #[allow(dead_code)]
     pub max_count: u32,
 }
 
@@ -585,12 +534,75 @@ fn default_count_one() -> u32 {
     1
 }
 
+fn default_faction() -> String {
+    "Monster".to_string()
+}
+
 fn default_kite_distance() -> u32 {
     3
 }
 
 fn default_delay() -> f32 {
     1.0
+}
+
+fn default_morale() -> f32 {
+    0.6
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub enum AiTrait {
+    Cowardly,
+    Aggressive,
+    Reckless,
+    Mindless,
+    Bestial,
+    Intelligent,
+    Hoarder,
+    Support,
+    Commander,
+    Ranged { range: u32 },
+}
+
+/// AI behavior configuration for a monster. Either a standard FSM or GOAP planner.
+#[derive(Debug, Clone, Deserialize)]
+pub enum AiConfig {
+    /// Standard 3-state FSM (Asleep/Hunting/Idle) with reactive behaviors.
+    Fsm {
+        #[serde(default)]
+        flee_at_hp_percent: f32,
+        #[serde(default)]
+        erratic_chance: f32,
+        #[serde(default)]
+        chase_leash: u32,
+        #[serde(default)]
+        kites: bool,
+        #[serde(default = "default_kite_distance")]
+        kite_distance: u32,
+        #[serde(default)]
+        ranged_range: u32,
+    },
+    /// Goal-Oriented Action Planning with trait-based goals/actions.
+    Goap {
+        /// Behavioral traits that drive goal/action generation.
+        traits: Vec<AiTrait>,
+        /// Initial morale value (0.0-1.0).
+        #[serde(default = "default_morale")]
+        base_morale: f32,
+    },
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        AiConfig::Fsm {
+            flee_at_hp_percent: 0.0,
+            erratic_chance: 0.0,
+            chase_leash: 0,
+            kites: false,
+            kite_distance: 3,
+            ranged_range: 0,
+        }
+    }
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
@@ -745,11 +757,11 @@ fn load_decoration_catalog(
     handle.0 = asset_server.load("decorations.ron");
 }
 
-fn load_shrines_catalog(
+fn load_faction_matrix(
     asset_server: Res<AssetServer>,
-    mut handle: ResMut<ShrinesCatalogHandle>,
+    mut handle: ResMut<crate::game::factions::FactionMatrixHandle>,
 ) {
-    handle.0 = asset_server.load("shrines.ron");
+    handle.0 = asset_server.load("factions.ron");
 }
 
 /// Collects sprite entries that need loading: `(texture_path, tile_size, grid_size)`.
@@ -890,27 +902,6 @@ fn load_prop_sprites(
     }
 }
 
-fn load_shrine_sprites(
-    asset_server: Res<AssetServer>,
-    catalog_handle: Res<ShrinesCatalogHandle>,
-    catalogs: Res<Assets<ShrinesCatalog>>,
-    mut sprites: ResMut<PropSpriteAssets>,
-    mut layouts: ResMut<Assets<TextureAtlasLayout>>,
-) {
-    if let Some(catalog) = catalogs.get(&catalog_handle.0) {
-        let new = load_sprite_entries(
-            catalog.categories.iter().map(|c| (
-                c.sprite.clone(),
-                c.tile_size.unwrap_or(UVec2::new(447, 447)),
-                UVec2::new(1, 1),
-            )),
-            &sprites.handles,
-        );
-        let s = &mut *sprites;
-        apply_sprite_entries(new, &mut s.handles, &mut s.layouts, &asset_server, &mut layouts);
-    }
-}
-
 // Groups the overflow resources so check_assets_loaded stays within Bevy's
 // 16-SystemParam limit.
 #[derive(bevy::ecs::system::SystemParam)]
@@ -928,8 +919,8 @@ struct ExtraLoadingParams<'w> {
     prefab_manifests: Res<'w, Assets<PrefabManifest>>,
     decoration_catalog_handle: Res<'w, DecorationCatalogHandle>,
     decoration_catalogs: Res<'w, Assets<DecorationCatalog>>,
-    shrines_catalog_handle: Res<'w, ShrinesCatalogHandle>,
-    shrines_catalogs: Res<'w, Assets<ShrinesCatalog>>,
+    faction_matrix_handle: Res<'w, crate::game::factions::FactionMatrixHandle>,
+    faction_matrix_assets: Res<'w, Assets<crate::game::factions::FactionMatrixAsset>>,
     next_state: ResMut<'w, NextState<AppState>>,
 }
 
@@ -1016,8 +1007,8 @@ fn check_assets_loaded(
     }
 
     if extra
-        .shrines_catalogs
-        .get(&extra.shrines_catalog_handle.0)
+        .faction_matrix_assets
+        .get(&extra.faction_matrix_handle.0)
         .is_none()
     {
         return;

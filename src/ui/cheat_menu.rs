@@ -1,5 +1,6 @@
-use crate::game::AppState;
+use crate::game::{AppState, InGameState};
 use crate::game::combat::{HealMessage, ToggleGodModeMessage};
+use crate::game::systems::Omniscient;
 use crate::map::dungeon::MapTransitionMessage;
 use crate::map::map::RevealMapMessage;
 use crate::player::Player;
@@ -18,6 +19,7 @@ pub enum CheatButton {
     RevealMap,
     HealPlayer,
     ToggleGodMode,
+    ToggleOmniscient,
     NextLevel,
     Close,
 }
@@ -33,6 +35,7 @@ pub fn toggle_cheat_menu_system(
     mut heal_writer: MessageWriter<HealMessage>,
     mut god_mode_writer: MessageWriter<ToggleGodModeMessage>,
     mut transition_writer: MessageWriter<MapTransitionMessage>,
+    mut omniscient: ResMut<Omniscient>,
 ) {
     // Open/Close toggle with Backslash
     if keyboard_input.just_pressed(KeyCode::Backslash) {
@@ -55,8 +58,8 @@ pub fn toggle_cheat_menu_system(
     }
 
     // Shortcut keys when open
-    if cheat_menu.is_open {
-        if let Ok(player_entity) = player_query.single() {
+    if cheat_menu.is_open
+        && let Ok(player_entity) = player_query.single() {
             if keyboard_input.just_pressed(KeyCode::KeyR) {
                 reveal_writer.write(RevealMapMessage);
             }
@@ -74,8 +77,10 @@ pub fn toggle_cheat_menu_system(
             if keyboard_input.just_pressed(KeyCode::KeyN) {
                 transition_writer.write(MapTransitionMessage);
             }
+            if keyboard_input.just_pressed(KeyCode::KeyO) {
+                omniscient.0 = !omniscient.0;
+            }
         }
-    }
 }
 
 fn spawn_cheat_menu(commands: &mut Commands, asset_server: &Res<AssetServer>) {
@@ -134,6 +139,7 @@ fn spawn_cheat_menu(commands: &mut Commands, asset_server: &Res<AssetServer>) {
                         "(G)odmode Toggle",
                         CheatButton::ToggleGodMode,
                     );
+                    spawn_button(parent, asset_server, "(O)mniscient Toggle", CheatButton::ToggleOmniscient);
                     spawn_button(parent, asset_server, "(N)ext Level", CheatButton::NextLevel);
                     spawn_button(
                         parent,
@@ -191,6 +197,7 @@ pub fn cheat_menu_button_system(
     mut heal_writer: MessageWriter<HealMessage>,
     mut god_mode_writer: MessageWriter<ToggleGodModeMessage>,
     mut transition_writer: MessageWriter<MapTransitionMessage>,
+    mut omniscient: ResMut<Omniscient>,
 ) {
     for (interaction, cheat_button, mut color) in interaction_query.iter_mut() {
         match *interaction {
@@ -214,6 +221,9 @@ pub fn cheat_menu_button_system(
                         if let Some(entity) = player_entity {
                             god_mode_writer.write(ToggleGodModeMessage { entity });
                         }
+                    }
+                    CheatButton::ToggleOmniscient => {
+                        omniscient.0 = !omniscient.0;
                     }
                     CheatButton::NextLevel => {
                         transition_writer.write(MapTransitionMessage);
@@ -246,7 +256,8 @@ impl Plugin for CheatMenuPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CheatMenu>().add_systems(
             Update,
-            (toggle_cheat_menu_system, cheat_menu_button_system).run_if(in_state(AppState::InGame)),
+            (toggle_cheat_menu_system, cheat_menu_button_system)
+                .run_if(in_state(AppState::InGame).and(in_state(InGameState::Running))),
         );
     }
 }

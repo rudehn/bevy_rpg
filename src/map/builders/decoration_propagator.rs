@@ -5,7 +5,7 @@ use bracket_lib::prelude::{Algorithm2D, Point, RandomNumberGenerator, Rect};
 use crate::assets::DecorationRule;
 use crate::map::tile::{Decoration, LiquidType, TerrainType};
 
-use super::{BuilderMap, MetaMapBuilder};
+use super::{BuilderMap, BuilderPhase, MetaMapBuilder};
 
 pub struct DecorationPropagator {
     rules: Vec<DecorationRule>,
@@ -17,6 +17,8 @@ impl MetaMapBuilder for DecorationPropagator {
     fn build_map(&mut self, build_data: &mut BuilderMap) {
         self.propagate(build_data);
     }
+
+    fn phase(&self) -> Option<BuilderPhase> { Some(BuilderPhase::Finalization) }
 }
 
 impl DecorationPropagator {

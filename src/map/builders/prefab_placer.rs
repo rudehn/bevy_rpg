@@ -39,11 +39,13 @@ impl MonsterRoleTable {
                 continue;
             }
             if let Some(asset) = monsters.get(&spawn.monster) {
-                if !asset.faction_tag.is_empty() && !asset.role.is_empty() {
+                let faction_tag = asset.faction.to_lowercase();
+                let role = crate::assets::infer_role(asset).to_string();
+                if !faction_tag.is_empty() && !role.is_empty() {
                     entries.push(MonsterRoleEntry {
                         name: asset.name.clone(),
-                        faction_tag: asset.faction_tag.clone(),
-                        role: asset.role.clone(),
+                        faction_tag,
+                        role,
                         min_floor: spawn.min_floor,
                         max_floor: spawn.max_floor,
                     });
@@ -210,7 +212,7 @@ fn rotate_90_cw(prefab: &PrefabTemplate) -> PrefabTemplate {
 
     let monster_spawns = prefab.monster_spawns.iter().map(|m| {
         let (nx, ny) = transform(m.x, m.y);
-        let behavior = transform_behavior(&m.behavior, &transform);
+        let behavior = transform_behavior(&m.behavior, transform);
         crate::assets::PrefabMonsterSpawn { x: nx, y: ny, role: m.role.clone(), behavior }
     }).collect();
 
@@ -256,7 +258,7 @@ fn flip_prefab_h(prefab: &PrefabTemplate) -> PrefabTemplate {
 
     let monster_spawns = prefab.monster_spawns.iter().map(|m| {
         let (nx, ny) = transform(m.x, m.y);
-        let behavior = transform_behavior(&m.behavior, &transform);
+        let behavior = transform_behavior(&m.behavior, transform);
         crate::assets::PrefabMonsterSpawn { x: nx, y: ny, role: m.role.clone(), behavior }
     }).collect();
 
@@ -409,24 +411,22 @@ impl PrefabPlacer {
             let try_room = oriented.placement != "wall";
             let try_wall = oriented.placement != "room";
 
-            if try_room {
-                if let Some(rect) = self.try_room_placement_with_overlap(
+            if try_room
+                && let Some(rect) = self.try_room_placement_with_overlap(
                     build_data, oriented, rng, occupied,
                 ) {
                     occupied.push(rect);
                     build_data.add_exclusion_zone(rect);
                     return true;
                 }
-            }
-            if try_wall {
-                if let Some(rect) = self.try_wall_carve_placement_with_overlap(
+            if try_wall
+                && let Some(rect) = self.try_wall_carve_placement_with_overlap(
                     build_data, oriented, rng, occupied,
                 ) {
                     occupied.push(rect);
                     build_data.add_exclusion_zone(rect);
                     return true;
                 }
-            }
         }
         false
     }
@@ -439,9 +439,7 @@ impl PrefabPlacer {
         rng: &mut RandomNumberGenerator,
         occupied: &[Rect],
     ) -> Option<Rect> {
-        let Some(rooms) = build_data.rooms() else {
-            return None;
-        };
+        let rooms = build_data.rooms()?;
 
         let mut candidate_offsets: Vec<(i32, i32)> = rooms
             .iter()
@@ -566,14 +564,13 @@ impl PrefabPlacer {
                 let total_walkable = (walkable_before as i32 + walkable_delta) as usize;
 
                 let start = build_data.starting_position.as_ref().map(|p| Point::new(p.x, p.y));
-                if let Some(start) = start {
-                    if !check_connectivity_fast(&build_data.map, start, total_walkable) {
+                if let Some(start) = start
+                    && !check_connectivity_fast(&build_data.map, start, total_walkable) {
                         for (idx, tile) in &snapshot {
                             build_data.map.tiles[*idx] = *tile;
                         }
                         continue;
                     }
-                }
 
                 self.add_prefab_spawns(build_data, prefab, ox, oy);
                 return Some(Rect::with_size(ox, oy, prefab.width, prefab.height));
@@ -684,14 +681,13 @@ impl PrefabPlacer {
 
         // Connectivity check
         let start = build_data.starting_position.as_ref().map(|p| Point::new(p.x, p.y));
-        if let Some(start) = start {
-            if !check_connectivity_fast(&build_data.map, start, total_walkable) {
+        if let Some(start) = start
+            && !check_connectivity_fast(&build_data.map, start, total_walkable) {
                 for (idx, tile) in &snapshot {
                     build_data.map.tiles[*idx] = *tile;
                 }
                 return false;
             }
-        }
 
         // Success — add spawns.
         self.add_prefab_spawns(build_data, prefab, offset_x, offset_y);

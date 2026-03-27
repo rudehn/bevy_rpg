@@ -24,19 +24,12 @@ pub struct GameLogText;
 
 #[allow(dead_code)]
 #[derive(Resource)]
+#[derive(Default)]
 pub struct GameLogSettings {
     pub expanded: bool,
     pub scroll_offset: usize,
 }
 
-impl Default for GameLogSettings {
-    fn default() -> Self {
-        Self {
-            expanded: false,
-            scroll_offset: 0,
-        }
-    }
-}
 
 pub fn add_log_message_system(
     mut messages: MessageReader<GameLogMessage>,

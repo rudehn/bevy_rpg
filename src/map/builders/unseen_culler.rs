@@ -3,9 +3,11 @@ use crate::map::Map;
 use crate::map::tile::TerrainType;
 use bracket_lib::prelude::Point;
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct UnseenCuller {}
 
+#[allow(dead_code)]
 impl UnseenCuller {
     pub fn new() -> Box<UnseenCuller> {
         Box::new(UnseenCuller {})

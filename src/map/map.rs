@@ -6,7 +6,7 @@ use crate::{
     game::AppState,
     map::{
         light::LightMap,
-        tile::{Decoration, TileExplored, TileMarker, Tile, TerrainType, LiquidType, TileVisibility, is_opaque},
+        tile::{Decoration, TileExplored, Tile, TerrainType, LiquidType, TileVisibility, is_opaque},
     },
     player::Player,
     ui::game_log::GameLogMessage,
@@ -43,6 +43,7 @@ impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Map::default())
             .init_resource::<NeedsExploredInit>()
+            .init_resource::<crate::map::tile::TileEntityIndex>()
             .add_message::<RevealMapMessage>()
             .add_systems(
                 Update,
@@ -140,6 +141,7 @@ pub fn update_tile_visibility(
     mut map: ResMut<Map>,
     light_map: Res<LightMap>,
     mode: Res<crate::game::ascii_mode::GraphicsMode>,
+    omniscient: Res<crate::game::systems::Omniscient>,
     mut sprite_set: ParamSet<(
         Query<(
             &Position,
@@ -154,10 +156,11 @@ pub fn update_tile_visibility(
     )>,
     mut ascii_glyph_query: Query<(&mut TextColor, &crate::game::ascii_mode::AsciiGlyphColor), With<crate::game::ascii_mode::AsciiGlyph>>,
 ) {
-    // Run when viewshed changes OR graphics mode changes
+    // Run when viewshed changes, graphics mode changes, or omniscient toggles.
     let viewshed_dirty = !viewshed_changed.is_empty();
     let mode_dirty = mode.is_changed();
-    if !viewshed_dirty && !mode_dirty {
+    let omni_dirty = omniscient.is_changed();
+    if !viewshed_dirty && !mode_dirty && !omni_dirty {
         return;
     }
 
@@ -167,6 +170,7 @@ pub fn update_tile_visibility(
 
     let fov_tiles = &player_viewshed.visible_tiles;
     let is_ascii = *mode == crate::game::ascii_mode::GraphicsMode::Ascii;
+    let omni = omniscient.0;
 
     let mut newly_explored = Vec::new();
     // Deferred ASCII child updates: (entity, light_amount, is_explored_dim).
@@ -180,7 +184,7 @@ pub fn update_tile_visibility(
     {
         let current_point = Point::new(tile_pos.x, tile_pos.y);
 
-        if fov_tiles.contains(&current_point) {
+        if omni || fov_tiles.contains(&current_point) {
             *tile_visibility = TileVisibility::Visible;
             *tile_explored = TileExplored::Explored;
             *visibility = Visibility::Visible;
@@ -382,13 +386,6 @@ impl Map {
         if self.in_bounds(pt) {
             let idx = self.xy_idx(pt.x, pt.y);
             self.tiles[idx].liquid = liquid;
-        }
-    }
-
-    pub fn set_decoration(&mut self, pt: Point, decoration: crate::map::tile::Decoration) {
-        if self.in_bounds(pt) {
-            let idx = self.xy_idx(pt.x, pt.y);
-            self.tiles[idx].decoration = decoration;
         }
     }
 

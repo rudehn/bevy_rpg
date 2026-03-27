@@ -3,68 +3,53 @@ use bracket_lib::{
     random::RandomNumberGenerator,
 };
 
+use bevy::log::{debug, warn};
 use std::collections::HashMap;
 use std::time::Instant;
-use bevy::log::debug;
 
 use crate::{
-    assets::{ItemSpawnInfo, MonsterAsset, MonsterSpawnInfo, PrefabTemplate, ShrineCategoryDef},
+    assets::{ItemSpawnInfo, MonsterAsset, MonsterSpawnInfo, PrefabTemplate},
     components::Position,
-    game::shrines::ShrinesPurchased,
     game::squad::{SquadConfig, SquadId, SquadIdCounter},
     map::{
         Map,
         builders::{
-            boss_room::BossRoomBuilder,
             candle_spawner::CandleSpawner,
-            cave_eroder::CaveEroder,
             decoration_propagator::DecorationPropagator,
             diagonal_culler::DiagonalCuller,
-            machine_placer::MachinePlacer,
             exit_points::DistantExit,
             finish_doors::FinishDoors,
             isolated_area_culler::IsolatedAreaCuller,
             item_spawner::ItemSpawner,
             lake_builder::LakeBuilder,
-            pillar_culler::PillarCuller,
             monster_spawner::MonsterSpawner,
+            pillar_culler::PillarCuller,
             prefab_placer::{MonsterRoleTable, PrefabPlacer},
             start_point::{StartPointBuilder, XStart, YStart},
-            unseen_culler::UnseenCuller,
         },
     },
 };
 
 pub mod algorithms;
-mod boss_room;
 mod brogelike;
-pub mod decoration_propagator;
 mod bsp_dungeon;
 mod candle_spawner;
 mod cave_eroder;
 pub(crate) mod choke_map;
 mod corridors;
+pub mod decoration_propagator;
 mod diagonal_culler;
 mod exit_points;
 mod finish_doors;
 mod isolated_area_culler;
-mod pillar_culler;
 pub mod item_spawner;
 mod lake_builder;
-mod machine_placer;
 pub mod monster_spawner;
+mod pillar_culler;
 pub mod prefab_placer;
 mod room_drawer;
-pub mod shrine_spawner;
 mod start_point;
 mod unseen_culler;
-
-/// A shrine to be spawned on the floor.
-pub struct ShrineSpawnEntry {
-    pub pos: Point,
-    pub shrine_data: crate::game::shrines::ShrineData,
-    pub category_id: String,
-}
 
 /// A single monster spawn entry, optionally linked to a squad.
 pub struct SpawnEntry {
@@ -79,12 +64,32 @@ pub struct SpawnEntry {
 impl SpawnEntry {
     /// Create a solo spawn with no squad affiliation.
     pub fn solo(pos: Point, name: String) -> Self {
-        Self { pos, name, squad_id: None, squad_config: None, is_leader: false, patrol_route: None }
+        Self {
+            pos,
+            name,
+            squad_id: None,
+            squad_config: None,
+            is_leader: false,
+            patrol_route: None,
+        }
     }
 
     /// Create a squad member spawn.
-    pub fn squad(pos: Point, name: String, id: SquadId, config: SquadConfig, is_leader: bool) -> Self {
-        Self { pos, name, squad_id: Some(id), squad_config: Some(config), is_leader, patrol_route: None }
+    pub fn squad(
+        pos: Point,
+        name: String,
+        id: SquadId,
+        config: SquadConfig,
+        is_leader: bool,
+    ) -> Self {
+        Self {
+            pos,
+            name,
+            squad_id: Some(id),
+            squad_config: Some(config),
+            is_leader,
+            patrol_route: None,
+        }
     }
 }
 
@@ -95,14 +100,11 @@ pub struct BuilderMap {
     pub map: Map,
     pub starting_position: Option<Position>,
     pub rooms: Option<Vec<Rect>>,
-    pub corridors: Option<Vec<Vec<usize>>>,
-    // pub history: Vec<Map>,
     pub width: i32,
     pub height: i32,
     pub spawn_list: Vec<SpawnEntry>,
     pub item_spawn_list: Vec<(Point, String, u32)>, // (pos, item_name, count)
-    pub prop_spawn_list: Vec<(Point, String)>,       // (pos, prop_name)
-    pub shrine_spawn_list: Vec<ShrineSpawnEntry>,
+    pub prop_spawn_list: Vec<(Point, String)>,      // (pos, prop_name)
     pub squad_counter: SquadIdCounter,
     pub decoration_exclusion_zones: Vec<Rect>,
 }
@@ -118,18 +120,22 @@ impl BuilderMap {
         // }
     }
 
-    // --- Validation helpers (Phase 2) ---
+    // --- Validation helpers ---
 
-    /// Panics with a descriptive message if `rooms` has not been set by a prior builder.
-    pub fn require_rooms(&self, builder: &'static str) -> &Vec<Rect> {
-        self.rooms.as_ref().unwrap_or_else(||
-            panic!("{builder} requires rooms to be set by a prior builder"))
+    /// Returns rooms if set, or logs a warning and returns `None`.
+    pub fn rooms_or_warn(&self, builder: &str) -> Option<&Vec<Rect>> {
+        self.rooms.as_ref().or_else(|| {
+            warn!("{builder}: rooms not set by a prior builder — skipping");
+            None
+        })
     }
 
-    /// Panics with a descriptive message if `starting_position` has not been set.
-    pub fn require_starting_position(&self, builder: &'static str) -> &Position {
-        self.starting_position.as_ref().unwrap_or_else(||
-            panic!("{builder} requires starting_position to be set by a prior builder"))
+    /// Returns starting_position if set, or logs a warning and returns `None`.
+    pub fn starting_position_or_warn(&self, builder: &str) -> Option<&Position> {
+        self.starting_position.as_ref().or_else(|| {
+            warn!("{builder}: starting_position not set by a prior builder — skipping");
+            None
+        })
     }
 
     // --- Accessor methods (Phase 3) ---
@@ -170,13 +176,11 @@ impl BuilderMap {
             map: Map::new(1, width, height, "test"),
             starting_position: None,
             rooms: None,
-            corridors: None,
             width,
             height,
             spawn_list: Vec::new(),
             item_spawn_list: Vec::new(),
             prop_spawn_list: Vec::new(),
-            shrine_spawn_list: Vec::new(),
             squad_counter: SquadIdCounter::default(),
             decoration_exclusion_zones: Vec::new(),
         }
@@ -184,7 +188,7 @@ impl BuilderMap {
 
     #[cfg(test)]
     pub fn with_open_room(width: i32, height: i32) -> Self {
-        use crate::map::tile::{Tile, TerrainType, LiquidType, Decoration};
+        use crate::map::tile::{Decoration, LiquidType, TerrainType, Tile};
 
         let mut bm = Self::new_for_test(width, height);
         // Carve floor interior, leave wall border
@@ -210,7 +214,13 @@ pub struct BuilderChain {
 }
 
 impl BuilderChain {
-    pub fn new<S: ToString>(new_depth: i32, width: i32, height: i32, name: S, squad_counter: SquadIdCounter) -> BuilderChain {
+    pub fn new<S: ToString>(
+        new_depth: i32,
+        width: i32,
+        height: i32,
+        name: S,
+        squad_counter: SquadIdCounter,
+    ) -> BuilderChain {
         BuilderChain {
             starter: None,
             builders: Vec::new(),
@@ -218,13 +228,12 @@ impl BuilderChain {
                 map: Map::new(new_depth, width, height, name),
                 starting_position: None,
                 rooms: None,
-                corridors: None,
                 width,
                 height,
                 spawn_list: Vec::new(),
                 item_spawn_list: Vec::new(),
                 prop_spawn_list: Vec::new(),
-                shrine_spawn_list: Vec::new(),
+
                 squad_counter,
                 decoration_exclusion_zones: Vec::new(),
             },
@@ -236,10 +245,6 @@ impl BuilderChain {
             None => self.starter = Some(("starter", starter)),
             Some(_) => panic!("You can only have one starting builder."),
         };
-    }
-
-    pub fn with(&mut self, metabuilder: Box<dyn MetaMapBuilder>) {
-        self.builders.push(("", metabuilder));
     }
 
     /// Register a meta builder with a display name (used for timing logs).
@@ -255,19 +260,47 @@ impl BuilderChain {
             Some((name, starter)) => {
                 let start = Instant::now();
                 starter.build_map(&mut self.build_data);
-                debug!("Builder [{}]: {:.1}ms", name, start.elapsed().as_secs_f64() * 1000.0);
+                debug!(
+                    "Builder [{}]: {:.1}ms",
+                    name,
+                    start.elapsed().as_secs_f64() * 1000.0
+                );
             }
         }
 
-        // Build additional layers in turn
+        // Build additional layers in turn, verifying phase ordering in debug builds.
+        let mut last_phase: Option<BuilderPhase> = None;
         for (i, (name, metabuilder)) in self.builders.iter_mut().enumerate() {
-            let label = if name.is_empty() { format!("meta_{}", i) } else { name.to_string() };
+            let label = if name.is_empty() {
+                format!("meta_{}", i)
+            } else {
+                name.to_string()
+            };
+
+            if let Some(phase) = metabuilder.phase() {
+                if let Some(prev) = last_phase {
+                    debug_assert!(
+                        phase >= prev,
+                        "Builder [{label}] phase {phase:?} is earlier than previous phase {prev:?}. \
+                         Reorder the pipeline in floor_builder()."
+                    );
+                }
+                last_phase = Some(phase);
+            }
+
             let start = Instant::now();
             metabuilder.build_map(&mut self.build_data);
-            debug!("Builder [{}]: {:.1}ms", label, start.elapsed().as_secs_f64() * 1000.0);
+            debug!(
+                "Builder [{}]: {:.1}ms",
+                label,
+                start.elapsed().as_secs_f64() * 1000.0
+            );
         }
 
-        debug!("Total build_map: {:.1}ms", total_start.elapsed().as_secs_f64() * 1000.0);
+        debug!(
+            "Total build_map: {:.1}ms",
+            total_start.elapsed().as_secs_f64() * 1000.0
+        );
     }
 
     // pub fn spawn_entities(&mut self, ecs: &mut World) {
@@ -293,6 +326,7 @@ pub struct FloorProfile {
     /// Hallway attachment chance (0-100).
     pub hallway_chance: i32,
     /// Erosion chance per eligible wall tile (0-100).
+    #[allow(dead_code)]
     pub erosion_percent: i32,
     /// Whether cavern rooms can use relaxed (no-padding) fitting.
     pub relaxed_fitting: bool,
@@ -338,44 +372,96 @@ pub trait InitialMapBuilder: Send + 'static {
     fn build_map(&mut self, build_data: &mut BuilderMap);
 }
 
+/// Logical pipeline phases. Builders declare their phase; `BuilderChain`
+/// enforces monotonically non-decreasing phase order via `debug_assert!`.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum BuilderPhase {
+    /// Initial map generation (rooms, corridors, terrain).
+    Geometry,
+    /// Terrain post-processing (culling, doors, lakes).
+    TerrainCleanup,
+    /// Prefabs, boss rooms, connectivity validation.
+    StructurePlacement,
+    /// Connectivity culling (IsolatedAreaCuller).
+    ConnectivityCull,
+    /// Entity spawning (monsters, items, props, shrines).
+    Spawning,
+    /// Exit placement, decoration, final passes.
+    Finalization,
+}
+
 pub trait MetaMapBuilder: Send + 'static {
     fn build_map(&mut self, build_data: &mut BuilderMap);
+
+    /// Declare which pipeline phase this builder belongs to.
+    /// Returns `None` by default (no phase enforcement).
+    fn phase(&self) -> Option<BuilderPhase> {
+        None
+    }
 }
 
 #[allow(dead_code)]
 fn random_start_position() -> (XStart, YStart) {
-    let x;
     let mut rng = RandomNumberGenerator::new();
     let xroll = rng.roll_dice(1, 3);
-    match xroll {
-        1 => x = XStart::LEFT,
-        2 => x = XStart::CENTER,
-        _ => x = XStart::RIGHT,
-    }
+    let x = match xroll {
+        1 => XStart::LEFT,
+        2 => XStart::CENTER,
+        _ => XStart::RIGHT,
+    };
 
-    let y;
     let yroll = rng.roll_dice(1, 3);
-    match yroll {
-        1 => y = YStart::BOTTOM,
-        2 => y = YStart::CENTER,
-        _ => y = YStart::TOP,
-    }
+    let y = match yroll {
+        1 => YStart::BOTTOM,
+        2 => YStart::CENTER,
+        _ => YStart::TOP,
+    };
 
     (x, y)
 }
 
+/// Constructs the builder pipeline for a single dungeon floor.
+///
+/// # Pipeline Dependency Graph
+///
+/// ```text
+/// Phase: Geometry
+///   BrogueLikeBuilder        → sets: rooms, map terrain
+///
+/// Phase: TerrainCleanup
+///   DiagonalCuller           → reads: map terrain
+///   StartPointBuilder        → reads: rooms         → sets: starting_position
+///   LakeBuilder              → reads: starting_position, map terrain
+///   DiagonalCuller2          → reads: map terrain
+///   PillarCuller             → reads: map terrain
+///   FinishDoors              → reads: map terrain
+///
+/// Phase: StructurePlacement
+///   PrefabPlacer             → reads: rooms          → sets: spawn_list, exclusion_zones
+///
+/// Phase: ConnectivityCull
+///   IsolatedAreaCuller       → reads: starting_position → modifies: map terrain
+///
+/// Phase: Spawning (must run AFTER ConnectivityCull)
+///   CandleSpawner            → reads: rooms          → sets: prop_spawn_list
+///   MonsterSpawner           → reads: rooms, starting_position → sets: spawn_list
+///   ItemSpawner              → reads: rooms          → sets: prop_spawn_list
+///
+/// Phase: Finalization
+///   DistantExit              → reads: starting_position → modifies: map terrain
+///   DecorationPropagator     → reads: exclusion_zones → modifies: map decoration
+/// ```
 pub fn floor_builder(
     new_depth: i32,
     width: i32,
     height: i32,
     spawn_table: &[MonsterSpawnInfo],
-    item_spawn_table: &[ItemSpawnInfo],
+    _item_spawn_table: &[ItemSpawnInfo],
     squad_counter: SquadIdCounter,
     prefabs: Vec<PrefabTemplate>,
     monster_manifest: &HashMap<String, MonsterAsset>,
     decoration_rules: Vec<crate::assets::DecorationRule>,
-    shrine_categories: Vec<ShrineCategoryDef>,
-    shrines_purchased: &ShrinesPurchased,
 ) -> BuilderChain {
     let mut map_name = "Floor ".to_owned() + &new_depth.to_string();
     if new_depth == 1 {
@@ -390,25 +476,24 @@ pub fn floor_builder(
     builder.start_with(brogelike::BrogueLikeBuilder::dungeon(
         new_depth, width, height, profile,
     ));
-    builder.with_named("DiagonalCuller", DiagonalCuller::new());
+    // builder.with_named("DiagonalCuller", DiagonalCuller::new());
     builder.with_named("StartPoint", StartPointBuilder::new());
-    builder.with_named("LakeBuilder", LakeBuilder::new(new_depth));
-    builder.with_named("DiagonalCuller2", DiagonalCuller::new());
-    builder.with_named("PillarCuller", PillarCuller::new());
-    builder.with_named("FinishDoors", FinishDoors::new());
-    builder.with_named("PrefabPlacer", PrefabPlacer::new(prefabs, role_table));
-    builder.with_named("BossRoomBuilder", BossRoomBuilder::new());
-    builder.with_named("CandleSpawner", CandleSpawner::new());
-    builder.with_named("MonsterSpawner", MonsterSpawner::new(spawn_table));
-    builder.with_named("ItemSpawner", ItemSpawner::new());
-    builder.with_named("MachinePlacer", MachinePlacer::new(shrine_categories, shrines_purchased));
-    builder.with_named("IsolatedAreaCuller", IsolatedAreaCuller::new());
+    // builder.with_named("LakeBuilder", LakeBuilder::new(new_depth));
+    // builder.with_named("DiagonalCuller2", DiagonalCuller::new());
+    // builder.with_named("PillarCuller", PillarCuller::new());
+    // builder.with_named("FinishDoors", FinishDoors::new());
+    // builder.with_named("PrefabPlacer", PrefabPlacer::new(prefabs, role_table));
+    // builder.with_named("IsolatedAreaCuller", IsolatedAreaCuller::new());
+    // --- Spawners run after IsolatedAreaCuller so entities are never placed in walled-off regions ---
+    // builder.with_named("CandleSpawner", CandleSpawner::new());
+    // builder.with_named("MonsterSpawner", MonsterSpawner::new(spawn_table));
+    // builder.with_named("ItemSpawner", ItemSpawner::new());
     builder.with_named("DistantExit", DistantExit::new());
-    builder.with_named("DecorationPropagator", DecorationPropagator::new(
-        decoration_rules,
-        new_depth,
-        profile.decoration_density,
-    ));
+    // builder.with_named("DecorationPropagator", DecorationPropagator::new(
+    //     decoration_rules,
+    //     new_depth,
+    //     profile.decoration_density,
+    // ));
 
     builder
 }
@@ -423,8 +508,16 @@ pub fn level_builder(
     prefabs: Vec<PrefabTemplate>,
     monster_manifest: &HashMap<String, MonsterAsset>,
     decoration_rules: Vec<crate::assets::DecorationRule>,
-    shrine_categories: Vec<ShrineCategoryDef>,
-    shrines_purchased: &ShrinesPurchased,
 ) -> BuilderChain {
-    floor_builder(new_depth, width, height, spawn_table, item_spawn_table, squad_counter, prefabs, monster_manifest, decoration_rules, shrine_categories, shrines_purchased)
+    floor_builder(
+        new_depth,
+        width,
+        height,
+        spawn_table,
+        item_spawn_table,
+        squad_counter,
+        prefabs,
+        monster_manifest,
+        decoration_rules,
+    )
 }

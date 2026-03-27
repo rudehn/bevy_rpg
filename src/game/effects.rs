@@ -1,12 +1,26 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::game::turns::ProcessingPhase;
+
+pub struct EffectsPlugin;
+
+impl Plugin for EffectsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_message::<UseItemMessage>()
+            .add_systems(
+                Update,
+                handle_use_item.in_set(ProcessingPhase::ResolveActions),
+            );
+    }
+}
+
 use crate::{
     assets::SpellRegistryHandle,
     components::{Inventory, Name},
     constants::BASE_ACTION_COST,
     game::{
-        actions::ActionFinishedEvent,
+        actions::{finish_turn, ActionFinishedEvent},
         combat::Health,
         items::{ItemProperties, ItemStack},
         magic::{ActiveSpells, KnownSpells},
@@ -87,10 +101,7 @@ pub fn handle_use_item(
                 "The {} has no effect.",
                 item_name
             )));
-            finish_writer.write(ActionFinishedEvent {
-                entity: player_entity,
-                base_cost: BASE_ACTION_COST,
-            });
+            finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST);
             continue;
         };
 
@@ -156,22 +167,15 @@ pub fn handle_use_item(
         }
 
         // Consume one from the stack; only remove/despawn when count reaches 0.
-        if let Some((count, max_stack)) = stack_info {
-            if count > 1 {
+        if let Some((count, max_stack)) = stack_info
+            && count > 1 {
                 commands.entity(msg.item_entity).insert(ItemStack { count: count - 1, max_stack });
-                finish_writer.write(ActionFinishedEvent {
-                    entity: player_entity,
-                    base_cost: BASE_ACTION_COST,
-                });
+                finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST);
                 continue;
             }
-        }
         inv.items.retain(|&e| e != msg.item_entity);
         commands.entity(msg.item_entity).despawn();
 
-        finish_writer.write(ActionFinishedEvent {
-            entity: player_entity,
-            base_cost: BASE_ACTION_COST,
-        });
+        finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST);
     }
 }

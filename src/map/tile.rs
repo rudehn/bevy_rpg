@@ -1,15 +1,24 @@
+use std::collections::HashMap;
+
 use bevy::camera::visibility::RenderLayers;
 use bevy::ecs::component::Component;
-use serde::{Deserialize, Serialize};
 use bevy::prelude::{
-    Commands, Entity, InheritedVisibility, Sprite, TextureAtlas, Transform, Vec3, ViewVisibility,
-    Visibility, Text2d, TextFont, TextColor, default,
+    Assets, Children, Commands, Entity, InheritedVisibility, Message, MessageReader, Res, ResMut,
+    Resource, Sprite, TextureAtlas, Transform, Vec3, ViewVisibility, Visibility, Query, With,
+    Text2d, TextFont, TextColor, default, warn,
 };
 use bracket_lib::prelude::Point;
+use serde::{Deserialize, Serialize};
 
-use crate::assets::{TileManifest, TileSpriteAssets};
-use crate::components::Collider;
+use crate::assets::{self, TileManifest, TileManifestHandle, TileSpriteAssets};
+use crate::components::{Collider, Viewshed};
 use crate::map::map::GRID_SIZE;
+use crate::map::Map;
+
+/// Spatial index mapping grid `(x, y)` → tile `Entity`.
+/// Built once per floor load by `spawn_tiles_into_ecs`; never modified at runtime.
+#[derive(Resource, Default)]
+pub struct TileEntityIndex(pub HashMap<(i32, i32), Entity>);
 
 #[derive(Component)]
 pub struct TileMarker;
@@ -122,10 +131,6 @@ pub enum TileExplored {
     Unexplored,
     Explored,
 }
-
-/// Marker for child sprite entities that render decoration overlays on tiles.
-#[derive(Component)]
-pub struct DecorationOverlay;
 
 pub fn is_walkable(tile: Tile) -> bool {
     // Both terrain and liquid must be walkable
@@ -374,4 +379,107 @@ pub fn spawn_tile_entity(
     }
 
     tile_entity
+}
+
+// ---------------------------------------------------------------------------
+// Runtime tile mutation
+// ---------------------------------------------------------------------------
+
+/// Request to change a tile's terrain at runtime. Handled by `apply_tile_mutations`,
+/// which updates both the `Map` resource and the ECS tile entity (sprite, collider,
+/// ASCII glyph, viewshed dirty flags).
+#[derive(Message)]
+pub struct TileMutationMessage {
+    pub position: Point,
+    pub new_terrain: TerrainType,
+}
+
+/// Applies queued tile mutations, keeping Map resource and ECS tile entities in sync.
+pub fn apply_tile_mutations(
+    mut commands: Commands,
+    mut messages: MessageReader<TileMutationMessage>,
+    mut map: ResMut<Map>,
+    tile_index: Res<TileEntityIndex>,
+    mut tile_query: Query<(&mut TerrainType, &mut Sprite, Option<&Children>)>,
+    mut glyph_query: Query<&mut Text2d, With<crate::game::ascii_mode::AsciiGlyph>>,
+    mut viewshed_query: Query<&mut Viewshed>,
+    tile_manifests: Res<Assets<TileManifest>>,
+    tile_manifest_handle: Res<TileManifestHandle>,
+    tile_sprite_assets: Res<TileSpriteAssets>,
+) {
+    let mut any = false;
+
+    let tile_manifest = tile_manifests.get(&tile_manifest_handle.0);
+
+    for msg in messages.read() {
+        // 1. Update Map resource (source of truth for game logic).
+        let idx = map.xy_idx(msg.position.x, msg.position.y);
+        map.tiles[idx].terrain = msg.new_terrain;
+
+        // 2. Look up the ECS tile entity via spatial index.
+        let Some(&tile_entity) = tile_index.0.get(&(msg.position.x, msg.position.y)) else {
+            warn!(
+                "TileMutationMessage at ({}, {}) — no tile entity in index",
+                msg.position.x, msg.position.y
+            );
+            continue;
+        };
+
+        let Ok((mut terrain_type, mut sprite, children)) = tile_query.get_mut(tile_entity) else {
+            warn!(
+                "TileMutationMessage at ({}, {}) — tile entity {:?} missing components",
+                msg.position.x, msg.position.y, tile_entity
+            );
+            continue;
+        };
+
+        // 3. Update ECS terrain component.
+        *terrain_type = msg.new_terrain;
+
+        // 4. Update sprite from tile manifest.
+        if let Some(manifest) = tile_manifest
+            && let Some(asset) = manifest.tiles.get(msg.new_terrain.name()) {
+                let (texture_path, index) = assets::parse_sprite_path(&asset.sprite);
+
+                if let Some(texture_handle) = tile_sprite_assets.handles.get(texture_path) {
+                    sprite.image = texture_handle.clone();
+                }
+                if let Some(layout_handle) = tile_sprite_assets.layouts.get(texture_path)
+                    && let Some(ref mut texture_atlas) = sprite.texture_atlas {
+                        texture_atlas.index = index;
+                        texture_atlas.layout = layout_handle.clone();
+                    }
+
+                // 5. Update ASCII glyph child.
+                if let Some(children) = children {
+                    let new_char = if asset.ascii_char.is_empty() {
+                        msg.new_terrain.name()
+                    } else {
+                        &asset.ascii_char
+                    };
+                    for &child in children.iter() {
+                        if let Ok(mut text) = glyph_query.get_mut(child) {
+                            **text = new_char.to_string();
+                        }
+                    }
+                }
+            }
+
+        // 6. Add or remove Collider based on walkability of the full tile.
+        let full_tile = map.tiles[idx];
+        if is_walkable(full_tile) {
+            commands.entity(tile_entity).remove::<Collider>();
+        } else {
+            commands.entity(tile_entity).insert(Collider);
+        }
+
+        any = true;
+    }
+
+    // 7. Mark all viewsheds dirty so FOV is recalculated.
+    if any {
+        for mut viewshed in viewshed_query.iter_mut() {
+            viewshed.dirty = true;
+        }
+    }
 }

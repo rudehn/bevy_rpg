@@ -9,7 +9,6 @@
 use super::{BuilderMap, MetaMapBuilder};
 use crate::map::tile::{Decoration, TerrainType, LiquidType};
 use crate::map::builders::algorithms::{Grid, BlobGenConfig, create_blob, BlobType};
-use bracket_lib::prelude::Point;
 use rand::prelude::*;
 use std::collections::VecDeque;
 
@@ -65,8 +64,8 @@ fn generate_blob_on_full_grid(
         round_count: 5,
         min_blob_width: 4,
         min_blob_height: 4,
-        max_blob_width: max_blob_width,
-        max_blob_height: max_blob_height,
+        max_blob_width,
+        max_blob_height,
         initial_alive_percent: 55,
         birth_threshold: 5,
         survival_threshold: 4,
@@ -172,7 +171,7 @@ fn lake_disrupts_passability(
 
 /// Brogue's designLakes: generate blob shapes, try placements, validate connectivity,
 /// stamp as Floor terrain, mark in lakeMap.
-fn design_lakes(build_data: &mut BuilderMap, lake_map: &mut Vec<bool>) {
+fn design_lakes(build_data: &mut BuilderMap, lake_map: &mut [bool]) {
     let map_w = build_data.map.width;
     let map_h = build_data.map.height;
 
@@ -255,7 +254,7 @@ fn design_lakes(build_data: &mut BuilderMap, lake_map: &mut Vec<bool>) {
 /// Returns the set of filled tile indices (for wreath generation).
 fn fill_lake(
     build_data: &mut BuilderMap,
-    lake_map: &mut Vec<bool>,
+    lake_map: &mut [bool],
     start_x: i32,
     start_y: i32,
     liquid: LiquidType,
@@ -322,8 +321,8 @@ fn create_wreath(
         }
     }
 
-    for idx in 0..total {
-        if wreath_mask[idx] {
+    for (idx, &is_wreath) in wreath_mask.iter().enumerate().take(total) {
+        if is_wreath {
             build_data.map.tiles[idx].liquid = shallow_liquid;
             if build_data.map.tiles[idx].terrain == TerrainType::Door
                 || build_data.map.tiles[idx].terrain == TerrainType::OpenDoor
@@ -336,7 +335,7 @@ fn create_wreath(
 
 /// Brogue's fillLakes: iterate lakeMap, for each unfilled lake tile pick a liquid
 /// type, flood-fill connected lake tiles, create wreath.
-fn fill_lakes(build_data: &mut BuilderMap, lake_map: &mut Vec<bool>, depth: i32) {
+fn fill_lakes(build_data: &mut BuilderMap, lake_map: &mut [bool], depth: i32) {
     let width = build_data.map.width;
     let height = build_data.map.height;
     let mut rng = rand::rng();

@@ -9,10 +9,9 @@ use crate::{
         AbilityDef, MonsterAsset, MonsterManifest, MonsterManifestHandle, MonsterSpriteAssets,
         ItemManifest, ItemManifestHandle, ItemSpriteAssets,
         PropManifest, PropManifestHandle, PropSpriteAssets,
-        ShrineCategoryDef,
     },
     components::{
-        Ammo, Collider, Faction, FactionKind, FinalBoss, FloorEntityMarker, GameEntityMarker, Monster, Name, Position, Prop, Viewshed, Item,
+        Ammo, Collider, Faction, FactionKind, FloorEntityMarker, GameEntityMarker, Inventory, Monster, Name, Position, Prop, Viewshed, Item,
     },
     constants::{TILE_SIZE_X, TILE_SIZE_Y, Z_MONSTER, Z_ITEM},
     game::{
@@ -20,7 +19,7 @@ use crate::{
         actions::SpeedStats,
         combat::{Damage, DamageType, DamageTypeTag, Health, HealthRegen, Resistances},
         items::{ItemProperties, ItemStack, LootEntry, LootTable},
-        magic::{ActiveSpells, KnownSpells, ManaRegen, SpellCooldowns, MAX_SPELL_SLOTS},
+        magic::{ActiveSpells, KnownSpells, ManaRegen, SpellCooldowns, StatusEffects, MAX_SPELL_SLOTS},
         ranged::RangedCapable,
         stats::{Armor, DamageBonus, Dodge, HitBonus, Mana},
     },
@@ -103,13 +102,22 @@ pub fn spawn_monster(
         return None;
     };
 
-    let mut monster_ai = MonsterAI::default();
-    monster_ai.flee_at_hp_percent = monster_asset.flee_at_hp_percent;
-    monster_ai.erratic_chance = monster_asset.erratic_chance;
-    monster_ai.chase_leash = monster_asset.chase_leash;
-    monster_ai.kites = monster_asset.kites;
-    monster_ai.kite_distance = monster_asset.kite_distance;
-    monster_ai.spawn_position = Some(Point::new(spawn_point.x, spawn_point.y));
+    let spawn_pt = Point::new(spawn_point.x, spawn_point.y);
+    let (mut monster_ai, base_morale) = match &monster_asset.ai {
+        crate::assets::AiConfig::Fsm { flee_at_hp_percent, erratic_chance, chase_leash, kites, kite_distance, .. } => {
+            let mut ai = MonsterAI::default();
+            ai.flee_at_hp_percent = *flee_at_hp_percent;
+            ai.erratic_chance = *erratic_chance;
+            ai.chase_leash = *chase_leash;
+            ai.kites = *kites;
+            ai.kite_distance = *kite_distance;
+            (ai, 0.6) // Default morale for FSM monsters
+        }
+        crate::assets::AiConfig::Goap { base_morale, .. } => {
+            (MonsterAI::default(), *base_morale)
+        }
+    };
+    monster_ai.spawn_position = Some(spawn_pt);
 
     let monster_entity = commands
         .spawn((
@@ -122,7 +130,10 @@ pub fn spawn_monster(
             new_grid_pos,
             new_pos,
             Viewshed::new(monster_asset.vision.max(2)),
-            Faction(FactionKind::Monster),
+            Faction(FactionKind(monster_asset.faction.clone())),
+            StatusEffects::default(),
+            Inventory { items: vec![], capacity: 20 },
+            crate::game::squad::Morale::new(base_morale),
         ))
         .insert((
             Health {
@@ -182,10 +193,19 @@ pub fn spawn_monster(
         ));
     }
 
-    if monster_asset.ranged_range > 0 {
+    let ranged_range = match &monster_asset.ai {
+        crate::assets::AiConfig::Fsm { ranged_range, .. } => *ranged_range,
+        crate::assets::AiConfig::Goap { traits, .. } => {
+            traits.iter().find_map(|t| match t {
+                crate::assets::AiTrait::Ranged { range } => Some(*range),
+                _ => None,
+            }).unwrap_or(0)
+        }
+    };
+    if ranged_range > 0 {
         commands
             .entity(monster_entity)
-            .insert(RangedCapable { range: monster_asset.ranged_range });
+            .insert(RangedCapable { range: ranged_range });
     }
 
     if !monster_asset.spells.is_empty() {
@@ -215,14 +235,6 @@ pub fn spawn_monster(
             map.insert(DamageType::from_str(dt_str), *val);
         }
         commands.entity(monster_entity).insert(Resistances(map));
-    }
-
-    // Boss marker + AI
-    if monster_asset.is_boss {
-        commands.entity(monster_entity).insert((
-            FinalBoss,
-            crate::game::boss::BossAI::default(),
-        ));
     }
 
     // Abilities — convert AbilityDef entries into ECS components
@@ -310,6 +322,26 @@ pub fn spawn_monster(
         attach_ascii_glyph(commands, monster_entity, &monster_asset.ascii_char, monster_asset.ascii_fg, &font.0, Vec3::new(scale_x, scale_y, 1.0));
     }
 
+    // GOAP monsters get a GoapAI component with trait-driven goals/actions.
+    if let crate::assets::AiConfig::Goap { traits, .. } = &monster_asset.ai {
+        let (goals, actions) = crate::game::goap::build_goap_config(
+            traits,
+            !monster_asset.spells.is_empty(),
+            monster_asset.base_armor >= 2,
+            /* is_squad_member */ false, // Will be set later when squad is assigned
+        );
+        commands.entity(monster_entity).insert(crate::game::goap::GoapAI {
+            goals,
+            actions,
+            hoard_position: if traits.iter().any(|t| matches!(t, crate::assets::AiTrait::Hoarder)) {
+                Some(spawn_pt)
+            } else {
+                None
+            },
+            roam_target: None,
+        });
+    }
+
     turn_manager.add_entity(monster_entity);
     Some(monster_entity)
 }
@@ -353,9 +385,7 @@ pub fn spawn_item(
     item_sprite_assets: &Res<ItemSpriteAssets>,
     ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
 ) -> Option<Entity> {
-    let Some(manifest) = item_manifests.get(&item_manifest_handle.0) else {
-        return None;
-    };
+    let manifest = item_manifests.get(&item_manifest_handle.0)?;
     let Some(asset) = manifest.items.get(item_name) else {
         warn!("Item '{}' not found in manifest.", item_name);
         return None;
@@ -512,74 +542,3 @@ pub fn spawn_prop(
     Some(prop_entity)
 }
 
-pub fn spawn_shrine(
-    commands: &mut Commands,
-    spawn_point: &Point,
-    shrine_data: crate::game::shrines::ShrineData,
-    category_def: &ShrineCategoryDef,
-    prop_sprite_assets: &Res<PropSpriteAssets>,
-    ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
-) -> Entity {
-    let (texture_path, index) = crate::assets::parse_sprite_path(&category_def.sprite);
-
-    let tile_size = category_def.tile_size.unwrap_or(UVec2::new(447, 447));
-    let scale_x = TILE_SIZE_X as f32 / tile_size.x as f32;
-    let scale_y = TILE_SIZE_Y as f32 / tile_size.y as f32;
-
-    let mut entity_cmd = commands.spawn((
-        crate::game::shrines::ShrineMarker,
-        Prop,
-        shrine_data.clone(),
-        Name(format!("{} Shrine", shrine_data.category_name)),
-        GameEntityMarker,
-        FloorEntityMarker,
-        Collider,
-        Position {
-            x: spawn_point.x,
-            y: spawn_point.y,
-        },
-        Transform {
-            translation: Vec3::new(
-                spawn_point.x as f32 * GRID_SIZE.x,
-                spawn_point.y as f32 * GRID_SIZE.y,
-                Z_ITEM,
-            ),
-            scale: Vec3::new(scale_x, scale_y, 1.0),
-            ..Default::default()
-        },
-        Visibility::Hidden,
-        RenderLayers::layer(1),
-    ));
-
-    // Attach sprite if the texture is loaded
-    if let (Some(texture_handle), Some(layout_handle)) = (
-        prop_sprite_assets.handles.get(texture_path).cloned(),
-        prop_sprite_assets.layouts.get(texture_path).cloned(),
-    ) {
-        entity_cmd.insert(Sprite::from_atlas_image(
-            texture_handle,
-            TextureAtlas {
-                index,
-                layout: layout_handle,
-            },
-        ));
-    } else {
-        warn!("Missing shrine sprite texture: '{}', shrine will have no sprite", texture_path);
-    }
-
-    let shrine_entity = entity_cmd.id();
-
-    // ASCII glyph child
-    if let Some(font) = ascii_font {
-        attach_ascii_glyph(
-            commands,
-            shrine_entity,
-            &category_def.ascii_glyph,
-            category_def.ascii_color,
-            &font.0,
-            Vec3::new(scale_x, scale_y, 1.0),
-        );
-    }
-
-    shrine_entity
-}

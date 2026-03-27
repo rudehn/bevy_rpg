@@ -3,7 +3,7 @@ use bracket_lib::prelude::{Algorithm2D, DijkstraMap, Point};
 
 use crate::constants::MAX_FLOOR;
 use crate::map::{
-    builders::{BuilderMap, MetaMapBuilder},
+    builders::{BuilderMap, BuilderPhase, MetaMapBuilder},
     tile::{LiquidType, TerrainType},
 };
 
@@ -14,6 +14,8 @@ impl MetaMapBuilder for DistantExit {
     fn build_map(&mut self, build_data: &mut BuilderMap) {
         self.build(build_data);
     }
+
+    fn phase(&self) -> Option<BuilderPhase> { Some(BuilderPhase::Finalization) }
 }
 
 impl DistantExit {
@@ -23,7 +25,7 @@ impl DistantExit {
     }
 
     fn build(&mut self, build_data: &mut BuilderMap) {
-        let starting_pos = build_data.require_starting_position("DistantExit").clone();
+        let Some(starting_pos) = build_data.starting_position_or_warn("DistantExit").cloned() else { return; };
         let start_idx = build_data
             .map
             .point2d_to_index(Point::new(starting_pos.x, starting_pos.y));
@@ -65,7 +67,7 @@ impl DistantExit {
                     && tile.map(|t| t.liquid) == Some(LiquidType::None)
                 {
                     let distance_to_start = dijkstra_map.map[idx];
-                    if distance_to_start != std::f32::MAX && distance_to_start > 0.0 {
+                    if distance_to_start != f32::MAX && distance_to_start > 0.0 {
                         let better = match exit_tile {
                             None => true,
                             Some((_, best)) => distance_to_start > best,
@@ -130,6 +132,9 @@ impl DistantExit {
             starting_pos.x, starting_pos.y
         );
         build_data.map.set_tile(stairs_pos, TerrainType::DownStairs);
+        // Ensure no liquid on the stairs tile (defensive — the candidate filter
+        // already requires LiquidType::None, but wreath/decoration passes could add liquid).
+        build_data.map.set_liquid(stairs_pos, LiquidType::None);
 
         // Verify the tile was actually set
         let verify = build_data.map.get_tile(stairs_pos);
