@@ -3,13 +3,15 @@ use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::{
     components::{Chest, Collider, Faction, InInventory, Inventory, Name, Position, Item},
+    game::machines::{Machine, MachineBumpMessage},
     constants::BASE_ACTION_COST,
     game::{
         combat::{AttackIntentMessage, DamageType, DamageTypeTag, DamageSource},
+        enchantment::{display_item_name, Enchantment, ItemArmorRunic, ItemWeaponRunic, RunicIdentified},
         factions::FactionMatrix,
         effects::UseItemMessage,
         items::{DropItemMessage, EquipItemMessage, ItemStack, UnequipItemMessage},
-        magic::CastSpellMessage,
+        // CastSpellMessage removed (spell system replaced by monster abilities)
         spawner::spawn_item,
         turns::MyTurn,
     },
@@ -33,12 +35,10 @@ pub enum Action {
     UnequipItem { item: Entity },
     DropItem    { item: Entity },
     UseItem     { item: Entity },
-    /// Cast the spell assigned to the given slot (0-based, keys 1–6).
-    /// `target`: None = self-target (Caster spells), Some(e) = pre-resolved entity target.
-    /// `target_pos`: tile position for tile-targeted spells (blink, AoE).
-    CastSpell   { slot: usize, target: Option<Entity>, target_pos: Option<(i32, i32)> },
     /// Fire a ranged weapon at a pre-selected target entity.
     RangedAttack { target: Entity },
+    /// Zap a staff at a target.
+    ZapStaff { staff_entity: Entity, target: Entity, target_pos: Option<(i32, i32)> },
 }
 
 // --- Events ---
@@ -160,8 +160,8 @@ pub fn dispatch_player_action(
     mut unequip_events: MessageWriter<UnequipItemMessage>,
     mut drop_events: MessageWriter<DropItemMessage>,
     mut use_item_events: MessageWriter<UseItemMessage>,
-    mut cast_spell_events: MessageWriter<CastSpellMessage>,
     mut ranged_events: MessageWriter<RangedAttackIntent>,
+    mut zap_staff_events: MessageWriter<crate::game::staves::ZapStaffMessage>,
     query: Query<Entity, (With<Player>, With<MyTurn>)>,
 ) {
     let Ok(player_entity) = query.single() else {
@@ -180,12 +180,16 @@ pub fn dispatch_player_action(
             Action::UnequipItem { item } => { unequip_events.write(UnequipItemMessage { item_entity: item }); }
             Action::DropItem { item } => { drop_events.write(DropItemMessage { item_entity: item }); }
             Action::UseItem { item } => { use_item_events.write(UseItemMessage { item_entity: item }); }
-            Action::CastSpell { slot, target, target_pos } => {
-                let target_entity = target.unwrap_or(player_entity);
-                cast_spell_events.write(CastSpellMessage { caster: player_entity, slot, target: target_entity, target_pos });
-            }
             Action::RangedAttack { target } => {
                 ranged_events.write(RangedAttackIntent { attacker: player_entity, target });
+            }
+            Action::ZapStaff { staff_entity, target, target_pos } => {
+                zap_staff_events.write(crate::game::staves::ZapStaffMessage {
+                    zapper: player_entity,
+                    staff_entity,
+                    target,
+                    target_pos,
+                });
             }
         }
     } else {
@@ -268,7 +272,7 @@ pub fn handle_pickup(
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
     actors_query: Query<(Entity, &Position, Has<Player>)>,
-    items_query: Query<(Entity, &Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
+    items_query: Query<(Entity, &Position, &Name, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>), (With<Item>, Without<InInventory>)>,
     mut inv_query: Query<&mut Inventory, With<Player>>,
     mut monster_inv_query: Query<&mut Inventory, Without<Player>>,
     inv_stacks_query: Query<(&Name, &ItemStack), With<InInventory>>,
@@ -279,7 +283,7 @@ pub fn handle_pickup(
         };
 
         let mut picked_up = false;
-        for (item_entity, item_pos, item_name, item_stack) in items_query.iter() {
+        for (item_entity, item_pos, item_name, item_stack, item_enchant, item_weapon_runic, item_armor_runic, item_runic_id) in items_query.iter() {
             if actor_pos != item_pos {
                 continue;
             }
@@ -298,12 +302,14 @@ pub fn handle_pickup(
                             &inv_stacks_query,
                         );
                         if transferred > 0 {
+                            let dname = display_item_name(&item_name.0, item_enchant, item_weapon_runic, item_armor_runic, item_runic_id);
                             log_writer.write(GameLogMessage(format!(
-                                "You pick up the {} (x{}).", item_name.0, transferred
+                                "You pick up the {} (x{}).", dname, transferred
                             )));
                             picked_up = true;
                         } else {
                             log_writer.write(GameLogMessage("Your inventory is full!".to_string()));
+                            break;
                         }
                     } else {
                         // Non-stackable: add directly as a new inventory slot.
@@ -314,10 +320,12 @@ pub fn handle_pickup(
                                 .insert(InInventory)
                                 .insert(Visibility::Hidden)
                                 .remove::<crate::components::FloorEntityMarker>();
-                            log_writer.write(GameLogMessage(format!("You pick up the {}.", item_name.0)));
+                            let dname = display_item_name(&item_name.0, item_enchant, item_weapon_runic, item_armor_runic, item_runic_id);
+                            log_writer.write(GameLogMessage(format!("You pick up the {}.", dname)));
                             picked_up = true;
                         } else {
                             log_writer.write(GameLogMessage("Your inventory is full!".to_string()));
+                            break;
                         }
                     }
 
@@ -363,6 +371,8 @@ enum BumpResult {
     HostileEntity(Entity),
     /// Tile has a chest — open it.
     Chest(Entity),
+    /// Tile has a machine entity — activate it.
+    Machine(Entity),
     /// Tile has a non-hostile entity with a Collider.
     BlockedByCollider,
 }
@@ -382,6 +392,7 @@ fn resolve_bump(
         Option<&Faction>,
         Has<Collider>,
         Has<Chest>,
+        Has<Machine>,
     ), (Without<TileMarker>, Without<Item>)>,
 ) -> BumpResult {
     // 1. Bounds check
@@ -398,22 +409,22 @@ fn resolve_bump(
 
     // 3. Occupant scan — prioritize hostile entities over props.
     let mut bump_target = None;
-    for (e, other_pos, _other_is_player, other_faction, other_has_collider, other_is_chest) in
+    for (e, other_pos, _other_is_player, other_faction, other_has_collider, other_is_chest, other_is_machine) in
         actors_query.iter()
     {
         if other_pos.to_point() == target_pt && e != actor {
             // Faction-bearing entities (player/monsters) take priority over props.
             if other_faction.is_some() {
-                bump_target = Some((e, other_faction, other_has_collider, other_is_chest));
+                bump_target = Some((e, other_faction, other_has_collider, other_is_chest, other_is_machine));
                 break;
             }
             if bump_target.is_none() {
-                bump_target = Some((e, other_faction, other_has_collider, other_is_chest));
+                bump_target = Some((e, other_faction, other_has_collider, other_is_chest, other_is_machine));
             }
         }
     }
 
-    if let Some((target_entity, target_faction, target_has_collider, target_is_chest)) =
+    if let Some((target_entity, target_faction, target_has_collider, target_is_chest, target_is_machine)) =
         bump_target
     {
         let is_hostile = match (actor_faction, target_faction) {
@@ -423,6 +434,9 @@ fn resolve_bump(
 
         if is_hostile {
             return BumpResult::HostileEntity(target_entity);
+        } else if target_is_machine && !target_is_chest && target_has_collider && actor_is_player {
+            // Bump-activated machine (blocking prop like altar/lever, not invisible step triggers)
+            return BumpResult::Machine(target_entity);
         } else if target_is_chest && actor_is_player {
             // Only the player opens chests via bump. GOAP entities (kobolds) emit
             // OpenChestIntent directly from their AI dispatch.
@@ -447,8 +461,10 @@ pub fn handle_movement(
     mut melee_writer: MessageWriter<MeleeIntent>,
     mut open_door_writer: MessageWriter<OpenDoorIntent>,
     mut open_chest_writer: MessageWriter<OpenChestIntent>,
+    mut machine_bump_writer: MessageWriter<MachineBumpMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut free_writer: MessageWriter<FreeActionEvent>,
+    mut log_writer: MessageWriter<GameLogMessage>,
     mut actors_query: Query<(
         Entity,
         &mut Position,
@@ -456,12 +472,13 @@ pub fn handle_movement(
         Option<&Faction>,
         Has<Collider>,
         Has<Chest>,
+        Has<Machine>,
     ), (Without<TileMarker>, Without<Item>)>,
     map: Res<Map>,
     faction_matrix: Res<FactionMatrix>,
 ) {
     for intent in intents.read() {
-        let Ok((_, pos, is_player, actor_faction, _, _)) = actors_query.get(intent.entity) else {
+        let Ok((_, pos, is_player, actor_faction, _, _, _)) = actors_query.get(intent.entity) else {
             finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
             continue;
         };
@@ -472,11 +489,33 @@ pub fn handle_movement(
 
         match result {
             BumpResult::Empty => {
-                if let Ok((_, mut pos, _, _, _, _)) = actors_query.get_mut(intent.entity) {
+                if let Ok((_, mut pos, _, _, _, _, _)) = actors_query.get_mut(intent.entity) {
                     pos.x = target_pt.x;
                     pos.y = target_pt.y;
                 }
-                finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
+                // Decoration movement cost modifier
+                let idx = map.xy_idx(target_pt.x, target_pt.y);
+                let mut move_cost = if idx < map.tiles.len() {
+                    match map.tiles[idx].decoration {
+                        crate::map::tile::Decoration::Cobweb => {
+                            if is_player {
+                                log_writer.write(GameLogMessage("You struggle through thick cobwebs!".to_string()));
+                            }
+                            BASE_ACTION_COST * 2
+                        }
+                        _ => BASE_ACTION_COST,
+                    }
+                } else {
+                    BASE_ACTION_COST
+                };
+                // Deep water movement cost
+                if idx < map.tiles.len() && map.tiles[idx].liquid == crate::map::tile::LiquidType::Water {
+                    move_cost *= 2;
+                    if is_player {
+                        log_writer.write(GameLogMessage("The deep water slows your movement.".to_string()));
+                    }
+                }
+                finish_turn(&mut commands, &mut finish_writer, intent.entity, move_cost);
             }
             BumpResult::Door(door_pos) => {
                 open_door_writer.write(OpenDoorIntent {
@@ -499,6 +538,13 @@ pub fn handle_movement(
                 });
                 // ActionGuard cleared by handle_open_chest via finish_turn.
             }
+            BumpResult::Machine(machine_entity) => {
+                machine_bump_writer.write(MachineBumpMessage {
+                    activator: intent.entity,
+                    machine_entity,
+                });
+                // ActionGuard cleared by handle_machine_bump via finish_turn.
+            }
             BumpResult::OutOfBounds | BumpResult::Wall | BumpResult::BlockedByCollider => {
                 if is_player {
                     free_turn(&mut commands, &mut free_writer, intent.entity);
@@ -516,6 +562,8 @@ pub fn handle_melee(
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut attack_writer: MessageWriter<AttackIntentMessage>,
     damage_type_query: Query<Option<&DamageTypeTag>>,
+    equipment_query: Query<&crate::game::items::Equipment>,
+    weapon_props_query: Query<&crate::game::items::ItemProperties>,
 ) {
     for intent in intents.read() {
         let damage_type = damage_type_query
@@ -530,7 +578,17 @@ pub fn handle_melee(
             damage_type,
             source: DamageSource::Melee,
         });
-        finish_turn(&mut commands, &mut finish_writer, intent.attacker, BASE_ACTION_COST);
+
+        // Use weapon attack speed to scale action cost
+        let attack_cost = equipment_query
+            .get(intent.attacker)
+            .ok()
+            .and_then(|eq| eq.weapon)
+            .and_then(|w| weapon_props_query.get(w).ok())
+            .map(|props| (BASE_ACTION_COST as f32 * props.attack_speed).round() as u32)
+            .unwrap_or(BASE_ACTION_COST);
+
+        finish_turn(&mut commands, &mut finish_writer, intent.attacker, attack_cost);
     }
 }
 
@@ -787,6 +845,7 @@ pub fn handle_open_chest(
                     &item_manifest_handle,
                     &item_sprite_assets,
                     ascii_font.as_deref(),
+                    Some(floor.0),
                 ) {
                     if is_player {
                         log_writer.write(GameLogMessage(format!("  Found: {}", spawn_info.item)));

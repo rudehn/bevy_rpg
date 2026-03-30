@@ -1,5 +1,6 @@
 use crate::game::abilities::AbilitiesPlugin;
 use crate::game::effects::EffectsPlugin;
+use crate::game::enchantment::EnchantmentPlugin;
 use crate::game::factions::FactionsPlugin;
 use crate::game::ranged::RangedPlugin;
 use crate::game::squad::SquadPlugin;
@@ -52,19 +53,22 @@ pub mod ascii_mode;
 pub mod camera;
 pub mod combat;
 pub mod effects;
+pub mod enchantment;
 pub mod factions;
 pub mod goap;
 pub mod items;
+pub mod machines;
 pub mod magic;
 pub mod particles;
 pub mod ranged;
 pub mod spawner;
-pub mod spells;
 pub mod squad;
+pub mod staves;
 pub mod stats;
 pub mod systems;
 pub mod targeting;
 pub mod turns;
+pub mod water;
 pub use ai::*;
 pub use spawner::*;
 pub use turns::*;
@@ -89,9 +93,10 @@ pub enum InGameState {
     Running,
     CharacterInfo,
     Inventory,
-    Spells,
     Targeting,
     LogHistory,
+    EnchantSelect,
+    StaffSelect,
 }
 
 pub struct GamePlugin;
@@ -120,6 +125,10 @@ impl Plugin for GamePlugin {
                 RangedPlugin,
                 EffectsPlugin,
                 FactionsPlugin,
+                EnchantmentPlugin,
+                crate::game::staves::StavesPlugin,
+                crate::game::machines::MachinesPlugin,
+                water::WaterPlugin,
                 ascii_mode::AsciiModePlugin,
             ))
             // Position→Transform sync and camera run whenever in-game, including Targeting state.
@@ -174,6 +183,7 @@ fn loot_drop_system(
     item_manifests: Res<Assets<ItemManifest>>,
     item_manifest_handle: Res<ItemManifestHandle>,
     item_sprite_assets: Res<ItemSpriteAssets>,
+    ascii_font: Option<Res<crate::game::ascii_mode::AsciiFont>>,
 ) {
     use bracket_lib::prelude::Point;
     for event in death_events.read() {
@@ -196,6 +206,7 @@ fn loot_drop_system(
                     &item_manifests,
                     &item_manifest_handle,
                     &item_sprite_assets,
+                    ascii_font.as_deref(),
                     None,
                 )
                     && count > 1 {

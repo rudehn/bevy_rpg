@@ -12,13 +12,13 @@ use crate::{
     game::{
         AppState,
         combat::{Damage, Health},
+        enchantment::{ArmorRunic, Enchantment, ItemArmorRunic, ItemWeaponRunic, RunicIdentified, WeaponRunic},
         items::{Equipment, ItemProperties, ItemStack},
-        magic::{
-            ActiveSpells, KnownSpells, ManaRegen, SpellCooldowns, StatusEffects,
-        },
+        magic::StatusEffects,
         spawner::spawn_item,
         squad::{SquadConfig, SquadId, SquadIdCounter, SquadLeader},
-        stats::{Armor, Dodge, Mana},
+        staves::{Rechargeable, StaffData, StaffEffect},
+        stats::{Armor, Dodge},
     },
     map::{
         dungeon::{CachedFloor, FloorCache, Floor, PendingGameLoad, PendingPlayerLoad, AutoSavePending},
@@ -216,6 +216,28 @@ pub struct SavedItem {
     pub name: String,
     #[serde(default = "default_stack_count")]
     pub count: u32,
+    #[serde(default)]
+    pub enchantment: Option<i32>,
+    #[serde(default)]
+    pub weapon_runic: Option<WeaponRunic>,
+    #[serde(default)]
+    pub armor_runic: Option<ArmorRunic>,
+    #[serde(default)]
+    pub runic_identified: Option<bool>,
+    #[serde(default)]
+    pub staff_effect: Option<StaffEffect>,
+    #[serde(default)]
+    pub base_recharge: Option<u32>,
+    #[serde(default)]
+    pub staff_charges: Option<i32>,
+    #[serde(default)]
+    pub staff_max_charges: Option<i32>,
+    #[serde(default)]
+    pub staff_recharge_timer: Option<u32>,
+    #[serde(default)]
+    pub staff_recharge_rate: Option<u32>,
+    #[serde(default)]
+    pub drifting: bool,
 }
 
 /// A prop's state, shared by save files and the floor cache.
@@ -260,15 +282,6 @@ pub struct PlayerSaveData {
     pub dodge: i32,
     pub viewshed_range: i32,
     pub damage: String,
-    pub mana_current: i32,
-    #[serde(default)]
-    pub known_spells: KnownSpells,
-    #[serde(default)]
-    pub active_spells: ActiveSpells,
-    #[serde(default)]
-    pub mana_regen: ManaRegen,
-    #[serde(default)]
-    pub spell_cooldowns: SpellCooldowns,
     #[serde(default)]
     pub status_effects: StatusEffects,
     pub inventory: Vec<InventoryItemSave>,
@@ -283,6 +296,26 @@ pub struct InventoryItemSave {
     pub count: u32,
     #[serde(default = "default_stack_max")]
     pub max_stack: u32,
+    #[serde(default)]
+    pub enchantment: Option<i32>,
+    #[serde(default)]
+    pub weapon_runic: Option<WeaponRunic>,
+    #[serde(default)]
+    pub armor_runic: Option<ArmorRunic>,
+    #[serde(default)]
+    pub runic_identified: Option<bool>,
+    #[serde(default)]
+    pub staff_effect: Option<StaffEffect>,
+    #[serde(default)]
+    pub base_recharge: Option<u32>,
+    #[serde(default)]
+    pub staff_charges: Option<i32>,
+    #[serde(default)]
+    pub staff_max_charges: Option<i32>,
+    #[serde(default)]
+    pub staff_recharge_timer: Option<u32>,
+    #[serde(default)]
+    pub staff_recharge_rate: Option<u32>,
 }
 
 fn default_stack_count() -> u32 { 1 }
@@ -360,29 +393,19 @@ pub fn auto_save_system(
             &Equipment,
             &Damage,
             &Viewshed,
-            &Mana,
         ),
         With<Player>,
     >,
-    player_magic_query: Query<
-        (
-            &KnownSpells,
-            &ActiveSpells,
-            &ManaRegen,
-            &SpellCooldowns,
-            &StatusEffects,
-        ),
-        With<Player>,
-    >,
-    inv_item_query: Query<(&Name, &ItemProperties, Has<Equipped>, Option<&ItemStack>), With<InInventory>>,
+    player_status_query: Query<&StatusEffects, With<Player>>,
+    inv_item_query: Query<(&Name, &ItemProperties, Has<Equipped>, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>), With<InInventory>>,
     monster_query: Query<(&Position, &Name, &Health, Option<&SquadId>, Option<&SquadConfig>, Has<SquadLeader>, Option<&crate::game::ai::PatrolRoute>), With<Monster>>,
     squad_counter: Res<SquadIdCounter>,
-    floor_item_query: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
+    floor_item_query: Query<(&Position, &Name, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>, Has<crate::components::Drifting>), (With<Item>, Without<InInventory>)>,
     prop_query: Query<(&Position, &Name), With<Prop>>,
 ) {
     auto_save_pending.0 = false;
 
-    let Ok((pos, health, armor, dodge, inventory, equipment, damage, viewshed, mana)) =
+    let Ok((pos, health, armor, dodge, inventory, equipment, damage, viewshed)) =
         player_query.single()
     else {
         warn!("Auto-save skipped: no player entity found.");
@@ -394,7 +417,7 @@ pub fn auto_save_system(
         .items
         .iter()
         .filter_map(|&item_entity| {
-            let Ok((name, props, is_equipped, stack)) = inv_item_query.get(item_entity) else {
+            let Ok((name, props, is_equipped, stack, enchant, weapon_runic, armor_runic, runic_id, staff_data, rechargeable)) = inv_item_query.get(item_entity) else {
                 return None;
             };
             let equipped_slot = if is_equipped {
@@ -409,6 +432,16 @@ pub fn auto_save_system(
                 equipped_slot,
                 count,
                 max_stack,
+                enchantment: enchant.map(|e| e.level),
+                weapon_runic: weapon_runic.map(|w| w.0),
+                armor_runic: armor_runic.map(|a| a.0),
+                runic_identified: runic_id.map(|r| r.0),
+                staff_effect: staff_data.map(|s| s.effect),
+                base_recharge: staff_data.map(|s| s.base_recharge),
+                staff_charges: rechargeable.map(|r| r.charges),
+                staff_max_charges: rechargeable.map(|r| r.max_charges),
+                staff_recharge_timer: rechargeable.map(|r| r.recharge_timer),
+                staff_recharge_rate: rechargeable.map(|r| r.recharge_rate),
             })
         })
         .collect();
@@ -431,27 +464,30 @@ pub fn auto_save_system(
     // Floor items (not in inventory)
     let floor_items: Vec<SavedItem> = floor_item_query
         .iter()
-        .map(|(pos, name, stack)| SavedItem {
+        .map(|(pos, name, stack, enchant, weapon_runic, armor_runic, runic_id, staff_data, rechargeable, is_drifting)| SavedItem {
             x: pos.x,
             y: pos.y,
             name: name.0.clone(),
             count: stack.map(|s| s.count).unwrap_or(1),
+            enchantment: enchant.map(|e| e.level),
+            weapon_runic: weapon_runic.map(|w| w.0),
+            armor_runic: armor_runic.map(|a| a.0),
+            runic_identified: runic_id.map(|r| r.0),
+            staff_effect: staff_data.map(|s| s.effect),
+            base_recharge: staff_data.map(|s| s.base_recharge),
+            staff_charges: rechargeable.map(|r| r.charges),
+            staff_max_charges: rechargeable.map(|r| r.max_charges),
+            staff_recharge_timer: rechargeable.map(|r| r.recharge_timer),
+            staff_recharge_rate: rechargeable.map(|r| r.recharge_rate),
+            drifting: is_drifting,
         })
         .collect();
 
-    // Magic state
-    let (known_spells, active_spells, mana_regen, spell_cooldowns, status_effects) =
-        if let Ok((ks, as_, mr, sc, se)) = player_magic_query.single() {
-            (ks.clone(), as_.clone(), mr.clone(), sc.clone(), se.clone())
-        } else {
-            (
-                KnownSpells::default(),
-                ActiveSpells::default(),
-                ManaRegen::default(),
-                SpellCooldowns::default(),
-                StatusEffects::default(),
-            )
-        };
+    // Status effects
+    let status_effects = player_status_query
+        .single()
+        .cloned()
+        .unwrap_or_default();
 
     // Props
     let props: Vec<SavedProp> = prop_query
@@ -478,11 +514,6 @@ pub fn auto_save_system(
             dodge: dodge.0,
             viewshed_range: viewshed.range,
             damage: damage.0.clone(),
-            mana_current: mana.current,
-            known_spells,
-            active_spells,
-            mana_regen,
-            spell_cooldowns,
             status_effects,
             inventory: inv_saves,
         },
@@ -520,7 +551,6 @@ pub fn apply_player_load_system(
             &mut Equipment,
             &mut Damage,
             &mut Viewshed,
-            &mut Mana,
         ),
         With<Player>,
     >,
@@ -543,7 +573,6 @@ pub fn apply_player_load_system(
         mut equipment,
         mut damage,
         mut viewshed,
-        mut mana,
     )) = player_query.single_mut()
     else {
         warn!("apply_player_load_system: no player entity yet, requeueing.");
@@ -562,19 +591,14 @@ pub fn apply_player_load_system(
     armor.0 = player_data.armor;
     dodge.0 = player_data.dodge;
 
-    // --- Damage / Viewshed / Mana ---
+    // --- Damage / Viewshed ---
     damage.0 = player_data.damage.clone();
     viewshed.range = player_data.viewshed_range;
     viewshed.dirty = true;
-    mana.current = player_data.mana_current;
 
-    // --- Magic state ---
+    // --- Status effects ---
     if let Ok(player_entity) = player_entity_query.single() {
         commands.entity(player_entity)
-            .insert(player_data.known_spells.clone())
-            .insert(player_data.active_spells.clone())
-            .insert(player_data.mana_regen.clone())
-            .insert(player_data.spell_cooldowns.clone())
             .insert(player_data.status_effects.clone());
     }
 
@@ -592,6 +616,7 @@ pub fn apply_player_load_system(
             &item_manifest_handle,
             &item_sprite_assets,
             None,
+            None,
         ) else {
             continue;
         };
@@ -604,6 +629,39 @@ pub fn apply_player_load_system(
             .insert(InInventory)
             .insert(Visibility::Hidden)
             .remove::<FloorEntityMarker>();
+
+        // Restore enchantment and runic data
+        if let Some(level) = item_save.enchantment {
+            commands.entity(item_entity).insert(Enchantment { level });
+        }
+        if let Some(runic) = item_save.weapon_runic {
+            commands.entity(item_entity).insert(ItemWeaponRunic(runic));
+        }
+        if let Some(runic) = item_save.armor_runic {
+            commands.entity(item_entity).insert(ItemArmorRunic(runic));
+        }
+        if let Some(identified) = item_save.runic_identified {
+            commands.entity(item_entity).insert(RunicIdentified(identified));
+        }
+
+        // Restore staff data
+        if let Some(effect) = item_save.staff_effect {
+            let base_recharge = item_save.base_recharge.unwrap_or(250);
+            commands.entity(item_entity).insert(StaffData { effect, base_recharge });
+            if let (Some(charges), Some(max_charges), Some(recharge_timer), Some(recharge_rate)) = (
+                item_save.staff_charges,
+                item_save.staff_max_charges,
+                item_save.staff_recharge_timer,
+                item_save.staff_recharge_rate,
+            ) {
+                commands.entity(item_entity).insert(Rechargeable {
+                    charges,
+                    max_charges,
+                    recharge_timer,
+                    recharge_rate,
+                });
+            }
+        }
 
         inventory.items.push(item_entity);
 

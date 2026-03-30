@@ -9,15 +9,18 @@ use crate::assets::{
     PrefabManifestHandle, PropManifest, PropManifestHandle, PropSpriteAssets, TileManifest,
     TileManifestHandle, TileSpriteAssets,
 };
-use crate::components::Position;
+use crate::components::{Collider, Position};
 use crate::game::ai::PatrolRoute;
 use crate::game::items::ItemStack;
+use crate::game::machines::{Machine, MachineEffect, MachineTrigger, MachineUsed};
 use crate::game::squad::{SquadConfig, SquadId, SquadLeader};
 use crate::game::TurnManager;
 use crate::game::{spawn_item, spawn_monster_by_name, spawn_prop};
 use crate::map::builders::BuilderMap;
 use crate::map::tile::{is_walkable, spawn_tile_entity, TerrainType, TileEntityIndex};
 use crate::map::Map;
+use crate::game::enchantment::{ArmorRunic, Enchantment, ItemArmorRunic, ItemWeaponRunic, RunicIdentified, WeaponRunic};
+use crate::game::staves::{Rechargeable, StaffData, StaffEffect};
 use crate::save::{
     save_data_to_map, GameSaveData, SavedHp, SavedItem, SavedMonster, SavedProp,
 };
@@ -77,6 +80,18 @@ struct ItemPlan {
     pos: Point,
     name: String,
     count: u32,
+    /// Saved enchantment data; `None` means freshly generated (roll random).
+    enchantment: Option<i32>,
+    weapon_runic: Option<WeaponRunic>,
+    armor_runic: Option<ArmorRunic>,
+    runic_identified: Option<bool>,
+    staff_effect: Option<StaffEffect>,
+    base_recharge: Option<u32>,
+    staff_charges: Option<i32>,
+    staff_max_charges: Option<i32>,
+    staff_recharge_timer: Option<u32>,
+    staff_recharge_rate: Option<u32>,
+    drifting: bool,
 }
 
 struct PropPlan {
@@ -84,11 +99,20 @@ struct PropPlan {
     name: String,
 }
 
+struct MachinePlan {
+    pos: Point,
+    prop_name: String,
+    trigger: MachineTrigger,
+    effect: MachineEffect,
+    consume_on_use: bool,
+}
+
 struct FloorPlan {
     map: Map,
     monsters: Vec<MonsterPlan>,
     items: Vec<ItemPlan>,
     props: Vec<PropPlan>,
+    machines: Vec<MachinePlan>,
     player_spawn: Point,
     /// Carried through from the Load path for the caller.
     pending_player_load: Option<crate::save::PlayerSaveData>,
@@ -229,6 +253,17 @@ fn items_from_saved(saved: Vec<SavedItem>) -> Vec<ItemPlan> {
             pos: Point::new(i.x, i.y),
             name: i.name,
             count: i.count,
+            enchantment: i.enchantment,
+            weapon_runic: i.weapon_runic,
+            armor_runic: i.armor_runic,
+            runic_identified: i.runic_identified,
+            staff_effect: i.staff_effect,
+            base_recharge: i.base_recharge,
+            staff_charges: i.staff_charges,
+            staff_max_charges: i.staff_max_charges,
+            staff_recharge_timer: i.staff_recharge_timer,
+            staff_recharge_rate: i.staff_recharge_rate,
+            drifting: i.drifting,
         })
         .collect()
 }
@@ -291,6 +326,17 @@ impl FloorPlan {
                 pos: pt,
                 name,
                 count,
+                enchantment: None,
+                weapon_runic: None,
+                armor_runic: None,
+                runic_identified: None,
+                staff_effect: None,
+                base_recharge: None,
+                staff_charges: None,
+                staff_max_charges: None,
+                staff_recharge_timer: None,
+                staff_recharge_rate: None,
+                drifting: false,
             })
             .collect();
 
@@ -300,11 +346,24 @@ impl FloorPlan {
             .map(|(pt, name)| PropPlan { pos: pt, name })
             .collect();
 
+        let machines = build_data
+            .machine_spawn_list
+            .into_iter()
+            .map(|ms| MachinePlan {
+                pos: ms.pos,
+                prop_name: ms.prop_name,
+                trigger: ms.trigger,
+                effect: ms.effect,
+                consume_on_use: ms.consume_on_use,
+            })
+            .collect();
+
         FloorPlan {
             map: build_data.map,
             monsters,
             items,
             props,
+            machines,
             player_spawn,
             pending_player_load: None,
         }
@@ -368,6 +427,7 @@ impl FloorPlan {
             monsters,
             items,
             props,
+            machines: Vec::new(),
             player_spawn,
             pending_player_load: None,
         }
@@ -387,6 +447,7 @@ impl FloorPlan {
             monsters,
             items,
             props,
+            machines: Vec::new(),
             player_spawn,
             pending_player_load: Some(save_data.player),
         }
@@ -459,6 +520,17 @@ pub fn materialize_floor(
 
     // Spawn items
     for i in &plan.items {
+        // If the item has saved enchantment data, skip random enchantment rolling
+        // by passing None for enchant_floor_depth.
+        let has_saved_enchantment = i.enchantment.is_some()
+            || i.weapon_runic.is_some()
+            || i.armor_runic.is_some();
+        let enchant_depth = if has_saved_enchantment {
+            None
+        } else {
+            Some(plan.map.depth as u32)
+        };
+
         if let Some(entity) = spawn_item(
             commands,
             &i.name,
@@ -467,6 +539,7 @@ pub fn materialize_floor(
             &entity_assets.item_manifest_handle,
             &entity_assets.item_sprite_assets,
             ascii_font,
+            enchant_depth,
         ) {
             if i.count > 1 {
                 let max_stack = entity_assets
@@ -478,6 +551,44 @@ pub fn materialize_floor(
                 commands
                     .entity(entity)
                     .insert(ItemStack { count: i.count, max_stack });
+            }
+
+            // Restore saved enchantment and runic data
+            if let Some(level) = i.enchantment {
+                commands.entity(entity).insert(Enchantment { level });
+            }
+            if let Some(runic) = i.weapon_runic {
+                commands.entity(entity).insert(ItemWeaponRunic(runic));
+            }
+            if let Some(runic) = i.armor_runic {
+                commands.entity(entity).insert(ItemArmorRunic(runic));
+            }
+            if let Some(identified) = i.runic_identified {
+                commands.entity(entity).insert(RunicIdentified(identified));
+            }
+
+            // Restore drifting state
+            if i.drifting {
+                commands.entity(entity).insert(crate::components::Drifting);
+            }
+
+            // Restore staff data
+            if let Some(effect) = i.staff_effect {
+                let base_recharge = i.base_recharge.unwrap_or(250);
+                commands.entity(entity).insert(StaffData { effect, base_recharge });
+                if let (Some(charges), Some(max_charges), Some(recharge_timer), Some(recharge_rate)) = (
+                    i.staff_charges,
+                    i.staff_max_charges,
+                    i.staff_recharge_timer,
+                    i.staff_recharge_rate,
+                ) {
+                    commands.entity(entity).insert(Rechargeable {
+                        charges,
+                        max_charges,
+                        recharge_timer,
+                        recharge_rate,
+                    });
+                }
             }
         } else {
             warnings.push(format!("Failed to spawn item '{}'", i.name));
@@ -498,6 +609,47 @@ pub fn materialize_floor(
         .is_none()
         {
             warnings.push(format!("Failed to spawn prop '{}'", p.name));
+        }
+    }
+
+    // Spawn machines
+    for m in &plan.machines {
+        if m.prop_name.is_empty() {
+            // Invisible trigger — no visual prop, just a position with machine components
+            let entity = commands.spawn((
+                crate::components::Position { x: m.pos.x, y: m.pos.y },
+                crate::components::GameEntityMarker,
+                crate::components::FloorEntityMarker,
+                Machine,
+                m.trigger.clone(),
+                m.effect.clone(),
+                MachineUsed(false),
+                crate::components::Name("Trap".to_string()),
+            )).id();
+            if m.consume_on_use {
+                commands.entity(entity).insert(crate::game::machines::MachineConsumeOnUse);
+            }
+        } else if let Some(entity) = spawn_prop(
+            commands,
+            &m.prop_name,
+            &m.pos,
+            &entity_assets.prop_manifests,
+            &entity_assets.prop_manifest_handle,
+            &entity_assets.prop_sprite_assets,
+            ascii_font,
+        ) {
+            commands.entity(entity).insert((
+                Machine,
+                m.trigger.clone(),
+                m.effect.clone(),
+                MachineUsed(false),
+                Collider,
+            ));
+            if m.consume_on_use {
+                commands.entity(entity).insert(crate::game::machines::MachineConsumeOnUse);
+            }
+        } else {
+            warnings.push(format!("Failed to spawn machine prop '{}'", m.prop_name));
         }
     }
 

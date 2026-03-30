@@ -5,6 +5,8 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::components::{FloorEntityMarker, InInventory, Monster, Name, Position, Item, Prop};
+use crate::game::enchantment::{Enchantment, ItemWeaponRunic, ItemArmorRunic, RunicIdentified};
+use crate::game::staves::{StaffData, Rechargeable};
 use crate::constants::MAX_FLOOR;
 use crate::game::{TurnManager, items::ItemStack, turns::TurnMarker};
 use crate::map::floor_materializer::{
@@ -181,7 +183,7 @@ fn find_up_stairs(map: &Map) -> Option<Point> {
 fn snapshot_floor(
     map: &Map,
     monster_query: &Query<(&Position, &Name, &crate::game::combat::Health, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>), With<Monster>>,
-    item_query: &Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
+    item_query: &Query<(&Position, &Name, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>, Has<crate::components::Drifting>), (With<Item>, Without<InInventory>)>,
     prop_query: &Query<(&Position, &Name), With<Prop>>,
 ) -> CachedFloor {
     use crate::save::{SavedMonster, SavedItem, SavedProp};
@@ -202,11 +204,22 @@ fn snapshot_floor(
 
     let items = item_query
         .iter()
-        .map(|(pos, name, stack)| SavedItem {
+        .map(|(pos, name, stack, enchant, weapon_runic, armor_runic, runic_id, staff_data, rechargeable, is_drifting)| SavedItem {
             x: pos.x,
             y: pos.y,
             name: name.0.clone(),
             count: stack.map(|s| s.count).unwrap_or(1),
+            enchantment: enchant.map(|e| e.level),
+            weapon_runic: weapon_runic.map(|w| w.0),
+            armor_runic: armor_runic.map(|a| a.0),
+            runic_identified: runic_id.map(|r| r.0),
+            staff_effect: staff_data.map(|s| s.effect),
+            base_recharge: staff_data.map(|s| s.base_recharge),
+            staff_charges: rechargeable.map(|r| r.charges),
+            staff_max_charges: rechargeable.map(|r| r.max_charges),
+            staff_recharge_timer: rechargeable.map(|r| r.recharge_timer),
+            staff_recharge_rate: rechargeable.map(|r| r.recharge_rate),
+            drifting: is_drifting,
         })
         .collect();
 
@@ -315,7 +328,7 @@ fn map_transition_system(
     q_tiles: Query<Entity, With<TileMarker>>,
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
     q_monsters: Query<(&Position, &Name, &crate::game::combat::Health, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>), With<Monster>>,
-    q_items: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
+    q_items: Query<(&Position, &Name, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>, Has<crate::components::Drifting>), (With<Item>, Without<InInventory>)>,
     q_props: Query<(&Position, &Name), With<Prop>>,
     mut turn_manager: ResMut<TurnManager>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
@@ -348,7 +361,7 @@ fn ascend_stairs_system(
     q_tiles: Query<Entity, With<TileMarker>>,
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
     q_monsters: Query<(&Position, &Name, &crate::game::combat::Health, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>), With<Monster>>,
-    q_items: Query<(&Position, &Name, Option<&ItemStack>), (With<Item>, Without<InInventory>)>,
+    q_items: Query<(&Position, &Name, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>, Has<crate::components::Drifting>), (With<Item>, Without<InInventory>)>,
     q_props: Query<(&Position, &Name), With<Prop>>,
     mut turn_manager: ResMut<TurnManager>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
@@ -525,8 +538,18 @@ pub fn spawn_dungeon(
         commands.entity(player_entity).insert(crate::map::dungeon::StairCooldown);
         turn_manager.add_entity(player_entity);
     }
+    // Re-add turn marker. It persists across floors but the queue was reset.
     for marker_entity in turn_marker_query.iter() {
         turn_manager.add_entity(marker_entity);
+    }
+
+    info!(
+        "spawn_dungeon: turn_queue has {} entities, current_time={}",
+        turn_manager.turn_queue.len(), turn_manager.current_time
+    );
+    // Log the first few entries to see their scheduled times
+    for (i, (entity, time)) in turn_manager.turn_queue.iter().enumerate().take(5) {
+        info!("  queue[{}]: entity={:?}, time={}", i, entity, time);
     }
 
     log_writer.write(GameLogMessage(format!("Welcome to floor {}!", floor.0)));

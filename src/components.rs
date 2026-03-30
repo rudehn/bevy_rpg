@@ -91,6 +91,11 @@ pub struct Equipped;
 #[derive(Component, Debug, Default)]
 pub struct Ammo;
 
+/// Marker component for items drifting in deep water currents.
+/// Items with this component move 1 tile per turn toward shore.
+#[derive(Component, Debug, Default)]
+pub struct Drifting;
+
 /// Marker component for props — non-item, non-monster world entities
 /// (watchfires, totem poles, barricades, etc.).
 #[derive(Component, Debug, Default)]
