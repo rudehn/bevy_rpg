@@ -488,6 +488,10 @@ pub struct MonsterSpawnInfo {
     /// Squad behavior: collective HP ratio below which cowardly squad members flee.
     #[serde(default = "default_flee_threshold")]
     pub flee_threshold: f32,
+
+    /// When true, this monster spawns on liquid tiles instead of dry land.
+    #[serde(default)]
+    pub spawn_on_liquid: bool,
 }
 
 /// A single species entry within a mixed group spawn.

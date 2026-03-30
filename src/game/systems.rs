@@ -3,7 +3,7 @@ use bevy::ecs::world::Ref;
 use bevy::prelude::{Children, Color, Resource, Sprite, TextColor, Visibility};
 use bevy::{
     ecs::{
-        query::{Changed, With, Without},
+        query::{Changed, Has, With, Without},
         system::{Query, Res, ResMut},
     },
     transform::components::Transform,
@@ -13,7 +13,7 @@ use bracket_lib::prelude::{Algorithm2D, Point, field_of_view};
 use crate::game::magic::StatusEffects;
 use crate::map::map::GRID_SIZE;
 use crate::{
-    components::{InInventory, Item, Monster, Position, Prop, Viewshed},
+    components::{InInventory, Item, Monster, Position, Prop, Submerged, Viewshed},
     map::Map,
     player::Player,
 };
@@ -41,14 +41,20 @@ pub fn update_monster_visibility(
     player_query: Query<&Viewshed, With<Player>>,
     mode: Res<crate::game::ascii_mode::GraphicsMode>,
     omniscient: Res<Omniscient>,
-    mut monster_query: Query<(&Position, &mut Visibility, &mut Sprite), With<Monster>>,
+    mut monster_query: Query<(&Position, &mut Visibility, &mut Sprite, Has<Submerged>), With<Monster>>,
 ) {
     let Ok(player_viewshed) = player_query.single() else {
         return;
     };
     let is_ascii = *mode == crate::game::ascii_mode::GraphicsMode::Ascii;
 
-    for (monster_pos, mut monster_vis, mut sprite) in monster_query.iter_mut() {
+    for (monster_pos, mut monster_vis, mut sprite, is_submerged) in monster_query.iter_mut() {
+        // Submerged monsters are always invisible regardless of viewshed.
+        if is_submerged {
+            *monster_vis = Visibility::Hidden;
+            continue;
+        }
+
         let monster_point = Point::new(monster_pos.x, monster_pos.y);
         let is_visible = omniscient.0 || player_viewshed.visible_tiles.contains(&monster_point);
 

@@ -127,6 +127,24 @@ impl MonsterAI {
         // Update AI mode based on visibility.
         self.update_mode(entity, &ctx, world);
 
+        // --- Submerge / Surface logic for aquatic monsters ---
+        let movement_mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
+        if movement_mode == MovementMode::RestrictedToLiquid {
+            let map = world.resource::<Map>();
+            let idx = map.xy_idx(ctx.monster_pos.x, ctx.monster_pos.y);
+            let on_liquid = map.tiles[idx].liquid != crate::map::tile::LiquidType::None;
+
+            if on_liquid && !has_adjacent_enemy(entity, ctx.monster_pos, world) {
+                // Submerge when on liquid with no adjacent enemies
+                world.commands().entity(entity).insert(crate::components::Submerged);
+            }
+        }
+
+        // Helper closure: surface before any attack action
+        let surface = |ent: Entity, w: &mut World| {
+            w.commands().entity(ent).remove::<crate::components::Submerged>();
+        };
+
         // --- Flee check (highest priority behavior) ---
         // Only flee when the player is visible — a monster that rounds a corner
         // and loses sight of the threat should stop fleeing and resume normal AI.
@@ -136,6 +154,7 @@ impl MonsterAI {
                     && let Some(intent) = try_flee_movement(
                         entity, ctx.monster_pos, ctx.player_point, world,
                     ) {
+                        surface(entity, world);
                         world.write_message(intent);
                         return;
                     }
@@ -146,9 +165,11 @@ impl MonsterAI {
         // Ranged monsters fire first, THEN kite on their next turn.
         if self.mode == MonsterAIMode::Hunting && ctx.is_player_visible {
             if try_use_ability(entity, ctx.monster_pos, ctx.player_entity, world) {
+                surface(entity, world);
                 return;
             }
             if try_ranged_attack(entity, ctx.monster_pos, ctx.player_point, ctx.player_entity, world) {
+                surface(entity, world);
                 return;
             }
         }
@@ -164,6 +185,7 @@ impl MonsterAI {
                 && let Some(intent) = try_flee_movement(
                     entity, ctx.monster_pos, ctx.player_point, world,
                 ) {
+                    surface(entity, world);
                     world.write_message(intent);
                     return;
                 }
@@ -308,6 +330,25 @@ impl AIContext {
 
         Some(AIContext { monster_pos, player_point, player_entity, is_player_visible })
     }
+}
+
+/// Returns true if any hostile entity is adjacent (Chebyshev distance 1) to the given position.
+fn has_adjacent_enemy(entity: Entity, pos: Point, world: &mut World) -> bool {
+    let monster_faction = world.get::<Faction>(entity).map(|f| f.0.clone());
+    let faction_matrix = world.resource::<FactionMatrix>().clone();
+    let mut query = world.query::<(Entity, &Position, &Faction)>();
+    for (other, other_pos, other_faction) in query.iter(world) {
+        if other == entity { continue; }
+        let dist = (other_pos.x - pos.x).abs().max((other_pos.y - pos.y).abs());
+        if dist <= 1 {
+            if let Some(ref mf) = monster_faction {
+                if faction_matrix.is_hostile_to(&mf.0, &other_faction.0.0) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Snap waypoint patrols to the nearest waypoint after a hunt ends.

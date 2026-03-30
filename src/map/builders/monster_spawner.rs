@@ -64,7 +64,12 @@ impl MonsterSpawner {
                     let spawn_index = rng.range(0, possible_spawns.len());
                     let monster_info = &possible_spawns[spawn_index];
 
-                    if let Some(origin) = self.get_walkable_room_point(room, map, &mut rng) {
+                    let origin = if monster_info.spawn_on_liquid {
+                        self.get_liquid_room_point(room, map, &mut rng)
+                    } else {
+                        self.get_walkable_room_point(room, map, &mut rng)
+                    };
+                    if let Some(origin) = origin {
                         let squad_config = SquadConfig {
                             on_leader_death: LeaderDeathBehavior::from_str(
                                 &monster_info.on_leader_death,
@@ -86,7 +91,7 @@ impl MonsterSpawner {
                             }
 
                             let points =
-                                find_cluster_points(origin, members.len(), map, &occupied);
+                                find_cluster_points(origin, members.len(), map, &occupied, monster_info.spawn_on_liquid);
 
                             let squad_id = build_data.squad_counter.next();
                             for (i, (pt, name)) in
@@ -106,7 +111,7 @@ impl MonsterSpawner {
                                 } as usize;
 
                             let points =
-                                find_cluster_points(origin, group_size, map, &occupied);
+                                find_cluster_points(origin, group_size, map, &occupied, monster_info.spawn_on_liquid);
 
                             if points.len() > 1 {
                                 let squad_id = build_data.squad_counter.next();
@@ -133,6 +138,35 @@ impl MonsterSpawner {
         for entry in new_spawns {
             build_data.add_monster_spawn(entry);
         }
+    }
+
+    /// Find a random tile WITH liquid in the room (for aquatic monsters).
+    fn get_liquid_room_point(
+        &self,
+        room: &Rect,
+        map: &Map,
+        rng: &mut RandomNumberGenerator,
+    ) -> Option<Point> {
+        for _ in 0..20 {
+            let x = if room.width() > 2 {
+                rng.roll_dice(1, room.width() - 2) + room.x1 + 1
+            } else {
+                room.x1 + 1
+            };
+            let y = if room.height() > 2 {
+                rng.roll_dice(1, room.height() - 2) + room.y1 + 1
+            } else {
+                room.y1 + 1
+            };
+            let idx = map.xy_idx(x, y);
+            if is_walkable(map.tiles[idx])
+                && map.tiles[idx].liquid != LiquidType::None
+                && !matches!(map.tiles[idx].terrain, TerrainType::UpStairs | TerrainType::DownStairs)
+            {
+                return Some(Point::new(x, y));
+            }
+        }
+        None
     }
 
     fn get_walkable_room_point(
@@ -166,11 +200,14 @@ impl MonsterSpawner {
 
 /// BFS outward from `origin` to find up to `count` walkable, unoccupied tiles.
 /// Uses cardinal directions only for tight cluster placement.
+/// When `liquid_only` is true, tiles must have liquid (for aquatic monsters);
+/// otherwise tiles must be dry (no liquid).
 fn find_cluster_points(
     origin: Point,
     count: usize,
     map: &Map,
     occupied: &HashSet<usize>,
+    liquid_only: bool,
 ) -> Vec<Point> {
     let mut result = Vec::new();
     let mut visited = HashSet::new();
@@ -184,7 +221,12 @@ fn find_cluster_points(
 
     while let Some(pt) = queue.pop_front() {
         let idx = map.xy_idx(pt.x, pt.y);
-        if is_walkable(map.tiles[idx]) && map.tiles[idx].liquid == LiquidType::None && !occupied.contains(&idx) {
+        let liquid_ok = if liquid_only {
+            map.tiles[idx].liquid != LiquidType::None
+        } else {
+            map.tiles[idx].liquid == LiquidType::None
+        };
+        if is_walkable(map.tiles[idx]) && liquid_ok && !occupied.contains(&idx) {
             result.push(pt);
             if result.len() >= count {
                 break;

@@ -27,6 +27,10 @@
     // Spiders — solo or pairs
     (monster: "Giant Spider",  min_floor: 3,  max_floor: 6,  min_group: 1, max_group: 2),
 
+    // Eels — aquatic ambushers (spawn in water)
+    (monster: "Eel", min_floor: 2, max_floor: 6, min_group: 1, max_group: 2, spawn_on_liquid: true),
+    (monster: "Eel", min_floor: 7, max_floor: 10, min_group: 2, max_group: 3, spawn_on_liquid: true),
+
     // ==================== GOBLINS (Floors 2-8) ====================
 
     // Basic goblins — cowards that flee when hurt

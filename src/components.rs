@@ -105,6 +105,12 @@ pub enum MovementMode {
     RestrictedToLiquid, // Can ONLY move on liquid tiles (eels, kraken)
 }
 
+/// Marker for aquatic monsters currently hiding beneath the water surface.
+/// While submerged the monster is invisible and cannot be targeted by ranged
+/// attacks or staff zaps. The AI removes this component before attacking.
+#[derive(Component, Debug, Default)]
+pub struct Submerged;
+
 /// Marker component for props — non-item, non-monster world entities
 /// (watchfires, totem poles, barricades, etc.).
 #[derive(Component, Debug, Default)]

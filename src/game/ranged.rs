@@ -16,7 +16,7 @@ impl Plugin for RangedPlugin {
 }
 
 use crate::{
-    components::{Ammo, InInventory, Inventory, Name, Position, Viewshed},
+    components::{Ammo, InInventory, Inventory, Name, Position, Submerged, Viewshed},
     constants::BASE_ACTION_COST,
     game::{
         actions::{ActionFinishedEvent, FreeActionEvent, RangedAttackIntent, finish_turn, free_turn},
@@ -58,7 +58,7 @@ pub fn handle_ranged_attack(
         Option<&Name>,
         Has<Player>,
     )>,
-    target_query: Query<(&Position, Option<&Name>)>,
+    target_query: Query<(&Position, Option<&Name>, Has<Submerged>)>,
     item_props_query: Query<&ItemProperties>,
     mut player_inv_query: Query<&mut Inventory, With<Player>>,
     arrow_query: Query<(&Name, &ItemStack), (With<InInventory>, With<Ammo>)>,
@@ -71,7 +71,7 @@ pub fn handle_ranged_attack(
             continue;
         };
 
-        let Ok((target_pos, target_name)) = target_query.get(intent.target) else {
+        let Ok((target_pos, target_name, target_submerged)) = target_query.get(intent.target) else {
             if is_player {
                 free_turn(&mut commands, &mut free_writer, intent.attacker);
             } else {
@@ -79,6 +79,17 @@ pub fn handle_ranged_attack(
             }
             continue;
         };
+
+        // Submerged targets cannot be hit by ranged attacks.
+        if target_submerged {
+            log_writer.write(GameLogMessage("The target is submerged and cannot be hit!".to_string()));
+            if is_player {
+                free_turn(&mut commands, &mut free_writer, intent.attacker);
+            } else {
+                finish_turn(&mut commands, &mut finish_writer, intent.attacker, BASE_ACTION_COST);
+            }
+            continue;
+        }
 
         let target_point = Point::new(target_pos.x, target_pos.y);
 
