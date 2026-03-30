@@ -11,7 +11,7 @@ use bracket_lib::prelude::Point;
 use serde::{Deserialize, Serialize};
 
 use crate::assets::{self, TileManifest, TileManifestHandle, TileSpriteAssets};
-use crate::components::{Collider, Viewshed};
+use crate::components::{Collider, MovementMode, Viewshed};
 use crate::map::map::GRID_SIZE;
 use crate::map::Map;
 
@@ -157,6 +157,18 @@ pub fn is_walkable(tile: Tile) -> bool {
     terrain_walkable && liquid_walkable
 }
 
+/// Mode-aware walkability check. Accounts for the entity's MovementMode when
+/// deciding whether it can enter a tile.
+pub fn can_entity_enter_tile(tile: Tile, mode: MovementMode) -> bool {
+    match mode {
+        MovementMode::Land | MovementMode::ImmuneToWater => is_walkable(tile),
+        MovementMode::RestrictedToLiquid => {
+            // Must have liquid AND terrain must be walkable
+            tile.liquid != LiquidType::None && is_walkable(tile)
+        }
+    }
+}
+
 pub fn is_passable(tile: Tile) -> bool {
     // Topologically passable: anywhere an entity *could* go, or doors.
     // Used for connectivity checks (ChokeMap, flood-fill). HiddenDoor and
@@ -182,13 +194,13 @@ pub fn is_pathing_blocker(tile: Tile) -> bool {
 }
 
 pub fn is_opaque(tile: Tile) -> bool {
-    match tile.terrain {
-        TerrainType::Wall => true,
-        TerrainType::Door => true,
-        TerrainType::HiddenDoor => true,  // Blocks FOV like a wall
-        TerrainType::LockedDoor => true,  // Blocks FOV like a closed door
-        _ => false,
-    }
+    let terrain_opaque = matches!(tile.terrain,
+        TerrainType::Wall | TerrainType::Door | TerrainType::HiddenDoor | TerrainType::LockedDoor
+    );
+    let decoration_opaque = matches!(tile.decoration,
+        Decoration::TallGrass | Decoration::Fungus
+    );
+    terrain_opaque || decoration_opaque
 }
 
 pub fn spawn_tile_entity(
@@ -316,8 +328,13 @@ pub fn spawn_tile_entity(
             terrain_asset.ascii_bg
         };
 
-        // Determine character: decoration (dry only) > liquid > terrain
-        let (ascii_char, fg_color) = if tile.decoration != Decoration::None && tile.liquid == LiquidType::None {
+        // Determine character: important terrain (stairs, doors) > decoration (dry only) > liquid > terrain
+        let terrain_has_priority = matches!(tile.terrain,
+            TerrainType::DownStairs | TerrainType::UpStairs | TerrainType::Door | TerrainType::OpenDoor | TerrainType::LockedDoor
+        );
+        let (ascii_char, fg_color) = if terrain_has_priority {
+            (terrain_asset.ascii_char.clone(), terrain_asset.ascii_fg)
+        } else if tile.decoration != Decoration::None && tile.liquid == LiquidType::None {
             let dec_asset = tile_manifest.tiles.get(tile.decoration.name());
             match dec_asset {
                 Some(da) if !da.ascii_char.is_empty() => (da.ascii_char.clone(), da.ascii_fg),

@@ -2,11 +2,11 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, BaseMap, DistanceAlg, Point, SmallVec};
 
 use crate::{
-    components::{Collider, Position, Viewshed},
+    components::{Collider, MovementMode, Position, Viewshed},
     game::AppState,
     map::{
         light::LightMap,
-        tile::{Decoration, TileExplored, Tile, TerrainType, LiquidType, TileVisibility, is_opaque},
+        tile::{Decoration, TileExplored, Tile, TerrainType, LiquidType, TileVisibility, is_opaque, is_passable, is_pathing_blocker, can_entity_enter_tile},
     },
     player::Player,
     ui::game_log::GameLogMessage,
@@ -473,5 +473,115 @@ impl Algorithm2D for Map {
 
     fn index_to_point2d(&self, idx: usize) -> Point {
         Point::new(idx as i32 % self.width, idx as i32 / self.width)
+    }
+}
+
+/// Wraps a `Map` reference with a `MovementMode` to provide mode-aware
+/// pathfinding costs via bracket-lib's `BaseMap` trait.
+pub struct MapWithMode<'a> {
+    pub map: &'a Map,
+    pub mode: MovementMode,
+}
+
+impl<'a> MapWithMode<'a> {
+    /// Mode-aware pathing cost for a single cell.
+    fn get_pathing_cost(&self, x: i32, y: i32) -> Option<f32> {
+        if !self.map.in_bounds(Point::new(x, y)) {
+            return None;
+        }
+
+        let idx = self.map.xy_idx(x, y);
+        let tile = self.map.tiles[idx];
+
+        // Topological passability gate (same for all modes).
+        if !is_passable(tile) {
+            return None;
+        }
+
+        match self.mode {
+            MovementMode::Land => {
+                // Deep water is nearly impassable for land creatures.
+                if tile.liquid == LiquidType::Water {
+                    return Some(50.0);
+                }
+                if is_pathing_blocker(tile) {
+                    return Some(5.0);
+                }
+                if self.map.blocked.get(idx).copied().unwrap_or(false) {
+                    return Some(10.0);
+                }
+                Some(1.0)
+            }
+            MovementMode::ImmuneToWater => {
+                // Water is free; other blockers still penalized.
+                if tile.liquid == LiquidType::Water {
+                    return Some(1.0);
+                }
+                if is_pathing_blocker(tile) {
+                    return Some(5.0);
+                }
+                if self.map.blocked.get(idx).copied().unwrap_or(false) {
+                    return Some(10.0);
+                }
+                Some(1.0)
+            }
+            MovementMode::RestrictedToLiquid => {
+                // Can only enter tiles with liquid that are walkable.
+                if !can_entity_enter_tile(tile, self.mode) {
+                    return None;
+                }
+                if self.map.blocked.get(idx).copied().unwrap_or(false) {
+                    return Some(10.0);
+                }
+                Some(1.0)
+            }
+        }
+    }
+}
+
+impl<'a> BaseMap for MapWithMode<'a> {
+    fn is_opaque(&self, idx: usize) -> bool {
+        is_opaque(self.map.tiles[idx])
+    }
+
+    fn get_available_exits(&self, idx: usize) -> SmallVec<[(usize, f32); 10]> {
+        let mut exits = SmallVec::new();
+        let (x, y) = self.map.idx_xy(idx);
+
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                let nx = x + dx;
+                let ny = y + dy;
+                if let Some(base_cost) = self.get_pathing_cost(nx, ny) {
+                    let next_idx = self.map.xy_idx(nx, ny);
+                    let cost = if dx != 0 && dy != 0 { base_cost * 1.45 } else { base_cost };
+                    exits.push((next_idx, cost));
+                }
+            }
+        }
+        exits
+    }
+
+    fn get_pathing_distance(&self, idx1: usize, idx2: usize) -> f32 {
+        let (x1, y1) = self.map.idx_xy(idx1);
+        let (x2, y2) = self.map.idx_xy(idx2);
+        DistanceAlg::Pythagoras.distance2d(Point::new(x1, y1), Point::new(x2, y2))
+    }
+}
+
+impl<'a> Algorithm2D for MapWithMode<'a> {
+    fn dimensions(&self) -> Point {
+        Point::new(self.map.width, self.map.height)
+    }
+
+    fn point2d_to_index(&self, pt: Point) -> usize {
+        self.map.xy_idx(pt.x, pt.y)
+    }
+
+    fn index_to_point2d(&self, idx: usize) -> Point {
+        Point::new(idx as i32 % self.map.width, idx as i32 / self.map.width)
     }
 }

@@ -19,9 +19,10 @@ use crate::{
         actions::SpeedStats,
         combat::{Damage, DamageType, DamageTypeTag, Health, HealthRegen, Resistances},
         items::{ItemProperties, ItemStack, LootEntry, LootTable},
-        magic::{ActiveSpells, KnownSpells, ManaRegen, SpellCooldowns, StatusEffects, MAX_SPELL_SLOTS},
+        magic::StatusEffects,
         ranged::RangedCapable,
-        stats::{Armor, DamageBonus, Dodge, HitBonus, Mana},
+        staves::MonsterAbilities,
+        stats::{Armor, DamageBonus, Dodge, HitBonus},
     },
     map::map::GRID_SIZE,
 };
@@ -146,6 +147,7 @@ pub fn spawn_monster(
             Dodge(monster_asset.base_dodge),
             HitBonus(0),
             DamageBonus(0),
+            monster_asset.movement_mode,
         ))
         .insert((
             Sprite::from_atlas_image(
@@ -181,16 +183,9 @@ pub fn spawn_monster(
         commands.entity(monster_entity).insert(LootTable { entries });
     }
 
-    // Caster monsters: add mana pool and regen components.
-    if !monster_asset.spells.is_empty() || monster_asset.mana > 0 {
-        let mana_max = monster_asset.mana;
-        commands.entity(monster_entity).insert((
-            Mana {
-                current: mana_max,
-                max: mana_max,
-            },
-            ManaRegen::default(),
-        ));
+    // Monster abilities (cooldown-based spell replacement)
+    if !monster_asset.monster_abilities.is_empty() {
+        commands.entity(monster_entity).insert(MonsterAbilities(monster_asset.monster_abilities.clone()));
     }
 
     let ranged_range = match &monster_asset.ai {
@@ -206,20 +201,6 @@ pub fn spawn_monster(
         commands
             .entity(monster_entity)
             .insert(RangedCapable { range: ranged_range });
-    }
-
-    if !monster_asset.spells.is_empty() {
-        let mut slots = vec![None; MAX_SPELL_SLOTS];
-        for (i, spell_id) in monster_asset.spells.iter().enumerate() {
-            if i < MAX_SPELL_SLOTS {
-                slots[i] = Some(spell_id.clone());
-            }
-        }
-        commands.entity(monster_entity).insert((
-            KnownSpells { spells: monster_asset.spells.clone() },
-            ActiveSpells { slots },
-            SpellCooldowns::default(),
-        ));
     }
 
     // Damage type tag (for melee attacks)
@@ -326,7 +307,7 @@ pub fn spawn_monster(
     if let crate::assets::AiConfig::Goap { traits, .. } = &monster_asset.ai {
         let (goals, actions) = crate::game::goap::build_goap_config(
             traits,
-            !monster_asset.spells.is_empty(),
+            !monster_asset.monster_abilities.is_empty(),
             monster_asset.base_armor >= 2,
             /* is_squad_member */ false, // Will be set later when squad is assigned
         );
@@ -376,6 +357,8 @@ pub fn spawn_monster_by_name(
     }
 }
 
+/// Spawn an item entity from the manifest.
+/// If `enchant_floor_depth` is `Some(depth)`, roll random enchantment and runic for weapons/armor.
 pub fn spawn_item(
     commands: &mut Commands,
     item_name: &str,
@@ -384,6 +367,7 @@ pub fn spawn_item(
     item_manifest_handle: &Res<ItemManifestHandle>,
     item_sprite_assets: &Res<ItemSpriteAssets>,
     ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
+    enchant_floor_depth: Option<u32>,
 ) -> Option<Entity> {
     let manifest = item_manifests.get(&item_manifest_handle.0)?;
     let Some(asset) = manifest.items.get(item_name) else {
@@ -441,6 +425,9 @@ pub fn spawn_item(
         rarity: asset.rarity.clone(),
         effect: asset.effect.clone(),
         weapon_range: asset.weapon_range,
+        attack_speed: asset.attack_speed,
+        staff_effect: asset.staff_effect,
+        base_recharge: asset.base_recharge,
     });
 
     entity.insert(ItemStack { count: 1, max_stack: asset.max_stack });
@@ -454,6 +441,24 @@ pub fn spawn_item(
     // ASCII glyph child
     if let Some(font) = ascii_font {
         attach_ascii_glyph(commands, item_entity, &asset.ascii_char, asset.ascii_fg, &font.0, Vec3::new(scale_x, scale_y, 1.0));
+    }
+
+    // Roll random enchantment and runic for weapons/armor
+    if let Some(depth) = enchant_floor_depth {
+        let mut rng = bracket_lib::random::RandomNumberGenerator::new();
+        crate::game::enchantment::enchant_item(commands, item_entity, &asset.item_kind, depth, &mut rng);
+    }
+
+    // Insert staff components if this is a staff item
+    if let Some(effect) = asset.staff_effect {
+        let enchant_level = 0; // Staff enchantment is handled by the Enchantment component
+        commands.entity(item_entity).insert((
+            crate::game::staves::StaffData {
+                effect,
+                base_recharge: asset.base_recharge,
+            },
+            crate::game::staves::Rechargeable::new(asset.base_recharge, enchant_level),
+        ));
     }
 
     Some(item_entity)

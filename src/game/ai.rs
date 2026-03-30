@@ -1,16 +1,14 @@
 use crate::{
-    assets::SpellRegistryHandle,
-    components::{Faction, FactionKind, Position, Viewshed},
+    components::{Faction, FactionKind, MovementMode, Position, Viewshed},
     game::factions::FactionMatrix,
     game::{
         actions::{Direction, MovementIntent, RangedAttackIntent, WaitIntent},
-        combat::Health,
-        magic::{ActiveSpells, CastSpellMessage, SpellCooldowns, StatusEffects},
+        combat::{ApplyDamageMessage, DamageSource, Health, HealMessage},
+        magic::StatusEffects,
         ranged::RangedCapable,
-        spells::{SpellRegistry, SpellTarget},
-        stats::Mana,
+        staves::{MonsterAbilities, MonsterAbilityKind},
     },
-    map::{Map, tile::is_walkable},
+    map::{Map, map::MapWithMode, tile::can_entity_enter_tile},
     player::Player,
 };
 use bevy::prelude::*;
@@ -147,7 +145,7 @@ impl MonsterAI {
         // Try special actions (spell, ranged) before kiting.
         // Ranged monsters fire first, THEN kite on their next turn.
         if self.mode == MonsterAIMode::Hunting && ctx.is_player_visible {
-            if try_cast_spell(entity, ctx.monster_pos, ctx.player_entity, world) {
+            if try_use_ability(entity, ctx.monster_pos, ctx.player_entity, world) {
                 return;
             }
             if try_ranged_attack(entity, ctx.monster_pos, ctx.player_point, ctx.player_entity, world) {
@@ -176,13 +174,14 @@ impl MonsterAI {
             let mut rng_inst = rng();
             let roll: f32 = rand::Rng::random(&mut rng_inst);
             if should_move_erratically(self.erratic_chance, roll) {
+                let mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
                 let map = world.resource::<Map>();
                 let mut directions = [Direction::N, Direction::E, Direction::S, Direction::W].to_vec();
                 directions.shuffle(&mut rng_inst);
                 let erratic_intent = directions.into_iter().find_map(|dir| {
                     let target = ctx.monster_pos + dir.offset();
                     if map.in_bounds(target)
-                        && is_walkable(map.tiles[map.xy_idx(target.x, target.y)])
+                        && can_entity_enter_tile(map.tiles[map.xy_idx(target.x, target.y)], mode)
                     {
                         Some(MovementIntent { entity, dir })
                     } else {
@@ -207,6 +206,13 @@ impl MonsterAI {
         ) {
             world.write_message(intent);
         } else {
+            let name = world.get::<crate::components::Name>(entity)
+                .map(|n| n.0.clone())
+                .unwrap_or_else(|| format!("{entity:?}"));
+            bevy::log::info!(
+                "FSM {name}: WaitIntent (mode={:?}, last_known={:?}, leash={:?})",
+                self.mode, self.last_known_player_position, leader_leash
+            );
             world.write_message(WaitIntent { entity });
         }
     }
@@ -217,6 +223,8 @@ impl MonsterAI {
             MonsterAIMode::Asleep => {
                 if ctx.is_player_visible {
                     self.mode = MonsterAIMode::Hunting;
+                    self.last_known_player_position = Some(ctx.player_point);
+                    self.chase_distance = 0;
                 }
             }
             MonsterAIMode::Hunting => {
@@ -330,11 +338,12 @@ pub fn try_flee_movement(
         return None;
     }
 
+    let mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
     let map = world.resource::<Map>();
 
     // Try primary flee direction.
     let primary = Point::new(monster_pos.x + dx, monster_pos.y + dy);
-    if map.in_bounds(primary) && is_walkable(map.tiles[map.xy_idx(primary.x, primary.y)]) {
+    if map.in_bounds(primary) && can_entity_enter_tile(map.tiles[map.xy_idx(primary.x, primary.y)], mode) {
         let dir = Direction::from_pos(
             &Position::from_point(monster_pos),
             &Position::from_point(primary),
@@ -351,7 +360,7 @@ pub fn try_flee_movement(
 
     for (px, py) in perp_offsets {
         let target = Point::new(monster_pos.x + px, monster_pos.y + py);
-        if map.in_bounds(target) && is_walkable(map.tiles[map.xy_idx(target.x, target.y)]) {
+        if map.in_bounds(target) && can_entity_enter_tile(map.tiles[map.xy_idx(target.x, target.y)], mode) {
             let dir = Direction::from_pos(
                 &Position::from_point(monster_pos),
                 &Position::from_point(target),
@@ -391,30 +400,170 @@ pub fn try_stun_skip(entity: Entity, world: &mut World) -> bool {
     true
 }
 
-/// Try to cast a spell. Returns true if a spell was cast (caller should return).
-/// Public entry point for GOAP entities to attempt casting their best spell.
-/// Looks up position and player entity, then delegates to the internal spell scorer.
-pub fn try_cast_spell_world(entity: Entity, world: &mut World) -> bool {
+/// Try to use a monster ability. Returns true if an ability was used (caller should return).
+/// Public entry point for GOAP entities to attempt using their best ability.
+pub fn try_use_ability_world(entity: Entity, world: &mut World) -> bool {
     let pos = world.get::<Position>(entity).map(|p| p.to_point()).unwrap_or(Point::new(0, 0));
     let player_entity = {
         let mut q = world.query_filtered::<Entity, With<Player>>();
         q.iter(world).next()
     };
-    try_cast_spell(entity, pos, player_entity, world)
+    try_use_ability(entity, pos, player_entity, world)
 }
 
-fn try_cast_spell(entity: Entity, monster_pos: Point, player_entity: Option<Entity>, world: &mut World) -> bool {
-    if let Some((spell_slot, target)) = choose_spell(entity, monster_pos, player_entity, world) {
-        world.write_message(CastSpellMessage {
-            caster: entity,
-            slot: spell_slot,
-            target,
-            target_pos: None,
-        });
-        true
-    } else {
-        false
+fn try_use_ability(entity: Entity, monster_pos: Point, player_entity: Option<Entity>, world: &mut World) -> bool {
+    // Read abilities
+    let abilities = world.get::<MonsterAbilities>(entity).cloned();
+    let Some(abilities) = abilities else { return false; };
+
+    let caster_faction = world.get::<Faction>(entity).map(|f| f.0.clone());
+    let caster_health = world.get::<Health>(entity).map(|h| (h.current, h.max));
+    let caster_effects = world.get::<StatusEffects>(entity).cloned();
+    let caster_name = world.get::<crate::components::Name>(entity)
+        .map(|n| n.0.clone())
+        .unwrap_or_else(|| "Something".to_string());
+
+    let faction_matrix = world.resource::<FactionMatrix>().clone();
+
+    // Find nearest enemy
+    let nearest_enemy: Option<(Entity, Point)> = {
+        let mut query = world.query::<(Entity, &Position, &Faction, &Health)>();
+        let mut best: Option<(Entity, Point, i32)> = None;
+        for (ent, pos, faction, _health) in query.iter(world) {
+            if ent == entity { continue; }
+            if let Some(ref cf) = caster_faction {
+                if !faction_matrix.is_hostile_to(&cf.0, &faction.0.0) { continue; }
+            }
+            let dist = (pos.x - monster_pos.x).abs() + (pos.y - monster_pos.y).abs();
+            if best.is_none() || dist < best.as_ref().unwrap().2 {
+                best = Some((ent, pos.to_point(), dist));
+            }
+        }
+        best.map(|(e, p, _)| (e, p))
+    };
+
+    // Find most-wounded ally for heals
+    let most_wounded_ally: Option<Entity> = {
+        let mut query = world.query::<(Entity, &Position, &Faction, &Health)>();
+        let mut best: Option<(Entity, i32)> = None;
+        for (ent, _pos, faction, health) in query.iter(world) {
+            if ent == entity { continue; }
+            if let Some(ref cf) = caster_faction {
+                if !faction_matrix.is_allied_to(&cf.0, &faction.0.0) { continue; }
+            }
+            let missing = health.max - health.current;
+            if missing > 0 && (best.is_none() || missing > best.as_ref().unwrap().1) {
+                best = Some((ent, missing));
+            }
+        }
+        best.map(|(e, _)| e)
+    };
+
+    let hp_pct = caster_health.map(|(c, m)| c as f32 / m.max(1) as f32).unwrap_or(1.0);
+
+    for (idx, ability) in abilities.0.iter().enumerate() {
+        if ability.current_cooldown > 0 { continue; }
+
+        match &ability.kind {
+            MonsterAbilityKind::Bolt { dice, damage_type } => {
+                let Some((target_entity, target_pos)) = nearest_enemy else { continue; };
+                let dist = (target_pos.x - monster_pos.x).abs() + (target_pos.y - monster_pos.y).abs();
+                if dist > ability.range as i32 { continue; }
+
+                let mut rng = bracket_lib::random::RandomNumberGenerator::new();
+                let damage = crate::game::staves::roll_dice_expr(&mut rng, dice).max(1);
+                world.write_message(ApplyDamageMessage {
+                    attacker: entity,
+                    target: target_entity,
+                    final_damage: damage,
+                    damage_type: *damage_type,
+                    source: DamageSource::Spell,
+                });
+                world.write_message(crate::ui::game_log::GameLogMessage(format!(
+                    "{} casts {}!", caster_name, ability.name
+                )));
+                // Set cooldown
+                if let Some(mut ma) = world.get_mut::<MonsterAbilities>(entity) {
+                    ma.0[idx].current_cooldown = ability.cooldown;
+                }
+                return true;
+            }
+            MonsterAbilityKind::Heal { dice } => {
+                // Heal self if low HP, or heal ally
+                let heal_self = hp_pct < 0.6;
+                let target = if heal_self {
+                    Some(entity)
+                } else {
+                    most_wounded_ally
+                };
+                let Some(target) = target else { continue; };
+
+                let mut rng = bracket_lib::random::RandomNumberGenerator::new();
+                let amount = crate::game::staves::roll_dice_expr(&mut rng, dice).max(1);
+                world.write_message(HealMessage { entity: target, amount });
+                world.write_message(crate::ui::game_log::GameLogMessage(format!(
+                    "{} casts {}!", caster_name, ability.name
+                )));
+                if let Some(mut ma) = world.get_mut::<MonsterAbilities>(entity) {
+                    ma.0[idx].current_cooldown = ability.cooldown;
+                }
+                return true;
+            }
+            MonsterAbilityKind::ApplyStatus { effect, duration } => {
+                let Some((target_entity, target_pos)) = nearest_enemy else { continue; };
+                let dist = (target_pos.x - monster_pos.x).abs() + (target_pos.y - monster_pos.y).abs();
+                if dist > ability.range as i32 { continue; }
+
+                if let Some(mut effects) = world.get_mut::<StatusEffects>(target_entity) {
+                    effects.add(*effect, *duration);
+                }
+                world.write_message(crate::ui::game_log::GameLogMessage(format!(
+                    "{} casts {}!", caster_name, ability.name
+                )));
+                if let Some(mut ma) = world.get_mut::<MonsterAbilities>(entity) {
+                    ma.0[idx].current_cooldown = ability.cooldown;
+                }
+                return true;
+            }
+            MonsterAbilityKind::SelfBuff { effect, duration } => {
+                // Check if already have this effect
+                let already_has = caster_effects.as_ref().map(|e| {
+                    e.0.iter().any(|ae| std::mem::discriminant(&ae.kind) == std::mem::discriminant(effect))
+                }).unwrap_or(false);
+                if already_has { continue; }
+
+                if let Some(mut effects) = world.get_mut::<StatusEffects>(entity) {
+                    effects.add(*effect, *duration);
+                }
+                world.write_message(crate::ui::game_log::GameLogMessage(format!(
+                    "{} casts {}!", caster_name, ability.name
+                )));
+                if let Some(mut ma) = world.get_mut::<MonsterAbilities>(entity) {
+                    ma.0[idx].current_cooldown = ability.cooldown;
+                }
+                return true;
+            }
+            MonsterAbilityKind::Summon { monster, count } => {
+                // Summon allied monsters
+                let caster_pos_comp = world.get::<Position>(entity).cloned();
+                let Some(caster_pos_comp) = caster_pos_comp else { continue; };
+                world.insert_resource(crate::game::magic::PendingSummon {
+                    caster_pos: caster_pos_comp,
+                    caster_label: caster_name.clone(),
+                    monster_name: monster.clone(),
+                    count: *count,
+                });
+                world.write_message(crate::ui::game_log::GameLogMessage(format!(
+                    "{} casts {}!", caster_name, ability.name
+                )));
+                if let Some(mut ma) = world.get_mut::<MonsterAbilities>(entity) {
+                    ma.0[idx].current_cooldown = ability.cooldown;
+                }
+                return true;
+            }
+        }
     }
+    false
 }
 
 /// Try a ranged attack if the monster has ranged capability and player is in range
@@ -490,15 +639,18 @@ fn resolve_movement(
 }
 
 /// A* pathfind one step toward `target` and return a MovementIntent.
+/// Uses the entity's `MovementMode` for mode-aware pathing costs.
 pub fn pathfind_toward(entity: Entity, from: Point, target: Point, world: &mut World) -> Option<MovementIntent> {
+    let mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
     let map = world.resource::<Map>();
+    let map_with_mode = MapWithMode { map, mode };
     let path = a_star_search(
-        map.point2d_to_index(from),
-        map.point2d_to_index(target),
-        map,
+        map_with_mode.point2d_to_index(from),
+        map_with_mode.point2d_to_index(target),
+        &map_with_mode,
     );
     if path.success && path.steps.len() > 1 {
-        let next_step = map.index_to_point2d(path.steps[1]);
+        let next_step = map_with_mode.index_to_point2d(path.steps[1]);
         let dir = Direction::from_pos(
             &Position::from_point(from),
             &Position::from_point(next_step),
@@ -509,21 +661,7 @@ pub fn pathfind_toward(entity: Entity, from: Point, target: Point, world: &mut W
     }
 }
 
-/// Information about a nearby entity, gathered once before spell scoring.
-struct NearbyEntity {
-    entity: Entity,
-    pos: Point,
-    faction: FactionKind,
-    hp_current: i32,
-    hp_max: i32,
-    mana_current: i32,
-    has_slow: bool,
-    has_haste: bool,
-}
-
-/// Spells gated by boss phase. The boss has all spells in its list, but only
-/// considers certain ones based on HP-driven phase. Spells NOT in this list
-/// (e.g. tier-granted fireball, haste) are always available.
+/// Spells gated by boss phase comment preserved for reference.
 
 /// Dispatch idle movement for a monster based on its `PatrolRoute` component.
 /// Sentry: jitter near home. Waypoint: walk route. AreaRoam: bounded random walk. None: free wander.
@@ -534,7 +672,9 @@ pub fn idle_movement(
     rng: &mut impl rand::Rng,
 ) -> Option<MovementIntent> {
     let patrol = world.get::<PatrolRoute>(entity).cloned();
+    let mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
     let map = world.resource::<Map>();
+    let map_with_mode = MapWithMode { map, mode };
 
     match patrol.as_ref().map(|p| &p.state) {
         Some(PatrolState::Sentry { home }) => {
@@ -542,12 +682,12 @@ pub fn idle_movement(
             let dist = DistanceAlg::Pythagoras.distance2d(monster_pos, home_pt);
             if dist > GUARD_PATROL_RADIUS as f32 {
                 let path = a_star_search(
-                    map.point2d_to_index(monster_pos),
-                    map.point2d_to_index(home_pt),
-                    map,
+                    map_with_mode.point2d_to_index(monster_pos),
+                    map_with_mode.point2d_to_index(home_pt),
+                    &map_with_mode,
                 );
                 if path.success && path.steps.len() > 1 {
-                    let next_step = map.index_to_point2d(path.steps[1]);
+                    let next_step = map_with_mode.index_to_point2d(path.steps[1]);
                     let dir = Direction::from_pos(
                         &Position::from_point(monster_pos),
                         &Position::from_point(next_step),
@@ -562,7 +702,7 @@ pub fn idle_movement(
                 directions.into_iter().find_map(|dir| {
                     let target = monster_pos + dir.offset();
                     if map.in_bounds(target)
-                        && is_walkable(map.tiles[map.xy_idx(target.x, target.y)])
+                        && can_entity_enter_tile(map.tiles[map.xy_idx(target.x, target.y)], mode)
                         && DistanceAlg::Pythagoras.distance2d(target, home_pt) <= GUARD_PATROL_RADIUS as f32
                     {
                         Some(MovementIntent { entity, dir })
@@ -578,6 +718,7 @@ pub fn idle_movement(
             if monster_pos == target {
                 // Arrived — advance index.
                 let _ = map;
+                drop(map_with_mode);
                 if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity)
                     && let PatrolState::Waypoint { ref points, ref mut current_index } = patrol.state {
                         *current_index = (*current_index + 1) % points.len();
@@ -585,15 +726,16 @@ pub fn idle_movement(
                 // Re-borrow and pathfind to next waypoint.
                 let patrol = world.get::<PatrolRoute>(entity).cloned();
                 let map = world.resource::<Map>();
+                let map_with_mode = MapWithMode { map, mode };
                 if let Some(PatrolRoute { state: PatrolState::Waypoint { ref points, current_index } }) = patrol {
                     let next_target = Point::new(points[current_index].0, points[current_index].1);
                     let path = a_star_search(
-                        map.point2d_to_index(monster_pos),
-                        map.point2d_to_index(next_target),
-                        map,
+                        map_with_mode.point2d_to_index(monster_pos),
+                        map_with_mode.point2d_to_index(next_target),
+                        &map_with_mode,
                     );
                     if path.success && path.steps.len() > 1 {
-                        let next_step = map.index_to_point2d(path.steps[1]);
+                        let next_step = map_with_mode.index_to_point2d(path.steps[1]);
                         let dir = Direction::from_pos(
                             &Position::from_point(monster_pos),
                             &Position::from_point(next_step),
@@ -604,12 +746,12 @@ pub fn idle_movement(
                 None
             } else {
                 let path = a_star_search(
-                    map.point2d_to_index(monster_pos),
-                    map.point2d_to_index(target),
-                    map,
+                    map_with_mode.point2d_to_index(monster_pos),
+                    map_with_mode.point2d_to_index(target),
+                    &map_with_mode,
                 );
                 if path.success && path.steps.len() > 1 {
-                    let next_step = map.index_to_point2d(path.steps[1]);
+                    let next_step = map_with_mode.index_to_point2d(path.steps[1]);
                     let dir = Direction::from_pos(
                         &Position::from_point(monster_pos),
                         &Position::from_point(next_step),
@@ -618,6 +760,7 @@ pub fn idle_movement(
                 } else {
                     // Pathfinding failed — skip to next waypoint.
                     let _ = map;
+                    drop(map_with_mode);
                     if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity)
                         && let PatrolState::Waypoint { ref points, ref mut current_index } = patrol.state {
                             *current_index = (*current_index + 1) % points.len();
@@ -633,7 +776,7 @@ pub fn idle_movement(
             directions.into_iter().find_map(|dir| {
                 let target = monster_pos + dir.offset();
                 if map.in_bounds(target)
-                    && is_walkable(map.tiles[map.xy_idx(target.x, target.y)])
+                    && can_entity_enter_tile(map.tiles[map.xy_idx(target.x, target.y)], mode)
                     && target.x >= min.0 && target.x <= max.0
                     && target.y >= min.1 && target.y <= max.1
                 {
@@ -650,7 +793,7 @@ pub fn idle_movement(
             directions.into_iter().find_map(|dir| {
                 let target = monster_pos + dir.offset();
                 if map.in_bounds(target)
-                    && is_walkable(map.tiles[map.xy_idx(target.x, target.y)])
+                    && can_entity_enter_tile(map.tiles[map.xy_idx(target.x, target.y)], mode)
                 {
                     Some(MovementIntent { entity, dir })
                 } else {
@@ -664,217 +807,7 @@ pub fn idle_movement(
 /// Evaluates all ready spells for `caster` and returns `(slot_index, target_entity)` for
 /// the best one, or `None` if no spell is worth casting.
 ///
-/// Fully faction-aware: determines friend/foe based on `Faction` component, not
-/// hardcoded Player/Monster markers. This allows AI-vs-AI and player-allied AI in the future.
-///
-/// Score normalization prevents nova-ing:
-///   effective_score = raw_score / (sqrt(mana_cost) * ln(cooldown + 1))
-fn choose_spell(
-    caster: Entity,
-    caster_pos: Point,
-    _player_entity: Option<Entity>,
-    world: &mut World,
-) -> Option<(usize, Entity)> {
-    // --- Gather caster data upfront ---
-    let caster_faction = world.get::<Faction>(caster)?.0.clone();
-
-    let (active_slots, cooldowns, mana_current, caster_hp, caster_max_hp) = {
-        let active = world.get::<ActiveSpells>(caster)?;
-        let cooldowns = world.get::<SpellCooldowns>(caster).cloned().unwrap_or_default();
-        let mana = world.get::<Mana>(caster).map(|m| m.current).unwrap_or(0);
-        let hp = world.get::<Health>(caster).map(|h| (h.current, h.max)).unwrap_or((1, 1));
-        (active.slots.clone(), cooldowns, mana, hp.0, hp.1)
-    };
-
-    let caster_effects = world.get::<StatusEffects>(caster);
-    let caster_has_haste = caster_effects.map(|e| e.is_hasted()).unwrap_or(false);
-    let hp_pct = caster_hp as f32 / caster_max_hp.max(1) as f32;
-
-    // Collect all nearby entities with faction info for targeting decisions.
-    let nearby: Vec<NearbyEntity> = {
-        let mut result = Vec::new();
-        let mut query = world.query::<(Entity, &Position, &Faction, &Health, Option<&Mana>, Option<&StatusEffects>)>();
-        for (ent, pos, faction, health, mana, effects) in query.iter(world) {
-            if ent == caster {
-                continue;
-            }
-            result.push(NearbyEntity {
-                entity: ent,
-                pos: pos.to_point(),
-                faction: faction.0.clone(),
-                hp_current: health.current,
-                hp_max: health.max,
-                mana_current: mana.map(|m| m.current).unwrap_or(0),
-                has_slow: effects.map(|e| e.is_slowed()).unwrap_or(false),
-                has_haste: effects.map(|e| e.is_hasted()).unwrap_or(false),
-            });
-        }
-        result
-    };
-
-    // Partition nearby entities by relationship to caster.
-    let faction_matrix = world.resource::<FactionMatrix>();
-    let enemies: Vec<&NearbyEntity> = nearby.iter().filter(|n| faction_matrix.is_hostile_to(&caster_faction.0, &n.faction.0)).collect();
-    let allies: Vec<&NearbyEntity> = nearby.iter().filter(|n| faction_matrix.is_allied_to(&caster_faction.0, &n.faction.0)).collect();
-
-    // Find the best enemy target (nearest visible enemy for single-target offensive spells).
-    let nearest_enemy = enemies.iter()
-        .min_by_key(|e| {
-            let dx = e.pos.x - caster_pos.x;
-            let dy = e.pos.y - caster_pos.y;
-            dx * dx + dy * dy
-        })
-        .copied();
-
-    // Find the most-wounded ally for heal/buff spells.
-    let most_wounded_ally = allies.iter()
-        .filter(|a| a.hp_current < a.hp_max)
-        .max_by_key(|a| a.hp_max - a.hp_current)
-        .copied();
-
-    let registry_handle = world.resource::<SpellRegistryHandle>().0.clone();
-    let registry = {
-        let assets = world.resource::<Assets<SpellRegistry>>();
-        assets.get(&registry_handle).cloned()
-    };
-    let registry = registry?;
-
-    let mut best_score: f32 = 0.0;
-    let mut best_slot: Option<usize> = None;
-    let mut best_target: Option<Entity> = None;
-
-    for (slot_idx, slot) in active_slots.iter().enumerate() {
-        let Some(spell_id) = slot else { continue };
-        let Some(spell) = registry.spells.get(spell_id) else {
-            continue;
-        };
-
-        if !cooldowns.is_ready(spell_id) {
-            continue;
-        }
-        if mana_current < spell.mana_cost {
-            continue;
-        }
-
-        // Resolve the primary target based on SpellTarget and available entities.
-        let primary_target: Option<&NearbyEntity> = match spell.target {
-            SpellTarget::Enemy => nearest_enemy,
-            SpellTarget::Castor => None, // Self-targeted, handled below
-            SpellTarget::Ally => most_wounded_ally,
-            SpellTarget::AllyOrSelf => {
-                // Choose most-wounded ally, or self if caster is more hurt
-                let caster_missing = caster_max_hp - caster_hp;
-                let ally_missing = most_wounded_ally.map(|a| a.hp_max - a.hp_current).unwrap_or(0);
-                if caster_missing > ally_missing {
-                    None // Will resolve to caster below
-                } else {
-                    most_wounded_ally
-                }
-            }
-        };
-
-        // For enemy-targeted spells, check range to the resolved enemy target.
-        let target_in_range = match spell.target {
-            SpellTarget::Enemy => {
-                if spell.range > 0 {
-                    primary_target
-                        .map(|t| DistanceAlg::Pythagoras.distance2d(caster_pos, t.pos) <= spell.range as f32)
-                        .unwrap_or(false)
-                } else {
-                    primary_target.is_some()
-                }
-            }
-            SpellTarget::Ally => {
-                if spell.range > 0 {
-                    primary_target
-                        .map(|t| DistanceAlg::Pythagoras.distance2d(caster_pos, t.pos) <= spell.range as f32)
-                        .unwrap_or(false)
-                } else {
-                    primary_target.is_some()
-                }
-            }
-            SpellTarget::AllyOrSelf | SpellTarget::Castor => true, // Always in range of self
-        };
-
-        if !target_in_range {
-            continue;
-        }
-
-        // Resolve to entity ID.
-        let resolved_entity: Option<Entity> = match spell.target {
-            SpellTarget::Castor => Some(caster),
-            SpellTarget::AllyOrSelf => {
-                primary_target.map(|t| t.entity).or(Some(caster))
-            }
-            _ => primary_target.map(|t| t.entity),
-        };
-
-        let Some(resolved_entity) = resolved_entity else {
-            continue; // No valid target available
-        };
-
-        // Build scoring context from the resolved primary target.
-        let caster_as_target = NearbyEntity {
-            entity: caster,
-            pos: caster_pos,
-            faction: caster_faction.clone(),
-            hp_current: caster_hp,
-            hp_max: caster_max_hp,
-            mana_current: 0,
-            has_slow: false,
-            has_haste: caster_has_haste,
-        };
-        let scoring_target = primary_target.unwrap_or(&caster_as_target);
-
-        // Build nearby list for AoE/chain scoring (excludes primary target).
-        let scoring_nearby: Vec<crate::game::spells::ScoringNearby> = nearby.iter()
-            .filter(|n| n.entity != scoring_target.entity)
-            .map(|n| crate::game::spells::ScoringNearby {
-                pos: (n.pos.x, n.pos.y),
-                is_enemy: faction_matrix.is_hostile_to(&caster_faction.0, &n.faction.0),
-            })
-            .collect();
-
-        let scoring_ctx = crate::game::spells::EffectScoringCtx {
-            caster_pos: (caster_pos.x, caster_pos.y),
-            caster_hp_pct: hp_pct,
-            caster_has_haste,
-            target_hp: scoring_target.hp_current,
-            target_hp_max: scoring_target.hp_max,
-            target_mana: scoring_target.mana_current,
-            target_has_slow: scoring_target.has_slow,
-            target_has_haste: scoring_target.has_haste,
-            target_is_self: resolved_entity == caster,
-            target_pos: (scoring_target.pos.x, scoring_target.pos.y),
-            nearby: &scoring_nearby,
-        };
-
-        // Score each effect and accumulate.
-        let mut raw: i32 = 0;
-        for effect in &spell.effects {
-            raw += crate::game::spells::score_effect(effect, &scoring_ctx);
-        }
-
-        if raw <= 0 {
-            continue;
-        }
-
-        let effective = crate::game::spells::normalize_spell_score(raw, spell.mana_cost, spell.cooldown);
-
-        if effective > best_score {
-            best_score = effective;
-            best_slot = Some(slot_idx);
-            best_target = Some(resolved_entity);
-        }
-    }
-
-    if best_score > 1.0 {
-        best_slot.zip(best_target)
-    } else {
-        None
-    }
-}
-
+// Old choose_spell code — find the end marker below and delete everything between.
 // =====================================================================
 // AI Behavior Helpers (pure decision functions)
 // =====================================================================

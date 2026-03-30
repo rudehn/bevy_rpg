@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::{
-    components::{Chest, Collider, Faction, InInventory, Inventory, Name, Position, Item},
+    components::{Chest, Collider, Faction, InInventory, Inventory, MovementMode, Name, Position, Item},
     game::machines::{Machine, MachineBumpMessage},
     constants::BASE_ACTION_COST,
     game::{
@@ -15,7 +15,7 @@ use crate::{
         spawner::spawn_item,
         turns::MyTurn,
     },
-    map::{Map, tile::{is_walkable, TerrainType, TileMutationMessage, TileMarker}},
+    map::{Map, tile::{can_entity_enter_tile, TerrainType, TileMutationMessage, TileMarker}},
     map::dungeon::Floor,
     player::Player,
     assets::{
@@ -382,6 +382,7 @@ fn resolve_bump(
     actor: Entity,
     actor_faction: Option<&Faction>,
     actor_is_player: bool,
+    actor_movement_mode: MovementMode,
     target_pt: Point,
     map: &Map,
     faction_matrix: &FactionMatrix,
@@ -393,6 +394,7 @@ fn resolve_bump(
         Has<Collider>,
         Has<Chest>,
         Has<Machine>,
+        Option<&MovementMode>,
     ), (Without<TileMarker>, Without<Item>)>,
 ) -> BumpResult {
     // 1. Bounds check
@@ -409,7 +411,7 @@ fn resolve_bump(
 
     // 3. Occupant scan — prioritize hostile entities over props.
     let mut bump_target = None;
-    for (e, other_pos, _other_is_player, other_faction, other_has_collider, other_is_chest, other_is_machine) in
+    for (e, other_pos, _other_is_player, other_faction, other_has_collider, other_is_chest, other_is_machine, _) in
         actors_query.iter()
     {
         if other_pos.to_point() == target_pt && e != actor {
@@ -447,8 +449,8 @@ fn resolve_bump(
         // Non-hostile, non-blocking occupant — fall through to walkability check.
     }
 
-    // 4. Wall/obstacle check
-    if !is_walkable(target_tile) {
+    // 4. Wall/obstacle check (mode-aware)
+    if !can_entity_enter_tile(target_tile, actor_movement_mode) {
         return BumpResult::Wall;
     }
 
@@ -473,23 +475,25 @@ pub fn handle_movement(
         Has<Collider>,
         Has<Chest>,
         Has<Machine>,
+        Option<&MovementMode>,
     ), (Without<TileMarker>, Without<Item>)>,
     map: Res<Map>,
     faction_matrix: Res<FactionMatrix>,
 ) {
     for intent in intents.read() {
-        let Ok((_, pos, is_player, actor_faction, _, _, _)) = actors_query.get(intent.entity) else {
+        let Ok((_, pos, is_player, actor_faction, _, _, _, movement_mode)) = actors_query.get(intent.entity) else {
             finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
             continue;
         };
         let actor_faction = actor_faction.cloned();
+        let actor_movement_mode = movement_mode.copied().unwrap_or_default();
 
         let target_pt = pos.to_point() + intent.dir.offset();
-        let result = resolve_bump(intent.entity, actor_faction.as_ref(), is_player, target_pt, &map, &faction_matrix, &actors_query);
+        let result = resolve_bump(intent.entity, actor_faction.as_ref(), is_player, actor_movement_mode, target_pt, &map, &faction_matrix, &actors_query);
 
         match result {
             BumpResult::Empty => {
-                if let Ok((_, mut pos, _, _, _, _, _)) = actors_query.get_mut(intent.entity) {
+                if let Ok((_, mut pos, _, _, _, _, _, _)) = actors_query.get_mut(intent.entity) {
                     pos.x = target_pt.x;
                     pos.y = target_pt.y;
                 }
@@ -508,8 +512,11 @@ pub fn handle_movement(
                 } else {
                     BASE_ACTION_COST
                 };
-                // Deep water movement cost
-                if idx < map.tiles.len() && map.tiles[idx].liquid == crate::map::tile::LiquidType::Water {
+                // Deep water movement cost (Land entities only)
+                if actor_movement_mode == MovementMode::Land
+                    && idx < map.tiles.len()
+                    && map.tiles[idx].liquid == crate::map::tile::LiquidType::Water
+                {
                     move_cost *= 2;
                     if is_player {
                         log_writer.write(GameLogMessage("The deep water slows your movement.".to_string()));

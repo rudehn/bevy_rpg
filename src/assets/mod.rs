@@ -3,9 +3,10 @@ use bevy_common_assets::ron::RonAssetPlugin;
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use crate::components::MovementMode;
 use crate::game::effects::Effect;
 use crate::game::items::{ArmorSlot, ItemKind, Rarity};
-use crate::game::spells::SpellRegistry;
+use crate::game::staves::MonsterAbilityDef;
 
 use crate::game::{AppState, camera};
 
@@ -68,7 +69,7 @@ impl Plugin for AssetsPlugin {
             .init_resource::<ItemManifestHandle>()
             .init_resource::<ItemSpawnTableHandle>()
             .init_resource::<PlayerAssetHandle>()
-            .init_resource::<SpellRegistryHandle>()
+            // SpellRegistryHandle removed (spell system replaced by monster abilities)
             .init_resource::<PropManifestHandle>()
             .init_resource::<PrefabManifestHandle>()
             .init_resource::<DecorationCatalogHandle>()
@@ -81,7 +82,7 @@ impl Plugin for AssetsPlugin {
                     load_item_manifest,
                     load_item_spawn_table,
                     load_player_asset,
-                    load_spell_registry,
+                    // load_spell_registry removed (spell system replaced)
                     load_prop_manifest,
                     load_prefab_manifest,
                     load_decoration_catalog,
@@ -113,7 +114,7 @@ impl Plugin for LoadingPlugin {
             RonAssetPlugin::<ItemManifest>::new(&["items.ron"]),
             RonAssetPlugin::<ItemSpawnTable>::new(&["item_spawns.ron"]),
             RonAssetPlugin::<PlayerAsset>::new(&["player.ron"]),
-            RonAssetPlugin::<SpellRegistry>::new(&["spells.ron"]),
+            // RonAssetPlugin::<SpellRegistry> removed (spell system replaced)
             RonAssetPlugin::<PropManifest>::new(&["props.ron"]),
             RonAssetPlugin::<PrefabManifest>::new(&["prefabs.ron"]),
             RonAssetPlugin::<DecorationCatalog>::new(&["decorations.ron"]),
@@ -364,8 +365,6 @@ pub struct MonsterAsset {
     pub tile_size: Option<UVec2>,
 
     pub base_hp: i32,
-    #[serde(default)]
-    pub mana: i32,
     pub damage: String,
 
     #[serde(default, deserialize_with = "serde_helpers::deserialize_i32_as_option")]
@@ -373,10 +372,6 @@ pub struct MonsterAsset {
 
     #[serde(default)]
     pub loot_table: Vec<MonsterLootEntry>,
-
-    /// Spell IDs (from spells.ron) pre-assigned to this monster's active slots.
-    #[serde(default)]
-    pub spells: Vec<String>,
 
     /// Melee damage type (e.g. "physical", "fire", "poison"). Default: "physical".
     #[serde(default)]
@@ -397,6 +392,10 @@ pub struct MonsterAsset {
     /// Monster abilities — passive, on-hit, on-death, and aura effects.
     #[serde(default)]
     pub abilities: Vec<AbilityDef>,
+
+    /// Cooldown-based monster spell abilities (replaces old mana/spells system).
+    #[serde(default)]
+    pub monster_abilities: Vec<MonsterAbilityDef>,
     #[serde(default)]
     pub ascii_char: String,
     #[serde(default = "default_white_hex", deserialize_with = "serde_helpers::deserialize_hex_color")]
@@ -413,6 +412,10 @@ pub struct MonsterAsset {
     /// Action delay multiplier. 1.0 = normal speed, >1.0 = slower, <1.0 = faster.
     #[serde(default = "default_delay")]
     pub delay: f32,
+
+    /// Movement mode controlling how this monster interacts with terrain.
+    #[serde(default)]
+    pub movement_mode: MovementMode,
 }
 
 /// Infer the combat role of a monster from its asset data (replaces the old
@@ -427,7 +430,7 @@ pub fn infer_role(asset: &MonsterAsset) -> &'static str {
         AiConfig::Fsm { ranged_range, .. } => *ranged_range > 0,
         AiConfig::Goap { traits, .. } => traits.iter().any(|t| matches!(t, AiTrait::Ranged { .. })),
     };
-    if !asset.spells.is_empty() && !has_ranged { return "caster"; }
+    if !asset.monster_abilities.is_empty() && !has_ranged { return "caster"; }
     if has_ranged { return "ranged"; }
     if asset.base_armor >= 2 { return "brute"; }
     "melee_guard"
@@ -666,6 +669,15 @@ pub struct ItemAsset {
     /// Range for ranged weapons (> 1 = ranged; 0 or 1 = melee/default).
     #[serde(default)]
     pub weapon_range: u32,
+    /// Attack speed multiplier (0.5 = twice as fast, 1.0 = normal). Defaults to 1.0.
+    #[serde(default = "default_attack_speed")]
+    pub attack_speed: f32,
+    /// Staff effect type (only for Staff items).
+    #[serde(default)]
+    pub staff_effect: Option<crate::game::staves::StaffEffect>,
+    /// Base recharge rate for staves (turns per charge at +0 enchantment).
+    #[serde(default)]
+    pub base_recharge: u32,
     /// Maximum number of items that can share one inventory slot (1 = not stackable).
     #[serde(default = "default_max_stack")]
     pub max_stack: u32,
@@ -676,6 +688,10 @@ pub struct ItemAsset {
     pub ascii_char: String,
     #[serde(default = "default_white_hex", deserialize_with = "serde_helpers::deserialize_hex_color")]
     pub ascii_fg: Color,
+}
+
+fn default_attack_speed() -> f32 {
+    1.0
 }
 
 fn default_max_stack() -> u32 {
@@ -705,9 +721,6 @@ pub struct ItemSpawnTableHandle(pub Handle<ItemSpawnTable>);
 #[derive(Resource, Default)]
 pub struct PlayerAssetHandle(pub Handle<PlayerAsset>);
 
-#[derive(Resource, Default)]
-pub struct SpellRegistryHandle(pub Handle<SpellRegistry>);
-
 fn load_monster_manifest(
     asset_server: Res<AssetServer>,
     mut monster_manifest_handle: ResMut<MonsterManifestHandle>,
@@ -736,10 +749,6 @@ fn load_item_spawn_table(asset_server: Res<AssetServer>, mut handle: ResMut<Item
 
 fn load_player_asset(asset_server: Res<AssetServer>, mut handle: ResMut<PlayerAssetHandle>) {
     handle.0 = asset_server.load("player.ron");
-}
-
-fn load_spell_registry(asset_server: Res<AssetServer>, mut handle: ResMut<SpellRegistryHandle>) {
-    handle.0 = asset_server.load("spells.ron");
 }
 
 fn load_prop_manifest(asset_server: Res<AssetServer>, mut handle: ResMut<PropManifestHandle>) {
@@ -910,8 +919,6 @@ struct ExtraLoadingParams<'w> {
     item_spawn_tables: Res<'w, Assets<ItemSpawnTable>>,
     player_asset_handle: Res<'w, PlayerAssetHandle>,
     player_assets: Res<'w, Assets<PlayerAsset>>,
-    spell_registry_handle: Res<'w, SpellRegistryHandle>,
-    spell_registries: Res<'w, Assets<SpellRegistry>>,
     prop_manifest_handle: Res<'w, PropManifestHandle>,
     prop_manifests: Res<'w, Assets<PropManifest>>,
     prop_sprite_assets: Res<'w, PropSpriteAssets>,
@@ -969,14 +976,6 @@ fn check_assets_loaded(
     if extra
         .player_assets
         .get(&extra.player_asset_handle.0)
-        .is_none()
-    {
-        return;
-    }
-
-    if extra
-        .spell_registries
-        .get(&extra.spell_registry_handle.0)
         .is_none()
     {
         return;

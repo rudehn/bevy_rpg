@@ -96,6 +96,15 @@ pub struct Ammo;
 #[derive(Component, Debug, Default)]
 pub struct Drifting;
 
+/// Determines how an entity interacts with terrain for movement and pathfinding.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum MovementMode {
+    #[default]
+    Land,              // Normal movement, deep water penalized
+    ImmuneToWater,     // Ignores water penalties, no item displacement
+    RestrictedToLiquid, // Can ONLY move on liquid tiles (eels, kraken)
+}
+
 /// Marker component for props — non-item, non-monster world entities
 /// (watchfires, totem poles, barricades, etc.).
 #[derive(Component, Debug, Default)]
