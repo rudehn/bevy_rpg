@@ -137,6 +137,9 @@ impl MonsterAI {
             if on_liquid && !has_adjacent_enemy(entity, ctx.monster_pos, world) {
                 // Submerge when on liquid with no adjacent enemies
                 world.commands().entity(entity).insert(crate::components::Submerged);
+            } else {
+                // Surface when enemy is adjacent or not on liquid
+                world.commands().entity(entity).remove::<crate::components::Submerged>();
             }
         }
 
@@ -256,6 +259,19 @@ impl MonsterAI {
                 } else {
                     // Player not visible — increment chase distance for leash tracking
                     self.chase_distance += 1;
+
+                    // Land monsters give up faster when the player's last known
+                    // position is on deep water (unreachable territory).
+                    if let Some(last_pos) = self.last_known_player_position {
+                        let movement_mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
+                        if movement_mode == MovementMode::Land {
+                            let map = world.resource::<Map>();
+                            let idx = map.xy_idx(last_pos.x, last_pos.y);
+                            if map.tiles[idx].liquid == crate::map::tile::LiquidType::Water {
+                                self.chase_distance += 2;
+                            }
+                        }
+                    }
 
                     // Chase leash: give up if chased too far without seeing player
                     if should_give_up_chase(self.chase_distance, self.chase_leash) {

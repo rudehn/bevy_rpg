@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use bracket_lib::prelude::Algorithm2D;
 
 use crate::components::{InInventory, Item, Monster, Name, Position, Prop};
+use crate::game::enchantment::{display_item_name, Enchantment, ItemArmorRunic, ItemWeaponRunic, RunicIdentified};
 use crate::constants::TILE_SIZE_X;
 use crate::game::camera::MainCamera;
 use crate::game::combat::Health;
@@ -36,12 +37,13 @@ fn update_hover_description(
     mut game_log: ResMut<GameLog>,
     nearby_state: Res<NearbyState>,
     monster_query: Query<(&Position, &Name, &Health), With<Monster>>,
-    item_query: Query<(&Position, &Name), (With<Item>, Without<InInventory>)>,
+    item_query: Query<(&Position, &Name, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>), (With<Item>, Without<InInventory>)>,
     prop_query: Query<(&Position, &Name), With<Prop>>,
     player_query: Query<&Position, With<Player>>,
     // For entities from the nearby list that might be items/props
     name_query: Query<&Name>,
     pos_query: Query<&Position>,
+    enchantment_query: Query<(Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>)>,
 ) {
     let mut description: Option<String> = None;
 
@@ -107,9 +109,9 @@ fn update_hover_description(
 
         // Item
         if !found_entity {
-            for (pos, name) in item_query.iter() {
+            for (pos, name, ench, w_runic, a_runic, runic_id) in item_query.iter() {
                 if pos.x == gx && pos.y == gy {
-                    parts.push(name.0.clone());
+                    parts.push(display_item_name(&name.0, ench, w_runic, a_runic, runic_id));
                     found_entity = true;
                     break;
                 }
@@ -132,7 +134,12 @@ fn update_hover_description(
         if !found_entity
             && let Some(entity) = nearby_entity
                 && let Ok(name) = name_query.get(entity) {
-                    parts.push(name.0.clone());
+                    let enriched = if let Ok((ench, w_runic, a_runic, runic_id)) = enchantment_query.get(entity) {
+                        display_item_name(&name.0, ench, w_runic, a_runic, runic_id)
+                    } else {
+                        name.0.clone()
+                    };
+                    parts.push(enriched);
                     found_entity = true;
                 }
 
@@ -147,6 +154,7 @@ fn update_hover_description(
             TerrainType::OpenDoor => "an open door",
             TerrainType::HiddenDoor => "wall", // looks like wall until discovered
             TerrainType::LockedDoor => "a locked door",
+            TerrainType::Portal => "a shimmering portal",
         };
 
         let liquid_desc = match tile.liquid {

@@ -74,6 +74,7 @@ struct MonsterPlan {
     squad_config: Option<SquadConfig>,
     patrol_route: Option<PatrolRoute>,
     saved_hp: Option<i32>,
+    submerged: bool,
 }
 
 struct ItemPlan {
@@ -232,7 +233,7 @@ fn monsters_from_saved(saved: Vec<SavedMonster>, restore_hp: bool) -> Vec<Monste
         .into_iter()
         .map(|m| MonsterPlan {
             pos: Point::new(m.x, m.y),
-            name: m.name,
+            name: m.name.clone(),
             squad_id: m.squad_id,
             is_leader: m.is_leader,
             squad_config: m.squad_config,
@@ -242,6 +243,7 @@ fn monsters_from_saved(saved: Vec<SavedMonster>, restore_hp: bool) -> Vec<Monste
             } else {
                 None
             },
+            submerged: m.submerged,
         })
         .collect()
 }
@@ -316,6 +318,7 @@ impl FloorPlan {
                 squad_config: entry.squad_config,
                 patrol_route: entry.patrol_route,
                 saved_hp: None,
+                submerged: false,
             })
             .collect();
 
@@ -512,6 +515,9 @@ pub fn materialize_floor(
             }
             if let Some(hp) = m.saved_hp {
                 commands.entity(entity).insert(SavedHp(hp));
+            }
+            if m.submerged {
+                commands.entity(entity).insert(crate::components::Submerged);
             }
         } else {
             warnings.push(format!("Failed to spawn monster '{}'", m.name));

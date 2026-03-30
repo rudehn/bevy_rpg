@@ -206,6 +206,8 @@ pub struct SavedMonster {
     pub squad_config: Option<SquadConfig>,
     #[serde(default)]
     pub patrol_route: Option<crate::game::ai::PatrolRoute>,
+    #[serde(default)]
+    pub submerged: bool,
 }
 
 /// A floor item's mutable state, shared by save files and the floor cache.
@@ -398,7 +400,7 @@ pub fn auto_save_system(
     >,
     player_status_query: Query<&StatusEffects, With<Player>>,
     inv_item_query: Query<(&Name, &ItemProperties, Has<Equipped>, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>), With<InInventory>>,
-    monster_query: Query<(&Position, &Name, &Health, Option<&SquadId>, Option<&SquadConfig>, Has<SquadLeader>, Option<&crate::game::ai::PatrolRoute>), With<Monster>>,
+    monster_query: Query<(&Position, &Name, &Health, Option<&SquadId>, Option<&SquadConfig>, Has<SquadLeader>, Option<&crate::game::ai::PatrolRoute>, Has<crate::components::Submerged>), With<Monster>>,
     squad_counter: Res<SquadIdCounter>,
     floor_item_query: Query<(&Position, &Name, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>, Has<crate::components::Drifting>), (With<Item>, Without<InInventory>)>,
     prop_query: Query<(&Position, &Name), With<Prop>>,
@@ -449,7 +451,7 @@ pub fn auto_save_system(
     // Floor monsters
     let monsters: Vec<SavedMonster> = monster_query
         .iter()
-        .map(|(pos, name, health, squad_id, squad_config, is_leader, patrol_route)| SavedMonster {
+        .map(|(pos, name, health, squad_id, squad_config, is_leader, patrol_route, is_submerged)| SavedMonster {
             x: pos.x,
             y: pos.y,
             name: name.0.clone(),
@@ -458,6 +460,7 @@ pub fn auto_save_system(
             is_leader,
             squad_config: squad_config.cloned(),
             patrol_route: patrol_route.cloned(),
+            submerged: is_submerged,
         })
         .collect();
 

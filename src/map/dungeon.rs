@@ -182,7 +182,7 @@ fn find_up_stairs(map: &Map) -> Option<Point> {
 /// Snapshot the current floor's surviving entities into a `CachedFloor`.
 fn snapshot_floor(
     map: &Map,
-    monster_query: &Query<(&Position, &Name, &crate::game::combat::Health, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>), With<Monster>>,
+    monster_query: &Query<(&Position, &Name, &crate::game::combat::Health, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>, Has<crate::components::Submerged>), With<Monster>>,
     item_query: &Query<(&Position, &Name, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>, Has<crate::components::Drifting>), (With<Item>, Without<InInventory>)>,
     prop_query: &Query<(&Position, &Name), With<Prop>>,
 ) -> CachedFloor {
@@ -190,7 +190,7 @@ fn snapshot_floor(
 
     let monsters = monster_query
         .iter()
-        .map(|(pos, name, health, squad_id, squad_config, is_leader, patrol_route)| SavedMonster {
+        .map(|(pos, name, health, squad_id, squad_config, is_leader, patrol_route, is_submerged)| SavedMonster {
             x: pos.x,
             y: pos.y,
             name: name.0.clone(),
@@ -199,6 +199,7 @@ fn snapshot_floor(
             is_leader,
             squad_config: squad_config.cloned(),
             patrol_route: patrol_route.cloned(),
+            submerged: is_submerged,
         })
         .collect();
 
@@ -327,7 +328,7 @@ fn map_transition_system(
     q_map_markers: Query<Entity, With<DungeonECSMap>>,
     q_tiles: Query<Entity, With<TileMarker>>,
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
-    q_monsters: Query<(&Position, &Name, &crate::game::combat::Health, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>), With<Monster>>,
+    q_monsters: Query<(&Position, &Name, &crate::game::combat::Health, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>, Has<crate::components::Submerged>), With<Monster>>,
     q_items: Query<(&Position, &Name, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>, Has<crate::components::Drifting>), (With<Item>, Without<InInventory>)>,
     q_props: Query<(&Position, &Name), With<Prop>>,
     mut turn_manager: ResMut<TurnManager>,
@@ -360,7 +361,7 @@ fn ascend_stairs_system(
     q_map_markers: Query<Entity, With<DungeonECSMap>>,
     q_tiles: Query<Entity, With<TileMarker>>,
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
-    q_monsters: Query<(&Position, &Name, &crate::game::combat::Health, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>), With<Monster>>,
+    q_monsters: Query<(&Position, &Name, &crate::game::combat::Health, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>, Has<crate::components::Submerged>), With<Monster>>,
     q_items: Query<(&Position, &Name, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>, Has<crate::components::Drifting>), (With<Item>, Without<InInventory>)>,
     q_props: Query<(&Position, &Name), With<Prop>>,
     mut turn_manager: ResMut<TurnManager>,
