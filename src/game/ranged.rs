@@ -19,7 +19,7 @@ use crate::{
     components::{Ammo, InInventory, Inventory, Name, Position, Submerged, Viewshed},
     constants::BASE_ACTION_COST,
     game::{
-        actions::{ActionFinishedEvent, FreeActionEvent, RangedAttackIntent, finish_turn, free_turn},
+        actions::{ActionFinishedEvent, ActionKind, FreeActionEvent, RangedAttackIntent, finish_turn, free_turn},
         combat::{AttackIntentMessage, DamageType, DamageSource},
         items::{Equipment, ItemProperties, ItemStack},
         particles::ParticleRequest,
@@ -67,7 +67,7 @@ pub fn handle_ranged_attack(
         let Ok((attacker_pos, viewshed, ranged_capable, equipment, attacker_name, is_player)) =
             attacker_query.get(intent.attacker)
         else {
-            finish_turn(&mut commands, &mut finish_writer, intent.attacker, BASE_ACTION_COST);
+            finish_turn(&mut commands, &mut finish_writer, intent.attacker, BASE_ACTION_COST, ActionKind::Attack);
             continue;
         };
 
@@ -75,7 +75,7 @@ pub fn handle_ranged_attack(
             if is_player {
                 free_turn(&mut commands, &mut free_writer, intent.attacker);
             } else {
-                finish_turn(&mut commands, &mut finish_writer, intent.attacker, BASE_ACTION_COST);
+                finish_turn(&mut commands, &mut finish_writer, intent.attacker, BASE_ACTION_COST, ActionKind::Attack);
             }
             continue;
         };
@@ -86,7 +86,7 @@ pub fn handle_ranged_attack(
             if is_player {
                 free_turn(&mut commands, &mut free_writer, intent.attacker);
             } else {
-                finish_turn(&mut commands, &mut finish_writer, intent.attacker, BASE_ACTION_COST);
+                finish_turn(&mut commands, &mut finish_writer, intent.attacker, BASE_ACTION_COST, ActionKind::Attack);
             }
             continue;
         }
@@ -101,7 +101,7 @@ pub fn handle_ranged_attack(
             if is_player {
                 free_turn(&mut commands, &mut free_writer, intent.attacker);
             } else {
-                finish_turn(&mut commands, &mut finish_writer, intent.attacker, BASE_ACTION_COST);
+                finish_turn(&mut commands, &mut finish_writer, intent.attacker, BASE_ACTION_COST, ActionKind::Attack);
             }
             continue;
         }
@@ -138,7 +138,7 @@ pub fn handle_ranged_attack(
             if is_player {
                 free_turn(&mut commands, &mut free_writer, intent.attacker);
             } else {
-                finish_turn(&mut commands, &mut finish_writer, intent.attacker, BASE_ACTION_COST);
+                finish_turn(&mut commands, &mut finish_writer, intent.attacker, BASE_ACTION_COST, ActionKind::Attack);
             }
             continue;
         }
@@ -191,6 +191,6 @@ pub fn handle_ranged_attack(
             damage_type: DamageType::Physical,
             source: DamageSource::Ranged,
         });
-        finish_turn(&mut commands, &mut finish_writer, intent.attacker, BASE_ACTION_COST);
+        finish_turn(&mut commands, &mut finish_writer, intent.attacker, BASE_ACTION_COST, ActionKind::Attack);
     }
 }

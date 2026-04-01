@@ -32,6 +32,8 @@ pub enum TargetingMode {
     Tile { slot: usize, range: i32, radius: i32 },
     /// Player is selecting a target for a ranged weapon attack.
     RangedAttack,
+    /// Player is selecting an enemy target for a staff zap.
+    Staff { staff_entity: Entity },
 }
 
 impl Default for TargetingMode {
@@ -45,6 +47,8 @@ impl Default for TargetingMode {
 pub struct TargetingContext {
     pub mode: TargetingMode,
     pub cursor: Position,
+    /// Staff entity being zapped (set by StaffSelect, consumed by targeting confirm).
+    pub staff_entity: Option<Entity>,
 }
 
 impl Default for TargetingContext {
@@ -52,48 +56,12 @@ impl Default for TargetingContext {
         Self {
             mode: TargetingMode::default(),
             cursor: Position { x: 0, y: 0 },
+            staff_entity: None,
         }
     }
 }
 
-// --- Spell targeting decision ---
-
-use crate::game::spells::{SpellData, SpellEffect, SpellTarget};
-
-/// Result of determining the targeting mode for a spell.
-pub enum SpellTargetingResult {
-    /// Enter targeting UI with this mode.
-    EnterTargeting(TargetingMode),
-    /// Cast immediately (self-targeting spell).
-    CastImmediate { slot: usize },
-}
-
-/// Determines the appropriate targeting mode for a spell based on its effects and target type.
-/// Centralizes the decision so `handle_player_input` doesn't need to know about spell internals.
-pub fn targeting_mode_for_spell(spell: &SpellData, slot: usize) -> SpellTargetingResult {
-    // Tile-targeted spells (e.g., Blink: Teleport with range > 0).
-    let tile_range = spell.effects.iter().find_map(|e| match e {
-        SpellEffect::Teleport { range } if *range > 0 => Some(*range),
-        _ => None,
-    });
-
-    if let Some(range) = tile_range {
-        return SpellTargetingResult::EnterTargeting(
-            TargetingMode::Tile { slot, range, radius: 0 },
-        );
-    }
-
-    match spell.target {
-        SpellTarget::Enemy => SpellTargetingResult::EnterTargeting(TargetingMode::Spell { slot }),
-        SpellTarget::Ally => SpellTargetingResult::EnterTargeting(
-            TargetingMode::SpellAlly { slot, include_self: false },
-        ),
-        SpellTarget::AllyOrSelf => SpellTargetingResult::EnterTargeting(
-            TargetingMode::SpellAlly { slot, include_self: true },
-        ),
-        SpellTarget::Castor => SpellTargetingResult::CastImmediate { slot },
-    }
-}
+// Spell targeting decision removed — spell system replaced by monster abilities.
 
 // --- Components ---
 
@@ -260,46 +228,16 @@ fn handle_targeting_input(
                     .find(|(_, mpos)| mpos.x == target_pos.x && mpos.y == target_pos.y)
                     .map(|(e, _)| e);
 
-                if let Some(entity) = found {
-                    pending.0 = Some(Action::CastSpell { slot: *slot, target: Some(entity), target_pos: None });
-                    next_turn_state.set(TurnState::Processing);
-                    next_ingame_state.set(InGameState::Running);
+                if found.is_some() {
+                    // Spell targeting removed — spell system replaced by monster abilities.
+                    log_writer.write(GameLogMessage("Spell targeting is no longer available.".to_string()));
                 } else {
                     log_writer.write(GameLogMessage("No valid target at cursor.".to_string()));
                 }
             }
-            TargetingMode::SpellAlly { slot, include_self } => {
-                // Ally targeting: find an allied entity at cursor (or self).
-                let player_faction = player_query.single().ok().map(|(_, _, f)| f.0.clone());
-
-                let found = if let Some(pf) = &player_faction {
-                    // Check if player is targeting themselves
-                    let self_target = player_query.single().ok().and_then(|(e, pos, _)| {
-                        if *include_self && pos.x == target_pos.x && pos.y == target_pos.y {
-                            Some(e)
-                        } else {
-                            None
-                        }
-                    });
-
-                    self_target.or_else(|| {
-                        faction_entities.iter()
-                            .find(|(_, pos, faction)| {
-                                pos.x == target_pos.x && pos.y == target_pos.y && faction_matrix.is_allied_to(&pf.0, &faction.0.0)
-                            })
-                            .map(|(e, _, _)| e)
-                    })
-                } else {
-                    None
-                };
-
-                if let Some(entity) = found {
-                    pending.0 = Some(Action::CastSpell { slot: *slot, target: Some(entity), target_pos: None });
-                    next_turn_state.set(TurnState::Processing);
-                    next_ingame_state.set(InGameState::Running);
-                } else {
-                    log_writer.write(GameLogMessage("No valid ally at cursor.".to_string()));
-                }
+            TargetingMode::SpellAlly { .. } => {
+                // Spell ally targeting removed — spell system replaced by monster abilities.
+                log_writer.write(GameLogMessage("Spell targeting is no longer available.".to_string()));
             }
             TargetingMode::Tile { slot, range, .. } => {
                 // Tile targeting: validate walkable tile within range.
@@ -318,11 +256,19 @@ fn handle_targeting_input(
 
                 if in_range && walkable && !occupied {
                     let player_entity = player_query.single().ok().map(|(e, _, _)| e);
-                    pending.0 = Some(Action::CastSpell {
-                        slot: *slot,
-                        target: player_entity,
-                        target_pos: Some((target_pos.x, target_pos.y)),
-                    });
+                    // Check if this is a staff-zap tile targeting (blinking)
+                    if let Some(staff_entity) = ctx.staff_entity {
+                        if let Some(pe) = player_entity {
+                            pending.0 = Some(Action::ZapStaff {
+                                staff_entity,
+                                target: pe,
+                                target_pos: Some((target_pos.x, target_pos.y)),
+                            });
+                        }
+                    } else {
+                        // Spell tile targeting removed — spell system replaced by monster abilities.
+                        log_writer.write(GameLogMessage("Spell targeting is no longer available.".to_string()));
+                    }
                     next_turn_state.set(TurnState::Processing);
                     next_ingame_state.set(InGameState::Running);
                 } else if !in_range {
@@ -341,6 +287,24 @@ fn handle_targeting_input(
 
                 if let Some(entity) = found {
                     pending.0 = Some(Action::RangedAttack { target: entity });
+                    next_turn_state.set(TurnState::Processing);
+                    next_ingame_state.set(InGameState::Running);
+                } else {
+                    log_writer.write(GameLogMessage("No valid target at cursor.".to_string()));
+                }
+            }
+            TargetingMode::Staff { staff_entity } => {
+                let found = monsters
+                    .iter()
+                    .find(|(_, mpos)| mpos.x == target_pos.x && mpos.y == target_pos.y)
+                    .map(|(e, _)| e);
+
+                if let Some(entity) = found {
+                    pending.0 = Some(Action::ZapStaff {
+                        staff_entity: *staff_entity,
+                        target: entity,
+                        target_pos: Some((target_pos.x, target_pos.y)),
+                    });
                     next_turn_state.set(TurnState::Processing);
                     next_ingame_state.set(InGameState::Running);
                 } else {
@@ -378,85 +342,4 @@ impl Plugin for TargetingPlugin {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::game::combat::DamageType;
-
-    fn make_spell(target: SpellTarget, effects: Vec<SpellEffect>) -> SpellData {
-        SpellData {
-            name: "Test".to_string(),
-            mana_cost: 5,
-            cooldown: 0,
-            description: String::new(),
-            target,
-            range: 5,
-            effects,
-            damage_type: DamageType::Physical,
-        }
-    }
-
-    #[test]
-    fn castor_spell_returns_cast_immediate() {
-        let spell = make_spell(SpellTarget::Castor, vec![SpellEffect::ApplyHaste { duration: 5 }]);
-        let result = targeting_mode_for_spell(&spell, 2);
-        assert!(matches!(result, SpellTargetingResult::CastImmediate { slot: 2 }));
-    }
-
-    #[test]
-    fn enemy_spell_enters_targeting() {
-        let spell = make_spell(SpellTarget::Enemy, vec![SpellEffect::Damage { dice: "2d6".into(), int_scaling: false }]);
-        let result = targeting_mode_for_spell(&spell, 0);
-        assert!(matches!(result, SpellTargetingResult::EnterTargeting(TargetingMode::Spell { slot: 0 })));
-    }
-
-    #[test]
-    fn ally_spell_excludes_self() {
-        let spell = make_spell(SpellTarget::Ally, vec![SpellEffect::Heal { dice: "1d8".into(), int_scaling: false }]);
-        let result = targeting_mode_for_spell(&spell, 1);
-        assert!(matches!(
-            result,
-            SpellTargetingResult::EnterTargeting(TargetingMode::SpellAlly { slot: 1, include_self: false })
-        ));
-    }
-
-    #[test]
-    fn ally_or_self_spell_includes_self() {
-        let spell = make_spell(SpellTarget::AllyOrSelf, vec![SpellEffect::Heal { dice: "1d8".into(), int_scaling: false }]);
-        let result = targeting_mode_for_spell(&spell, 3);
-        assert!(matches!(
-            result,
-            SpellTargetingResult::EnterTargeting(TargetingMode::SpellAlly { slot: 3, include_self: true })
-        ));
-    }
-
-    #[test]
-    fn teleport_with_range_enters_tile_targeting() {
-        let spell = make_spell(SpellTarget::Castor, vec![SpellEffect::Teleport { range: 5 }]);
-        let result = targeting_mode_for_spell(&spell, 4);
-        assert!(matches!(
-            result,
-            SpellTargetingResult::EnterTargeting(TargetingMode::Tile { slot: 4, range: 5, radius: 0 })
-        ));
-    }
-
-    #[test]
-    fn teleport_zero_range_is_immediate() {
-        let spell = make_spell(SpellTarget::Castor, vec![SpellEffect::Teleport { range: 0 }]);
-        let result = targeting_mode_for_spell(&spell, 0);
-        assert!(matches!(result, SpellTargetingResult::CastImmediate { slot: 0 }));
-    }
-
-    #[test]
-    fn teleport_overrides_target_type() {
-        let spell = make_spell(SpellTarget::Enemy, vec![
-            SpellEffect::Damage { dice: "1d4".into(), int_scaling: false },
-            SpellEffect::Teleport { range: 3 },
-        ]);
-        let result = targeting_mode_for_spell(&spell, 1);
-        assert!(matches!(
-            result,
-            SpellTargetingResult::EnterTargeting(TargetingMode::Tile { slot: 1, range: 3, .. })
-        ));
-    }
-}
+// Spell targeting tests removed — spell system replaced by monster abilities.

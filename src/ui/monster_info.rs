@@ -1,16 +1,17 @@
 use bevy::prelude::*;
 
-use crate::assets::SpellRegistryHandle;
 use crate::components::{GameEntityMarker, Monster, Name, Position};
 use crate::constants::TILE_SIZE_X;
+use crate::game::abilities::{
+    BurningStrike, ExplodeOnDeath, Knockback, LifeDrain, PackTactics, Rally, RoughBody,
+    SlowStrike, StunningBlow, SummonOnDeath, Terrify, WarCry,
+};
 use crate::game::actions::SpeedStats;
 use crate::game::camera::{MainCamera, UiCamera};
 use crate::game::combat::{Damage, Health, HealthRegen};
-use crate::game::magic::{
-    KnownSpells, StatusEffects,
-};
-use crate::game::stats::Armor;
-use crate::game::spells::SpellRegistry;
+use crate::game::magic::StatusEffects;
+use crate::game::staves::MonsterAbilities;
+use crate::game::stats::{Armor, DamageBonus};
 use crate::game::AppState;
 use crate::player::Player;
 use crate::ui::nearby::NearbyState;
@@ -95,16 +96,22 @@ fn update_monster_info_panel(
         ),
         Or<(With<Monster>, With<Player>)>,
     >,
-    // Query 2: spells (looked up by entity after focus is determined)
-    q_spells: Query<Option<&KnownSpells>>,
+    // Query 2: monster abilities (looked up by entity after focus is determined)
+    q_abilities: Query<Option<&MonsterAbilities>>,
     // Query 3: active status effects (looked up by entity after focus is determined)
     q_statuses: Query<Option<&StatusEffects>>,
+    // Query 4: ability traits
+    q_traits: Query<(
+        Has<BurningStrike>, Has<StunningBlow>, Has<LifeDrain>, Has<Knockback>,
+        Has<SlowStrike>, Has<RoughBody>, Has<ExplodeOnDeath>, Has<SummonOnDeath>,
+        Has<PackTactics>, Has<Rally>, Has<Terrify>, Has<WarCry>,
+    )>,
+    // Query 5: player stats for battle sim
+    q_player_combat: Query<(&Health, &Damage, &Armor, &DamageBonus), With<Player>>,
     nearby_state: Res<NearbyState>,
     pos_query: Query<(Entity, &Position), Or<(With<Monster>, With<Player>, With<crate::components::Item>, With<crate::components::Prop>)>>,
     name_query: Query<&Name>,
     asset_server: Res<AssetServer>,
-    spell_registry_handle: Option<Res<SpellRegistryHandle>>,
-    spell_registries: Res<Assets<SpellRegistry>>,
 ) {
     let Ok(window) = windows.single() else {
         return;
@@ -251,29 +258,17 @@ fn update_monster_info_panel(
     let health_max = health.max;
     let regen_rate = regen.map(|r| r.regen_rate);
     let damage_str = damage.0.clone();
-    let speed_delay = speed_stats.map(|s| s.delay);
+    let speed_movement_delay = speed_stats.map(|s| s.movement_delay);
+    let speed_attack_delay = speed_stats.map(|s| s.attack_delay);
     let armor_val = armor.map(|a| a.0).unwrap_or(0);
 
-    // Collect spells
-    let mut spell_entries: Vec<(String, String)> = Vec::new();
+    // Collect monster abilities
+    let mut ability_entries: Vec<String> = Vec::new();
 
-    if let Ok(known_spells) = q_spells.get(entity)
-        && let Some(spells) = known_spells {
-            let registry = spell_registry_handle
-                .as_ref()
-                .and_then(|h| spell_registries.get(&h.0));
-
-            for spell_id in &spells.spells {
-                let (spell_name, spell_desc) = if let Some(reg) = registry {
-                    if let Some(data) = reg.spells.get(spell_id) {
-                        (data.name.clone(), data.description.clone())
-                    } else {
-                        (spell_id.clone(), String::new())
-                    }
-                } else {
-                    (spell_id.clone(), String::new())
-                };
-                spell_entries.push((spell_name, spell_desc));
+    if let Ok(monster_abilities) = q_abilities.get(entity)
+        && let Some(abilities) = monster_abilities {
+            for ability in &abilities.0 {
+                ability_entries.push(ability.name.clone());
             }
         }
 
@@ -282,6 +277,34 @@ fn update_monster_info_panel(
         crate::ui::collect_status_effects(status)
     } else {
         Vec::new()
+    };
+
+    // Collect ability traits
+    let mut traits: Vec<&str> = Vec::new();
+    if let Ok((burn, stun, drain, kb, slow, rough, explode, summon, pack, rally, terrify, warcry)) = q_traits.get(entity) {
+        if burn { traits.push("Burning Strike"); }
+        if stun { traits.push("Stunning Blow"); }
+        if drain { traits.push("Life Drain"); }
+        if kb { traits.push("Knockback"); }
+        if slow { traits.push("Slowing Strike"); }
+        if rough { traits.push("Rough Body"); }
+        if explode { traits.push("Explodes on Death"); }
+        if summon { traits.push("Summons on Death"); }
+        if pack { traits.push("Pack Tactics"); }
+        if rally { traits.push("Rally Aura"); }
+        if terrify { traits.push("Terrify Aura"); }
+        if warcry { traits.push("War Cry"); }
+    }
+
+    // Battle sim: estimate turns to kill each other
+    let is_player_entity = q_player_combat.get(entity).is_ok();
+    let battle_estimate = if !is_player_entity {
+        estimate_battle(
+            health.current, &damage.0, armor_val,
+            q_player_combat.single().ok(),
+        )
+    } else {
+        None
     };
 
     // Build UI
@@ -328,9 +351,21 @@ fn update_monster_info_panel(
             TextColor(Color::srgb(0.8, 0.8, 0.8)),
         ));
 
-        // Speed trait
-        if let Some(delay) = speed_delay
-            && let Some((label, color)) = super::get_speed_trait(delay, "Action") {
+        // Speed traits (movement + attack)
+        if let Some(delay) = speed_movement_delay
+            && let Some((label, color)) = super::get_speed_trait(delay, "Move") {
+                parent.spawn((
+                    Text::new(label),
+                    TextFont {
+                        font: font.clone(),
+                        font_size: 13.0,
+                        ..default()
+                    },
+                    TextColor(color),
+                ));
+            }
+        if let Some(delay) = speed_attack_delay
+            && let Some((label, color)) = super::get_speed_trait(delay, "Attack") {
                 parent.spawn((
                     Text::new(label),
                     TextFont {
@@ -355,10 +390,10 @@ fn update_monster_info_panel(
             ));
         }
 
-        // Spells
-        if !spell_entries.is_empty() {
+        // Monster Abilities
+        if !ability_entries.is_empty() {
             parent.spawn((
-                Text::new("Spells:"),
+                Text::new("Abilities:"),
                 TextFont {
                     font: font.clone(),
                     font_size: 13.0,
@@ -370,9 +405,9 @@ fn update_monster_info_panel(
                     ..default()
                 },
             ));
-            for (spell_name, _spell_desc) in &spell_entries {
+            for ability_name in &ability_entries {
                 parent.spawn((
-                    Text::new(format!("- {}", spell_name)),
+                    Text::new(format!("- {}", ability_name)),
                     TextFont {
                         font: font.clone(),
                         font_size: 12.0,
@@ -433,7 +468,103 @@ fn update_monster_info_panel(
                 }
             });
         }
+
+        // Ability traits
+        if !traits.is_empty() {
+            parent.spawn((
+                Text::new("Traits:"),
+                TextFont {
+                    font: font.clone(),
+                    font_size: 13.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.9, 0.75, 0.5)),
+                Node {
+                    margin: UiRect::top(Val::Px(4.0)),
+                    ..default()
+                },
+            ));
+            for t in &traits {
+                parent.spawn((
+                    Text::new(format!("- {}", t)),
+                    TextFont {
+                        font: font.clone(),
+                        font_size: 12.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.85, 0.75, 0.55)),
+                    Node {
+                        padding: UiRect::left(Val::Px(8.0)),
+                        ..default()
+                    },
+                ));
+            }
+        }
+
+        // Battle estimate
+        if let Some((player_ttk, monster_ttk)) = battle_estimate {
+            let color = if player_ttk < monster_ttk {
+                Color::srgb(0.3, 0.9, 0.3) // You win — green
+            } else if player_ttk > monster_ttk {
+                Color::srgb(0.9, 0.3, 0.3) // You lose — red
+            } else {
+                Color::srgb(0.9, 0.9, 0.3) // Close fight — yellow
+            };
+            parent.spawn((
+                Text::new(format!("You kill in ~{} hits, it kills you in ~{}", player_ttk, monster_ttk)),
+                TextFont {
+                    font: font.clone(),
+                    font_size: 11.0,
+                    ..default()
+                },
+                TextColor(color),
+                Node {
+                    margin: UiRect::top(Val::Px(4.0)),
+                    ..default()
+                },
+            ));
+        }
     });
+}
+
+/// Estimate a simple battle: returns (player_hits_to_kill_monster, monster_hits_to_kill_player).
+fn estimate_battle(
+    monster_hp: i32,
+    monster_damage_dice: &str,
+    monster_armor: i32,
+    player_stats: Option<(&Health, &Damage, &Armor, &DamageBonus)>,
+) -> Option<(i32, i32)> {
+    let (player_hp, player_dmg, player_armor, player_dmg_bonus) = player_stats?;
+
+    // Estimate average player damage per hit
+    let player_avg = avg_dice(player_dmg.0.as_str()) + player_dmg_bonus.0 as f32;
+    let player_effective = (player_avg - monster_armor as f32).max(1.0);
+    let player_ttk = (monster_hp as f32 / player_effective).ceil() as i32;
+
+    // Estimate average monster damage per hit
+    let monster_avg = avg_dice(monster_damage_dice);
+    let monster_effective = (monster_avg - player_armor.0 as f32).max(1.0);
+    let monster_ttk = (player_hp.current as f32 / monster_effective).ceil() as i32;
+
+    Some((player_ttk, monster_ttk))
+}
+
+fn avg_dice(dice_str: &str) -> f32 {
+    let dice_str = dice_str.trim();
+    let (dice_part, bonus) = if let Some(plus_idx) = dice_str.find('+') {
+        let bonus: f32 = dice_str[plus_idx + 1..].trim().parse().unwrap_or(0.0);
+        (&dice_str[..plus_idx], bonus)
+    } else {
+        (dice_str, 0.0)
+    };
+
+    if let Some(d_idx) = dice_part.find('d') {
+        let n: f32 = dice_part[..d_idx].trim().parse().unwrap_or(1.0);
+        let m: f32 = dice_part[d_idx + 1..].trim().parse().unwrap_or(4.0);
+        n * (m + 1.0) / 2.0 + bonus
+    } else {
+        dice_str.parse::<f32>().unwrap_or(2.0)
+    }
 }
 
 // --- Sub-tooltip hover system ---

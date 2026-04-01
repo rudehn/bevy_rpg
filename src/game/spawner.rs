@@ -119,6 +119,7 @@ pub fn spawn_monster(
         }
     };
     monster_ai.spawn_position = Some(spawn_pt);
+    monster_ai.stationary = monster_asset.stationary;
 
     let monster_entity = commands
         .spawn((
@@ -142,7 +143,7 @@ pub fn spawn_monster(
                 max: monster_asset.base_hp,
             },
             Damage(monster_asset.damage.clone()),
-            SpeedStats { delay: monster_asset.delay },
+            SpeedStats::new(monster_asset.movement_delay, monster_asset.attack_delay),
             Armor(monster_asset.base_armor),
             Dodge(monster_asset.base_dodge),
             HitBonus(0),
@@ -262,10 +263,11 @@ pub fn spawn_monster(
                     threshold_percent: *threshold_percent,
                 });
             }
-            AbilityDef::ExplodeOnDeath { damage, radius } => {
+            AbilityDef::ExplodeOnDeath { damage, radius, damage_type } => {
                 commands.entity(monster_entity).insert(ExplodeOnDeath {
                     damage: *damage,
                     radius: *radius,
+                    damage_type: damage_type.as_ref().map(|s| DamageType::from_str(s)).unwrap_or(DamageType::Fire),
                 });
             }
             AbilityDef::SummonOnDeath { monster, count } => {
@@ -294,6 +296,14 @@ pub fn spawn_monster(
                 commands.entity(monster_entity).insert(Terrify {
                     radius: *radius,
                 });
+            }
+            AbilityDef::SplitOnHit { min_hp } => {
+                commands.entity(monster_entity).insert(SplitOnHit {
+                    min_hp: *min_hp,
+                });
+            }
+            AbilityDef::MimicDisguise => {
+                commands.entity(monster_entity).insert(MimicDisguise);
             }
         }
     }
@@ -428,12 +438,23 @@ pub fn spawn_item(
         attack_speed: asset.attack_speed,
         staff_effect: asset.staff_effect,
         base_recharge: asset.base_recharge,
+        dodge_bonus: asset.dodge_bonus,
+        hit_bonus: asset.hit_bonus,
+        damage_bonus: asset.damage_bonus,
+        regen_bonus: asset.regen_bonus,
+        max_hp_bonus: asset.max_hp_bonus,
+        delay_modifier: asset.delay_modifier,
+        weapon_ability: asset.weapon_ability.clone(),
     });
 
     entity.insert(ItemStack { count: 1, max_stack: asset.max_stack });
 
     if asset.is_ammo {
         entity.insert(Ammo);
+    }
+
+    if asset.is_quest_item {
+        entity.insert(crate::components::QuestItem);
     }
 
     let item_entity = entity.id();
@@ -496,6 +517,7 @@ pub fn spawn_prop(
 
     let mut entity = commands.spawn((
         Prop,
+        crate::components::PropKey(prop_name.to_string()),
         Name(asset.name.clone()),
         GameEntityMarker,
         FloorEntityMarker,
@@ -533,6 +555,15 @@ pub fn spawn_prop(
         entity.insert(Collider);
     }
 
+    // Barricades are destructible props that can be attacked and destroyed.
+    if prop_name == "barricade" {
+        entity.insert((
+            Health { current: 10, max: 10 },
+            Damage("1d1".to_string()),
+            crate::components::Destructible,
+        ));
+    }
+
     if prop_name == "chest" {
         entity.insert(crate::components::Chest);
     }
@@ -545,5 +576,60 @@ pub fn spawn_prop(
     }
 
     Some(prop_entity)
+}
+
+/// Spawn a key item entity at the given position. The key opens a locked door
+/// whose `LockedDoorData.key_name` matches `key_name`.
+pub fn spawn_key(
+    commands: &mut Commands,
+    key_name: &str,
+    position: &Point,
+    ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
+) -> Entity {
+    use crate::components::Key;
+
+    let scale_x = GRID_SIZE.x / 16.0;
+    let scale_y = GRID_SIZE.y / 16.0;
+
+    let entity = commands
+        .spawn((
+            Item,
+            Name(key_name.to_string()),
+            Key { key_name: key_name.to_string() },
+            GameEntityMarker,
+            FloorEntityMarker,
+            Position { x: position.x, y: position.y },
+            Sprite {
+                color: Color::srgb(1.0, 0.85, 0.0), // yellow
+                custom_size: Some(GRID_SIZE),
+                ..default()
+            },
+            Transform {
+                translation: Vec3::new(
+                    position.x as f32 * GRID_SIZE.x,
+                    position.y as f32 * GRID_SIZE.y,
+                    Z_ITEM,
+                ),
+                scale: Vec3::new(scale_x, scale_y, 1.0),
+                ..Default::default()
+            },
+            Visibility::Hidden,
+            RenderLayers::layer(1),
+        ))
+        .id();
+
+    // ASCII glyph child — render as "k" in yellow
+    if let Some(font) = ascii_font {
+        attach_ascii_glyph(
+            commands,
+            entity,
+            "k",
+            Color::srgb(1.0, 0.85, 0.0),
+            &font.0,
+            Vec3::new(scale_x, scale_y, 1.0),
+        );
+    }
+
+    entity
 }
 

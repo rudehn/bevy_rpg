@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::{Collider, Inventory, Name, Position, Submerged};
 use crate::constants::BASE_ACTION_COST;
-use crate::game::actions::{finish_turn, ActionFinishedEvent};
+use crate::game::actions::{finish_turn, ActionFinishedEvent, ActionKind};
 use crate::game::combat::{
-    ApplyDamageMessage, DamageSource, DamageType, GameRng, Health,
+    ApplyDamageMessage, DamageSource, DamageType, GameRng, HealMessage, Health,
 };
 use crate::game::enchantment::Enchantment;
 use crate::game::magic::{StatusEffectKind, StatusEffects};
@@ -35,6 +35,12 @@ pub enum StaffEffect {
     Poison,
     /// Teleport the caster along a line, stopping at obstacles.
     Blinking,
+    /// Deal fire damage in a 3x3 area centered on target.
+    Fire,
+    /// Heal the user (self-only, no target selection).
+    Healing,
+    /// Knockback target 3 tiles + deal physical damage.
+    Force,
 }
 
 impl StaffEffect {
@@ -43,6 +49,9 @@ impl StaffEffect {
             StaffEffect::Lightning => "Lightning",
             StaffEffect::Poison => "Poison",
             StaffEffect::Blinking => "Blinking",
+            StaffEffect::Fire => "Fire",
+            StaffEffect::Healing => "Healing",
+            StaffEffect::Force => "Force",
         }
     }
 
@@ -61,6 +70,18 @@ impl StaffEffect {
                 let dist = blink_distance(enchant);
                 format!("Teleport up to {} tiles in a direction", dist)
             }
+            StaffEffect::Fire => {
+                let (low, high) = fire_damage(enchant);
+                format!("Fire blast in 3x3 area ({}-{} damage)", low, high)
+            }
+            StaffEffect::Healing => {
+                let (low, high) = healing_amount(enchant);
+                format!("Heal self for {}-{} HP", low, high)
+            }
+            StaffEffect::Force => {
+                let (low, high) = force_damage(enchant);
+                format!("Knockback 3 tiles + {}-{} damage", low, high)
+            }
         }
     }
 
@@ -69,6 +90,16 @@ impl StaffEffect {
         match self {
             StaffEffect::Lightning | StaffEffect::Poison => 8,
             StaffEffect::Blinking => blink_distance(enchant),
+            StaffEffect::Fire | StaffEffect::Force => 6,
+            StaffEffect::Healing => 0, // self-only
+        }
+    }
+
+    /// Whether this staff effect requires target selection.
+    pub fn needs_target(&self) -> bool {
+        match self {
+            StaffEffect::Healing => false,
+            _ => true,
         }
     }
 }
@@ -98,6 +129,30 @@ pub fn poison_dpt(enchant: i32) -> i32 {
 /// Blink distance in tiles.
 pub fn blink_distance(enchant: i32) -> i32 {
     2 + enchant.max(0) * 2
+}
+
+/// Fire staff damage range (low, high) — 2d6 base, scales with enchantment.
+pub fn fire_damage(enchant: i32) -> (i32, i32) {
+    let e = enchant.max(0);
+    let low = (2 + e).max(2);
+    let high = (12 + e * 3).max(low);
+    (low, high)
+}
+
+/// Healing staff amount range (low, high) — 3d6 base, scales with enchantment.
+pub fn healing_amount(enchant: i32) -> (i32, i32) {
+    let e = enchant.max(0);
+    let low = (3 + e * 2).max(3);
+    let high = (18 + e * 4).max(low);
+    (low, high)
+}
+
+/// Force staff damage range (low, high) — 1d6 base, scales with enchantment.
+pub fn force_damage(enchant: i32) -> (i32, i32) {
+    let e = enchant.max(0);
+    let low = (1 + e / 2).max(1);
+    let high = (6 + e * 2).max(low);
+    (low, high)
 }
 
 /// Max charges for a staff at given enchantment level.
@@ -207,6 +262,7 @@ pub fn handle_zap_staff(
     all_positions: Query<(Entity, &Position), With<Health>>,
     mut status_query: Query<&mut StatusEffects>,
     mut damage_writer: MessageWriter<ApplyDamageMessage>,
+    mut heal_writer: MessageWriter<HealMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     collider_query: Query<&Position, With<Collider>>,
@@ -217,7 +273,7 @@ pub fn handle_zap_staff(
 
         if rech.charges <= 0 {
             log_writer.write(GameLogMessage("The staff has no charges!".to_string()));
-            finish_turn(&mut commands, &mut finish_writer, msg.zapper, BASE_ACTION_COST);
+            finish_turn(&mut commands, &mut finish_writer, msg.zapper, BASE_ACTION_COST, ActionKind::Attack);
             continue;
         }
 
@@ -228,14 +284,14 @@ pub fn handle_zap_staff(
         let enchant_level = enchant.map(|e| e.level).unwrap_or(0);
         let Ok((_zapper_name, zapper_pos)) = zapper_query.get(msg.zapper) else { continue; };
 
-        // Submerged targets cannot be hit by staff zaps (except Blinking which targets self).
-        if staff_data.effect != StaffEffect::Blinking {
+        // Submerged targets cannot be hit by staff zaps (except self-targeting effects).
+        if staff_data.effect != StaffEffect::Blinking && staff_data.effect != StaffEffect::Healing {
             if let Ok((_, _, _, _, is_submerged)) = target_query.get(msg.target) {
                 if is_submerged {
                     // Refund the charge since the zap failed
                     rech.charges += 1;
                     log_writer.write(GameLogMessage("The target is submerged and cannot be hit!".to_string()));
-                    finish_turn(&mut commands, &mut finish_writer, msg.zapper, BASE_ACTION_COST);
+                    finish_turn(&mut commands, &mut finish_writer, msg.zapper, BASE_ACTION_COST, ActionKind::Attack);
                     continue;
                 }
             }
@@ -340,9 +396,121 @@ pub fn handle_zap_staff(
                     log_writer.write(GameLogMessage("You can't blink there.".to_string()));
                 }
             }
+            StaffEffect::Fire => {
+                // AoE fire damage in 3x3 area centered on target position
+                let Ok((_, _, target_pos, _, _)) = target_query.get(msg.target) else { continue; };
+                let (low, high) = fire_damage(enchant_level);
+                let center_x = target_pos.x;
+                let center_y = target_pos.y;
+                let mut hit_count = 0;
+
+                for (entity, pos) in all_positions.iter() {
+                    if entity == msg.zapper { continue; }
+                    let dx = (pos.x - center_x).abs();
+                    let dy = (pos.y - center_y).abs();
+                    if dx <= 1 && dy <= 1 {
+                        let dmg = game_rng.0.range(low, high + 1);
+                        damage_writer.write(ApplyDamageMessage {
+                            attacker: msg.zapper,
+                            target: entity,
+                            final_damage: dmg,
+                            damage_type: DamageType::Fire,
+                            source: DamageSource::Environment,
+                        });
+                        if let Ok((_, name, _, _, _)) = target_query.get(entity) {
+                            log_writer.write(GameLogMessage(format!(
+                                "{} is engulfed in flames for {} damage!",
+                                name.0, dmg
+                            )));
+                        }
+                        // Apply burning status for 3 turns
+                        if let Ok(mut effects) = status_query.get_mut(entity) {
+                            effects.add(StatusEffectKind::Burning { damage_per_turn: 2 }, 3);
+                        }
+                        hit_count += 1;
+                    }
+                }
+
+                if hit_count == 0 {
+                    log_writer.write(GameLogMessage("The fire blast hits nothing.".to_string()));
+                }
+            }
+            StaffEffect::Healing => {
+                // Self-heal, no target needed
+                let (low, high) = healing_amount(enchant_level);
+                let heal = game_rng.0.range(low, high + 1);
+
+                heal_writer.write(HealMessage {
+                    entity: msg.zapper,
+                    amount: heal,
+                });
+                log_writer.write(GameLogMessage(format!(
+                    "The staff glows warmly. You recover {} HP.",
+                    heal
+                )));
+            }
+            StaffEffect::Force => {
+                // Knockback target 3 tiles + physical damage
+                let Ok((_, target_name, target_pos, _, _)) = target_query.get(msg.target) else { continue; };
+                let (low, high) = force_damage(enchant_level);
+                let dmg = game_rng.0.range(low, high + 1);
+
+                // Apply damage
+                damage_writer.write(ApplyDamageMessage {
+                    attacker: msg.zapper,
+                    target: msg.target,
+                    final_damage: dmg,
+                    damage_type: DamageType::Physical,
+                    source: DamageSource::Environment,
+                });
+
+                // Calculate knockback direction (away from zapper)
+                let kb_dx = (target_pos.x - zapper_pos.x).signum();
+                let kb_dy = (target_pos.y - zapper_pos.y).signum();
+
+                if kb_dx != 0 || kb_dy != 0 {
+                    let occupied: std::collections::HashSet<(i32, i32)> = collider_query
+                        .iter()
+                        .filter(|p| !(p.x == target_pos.x && p.y == target_pos.y))
+                        .map(|p| (p.x, p.y))
+                        .collect();
+
+                    let mut final_x = target_pos.x;
+                    let mut final_y = target_pos.y;
+                    for _ in 0..3 {
+                        let nx = final_x + kb_dx;
+                        let ny = final_y + kb_dy;
+                        let idx = map.xy_idx(nx, ny);
+                        if idx >= map.tiles.len() || !is_walkable(map.tiles[idx]) || occupied.contains(&(nx, ny)) {
+                            break;
+                        }
+                        final_x = nx;
+                        final_y = ny;
+                    }
+
+                    if final_x != target_pos.x || final_y != target_pos.y {
+                        commands.entity(msg.target).insert(Position { x: final_x, y: final_y });
+                        let dist = (final_x - target_pos.x).abs() + (final_y - target_pos.y).abs();
+                        log_writer.write(GameLogMessage(format!(
+                            "A blast of force hits {} for {} damage and knocks it back {} tiles!",
+                            target_name.0, dmg, dist
+                        )));
+                    } else {
+                        log_writer.write(GameLogMessage(format!(
+                            "A blast of force hits {} for {} damage!",
+                            target_name.0, dmg
+                        )));
+                    }
+                } else {
+                    log_writer.write(GameLogMessage(format!(
+                        "A blast of force hits {} for {} damage!",
+                        target_name.0, dmg
+                    )));
+                }
+            }
         }
 
-        finish_turn(&mut commands, &mut finish_writer, msg.zapper, BASE_ACTION_COST);
+        finish_turn(&mut commands, &mut finish_writer, msg.zapper, BASE_ACTION_COST, ActionKind::Attack);
     }
 }
 

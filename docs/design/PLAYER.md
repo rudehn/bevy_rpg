@@ -112,7 +112,6 @@ AttackIntentMessage
 | Physical | Yes (flat subtraction) | Yes (%) | Standard; most melee and basic spells |
 | Fire | No | Yes (%) | Destroys wooden doors; all DoT (burning) is fire-based |
 | Lightning | No | Yes (%) | Can chain jump to additional enemies |
-| Necrotic | No | Yes (%) | Dark magic; Tyrant and undead |
 
 Physical hits the full reduction chain: flat armor first, then percentage
 resistance. Fire, Lightning, and Necrotic skip flat armor — only their

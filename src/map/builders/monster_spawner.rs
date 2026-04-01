@@ -251,3 +251,111 @@ fn find_cluster_points(
 
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map::tile::{Tile, Decoration};
+
+    fn make_map(width: i32, height: i32, tiles: Vec<Tile>) -> Map {
+        let count = (width * height) as usize;
+        assert_eq!(tiles.len(), count);
+        Map {
+            name: "test".to_string(),
+            tiles,
+            explored_tiles: vec![false; count],
+            blocked: vec![false; count],
+            width,
+            height,
+            depth: 1,
+        }
+    }
+
+    fn floor() -> Tile {
+        Tile { terrain: TerrainType::Floor, liquid: LiquidType::None, decoration: Decoration::None }
+    }
+
+    fn deep_water() -> Tile {
+        Tile { terrain: TerrainType::Floor, liquid: LiquidType::Water, decoration: Decoration::None }
+    }
+
+    fn wall() -> Tile {
+        Tile { terrain: TerrainType::Wall, liquid: LiquidType::None, decoration: Decoration::None }
+    }
+
+    // ---- find_cluster_points (dry mode) ----
+
+    #[test]
+    fn cluster_finds_dry_floor_tiles() {
+        // 5x5 all floor
+        let map = make_map(5, 5, vec![floor(); 25]);
+        let occupied = HashSet::new();
+        let points = find_cluster_points(Point::new(2, 2), 3, &map, &occupied, false);
+        assert_eq!(points.len(), 3);
+        // All points should be dry floor
+        for pt in &points {
+            let idx = map.xy_idx(pt.x, pt.y);
+            assert_eq!(map.tiles[idx].liquid, LiquidType::None);
+        }
+    }
+
+    #[test]
+    fn cluster_skips_occupied_tiles() {
+        let map = make_map(3, 3, vec![floor(); 9]);
+        let mut occupied = HashSet::new();
+        // Occupy all but origin
+        for i in 0..9 {
+            if i != 4 { occupied.insert(i); }
+        }
+        let points = find_cluster_points(Point::new(1, 1), 3, &map, &occupied, false);
+        assert_eq!(points.len(), 1); // Only origin is available
+    }
+
+    #[test]
+    fn cluster_skips_walls() {
+        // 3x3: center is floor, everything else is wall
+        let mut tiles = vec![wall(); 9];
+        tiles[4] = floor();
+        let map = make_map(3, 3, tiles);
+        let points = find_cluster_points(Point::new(1, 1), 5, &map, &HashSet::new(), false);
+        assert_eq!(points.len(), 1); // Only center is walkable
+    }
+
+    // ---- find_cluster_points (liquid_only mode) ----
+
+    #[test]
+    fn cluster_liquid_only_finds_water_tiles() {
+        // 5x5: center 3x3 is deep water, border is floor
+        let mut tiles = vec![floor(); 25];
+        for y in 1..4 {
+            for x in 1..4 {
+                tiles[(y * 5 + x) as usize] = deep_water();
+            }
+        }
+        let map = make_map(5, 5, tiles);
+        let points = find_cluster_points(Point::new(2, 2), 4, &map, &HashSet::new(), true);
+        assert_eq!(points.len(), 4);
+        for pt in &points {
+            let idx = map.xy_idx(pt.x, pt.y);
+            assert_eq!(map.tiles[idx].liquid, LiquidType::Water);
+        }
+    }
+
+    #[test]
+    fn cluster_liquid_only_skips_dry_tiles() {
+        // 3x3: only center is water, rest is dry floor
+        let mut tiles = vec![floor(); 9];
+        tiles[4] = deep_water();
+        let map = make_map(3, 3, tiles);
+        let points = find_cluster_points(Point::new(1, 1), 3, &map, &HashSet::new(), true);
+        assert_eq!(points.len(), 1); // Only center has water
+    }
+
+    #[test]
+    fn cluster_liquid_only_no_water_returns_empty() {
+        // 3x3 all dry floor — origin has no water
+        let map = make_map(3, 3, vec![floor(); 9]);
+        let points = find_cluster_points(Point::new(1, 1), 3, &map, &HashSet::new(), true);
+        assert!(points.is_empty());
+    }
+}

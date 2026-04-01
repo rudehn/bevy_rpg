@@ -91,6 +91,11 @@ pub struct Equipped;
 #[derive(Component, Debug, Default)]
 pub struct Ammo;
 
+/// Marker for quest items required to win the game (e.g., Amulet of Yendor).
+/// The escape portal checks the player's inventory for this component.
+#[derive(Component, Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QuestItem;
+
 /// Marker component for items drifting in deep water currents.
 /// Items with this component move 1 tile per turn toward shore.
 #[derive(Component, Debug, Default)]
@@ -111,10 +116,33 @@ pub enum MovementMode {
 #[derive(Component, Debug, Default)]
 pub struct Submerged;
 
+/// A key that opens a specific locked door.
+#[derive(Component, Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Key {
+    pub key_name: String,
+}
+
+/// Marker entity placed at a LockedDoor tile position to store which key opens it.
+#[derive(Component, Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LockedDoorData {
+    pub key_name: String,
+}
+
 /// Marker component for props — non-item, non-monster world entities
 /// (watchfires, totem poles, barricades, etc.).
 #[derive(Component, Debug, Default)]
 pub struct Prop;
+
+/// Stores the manifest key for a prop (e.g., "watchfire", "candle").
+/// Used to correctly restore props from cache/save, since the display
+/// `Name` (e.g., "Watchfire") differs from the manifest lookup key.
+#[derive(Component, Debug, Clone)]
+pub struct PropKey(pub String);
+
+/// Marker component for destructible props (e.g., barricades).
+/// Entities with both `Destructible` and `Health` can be attacked via bump.
+#[derive(Component, Debug, Default)]
+pub struct Destructible;
 
 /// Marker component for chest props. When bumped by the player, the chest
 /// despawns and spawns level-appropriate items at its position.

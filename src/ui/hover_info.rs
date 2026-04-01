@@ -6,13 +6,15 @@ use bevy::prelude::*;
 use bracket_lib::prelude::Algorithm2D;
 
 use crate::components::{InInventory, Item, Monster, Name, Position, Prop};
-use crate::game::enchantment::{display_item_name, Enchantment, ItemArmorRunic, ItemWeaponRunic, RunicIdentified};
 use crate::constants::TILE_SIZE_X;
+use crate::game::AppState;
 use crate::game::camera::MainCamera;
 use crate::game::combat::Health;
-use crate::game::AppState;
+use crate::game::enchantment::{
+    Enchantment, ItemArmorRunic, ItemWeaponRunic, RunicIdentified, display_item_name,
+};
 use crate::map::map::Map;
-use crate::map::tile::{TerrainType, LiquidType, Decoration};
+use crate::map::tile::{Decoration, LiquidType, TerrainType};
 use crate::player::Player;
 use crate::ui::game_log::GameLog;
 use crate::ui::nearby::NearbyState;
@@ -23,8 +25,7 @@ impl Plugin for HoverInfoPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            update_hover_description
-                .run_if(in_state(AppState::InGame)),
+            update_hover_description.run_if(in_state(AppState::InGame)),
         );
     }
 }
@@ -37,13 +38,28 @@ fn update_hover_description(
     mut game_log: ResMut<GameLog>,
     nearby_state: Res<NearbyState>,
     monster_query: Query<(&Position, &Name, &Health), With<Monster>>,
-    item_query: Query<(&Position, &Name, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>), (With<Item>, Without<InInventory>)>,
+    item_query: Query<
+        (
+            &Position,
+            &Name,
+            Option<&Enchantment>,
+            Option<&ItemWeaponRunic>,
+            Option<&ItemArmorRunic>,
+            Option<&RunicIdentified>,
+        ),
+        (With<Item>, Without<InInventory>),
+    >,
     prop_query: Query<(&Position, &Name), With<Prop>>,
     player_query: Query<&Position, With<Player>>,
     // For entities from the nearby list that might be items/props
     name_query: Query<&Name>,
     pos_query: Query<&Position>,
-    enchantment_query: Query<(Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>)>,
+    enchantment_query: Query<(
+        Option<&Enchantment>,
+        Option<&ItemWeaponRunic>,
+        Option<&ItemArmorRunic>,
+        Option<&RunicIdentified>,
+    )>,
 ) {
     let mut description: Option<String> = None;
 
@@ -54,23 +70,25 @@ fn update_hover_description(
     // Mouse hover → grid position
     if let (Ok(window), Ok((camera, camera_transform))) = (windows.single(), q_camera.single())
         && let Some(screen_pos) = window.cursor_position()
-            && let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, screen_pos) {
-                let gx = (world_pos.x / TILE_SIZE_X as f32 + 0.5).floor() as i32;
-                let gy = (world_pos.y / TILE_SIZE_X as f32 + 0.5).floor() as i32;
-                if map.in_bounds(bracket_lib::prelude::Point::new(gx, gy)) {
-                    grid_pos = Some((gx, gy));
-                }
-            }
+        && let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, screen_pos)
+    {
+        let gx = (world_pos.x / TILE_SIZE_X as f32 + 0.5).floor() as i32;
+        let gy = (world_pos.y / TILE_SIZE_X as f32 + 0.5).floor() as i32;
+        if map.in_bounds(bracket_lib::prelude::Point::new(gx, gy)) {
+            grid_pos = Some((gx, gy));
+        }
+    }
 
     // Fallback: nearby panel selection
     if grid_pos.is_none()
         && let Some(idx) = nearby_state.selected_idx
-            && let Some(&entity) = nearby_state.entity_list.get(idx) {
-                nearby_entity = Some(entity);
-                if let Ok(pos) = pos_query.get(entity) {
-                    grid_pos = Some((pos.x, pos.y));
-                }
-            }
+        && let Some(&entity) = nearby_state.entity_list.get(idx)
+    {
+        nearby_entity = Some(entity);
+        if let Ok(pos) = pos_query.get(entity) {
+            grid_pos = Some((pos.x, pos.y));
+        }
+    }
 
     if let Some((gx, gy)) = grid_pos {
         let idx = map.xy_idx(gx, gy);
@@ -133,15 +151,17 @@ fn update_hover_description(
         // use the nearby entity's name directly
         if !found_entity
             && let Some(entity) = nearby_entity
-                && let Ok(name) = name_query.get(entity) {
-                    let enriched = if let Ok((ench, w_runic, a_runic, runic_id)) = enchantment_query.get(entity) {
-                        display_item_name(&name.0, ench, w_runic, a_runic, runic_id)
-                    } else {
-                        name.0.clone()
-                    };
-                    parts.push(enriched);
-                    found_entity = true;
-                }
+            && let Ok(name) = name_query.get(entity)
+        {
+            let enriched =
+                if let Ok((ench, w_runic, a_runic, runic_id)) = enchantment_query.get(entity) {
+                    display_item_name(&name.0, ench, w_runic, a_runic, runic_id)
+                } else {
+                    name.0.clone()
+                };
+            parts.push(enriched);
+            found_entity = true;
+        }
 
         // Tile description
         let terrain_desc = match tile.terrain {
@@ -175,7 +195,8 @@ fn update_hover_description(
             Decoration::Fungus => "fungus",
             Decoration::Cobweb => "cobwebs",
             Decoration::Bloodstain => "bloodstains",
-            Decoration::ScorchedEarth => "scorched earth",
+            Decoration::TrampledGrass => "trampled grass",
+            Decoration::TrampledFungus => "trampled fungus",
         };
 
         // Build description: entity on terrain/liquid

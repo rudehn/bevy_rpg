@@ -1,23 +1,22 @@
 use bevy::prelude::*;
 
-use crate::assets::SpellRegistryHandle;
 use crate::components::GameEntityMarker;
 use crate::constants::BASE_ACTION_COST;
 use crate::game::AppState;
-use crate::game::actions::{
-    Action, ActionFinishedEvent, ActionGuard, Direction, FreeActionEvent, MeleeIntent, MovementIntent,
-    OpenChestIntent, OpenDoorIntent, PendingPlayerAction, PickUpIntent,
-    SpeedStats, WaitIntent, finish_turn,
-    dispatch_player_action,
-    handle_door_open, handle_melee, handle_movement, handle_open_chest, handle_pickup, handle_wait,
-};
-use crate::map::map::populate_blocked_tiles;
-use crate::game::ai::MonsterAI;
-use crate::game::targeting::{TargetingContext, TargetingMode, SpellTargetingResult, targeting_mode_for_spell};
-use crate::game::spells::SpellRegistry;
-use crate::game::magic::{ActiveSpells, StatusEffects};
 use crate::game::InGameState;
+use crate::game::actions::{
+    Action, ActionFinishedEvent, ActionGuard, ActionKind, Direction, FreeActionEvent, MeleeIntent,
+    MovementIntent, OpenChestIntent, OpenDoorIntent, UnlockDoorIntent, PendingPlayerAction,
+    PickUpIntent, SpeedStats, WaitIntent, dispatch_player_action, finish_turn, handle_door_open,
+    handle_unlock_door, handle_melee, handle_movement, handle_open_chest, handle_pickup,
+    handle_wait,
+};
+use crate::game::ai::MonsterAI;
+use crate::game::magic::StatusEffects;
+use crate::game::targeting::{TargetingContext, TargetingMode};
+use crate::map::map::populate_blocked_tiles;
 use crate::player::{MovementTimer, Player};
+use crate::ui::game_log::GameLogMessage;
 
 #[derive(Component)]
 pub struct TurnMarker;
@@ -93,11 +92,13 @@ impl Plugin for TurnOrderPlugin {
             .add_message::<WaitIntent>()
             .add_message::<PickUpIntent>()
             .add_message::<OpenDoorIntent>()
+            .add_message::<UnlockDoorIntent>()
             .add_message::<OpenChestIntent>()
             // RangedAttackIntent registered by RangedPlugin.
             // UseItemMessage registered by EffectsPlugin.
             // Tile mutation message (syncs Map resource ↔ ECS tile entities).
             .add_message::<crate::map::tile::TileMutationMessage>()
+            .add_message::<crate::map::tile::DecorationMutationMessage>()
             // GOAP action messages.
             .add_message::<crate::game::goap::DropAtHoardMessage>()
             // Turn-lifecycle messages.
@@ -120,13 +121,13 @@ impl Plugin for TurnOrderPlugin {
             .add_systems(
                 Update,
                 (
-                    select_next_actor.run_if(in_state(TurnState::NextTurn)),
-                    (
-                        player_stun_check,
-                        handle_player_input.after(player_stun_check),
-                    ).run_if(
-                        in_state(TurnState::PlayerInput).and(in_state(InGameState::Running))
-                    ),
+                    select_next_actor
+                        .run_if(in_state(TurnState::NextTurn))
+                        .after(crate::game::systems::fov_update_system),
+                    handle_player_input
+                        .run_if(
+                            in_state(TurnState::PlayerInput).and(in_state(InGameState::Running)),
+                        ),
                 )
                     .run_if(in_state(AppState::InGame)),
             )
@@ -156,6 +157,7 @@ impl Plugin for TurnOrderPlugin {
                     handle_melee,
                     // handle_ranged_attack registered by RangedPlugin.
                     handle_door_open,
+                    handle_unlock_door,
                     handle_open_chest,
                     handle_pickup,
                     handle_wait,
@@ -168,7 +170,9 @@ impl Plugin for TurnOrderPlugin {
             .add_systems(
                 Update,
                 (
+                    crate::game::tile_promotion::tile_promotion_tick_system,
                     crate::map::tile::apply_tile_mutations,
+                    crate::map::tile::apply_decoration_mutations,
                     action_guard_safety_net,
                     resolve_free_actions,
                     resolve_turn_end,
@@ -212,7 +216,7 @@ fn select_next_actor(
 
     let mut player_ready = false;
     let mut npc_tagged = 0u32;
-    const MAX_NPC_BATCH: u32 = 4;
+    const MAX_NPC_BATCH: u32 = 16;
 
     // Identify actors ready at this time slice, batching NPCs up to MAX_NPC_BATCH.
     // We MUST stop if we hit the player to gather input.
@@ -237,9 +241,16 @@ fn select_next_actor(
             if npc_tagged > 0 {
                 break;
             } else {
-                // If no NPCs were tagged yet, the player is the very first one ready.
-                // We'll tag them and go to input. Stun is handled by player_stun_check
-                // which runs in PlayerInput state before handle_player_input.
+                info!(
+                    "TURN: select → Player at time={}, queue_size={}, next_npc_time={}",
+                    time,
+                    turn_manager.turn_queue.len(),
+                    turn_manager
+                        .turn_queue
+                        .first()
+                        .map(|(_, t)| *t)
+                        .unwrap_or(0)
+                );
                 commands.queue(move |world: &mut World| {
                     if let Ok(mut ec) = world.get_entity_mut(entity) {
                         ec.insert(MyTurn);
@@ -270,6 +281,12 @@ fn select_next_actor(
     }
 
     if npc_tagged > 0 {
+        info!(
+            "select_next_actor: tagged {} NPCs at time {}, queue_remaining={}",
+            npc_tagged,
+            turn_manager.current_time,
+            turn_manager.turn_queue.len()
+        );
         next_state.set(TurnState::Processing);
     } else if player_ready {
         // This case should be handled by the "if no NPCs tagged yet" block above,
@@ -281,7 +298,6 @@ fn select_next_actor(
 fn turn_queue_len(tm: &TurnManager) -> usize {
     tm.turn_queue.len()
 }
-
 
 /// BRIDGE: Triggers Monster AI
 fn monster_ai_dispatch(world: &mut World) {
@@ -309,6 +325,7 @@ fn marker_dispatch(
         finish_writer.write(ActionFinishedEvent {
             entity,
             base_cost: BASE_ACTION_COST,
+            action_kind: ActionKind::Movement,
         });
         turn_end_writer.write(TurnEndEvent);
         commands.entity(entity).remove::<MyTurn>();
@@ -327,7 +344,7 @@ fn action_guard_safety_net(
         warn!(
             "ActionGuard still present on {entity:?} — a handler forgot to call finish_turn(). Emitting fallback."
         );
-        finish_turn(&mut commands, &mut finish_writer, entity, BASE_ACTION_COST);
+        finish_turn(&mut commands, &mut finish_writer, entity, BASE_ACTION_COST, ActionKind::Movement);
     }
 }
 
@@ -349,17 +366,58 @@ fn resolve_free_actions(
 }
 
 fn resolve_turn_end(
+    mut commands: Commands,
     mut events: MessageReader<ActionFinishedEvent>,
     mut turn_manager: ResMut<TurnManager>,
     stats_query: Query<&SpeedStats>,
+    speed_runic_query: Query<Entity, With<crate::game::enchantment::SpeedRunicProc>>,
+    riposte_query: Query<Entity, With<crate::game::combat::RiposteReady>>,
+    mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     let current_time = turn_manager.current_time;
     let mut any = false;
     for event in events.read() {
+        // Dedup: don't add an entity that's already in the queue (can happen during
+        // floor transitions when spawn_dungeon adds entities and resolve_turn_end
+        // processes stale ActionFinishedEvents from the previous floor).
+        if turn_manager
+            .turn_queue
+            .iter()
+            .any(|(e, _)| *e == event.entity)
+        {
+            continue;
+        }
         let stats = stats_query.get(event.entity).cloned().unwrap_or_default();
-        let cost = (event.base_cost as f32 * stats.delay).round() as u32;
+        let delay = stats.delay_for(event.action_kind);
+        let mut cost = (event.base_cost as f32 * delay).round() as u32;
 
-        turn_manager.turn_queue.push((event.entity, current_time + cost));
+        if delay > 2.0 {
+            info!(
+                "High-delay entity {:?} — delay={}, base_cost={}, final_cost={}",
+                event.entity, delay, event.base_cost, cost
+            );
+        }
+
+        // Speed runic: override cost to 0 for a free turn
+        if speed_runic_query.get(event.entity).is_ok() {
+            cost = 0;
+            commands
+                .entity(event.entity)
+                .remove::<crate::game::enchantment::SpeedRunicProc>();
+        }
+
+        // Riposte: override cost to 0 for a free melee counter-attack
+        if riposte_query.get(event.entity).is_ok() {
+            cost = 0;
+            commands
+                .entity(event.entity)
+                .remove::<crate::game::combat::RiposteReady>();
+            log_writer.write(GameLogMessage("Riposte!".to_string()));
+        }
+
+        turn_manager
+            .turn_queue
+            .push((event.entity, current_time + cost));
         any = true;
     }
     if any {
@@ -375,7 +433,7 @@ fn continue_turn_processing(
 ) {
     // Check if we can immediately trigger another batch of NPCs who are ready "now"
     let mut npc_added = 0u32;
-    const MAX_NPC_BATCH: u32 = 4;
+    const MAX_NPC_BATCH: u32 = 16;
     // Queue is already sorted by resolve_turn_end; no redundant sort needed.
 
     while !turn_manager.turn_queue.is_empty() {
@@ -422,31 +480,16 @@ fn continue_turn_processing(
 
 /// Pre-check: if the player is stunned, skip their input and go straight to Processing.
 /// This keeps stun logic out of the turn system — it's a status effect concern.
-fn player_stun_check(
-    query: Query<(Entity, &crate::components::Position, &StatusEffects), (With<Player>, With<MyTurn>)>,
-    mut log_writer: MessageWriter<crate::ui::game_log::GameLogMessage>,
-    mut particle_writer: MessageWriter<crate::game::particles::ParticleRequest>,
-    mut wait_writer: MessageWriter<WaitIntent>,
-    mut next_state: ResMut<NextState<TurnState>>,
-) {
-    let Ok((entity, pos, effects)) = query.single() else {
-        return;
-    };
-    if !effects.is_stunned() {
-        return;
+/// If the player is stunned or entangled, returns `Some(message)`.
+/// The caller (handle_player_input) should override any input to Wait.
+fn player_status_override(effects: &StatusEffects) -> Option<&'static str> {
+    if effects.is_entangled() {
+        Some("You struggle against the cobwebs!")
+    } else if effects.is_stunned() {
+        Some("You are stunned and cannot act!")
+    } else {
+        None
     }
-    log_writer.write(crate::ui::game_log::GameLogMessage(
-        "You are stunned and cannot act!".to_string(),
-    ));
-    let world_pos = crate::game::particles::grid_to_world(pos.x, pos.y);
-    particle_writer.write(crate::game::particles::ParticleRequest::FloatingText {
-        world_pos,
-        text: "\u{2605}".to_string(),
-        color: bevy::prelude::Color::srgba(1.0, 1.0, 0.3, 1.0),
-        font_size: 5.0,
-    });
-    wait_writer.write(WaitIntent { entity });
-    next_state.set(TurnState::Processing);
 }
 
 fn handle_player_input(
@@ -457,9 +500,8 @@ fn handle_player_input(
     mut next_turn_state: ResMut<NextState<TurnState>>,
     mut next_ingame: ResMut<NextState<InGameState>>,
     mut targeting_context: ResMut<TargetingContext>,
-    spell_registry_handle: Res<SpellRegistryHandle>,
-    spell_registries: Res<Assets<SpellRegistry>>,
-    player_active_spells: Query<&ActiveSpells, With<Player>>,
+    player_effects: Query<&StatusEffects, With<Player>>,
+    mut log_writer: MessageWriter<crate::ui::game_log::GameLogMessage>,
 ) {
     let mut action = None;
 
@@ -492,37 +534,27 @@ fn handle_player_input(
         // Do NOT transition to Processing — wait for targeting to complete.
     }
 
-    // Spell slots 1–6.
-    let spell_keys = [
-        KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3,
-        KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6,
-    ];
-    for (i, &key) in spell_keys.iter().enumerate() {
-        if keys.just_pressed(key) {
-            let spell_info = player_active_spells.single().ok().and_then(|active| {
-                let spell_id = active.slots.get(i)?.as_deref()?;
-                let registry = spell_registries.get(&spell_registry_handle.0)?;
-                registry.spells.get(spell_id).cloned()
-            });
-
-            if let Some(spell) = spell_info {
-                match targeting_mode_for_spell(&spell, i) {
-                    SpellTargetingResult::EnterTargeting(mode) => {
-                        targeting_context.mode = mode;
-                        next_ingame.set(InGameState::Targeting);
-                    }
-                    SpellTargetingResult::CastImmediate { slot } => {
-                        action = Some(Action::CastSpell { slot, target: None, target_pos: None });
-                    }
-                }
-            } else {
-                action = Some(Action::CastSpell { slot: i, target: None, target_pos: None });
-            }
-            break;
-        }
+    // Z — zap a staff (opens staff selection screen).
+    if keys.just_pressed(KeyCode::KeyZ) {
+        next_ingame.set(InGameState::StaffSelect);
     }
 
     if let Some(act) = action {
+        // Stunned/entangled: any input becomes a Wait turn with a message.
+        // The player must press a key each turn — no auto-resolve cascade.
+        if let Ok(effects) = player_effects.single() {
+            if let Some(msg) = player_status_override(effects) {
+                log_writer.write(crate::ui::game_log::GameLogMessage(msg.to_string()));
+                pending.0 = Some(Action::Wait);
+                next_turn_state.set(TurnState::Processing);
+                return;
+            }
+        }
+
+        info!(
+            "TURN: player input → {:?}, transitioning to Processing",
+            act
+        );
         pending.0 = Some(act);
         next_turn_state.set(TurnState::Processing);
     }

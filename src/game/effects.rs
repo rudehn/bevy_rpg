@@ -16,16 +16,13 @@ impl Plugin for EffectsPlugin {
 }
 
 use crate::{
-    assets::SpellRegistryHandle,
     components::{Inventory, Name},
     constants::BASE_ACTION_COST,
     game::{
-        actions::{finish_turn, ActionFinishedEvent},
+        actions::{finish_turn, ActionFinishedEvent, ActionKind},
         combat::Health,
         items::{ItemProperties, ItemStack},
-        magic::{ActiveSpells, KnownSpells},
-        stats::Mana,
-        spells::SpellRegistry,
+        magic::{StatusEffectKind, StatusEffects},
     },
     player::Player,
     ui::game_log::GameLogMessage,
@@ -38,10 +35,14 @@ use crate::{
 pub enum Effect {
     /// Restore N hit points to the user (clamped to max HP).
     HealHp(i32),
-    /// Restore N mana to the user (clamped to max mana).
-    RestoreMana(i32),
-    /// Teach the player a new spell (spellbook). Value is the spell ID from spells.ron.
-    LearnSpell(String),
+    /// Prompt the player to select a weapon/armor to enchant by +1.
+    EnchantItem,
+    /// Apply Hasted status for N turns.
+    ApplyHaste(u32),
+    /// Apply temporary fire resistance for N turns.
+    ApplyFireResistance(u32),
+    /// Remove all poison effects and apply temporary poison resistance for N turns.
+    Antidote(u32),
 }
 
 // --- Messages ---
@@ -64,19 +65,16 @@ pub fn handle_use_item(
             Entity,
             &mut Inventory,
             &mut Health,
-            &mut Mana,
-            &mut KnownSpells,
-            &mut ActiveSpells,
+            &mut StatusEffects,
         ),
         With<Player>,
     >,
     item_query: Query<(&Name, &ItemProperties, Option<&ItemStack>)>,
-    spell_registry_handle: Res<SpellRegistryHandle>,
-    spell_registries: Res<Assets<SpellRegistry>>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
+    mut next_ingame: ResMut<NextState<crate::game::InGameState>>,
 ) {
-    let Ok((player_entity, mut inv, mut health, mut mana, mut known_spells, mut active_spells)) =
+    let Ok((player_entity, mut inv, mut health, mut status_effects)) =
         player_query.single_mut()
     else {
         return;
@@ -101,7 +99,7 @@ pub fn handle_use_item(
                 "The {} has no effect.",
                 item_name
             )));
-            finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST);
+            finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST, ActionKind::Movement);
             continue;
         };
 
@@ -115,53 +113,41 @@ pub fn handle_use_item(
                     item_name, healed
                 )));
             }
-            Effect::RestoreMana(amount) => {
-                let before = mana.current;
-                mana.current = (mana.current + amount).min(mana.max);
-                let restored = mana.current - before;
+            Effect::EnchantItem => {
+                // Transition to enchant selection UI — player picks which item to enchant.
+                // The scroll is consumed here; the actual enchanting happens in the selection UI.
+                next_ingame.set(crate::game::InGameState::EnchantSelect);
+            }
+            Effect::ApplyHaste(turns) => {
+                status_effects.add(StatusEffectKind::Hasted, turns);
                 log_writer.write(GameLogMessage(format!(
-                    "You drink the {} and restore {} mana.",
-                    item_name, restored
+                    "You drink the {} and feel incredibly fast! ({} turns)",
+                    item_name, turns
                 )));
             }
-            Effect::LearnSpell(spell_id) => {
-                // Look up display name from registry; fall back to the ID.
-                let spell_name = spell_registries
-                    .get(&spell_registry_handle.0)
-                    .and_then(|r| r.spells.get(&spell_id))
-                    .map(|s| s.name.clone())
-                    .unwrap_or_else(|| spell_id.clone());
-
-                if known_spells.spells.contains(&spell_id) {
+            Effect::ApplyFireResistance(turns) => {
+                status_effects.add(StatusEffectKind::FireResistance, turns);
+                log_writer.write(GameLogMessage(format!(
+                    "You drink the {} and feel resistant to fire! ({} turns)",
+                    item_name, turns
+                )));
+            }
+            Effect::Antidote(turns) => {
+                // Remove all poison effects
+                let was_poisoned = status_effects.is_poisoned();
+                status_effects.remove_kind(|k| matches!(k, StatusEffectKind::Poisoned { .. }));
+                // Apply temporary poison resistance
+                status_effects.add(StatusEffectKind::PoisonResistance, turns);
+                if was_poisoned {
                     log_writer.write(GameLogMessage(format!(
-                        "You already know {}.",
-                        spell_name
+                        "You drink the {}. The poison is purged from your body!",
+                        item_name
                     )));
                 } else {
-                    // Auto-slot into first empty slot if one exists.
-                    let auto_slotted = active_spells
-                        .slots
-                        .iter_mut()
-                        .find(|s| s.is_none())
-                        .map(|slot| {
-                            *slot = Some(spell_id.clone());
-                            true
-                        })
-                        .unwrap_or(false);
-
-                    known_spells.spells.push(spell_id.clone());
-
-                    if auto_slotted {
-                        log_writer.write(GameLogMessage(format!(
-                            "You learn {} and it is slotted automatically.",
-                            spell_name
-                        )));
-                    } else {
-                        log_writer.write(GameLogMessage(format!(
-                            "You learn {}. Open [S] Spells to assign it to a slot.",
-                            spell_name
-                        )));
-                    }
+                    log_writer.write(GameLogMessage(format!(
+                        "You drink the {} and feel resistant to poison. ({} turns)",
+                        item_name, turns
+                    )));
                 }
             }
         }
@@ -170,12 +156,12 @@ pub fn handle_use_item(
         if let Some((count, max_stack)) = stack_info
             && count > 1 {
                 commands.entity(msg.item_entity).insert(ItemStack { count: count - 1, max_stack });
-                finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST);
+                finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST, ActionKind::Movement);
                 continue;
             }
         inv.items.retain(|&e| e != msg.item_entity);
         commands.entity(msg.item_entity).despawn();
 
-        finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST);
+        finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST, ActionKind::Movement);
     }
 }

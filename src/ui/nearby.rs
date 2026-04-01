@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::components::{Chest, GameEntityMarker, InInventory, Item, Monster, Name, Position, Prop, Viewshed};
+use crate::game::enchantment::{display_item_name, Enchantment, ItemArmorRunic, ItemWeaponRunic, RunicIdentified};
 use crate::game::items::ItemProperties;
 use crate::game::{AppState, InGameState};
 use crate::map::Map;
@@ -95,7 +96,8 @@ fn update_nearby_panel(
     player_query: Query<(&Viewshed, &Position), (With<Player>, Changed<Viewshed>)>,
     monster_query: Query<(Entity, &Position, &Name, &Sprite, Option<&Children>), With<Monster>>,
     item_query: Query<
-        (Entity, &Position, &Name, &ItemProperties, &Sprite, Option<&Children>),
+        (Entity, &Position, &Name, &ItemProperties, &Sprite, Option<&Children>,
+         Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>),
         (With<Item>, Without<InInventory>),
     >,
     chest_query: Query<
@@ -151,10 +153,11 @@ fn update_nearby_panel(
     let mut items: Vec<NearbyEntry> = item_query
         .iter()
         .filter(|(_, pos, ..)| visible.contains(&(pos.x, pos.y)))
-        .map(|(entity, pos, name, _props, sprite, children)| {
+        .map(|(entity, pos, name, _props, sprite, children, ench, w_runic, a_runic, runic_id)| {
             let dist = tile_distance(player_pos, pos);
             let (ac, acol) = get_ascii_info(children).unzip();
-            (entity, dist, name.0.clone(), sprite.image.clone(), sprite.texture_atlas.clone(), ac, acol)
+            let enriched = display_item_name(&name.0, ench, w_runic, a_runic, runic_id);
+            (entity, dist, enriched, sprite.image.clone(), sprite.texture_atlas.clone(), ac, acol)
         })
         .collect();
     items.sort_by_key(|(_, d, ..)| *d);

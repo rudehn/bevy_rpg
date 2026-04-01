@@ -821,7 +821,7 @@ use bracket_lib::prelude::{DistanceAlg, Point};
 use crate::{
     components::{Chest, Faction, FloorEntityMarker, InInventory, Inventory, Item, Monster, Position, Viewshed},
     game::{
-        actions::{ActionGuard, MeleeIntent, MovementIntent, OpenChestIntent, PickUpIntent, WaitIntent},
+        actions::{ActionFinishedEvent, ActionGuard, MeleeIntent, MovementIntent, OpenChestIntent, PickUpIntent, WaitIntent},
         ai::{idle_movement, pathfind_toward, try_flee_movement, try_stun_skip},
         combat::Health,
         factions::FactionMatrix,
@@ -877,10 +877,15 @@ fn execute_goap(entity: Entity, ai: &mut GoapAI, world: &mut World) {
     let action_name = {
         let result = plan(&state, &ai.goals, &ai.actions);
         let name = result.map(|a| a.name);
-        bevy::log::debug!(
-            "GOAP {entity:?}: action={:?} state=[player_vis={} hostile={} items={} adj_item={} adj_chest={} carry={} hoard={}]",
-            name, state.player_visible, state.hostile_nearby, state.item_visible,
-            state.adjacent_to_item, state.adjacent_to_chest, state.carrying_items, state.at_hoard,
+        let monster_name = world.get::<crate::components::Name>(entity)
+            .map(|n| n.0.clone())
+            .unwrap_or_default();
+        let monster_pos = world.get::<crate::components::Position>(entity)
+            .map(|p| format!("({},{})", p.x, p.y))
+            .unwrap_or_default();
+        bevy::log::info!(
+            "GOAP {} {} {entity:?}: action={:?} player_vis={}",
+            monster_name, monster_pos, name, state.player_visible,
         );
         name
     };
@@ -889,14 +894,18 @@ fn execute_goap(entity: Entity, ai: &mut GoapAI, world: &mut World) {
     match action_name {
         Some(name) => dispatch_action(entity, name, ai, world),
         None => {
-            // All goals satisfied — try opportunistic actions before roaming.
+            // All goals satisfied — try opportunistic actions before idling.
             // Ranged monsters shoot if player is visible and they're safe.
             if state.player_visible && state.ally_between_self_and_threat {
                 dispatch_action(entity, "ranged_attack", ai, world);
             } else if state.player_visible && state.adjacent_to_threat {
                 dispatch_action(entity, "attack_melee", ai, world);
-            } else {
+            } else if ai.hoard_position.is_some() {
+                // Hoarders roam to seek items when idle.
                 dispatch_action(entity, "roam", ai, world);
+            } else {
+                // Combat-oriented monsters wait in place when all goals are satisfied.
+                world.write_message(WaitIntent { entity });
             }
         }
     }
@@ -1041,7 +1050,12 @@ fn gather_world_state(entity: Entity, ai: &GoapAI, world: &mut World) -> WorldSt
         squad_retreating,
         near_leader,
         self_morale_low,
-        can_cast_useful_spell: false, // TODO: Phase 6 — spell integration
+        can_cast_useful_spell: {
+            // Check if entity has any monster ability off cooldown
+            world.get::<crate::game::staves::MonsterAbilities>(entity)
+                .map(|ma| ma.0.iter().any(|a| a.current_cooldown == 0))
+                .unwrap_or(false)
+        },
         ally_between_self_and_threat,
     }
 }
@@ -1229,10 +1243,9 @@ fn dispatch_action(entity: Entity, action_name: &str, ai: &mut GoapAI, world: &m
         }
 
         "cast_spell" => {
-            // Delegate to the existing spell scorer. For now, use standard AI spell logic.
-            // Full spell bias integration comes in Phase 6.
-            use crate::game::ai::try_cast_spell_world;
-            if !try_cast_spell_world(entity, world) {
+            // Delegate to the monster ability system.
+            use crate::game::ai::try_use_ability_world;
+            if !try_use_ability_world(entity, world) {
                 world.write_message(WaitIntent { entity });
             }
         }
@@ -1262,7 +1275,14 @@ fn dispatch_action(entity: Entity, action_name: &str, ai: &mut GoapAI, world: &m
             // "roam" — pathfind to a random reachable tile. Pick a new target
             // when we don't have one or we've reached the current one.
             if ai.roam_target.is_none() || ai.roam_target == Some(pos) {
-                ai.roam_target = pick_random_walkable_tile(world);
+                let old = ai.roam_target;
+                ai.roam_target = pick_random_walkable_tile_near(pos, world);
+                let name = world.get::<crate::components::Name>(entity)
+                    .map(|n| n.0.clone()).unwrap_or_default();
+                bevy::log::info!(
+                    "ROAM {} {entity:?}: pos=({},{}) old_target={:?} new_target={:?}",
+                    name, pos.x, pos.y, old, ai.roam_target
+                );
             }
 
             if let Some(target) = ai.roam_target {
@@ -1278,17 +1298,20 @@ fn dispatch_action(entity: Entity, action_name: &str, ai: &mut GoapAI, world: &m
     }
 }
 
-/// Pick a random walkable tile on the map for roaming.
-fn pick_random_walkable_tile(world: &mut World) -> Option<Point> {
+/// Pick a random walkable tile near a position for roaming.
+/// Searches within ROAM_RADIUS tiles to keep monsters in their local area.
+const ROAM_RADIUS: i32 = 12;
+
+fn pick_random_walkable_tile_near(pos: Point, world: &mut World) -> Option<Point> {
     use crate::map::tile::is_walkable;
     let map = world.resource::<Map>();
     let w = map.width();
     let h = map.height();
     let tiles = &map.tiles;
 
-    // Collect walkable positions, then pick one at random.
-    let walkable: Vec<Point> = (0..w)
-        .flat_map(|x| (0..h).map(move |y| (x, y)))
+    // Collect walkable positions within ROAM_RADIUS of the current position.
+    let walkable: Vec<Point> = ((pos.x - ROAM_RADIUS).max(0)..=(pos.x + ROAM_RADIUS).min(w - 1))
+        .flat_map(|x| ((pos.y - ROAM_RADIUS).max(0)..=(pos.y + ROAM_RADIUS).min(h - 1)).map(move |y| (x, y)))
         .filter(|&(x, y)| is_walkable(tiles[(y * w + x) as usize]))
         .map(|(x, y)| Point::new(x, y))
         .collect();
@@ -1343,6 +1366,7 @@ fn find_nearest_loot(
 pub fn handle_drop_at_hoard(
     mut commands: Commands,
     mut messages: MessageReader<DropAtHoardMessage>,
+    mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut inv_query: Query<(&Position, &mut Inventory)>,
 ) {
     for msg in messages.read() {
@@ -1355,6 +1379,7 @@ pub fn handle_drop_at_hoard(
                 .insert(Visibility::Inherited)
                 .insert(FloorEntityMarker);
         }
+        crate::game::actions::finish_turn(&mut commands, &mut finish_writer, msg.entity, crate::constants::BASE_ACTION_COST, crate::game::actions::ActionKind::Movement);
     }
 }
 
@@ -1433,9 +1458,10 @@ mod tests {
     }
 
     #[test]
-    fn roam_when_nothing_to_do() {
+    fn idle_when_nothing_to_do() {
         // No threats, no items, not carrying — roam doesn't advance any goal,
-        // so planner returns None. The dispatch layer treats None as "roam".
+        // so planner returns None. The dispatch layer treats None as "wait"
+        // (hoarders roam instead).
         assert_eq!(run_plan(&WorldState::default()), None);
     }
 

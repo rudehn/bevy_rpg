@@ -39,43 +39,48 @@ fn deep_water_item_sweep_system(
     mut log_writer: MessageWriter<GameLogMessage>,
     map: Res<Map>,
 ) {
-    for _ in turn_end.read() {
-        for (pos, mut inventory, _actor_name) in actors.iter_mut() {
-            let idx = map.xy_idx(pos.x, pos.y);
-            if idx >= map.tiles.len() || map.tiles[idx].liquid != LiquidType::Water {
-                continue;
-            }
+    // Consume all turn events but only sweep once per frame to prevent
+    // items being ejected multiple times when many turns resolve at once.
+    if turn_end.read().count() == 0 {
+        return;
+    }
 
-            // Iterate in reverse to avoid index invalidation when removing
-            let mut i = inventory.items.len();
-            while i > 0 {
-                i -= 1;
-                let roll = game_rng.0.range(0, 100);
-                if roll < 50 {
-                    let item_entity = inventory.items.remove(i);
-                    let item_name = item_names
-                        .get(item_entity)
-                        .map(|n| n.0.clone())
-                        .unwrap_or_else(|_| "item".to_string());
+    for (pos, mut inventory, _actor_name) in actors.iter_mut() {
+        let idx = map.xy_idx(pos.x, pos.y);
+        if idx >= map.tiles.len() || map.tiles[idx].liquid != LiquidType::Water {
+            continue;
+        }
 
-                    commands.entity(item_entity)
-                        .remove::<InInventory>()
-                        .insert(Position { x: pos.x, y: pos.y })
-                        .insert(FloorEntityMarker)
-                        .insert(Drifting)
-                        .insert(Visibility::Inherited);
+        // Iterate in reverse to avoid index invalidation when removing
+        let mut i = inventory.items.len();
+        while i > 0 {
+            i -= 1;
+            let roll = game_rng.0.range(0, 100);
+            if roll < 50 {
+                let item_entity = inventory.items.remove(i);
+                let item_name = item_names
+                    .get(item_entity)
+                    .map(|n| n.0.clone())
+                    .unwrap_or_else(|_| "item".to_string());
 
-                    log_writer.write(GameLogMessage(format!(
-                        "Your {} is swept away by the current!",
-                        item_name
-                    )));
-                }
+                commands.entity(item_entity)
+                    .remove::<InInventory>()
+                    .insert(Position { x: pos.x, y: pos.y })
+                    .insert(FloorEntityMarker)
+                    .insert(Drifting)
+                    .insert(Visibility::Inherited);
+
+                log_writer.write(GameLogMessage(format!(
+                    "Your {} is swept away by the current!",
+                    item_name
+                )));
             }
         }
     }
 }
 
 /// Drift items with the `Drifting` component 1 tile per turn.
+/// Only drifts once per frame regardless of how many turn events fired.
 /// If they reach a non-deep-water tile, they stop drifting.
 fn item_drift_system(
     mut turn_end: MessageReader<TurnEndEvent>,
@@ -89,35 +94,39 @@ fn item_drift_system(
         (1, 1), (1, -1), (-1, 1), (-1, -1),
     ];
 
-    for _ in turn_end.read() {
-        for (entity, mut pos) in drifting_items.iter_mut() {
-            // Collect walkable adjacent tiles
-            let mut candidates: Vec<(i32, i32, bool)> = Vec::new();
-            for &(dx, dy) in &OFFSETS {
-                let nx = pos.x + dx;
-                let ny = pos.y + dy;
-                if nx < 0 || ny < 0 || nx >= map.width || ny >= map.height {
-                    continue;
-                }
-                let idx = map.xy_idx(nx, ny);
-                if idx < map.tiles.len() && is_walkable(map.tiles[idx]) {
-                    let is_deep = map.tiles[idx].liquid == LiquidType::Water;
-                    candidates.push((nx, ny, is_deep));
-                }
-            }
+    // Consume all turn events but only drift once per frame to prevent
+    // items teleporting across the map when many turns resolve at once.
+    if turn_end.read().count() == 0 {
+        return;
+    }
 
-            if candidates.is_empty() {
-                // Stuck — stop drifting
+    for (entity, mut pos) in drifting_items.iter_mut() {
+        // Collect walkable adjacent tiles
+        let mut candidates: Vec<(i32, i32, bool)> = Vec::new();
+        for &(dx, dy) in &OFFSETS {
+            let nx = pos.x + dx;
+            let ny = pos.y + dy;
+            if nx < 0 || ny < 0 || nx >= map.width || ny >= map.height {
+                continue;
+            }
+            let idx = map.xy_idx(nx, ny);
+            if idx < map.tiles.len() && is_walkable(map.tiles[idx]) {
+                let is_deep = map.tiles[idx].liquid == LiquidType::Water;
+                candidates.push((nx, ny, is_deep));
+            }
+        }
+
+        if candidates.is_empty() {
+            // Stuck — stop drifting
+            commands.entity(entity).remove::<Drifting>();
+        } else {
+            let pick = game_rng.0.range(0, candidates.len() as i32) as usize;
+            let (nx, ny, is_deep) = candidates[pick];
+            pos.x = nx;
+            pos.y = ny;
+            if !is_deep {
+                // Washed ashore
                 commands.entity(entity).remove::<Drifting>();
-            } else {
-                let pick = game_rng.0.range(0, candidates.len() as i32) as usize;
-                let (nx, ny, is_deep) = candidates[pick];
-                pos.x = nx;
-                pos.y = ny;
-                if !is_deep {
-                    // Washed ashore
-                    commands.entity(entity).remove::<Drifting>();
-                }
             }
         }
     }

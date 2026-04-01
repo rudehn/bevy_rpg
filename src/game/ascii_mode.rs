@@ -5,8 +5,8 @@ use crate::map::tile::TileMarker;
 /// Controls whether the game renders sprites or ASCII characters.
 #[derive(Resource, Default, PartialEq, Eq, Clone, Copy)]
 pub enum GraphicsMode {
-    #[default]
     Sprites,
+    #[default]
     Ascii,
 }
 
@@ -177,15 +177,20 @@ fn init_new_ascii_glyphs(
 }
 
 /// Keep the player sprite transparent in ASCII mode, restore in Sprites mode.
+/// Also handles newly spawned players so the sprite is correct on first frame.
 fn update_player_ascii_sprite(
     mode: Res<GraphicsMode>,
-    mut player_query: Query<&mut Sprite, With<crate::player::Player>>,
+    mut params: ParamSet<(
+        Query<&mut Sprite, With<crate::player::Player>>,
+        Query<(), (With<crate::player::Player>, Added<Sprite>)>,
+    )>,
 ) {
-    if !mode.is_changed() {
+    let has_new = !params.p1().is_empty();
+    if !mode.is_changed() && !has_new {
         return;
     }
     let is_ascii = *mode == GraphicsMode::Ascii;
-    for mut sprite in player_query.iter_mut() {
+    for mut sprite in params.p0().iter_mut() {
         sprite.color = if is_ascii { Color::NONE } else { Color::WHITE };
     }
 }

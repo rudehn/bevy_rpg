@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     assets::{ItemManifest, ItemManifestHandle, ItemSpriteAssets},
-    components::{Equipped, FloorEntityMarker, InInventory, Inventory, Item, Monster, Name, Position, Prop, Viewshed},
+    components::{Equipped, FloorEntityMarker, InInventory, Inventory, Item, Key, Monster, Name, Position, Prop, QuestItem, Viewshed},
     game::{
         AppState,
         combat::{Damage, Health},
@@ -318,6 +318,12 @@ pub struct InventoryItemSave {
     pub staff_recharge_timer: Option<u32>,
     #[serde(default)]
     pub staff_recharge_rate: Option<u32>,
+    /// Key name for Key items (opens a specific locked door).
+    #[serde(default)]
+    pub key_name: Option<String>,
+    /// Whether this item is a quest item (e.g., Amulet of Yendor).
+    #[serde(default)]
+    pub is_quest_item: bool,
 }
 
 fn default_stack_count() -> u32 { 1 }
@@ -399,11 +405,11 @@ pub fn auto_save_system(
         With<Player>,
     >,
     player_status_query: Query<&StatusEffects, With<Player>>,
-    inv_item_query: Query<(&Name, &ItemProperties, Has<Equipped>, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>), With<InInventory>>,
+    inv_item_query: Query<(&Name, &ItemProperties, Has<Equipped>, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>, Option<&Key>, Has<QuestItem>), With<InInventory>>,
     monster_query: Query<(&Position, &Name, &Health, Option<&SquadId>, Option<&SquadConfig>, Has<SquadLeader>, Option<&crate::game::ai::PatrolRoute>, Has<crate::components::Submerged>), With<Monster>>,
     squad_counter: Res<SquadIdCounter>,
     floor_item_query: Query<(&Position, &Name, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>, Has<crate::components::Drifting>), (With<Item>, Without<InInventory>)>,
-    prop_query: Query<(&Position, &Name), With<Prop>>,
+    prop_query: Query<(&Position, &Name, Option<&crate::components::PropKey>), With<Prop>>,
 ) {
     auto_save_pending.0 = false;
 
@@ -419,7 +425,7 @@ pub fn auto_save_system(
         .items
         .iter()
         .filter_map(|&item_entity| {
-            let Ok((name, props, is_equipped, stack, enchant, weapon_runic, armor_runic, runic_id, staff_data, rechargeable)) = inv_item_query.get(item_entity) else {
+            let Ok((name, props, is_equipped, stack, enchant, weapon_runic, armor_runic, runic_id, staff_data, rechargeable, key, is_quest_item)) = inv_item_query.get(item_entity) else {
                 return None;
             };
             let equipped_slot = if is_equipped {
@@ -435,7 +441,7 @@ pub fn auto_save_system(
                 count,
                 max_stack,
                 enchantment: enchant.map(|e| e.level),
-                weapon_runic: weapon_runic.map(|w| w.0),
+                weapon_runic: weapon_runic.map(|w| w.0.clone()),
                 armor_runic: armor_runic.map(|a| a.0),
                 runic_identified: runic_id.map(|r| r.0),
                 staff_effect: staff_data.map(|s| s.effect),
@@ -444,6 +450,8 @@ pub fn auto_save_system(
                 staff_max_charges: rechargeable.map(|r| r.max_charges),
                 staff_recharge_timer: rechargeable.map(|r| r.recharge_timer),
                 staff_recharge_rate: rechargeable.map(|r| r.recharge_rate),
+                key_name: key.map(|k| k.key_name.clone()),
+                is_quest_item,
             })
         })
         .collect();
@@ -473,7 +481,7 @@ pub fn auto_save_system(
             name: name.0.clone(),
             count: stack.map(|s| s.count).unwrap_or(1),
             enchantment: enchant.map(|e| e.level),
-            weapon_runic: weapon_runic.map(|w| w.0),
+            weapon_runic: weapon_runic.map(|w| w.0.clone()),
             armor_runic: armor_runic.map(|a| a.0),
             runic_identified: runic_id.map(|r| r.0),
             staff_effect: staff_data.map(|s| s.effect),
@@ -495,7 +503,13 @@ pub fn auto_save_system(
     // Props
     let props: Vec<SavedProp> = prop_query
         .iter()
-        .map(|(pos, name)| SavedProp { x: pos.x, y: pos.y, name: name.0.clone() })
+        .map(|(pos, name, prop_key)| SavedProp {
+            x: pos.x,
+            y: pos.y,
+            // Use the manifest key if available; fall back to display name
+            // for backward compatibility with old saves.
+            name: prop_key.map(|k| k.0.clone()).unwrap_or_else(|| name.0.clone()),
+        })
         .collect();
 
     // Floor cache
@@ -637,8 +651,8 @@ pub fn apply_player_load_system(
         if let Some(level) = item_save.enchantment {
             commands.entity(item_entity).insert(Enchantment { level });
         }
-        if let Some(runic) = item_save.weapon_runic {
-            commands.entity(item_entity).insert(ItemWeaponRunic(runic));
+        if let Some(runic) = &item_save.weapon_runic {
+            commands.entity(item_entity).insert(ItemWeaponRunic(runic.clone()));
         }
         if let Some(runic) = item_save.armor_runic {
             commands.entity(item_entity).insert(ItemArmorRunic(runic));
@@ -664,6 +678,16 @@ pub fn apply_player_load_system(
                     recharge_rate,
                 });
             }
+        }
+
+        // Restore Key component
+        if let Some(ref key_name) = item_save.key_name {
+            commands.entity(item_entity).insert(Key { key_name: key_name.clone() });
+        }
+
+        // Restore QuestItem marker
+        if item_save.is_quest_item {
+            commands.entity(item_entity).insert(QuestItem);
         }
 
         inventory.items.push(item_entity);

@@ -563,8 +563,8 @@ pub fn materialize_floor(
             if let Some(level) = i.enchantment {
                 commands.entity(entity).insert(Enchantment { level });
             }
-            if let Some(runic) = i.weapon_runic {
-                commands.entity(entity).insert(ItemWeaponRunic(runic));
+            if let Some(runic) = &i.weapon_runic {
+                commands.entity(entity).insert(ItemWeaponRunic(runic.clone()));
             }
             if let Some(runic) = i.armor_runic {
                 commands.entity(entity).insert(ItemArmorRunic(runic));

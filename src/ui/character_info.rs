@@ -2,7 +2,7 @@ use crate::game::AppState;
 use crate::game::InGameState;
 use crate::game::actions::SpeedStats;
 use crate::game::combat::{Damage, Health};
-use crate::game::stats::{Armor, Dodge, Mana};
+use crate::game::stats::{Armor, Dodge};
 use crate::player::Player;
 use bevy::prelude::*;
 
@@ -42,7 +42,6 @@ fn spawn_character_info_ui(
     player_query: Query<
         (
             &Health,
-            &Mana,
             &Damage,
             &Armor,
             &Dodge,
@@ -51,24 +50,27 @@ fn spawn_character_info_ui(
         With<Player>,
     >,
 ) {
-    let Ok((health, mana, damage, armor, dodge, speed_stats)) = player_query.single() else {
+    let Ok((health, damage, armor, dodge, speed_stats)) = player_query.single() else {
         return;
     };
 
     let font = asset_server.load("fonts/Macondo-Regular.ttf");
 
-    let speed_str = speed_stats
-        .map(|s| format!("{:.2}x", s.delay))
+    let move_speed_str = speed_stats
+        .map(|s| format!("{:.2}x", s.movement_delay))
+        .unwrap_or_else(|| "1.00x".to_string());
+    let atk_speed_str = speed_stats
+        .map(|s| format!("{:.2}x", s.attack_delay))
         .unwrap_or_else(|| "1.00x".to_string());
 
     let stats_text = format!(
-        "HP:       {}/{}\nMana:     {}/{}\nDamage:   {}\nArmor:    {}\nDodge:    {}\nSpeed:    {}",
+        "HP:       {}/{}\nDamage:   {}\nArmor:    {}\nDodge:    {}\nMove Spd: {}\nAtk Spd:  {}",
         health.current, health.max,
-        mana.current, mana.max,
         damage.0,
         armor.0,
         dodge.0,
-        speed_str,
+        move_speed_str,
+        atk_speed_str,
     );
 
     use crate::ui::modal::{spawn_modal, ModalConfig};

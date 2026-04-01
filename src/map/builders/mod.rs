@@ -44,6 +44,7 @@ mod finish_doors;
 mod isolated_area_culler;
 pub mod item_spawner;
 mod lake_builder;
+pub mod machine_builder;
 pub mod monster_spawner;
 mod pillar_culler;
 pub mod prefab_placer;
@@ -105,6 +106,7 @@ pub struct BuilderMap {
     pub spawn_list: Vec<SpawnEntry>,
     pub item_spawn_list: Vec<(Point, String, u32)>, // (pos, item_name, count)
     pub prop_spawn_list: Vec<(Point, String)>,      // (pos, prop_name)
+    pub machine_spawn_list: Vec<machine_builder::MachineSpawn>,
     pub squad_counter: SquadIdCounter,
     pub decoration_exclusion_zones: Vec<Rect>,
 }
@@ -181,6 +183,7 @@ impl BuilderMap {
             spawn_list: Vec::new(),
             item_spawn_list: Vec::new(),
             prop_spawn_list: Vec::new(),
+            machine_spawn_list: Vec::new(),
             squad_counter: SquadIdCounter::default(),
             decoration_exclusion_zones: Vec::new(),
         }
@@ -233,7 +236,7 @@ impl BuilderChain {
                 spawn_list: Vec::new(),
                 item_spawn_list: Vec::new(),
                 prop_spawn_list: Vec::new(),
-
+                machine_spawn_list: Vec::new(),
                 squad_counter,
                 decoration_exclusion_zones: Vec::new(),
             },
@@ -430,7 +433,6 @@ fn random_start_position() -> (XStart, YStart) {
 ///   BrogueLikeBuilder        → sets: rooms, map terrain
 ///
 /// Phase: TerrainCleanup
-///   DiagonalCuller           → reads: map terrain
 ///   StartPointBuilder        → reads: rooms         → sets: starting_position
 ///   LakeBuilder              → reads: starting_position, map terrain
 ///   DiagonalCuller2          → reads: map terrain
@@ -483,17 +485,17 @@ pub fn floor_builder(
     // builder.with_named("PillarCuller", PillarCuller::new());
     // builder.with_named("FinishDoors", FinishDoors::new());
     // builder.with_named("PrefabPlacer", PrefabPlacer::new(prefabs, role_table));
+    // builder.with_named("MachineBuilder", machine_builder::MachineBuilder::new());
     // builder.with_named("IsolatedAreaCuller", IsolatedAreaCuller::new());
     // --- Spawners run after IsolatedAreaCuller so entities are never placed in walled-off regions ---
     // builder.with_named("CandleSpawner", CandleSpawner::new());
     // builder.with_named("MonsterSpawner", MonsterSpawner::new(spawn_table));
     // builder.with_named("ItemSpawner", ItemSpawner::new());
+    builder.with_named(
+        "DecorationPropagator",
+        DecorationPropagator::new(decoration_rules, new_depth, profile.decoration_density),
+    );
     builder.with_named("DistantExit", DistantExit::new());
-    // builder.with_named("DecorationPropagator", DecorationPropagator::new(
-    //     decoration_rules,
-    //     new_depth,
-    //     profile.decoration_density,
-    // ));
 
     builder
 }

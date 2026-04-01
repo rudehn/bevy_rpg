@@ -418,6 +418,12 @@ impl Map {
             return Some(10.0);
         }
 
+        // Decoration movement cost (cobwebs, tall grass, etc.)
+        let dec_cost = tile.decoration.movement_cost();
+        if dec_cost > 1.0 {
+            return Some(dec_cost);
+        }
+
         Some(1.0)
     }
 }
@@ -500,9 +506,11 @@ impl<'a> MapWithMode<'a> {
 
         match self.mode {
             MovementMode::Land => {
-                // Deep water is nearly impassable for land creatures.
+                // Land creatures cannot pathfind through deep water.
+                // (Players bypass A* via direct bump movement, so this
+                // only prevents monster AI from wading into water.)
                 if tile.liquid == LiquidType::Water {
-                    return Some(50.0);
+                    return None;
                 }
                 if is_pathing_blocker(tile) {
                     return Some(5.0);
@@ -510,12 +518,14 @@ impl<'a> MapWithMode<'a> {
                 if self.map.blocked.get(idx).copied().unwrap_or(false) {
                     return Some(10.0);
                 }
+                let dec_cost = tile.decoration.movement_cost();
+                if dec_cost > 1.0 { return Some(dec_cost); }
                 Some(1.0)
             }
             MovementMode::ImmuneToWater => {
                 // Water is free; other blockers still penalized.
                 if tile.liquid == LiquidType::Water {
-                    return Some(1.0);
+                    return Some(tile.decoration.movement_cost().max(1.0));
                 }
                 if is_pathing_blocker(tile) {
                     return Some(5.0);
@@ -523,6 +533,8 @@ impl<'a> MapWithMode<'a> {
                 if self.map.blocked.get(idx).copied().unwrap_or(false) {
                     return Some(10.0);
                 }
+                let dec_cost = tile.decoration.movement_cost();
+                if dec_cost > 1.0 { return Some(dec_cost); }
                 Some(1.0)
             }
             MovementMode::RestrictedToLiquid => {
@@ -533,6 +545,8 @@ impl<'a> MapWithMode<'a> {
                 if self.map.blocked.get(idx).copied().unwrap_or(false) {
                     return Some(10.0);
                 }
+                let dec_cost = tile.decoration.movement_cost();
+                if dec_cost > 1.0 { return Some(dec_cost); }
                 Some(1.0)
             }
         }
@@ -583,5 +597,286 @@ impl<'a> Algorithm2D for MapWithMode<'a> {
 
     fn index_to_point2d(&self, idx: usize) -> Point {
         Point::new(idx as i32 % self.map.width, idx as i32 / self.map.width)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map::tile::{Tile, TerrainType, LiquidType, Decoration};
+
+    /// Create a small test map with specified tiles.
+    fn make_map(width: i32, height: i32, tiles: Vec<Tile>) -> Map {
+        let count = (width * height) as usize;
+        assert_eq!(tiles.len(), count);
+        Map {
+            name: "test".to_string(),
+            tiles,
+            explored_tiles: vec![false; count],
+            blocked: vec![false; count],
+            width,
+            height,
+            depth: 1,
+        }
+    }
+
+    fn floor() -> Tile {
+        Tile { terrain: TerrainType::Floor, liquid: LiquidType::None, decoration: Decoration::None }
+    }
+
+    fn wall() -> Tile {
+        Tile { terrain: TerrainType::Wall, liquid: LiquidType::None, decoration: Decoration::None }
+    }
+
+    fn deep_water() -> Tile {
+        Tile { terrain: TerrainType::Floor, liquid: LiquidType::Water, decoration: Decoration::None }
+    }
+
+    fn shallow_water() -> Tile {
+        Tile { terrain: TerrainType::Floor, liquid: LiquidType::ShallowWater, decoration: Decoration::None }
+    }
+
+    fn lava() -> Tile {
+        Tile { terrain: TerrainType::Floor, liquid: LiquidType::Lava, decoration: Decoration::None }
+    }
+
+    // ---- Map::get_pathing_cost ----
+
+    #[test]
+    fn pathing_cost_floor_is_one() {
+        let map = make_map(3, 3, vec![floor(); 9]);
+        assert_eq!(map.get_pathing_cost(1, 1), Some(1.0));
+    }
+
+    #[test]
+    fn pathing_cost_wall_is_none() {
+        let map = make_map(3, 3, vec![wall(); 9]);
+        assert_eq!(map.get_pathing_cost(1, 1), None);
+    }
+
+    #[test]
+    fn pathing_cost_deep_water_is_five() {
+        let mut tiles = vec![floor(); 9];
+        tiles[4] = deep_water(); // center
+        let map = make_map(3, 3, tiles);
+        assert_eq!(map.get_pathing_cost(1, 1), Some(5.0));
+    }
+
+    #[test]
+    fn pathing_cost_out_of_bounds_is_none() {
+        let map = make_map(3, 3, vec![floor(); 9]);
+        assert_eq!(map.get_pathing_cost(-1, 0), None);
+        assert_eq!(map.get_pathing_cost(3, 0), None);
+    }
+
+    #[test]
+    fn pathing_cost_blocked_tile_is_ten() {
+        let mut map = make_map(3, 3, vec![floor(); 9]);
+        map.blocked[4] = true;
+        assert_eq!(map.get_pathing_cost(1, 1), Some(10.0));
+    }
+
+    // ---- MapWithMode pathing costs ----
+
+    #[test]
+    fn land_mode_deep_water_impassable() {
+        let mut tiles = vec![floor(); 9];
+        tiles[4] = deep_water();
+        let map = make_map(3, 3, tiles);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::Land };
+        assert_eq!(mwm.get_pathing_cost(1, 1), None);
+    }
+
+    #[test]
+    fn land_mode_floor_costs_one() {
+        let map = make_map(3, 3, vec![floor(); 9]);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::Land };
+        assert_eq!(mwm.get_pathing_cost(1, 1), Some(1.0));
+    }
+
+    #[test]
+    fn land_mode_lava_costs_five() {
+        let mut tiles = vec![floor(); 9];
+        tiles[4] = lava();
+        let map = make_map(3, 3, tiles);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::Land };
+        assert_eq!(mwm.get_pathing_cost(1, 1), Some(5.0));
+    }
+
+    #[test]
+    fn immune_to_water_deep_water_costs_one() {
+        let mut tiles = vec![floor(); 9];
+        tiles[4] = deep_water();
+        let map = make_map(3, 3, tiles);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::ImmuneToWater };
+        assert_eq!(mwm.get_pathing_cost(1, 1), Some(1.0));
+    }
+
+    #[test]
+    fn immune_to_water_floor_costs_one() {
+        let map = make_map(3, 3, vec![floor(); 9]);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::ImmuneToWater };
+        assert_eq!(mwm.get_pathing_cost(1, 1), Some(1.0));
+    }
+
+    #[test]
+    fn restricted_to_liquid_deep_water_costs_one() {
+        let mut tiles = vec![floor(); 9];
+        tiles[4] = deep_water();
+        let map = make_map(3, 3, tiles);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::RestrictedToLiquid };
+        assert_eq!(mwm.get_pathing_cost(1, 1), Some(1.0));
+    }
+
+    #[test]
+    fn restricted_to_liquid_dry_floor_is_impassable() {
+        let map = make_map(3, 3, vec![floor(); 9]);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::RestrictedToLiquid };
+        assert_eq!(mwm.get_pathing_cost(1, 1), None);
+    }
+
+    #[test]
+    fn restricted_to_liquid_shallow_water_costs_one() {
+        let mut tiles = vec![floor(); 9];
+        tiles[4] = shallow_water();
+        let map = make_map(3, 3, tiles);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::RestrictedToLiquid };
+        assert_eq!(mwm.get_pathing_cost(1, 1), Some(1.0));
+    }
+
+    #[test]
+    fn restricted_to_liquid_wall_is_impassable() {
+        let map = make_map(3, 3, vec![wall(); 9]);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::RestrictedToLiquid };
+        assert_eq!(mwm.get_pathing_cost(1, 1), None);
+    }
+
+    #[test]
+    fn all_modes_wall_is_impassable() {
+        let map = make_map(3, 3, vec![wall(); 9]);
+        for mode in [MovementMode::Land, MovementMode::ImmuneToWater, MovementMode::RestrictedToLiquid] {
+            let mwm = MapWithMode { map: &map, mode };
+            assert_eq!(mwm.get_pathing_cost(1, 1), None, "mode {:?} should block walls", mode);
+        }
+    }
+
+    #[test]
+    fn all_modes_out_of_bounds_is_none() {
+        let map = make_map(3, 3, vec![floor(); 9]);
+        for mode in [MovementMode::Land, MovementMode::ImmuneToWater, MovementMode::RestrictedToLiquid] {
+            let mwm = MapWithMode { map: &map, mode };
+            assert_eq!(mwm.get_pathing_cost(-1, 0), None);
+        }
+    }
+
+    // ---- MapWithMode::get_available_exits ----
+
+    #[test]
+    fn land_mode_excludes_water_from_exits() {
+        // 3x3 map: all floor except center is deep water
+        let mut tiles = vec![floor(); 9];
+        tiles[4] = deep_water();
+        let map = make_map(3, 3, tiles);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::Land };
+
+        // Center tile (1,1) = index 4 with deep water. Check exits FROM a corner.
+        let exits = mwm.get_available_exits(0); // (0,0)
+        // Land mode should NOT include deep water as an exit at all.
+        let center_exit = exits.iter().find(|(idx, _)| *idx == 4);
+        assert!(center_exit.is_none(), "land mode should not pathfind into deep water");
+    }
+
+    #[test]
+    fn restricted_to_liquid_no_exits_to_dry_floor() {
+        // 3x3 map: center is deep water, everything else is dry floor
+        let mut tiles = vec![floor(); 9];
+        tiles[4] = deep_water();
+        let map = make_map(3, 3, tiles);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::RestrictedToLiquid };
+
+        // From center (deep water), all exits lead to dry floor → no exits
+        let exits = mwm.get_available_exits(4);
+        assert!(exits.is_empty(), "restricted-to-liquid should have no exits to dry floor");
+    }
+
+    #[test]
+    fn restricted_to_liquid_exits_to_adjacent_water() {
+        // 3x3 map: all deep water
+        let tiles = vec![deep_water(); 9];
+        let map = make_map(3, 3, tiles);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::RestrictedToLiquid };
+
+        // From center, should have 8 exits (all water)
+        let exits = mwm.get_available_exits(4);
+        assert_eq!(exits.len(), 8);
+        // All costs should be 1.0 (cardinal) or 1.45 (diagonal)
+        for (_, cost) in &exits {
+            assert!(*cost >= 1.0 && *cost <= 1.5, "unexpected cost: {}", cost);
+        }
+    }
+
+    // ---- A* pathfinding integration ----
+
+    #[test]
+    fn land_mode_paths_around_water() {
+        // 5x3 map: row 1 has deep water in the middle
+        // Layout (y=0 bottom, y=2 top):
+        //   F F F F F   (y=2)
+        //   F F W F F   (y=1)
+        //   F F F F F   (y=0)
+        // Land mode should find a path from (0,1) to (4,1) that goes around the water
+        let mut tiles = vec![floor(); 15];
+        tiles[5 + 2] = deep_water(); // (2, 1)
+        let map = make_map(5, 3, tiles);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::Land };
+
+        let path = bracket_lib::prelude::a_star_search(
+            mwm.point2d_to_index(Point::new(0, 1)),
+            mwm.point2d_to_index(Point::new(4, 1)),
+            &mwm,
+        );
+        assert!(path.success, "should find a path");
+        // The path should NOT go through (2,1) if a cheaper route exists
+        let water_idx = map.xy_idx(2, 1);
+        // A* may or may not go through water depending on cost — at 50.0 it should avoid it
+        // since going diagonally around costs about 2.9 (1.45 * 2)
+        assert!(!path.steps.contains(&water_idx), "should route around deep water");
+    }
+
+    #[test]
+    fn restricted_to_liquid_paths_through_water_only() {
+        // 5x3: water channel through the middle row
+        //   W W W W W   (y=2) -- all wall
+        //   D D D D D   (y=1) -- all deep water
+        //   W W W W W   (y=0) -- all wall
+        let mut tiles = vec![wall(); 15];
+        for x in 0..5 {
+            tiles[5 + x] = deep_water(); // row 1
+        }
+        let map = make_map(5, 3, tiles);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::RestrictedToLiquid };
+
+        let path = bracket_lib::prelude::a_star_search(
+            mwm.point2d_to_index(Point::new(0, 1)),
+            mwm.point2d_to_index(Point::new(4, 1)),
+            &mwm,
+        );
+        assert!(path.success, "should find a path through water channel");
+        assert_eq!(path.steps.len(), 5, "should be 5 steps (0,1)->(4,1)");
+    }
+
+    #[test]
+    fn restricted_to_liquid_no_path_across_dry_gap() {
+        // 5x1: water, water, floor, water, water
+        let tiles = vec![deep_water(), deep_water(), floor(), deep_water(), deep_water()];
+        let map = make_map(5, 1, tiles);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::RestrictedToLiquid };
+
+        let path = bracket_lib::prelude::a_star_search(
+            mwm.point2d_to_index(Point::new(0, 0)),
+            mwm.point2d_to_index(Point::new(4, 0)),
+            &mwm,
+        );
+        assert!(!path.success, "should not find path across dry gap");
     }
 }

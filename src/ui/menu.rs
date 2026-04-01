@@ -345,7 +345,7 @@ fn victory_setup(
                 TextColor(GOLD),
             ));
             root.spawn((
-                Text::new("The Veiled Tyrant falls."),
+                Text::new("You have escaped the depths."),
                 TextFont { font: font.clone(), font_size: 22.0, ..default() },
                 TextColor(Color::WHITE),
                 Node { margin: UiRect::top(Val::Px(10.0)), ..default() },

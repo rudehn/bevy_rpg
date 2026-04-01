@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
 use crate::{
-    components::{Chest, Collider, Faction, InInventory, Inventory, MovementMode, Name, Position, Item},
+    components::{Chest, Collider, Destructible, Faction, InInventory, Inventory, Key, LockedDoorData, MovementMode, Name, Position, Item},
     game::machines::{Machine, MachineBumpMessage},
     constants::BASE_ACTION_COST,
     game::{
@@ -78,19 +78,62 @@ pub struct OpenChestIntent {
 }
 
 #[derive(Message)]
+pub struct UnlockDoorIntent {
+    pub entity: Entity,
+    pub door_pos: Point,
+}
+
+#[derive(Message)]
 pub struct RangedAttackIntent {
     pub attacker: Entity,
     pub target: Entity,
 }
 
+/// Classifies an action for delay calculation. Movement uses `movement_delay`,
+/// attacks use `attack_delay`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ActionKind {
+    #[default]
+    Movement,
+    Attack,
+}
+
 #[derive(Component, Clone)]
 pub struct SpeedStats {
-    pub delay: f32, // e.g., 0.5 for half time,  2.0 for double time
+    /// Base movement delay set at spawn time. Never overwritten at runtime.
+    pub base_movement_delay: f32,
+    /// Base attack delay set at spawn time. Never overwritten at runtime.
+    pub base_attack_delay: f32,
+    /// Effective movement delay = base_movement_delay * status-effect multiplier.
+    /// Recomputed each frame by `apply_speed_effects_system`.
+    pub movement_delay: f32,
+    /// Effective attack delay = base_attack_delay * status-effect multiplier.
+    /// Recomputed each frame by `apply_speed_effects_system`.
+    pub attack_delay: f32,
+}
+
+impl SpeedStats {
+    pub fn new(base_movement_delay: f32, base_attack_delay: f32) -> Self {
+        Self {
+            base_movement_delay,
+            base_attack_delay,
+            movement_delay: base_movement_delay,
+            attack_delay: base_attack_delay,
+        }
+    }
+
+    /// Return the effective delay for the given action kind.
+    pub fn delay_for(&self, kind: ActionKind) -> f32 {
+        match kind {
+            ActionKind::Movement => self.movement_delay,
+            ActionKind::Attack => self.attack_delay,
+        }
+    }
 }
 
 impl Default for SpeedStats {
     fn default() -> Self {
-        Self { delay: 1.0 }
+        Self::new(1.0, 1.0)
     }
 }
 
@@ -100,6 +143,7 @@ impl Default for SpeedStats {
 pub struct ActionFinishedEvent {
     pub entity: Entity,
     pub base_cost: u32,
+    pub action_kind: ActionKind,
 }
 
 /// Emitted when a player action is invalid (e.g. moving into a wall, firing with no bow).
@@ -130,8 +174,9 @@ pub fn finish_turn(
     finish_writer: &mut MessageWriter<ActionFinishedEvent>,
     entity: Entity,
     base_cost: u32,
+    action_kind: ActionKind,
 ) {
-    finish_writer.write(ActionFinishedEvent { entity, base_cost });
+    finish_writer.write(ActionFinishedEvent { entity, base_cost, action_kind });
     commands.entity(entity).remove::<ActionGuard>();
 }
 
@@ -350,7 +395,7 @@ pub fn handle_pickup(
         }
 
         // Always finish — even if nothing was picked up, the turn is consumed.
-        finish_turn(&mut commands, &mut finish_writer, actor_entity, BASE_ACTION_COST);
+        finish_turn(&mut commands, &mut finish_writer, actor_entity, BASE_ACTION_COST, ActionKind::Movement);
     }
 }
 
@@ -367,6 +412,8 @@ enum BumpResult {
     Wall,
     /// Tile has a closed door.
     Door(Point),
+    /// Tile has a locked door.
+    LockedDoor(Point),
     /// Tile has a hostile entity — convert to melee.
     HostileEntity(Entity),
     /// Tile has a chest — open it.
@@ -395,6 +442,7 @@ fn resolve_bump(
         Has<Chest>,
         Has<Machine>,
         Option<&MovementMode>,
+        Has<Destructible>,
     ), (Without<TileMarker>, Without<Item>)>,
 ) -> BumpResult {
     // 1. Bounds check
@@ -409,24 +457,29 @@ fn resolve_bump(
         return BumpResult::Door(target_pt);
     }
 
+    // 2b. Locked door
+    if target_tile.terrain == TerrainType::LockedDoor {
+        return BumpResult::LockedDoor(target_pt);
+    }
+
     // 3. Occupant scan — prioritize hostile entities over props.
     let mut bump_target = None;
-    for (e, other_pos, _other_is_player, other_faction, other_has_collider, other_is_chest, other_is_machine, _) in
+    for (e, other_pos, _other_is_player, other_faction, other_has_collider, other_is_chest, other_is_machine, _, other_is_destructible) in
         actors_query.iter()
     {
         if other_pos.to_point() == target_pt && e != actor {
             // Faction-bearing entities (player/monsters) take priority over props.
             if other_faction.is_some() {
-                bump_target = Some((e, other_faction, other_has_collider, other_is_chest, other_is_machine));
+                bump_target = Some((e, other_faction, other_has_collider, other_is_chest, other_is_machine, other_is_destructible));
                 break;
             }
             if bump_target.is_none() {
-                bump_target = Some((e, other_faction, other_has_collider, other_is_chest, other_is_machine));
+                bump_target = Some((e, other_faction, other_has_collider, other_is_chest, other_is_machine, other_is_destructible));
             }
         }
     }
 
-    if let Some((target_entity, target_faction, target_has_collider, target_is_chest, target_is_machine)) =
+    if let Some((target_entity, target_faction, target_has_collider, target_is_chest, target_is_machine, target_is_destructible)) =
         bump_target
     {
         let is_hostile = match (actor_faction, target_faction) {
@@ -435,6 +488,9 @@ fn resolve_bump(
         };
 
         if is_hostile {
+            return BumpResult::HostileEntity(target_entity);
+        } else if target_is_destructible && actor_is_player {
+            // Destructible props (barricades) can be attacked by the player.
             return BumpResult::HostileEntity(target_entity);
         } else if target_is_machine && !target_is_chest && target_has_collider && actor_is_player {
             // Bump-activated machine (blocking prop like altar/lever, not invisible step triggers)
@@ -462,11 +518,14 @@ pub fn handle_movement(
     mut intents: MessageReader<MovementIntent>,
     mut melee_writer: MessageWriter<MeleeIntent>,
     mut open_door_writer: MessageWriter<OpenDoorIntent>,
+    mut unlock_door_writer: MessageWriter<UnlockDoorIntent>,
     mut open_chest_writer: MessageWriter<OpenChestIntent>,
     mut machine_bump_writer: MessageWriter<MachineBumpMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut free_writer: MessageWriter<FreeActionEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
+    mut tile_mutation_writer: MessageWriter<crate::map::tile::TileMutationMessage>,
+    mut decoration_mutation_writer: MessageWriter<crate::map::tile::DecorationMutationMessage>,
     mut actors_query: Query<(
         Entity,
         &mut Position,
@@ -476,13 +535,15 @@ pub fn handle_movement(
         Has<Chest>,
         Has<Machine>,
         Option<&MovementMode>,
+        Has<Destructible>,
     ), (Without<TileMarker>, Without<Item>)>,
+    mut status_query: Query<&mut crate::game::magic::StatusEffects>,
     map: Res<Map>,
     faction_matrix: Res<FactionMatrix>,
 ) {
     for intent in intents.read() {
-        let Ok((_, pos, is_player, actor_faction, _, _, _, movement_mode)) = actors_query.get(intent.entity) else {
-            finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
+        let Ok((_, pos, is_player, actor_faction, _, _, _, movement_mode, _)) = actors_query.get(intent.entity) else {
+            finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST, ActionKind::Movement);
             continue;
         };
         let actor_faction = actor_faction.cloned();
@@ -493,25 +554,24 @@ pub fn handle_movement(
 
         match result {
             BumpResult::Empty => {
-                if let Ok((_, mut pos, _, _, _, _, _, _)) = actors_query.get_mut(intent.entity) {
+                if let Ok((_, mut pos, _, _, _, _, _, _, _)) = actors_query.get_mut(intent.entity) {
                     pos.x = target_pt.x;
                     pos.y = target_pt.y;
                 }
                 // Decoration movement cost modifier
                 let idx = map.xy_idx(target_pt.x, target_pt.y);
-                let mut move_cost = if idx < map.tiles.len() {
-                    match map.tiles[idx].decoration {
-                        crate::map::tile::Decoration::Cobweb => {
-                            if is_player {
-                                log_writer.write(GameLogMessage("You struggle through thick cobwebs!".to_string()));
-                            }
-                            BASE_ACTION_COST * 2
-                        }
-                        _ => BASE_ACTION_COST,
-                    }
+                let dec_multiplier = if idx < map.tiles.len() {
+                    map.tiles[idx].decoration.movement_cost()
                 } else {
-                    BASE_ACTION_COST
+                    1.0
                 };
+                let mut move_cost = (BASE_ACTION_COST as f32 * dec_multiplier) as u32;
+                if dec_multiplier > 1.0 && is_player {
+                    let dec_name = map.tiles[idx].decoration.name();
+                    log_writer.write(GameLogMessage(format!(
+                        "The {} slows your movement!", dec_name.to_lowercase()
+                    )));
+                }
                 // Deep water movement cost (Land entities only)
                 if actor_movement_mode == MovementMode::Land
                     && idx < map.tiles.len()
@@ -522,7 +582,46 @@ pub fn handle_movement(
                         log_writer.write(GameLogMessage("The deep water slows your movement.".to_string()));
                     }
                 }
-                finish_turn(&mut commands, &mut finish_writer, intent.entity, move_cost);
+
+                // On-step decoration promotion (trample tall grass, fungus)
+                if idx < map.tiles.len() {
+                    use crate::map::tile::{PromotionTarget, DecorationMutationMessage};
+                    let decoration = map.tiles[idx].decoration;
+
+                    if let Some(target) = decoration.on_step_promotion() {
+                        match target {
+                            PromotionTarget::Decoration(new_dec) => {
+                                decoration_mutation_writer.write(DecorationMutationMessage {
+                                    position: bracket_lib::prelude::Point::new(target_pt.x, target_pt.y),
+                                    new_decoration: new_dec,
+                                });
+                            }
+                            PromotionTarget::Terrain(new_terrain) => {
+                                tile_mutation_writer.write(crate::map::tile::TileMutationMessage {
+                                    position: bracket_lib::prelude::Point::new(target_pt.x, target_pt.y),
+                                    new_terrain,
+                                });
+                            }
+                        }
+                    }
+
+                    // Cobweb entangle: immobilize for 3 turns, web persists until break-free
+                    if decoration.entangles() {
+                        if let Ok(mut effects) = status_query.get_mut(intent.entity) {
+                            if !effects.is_entangled() {
+                                effects.add(crate::game::magic::StatusEffectKind::Entangled, 3);
+                                let msg = if is_player {
+                                    "You are caught in the cobwebs!".to_string()
+                                } else {
+                                    "Something is caught in the cobwebs!".to_string()
+                                };
+                                log_writer.write(GameLogMessage(msg));
+                            }
+                        }
+                    }
+                }
+
+                finish_turn(&mut commands, &mut finish_writer, intent.entity, move_cost, ActionKind::Movement);
             }
             BumpResult::Door(door_pos) => {
                 open_door_writer.write(OpenDoorIntent {
@@ -530,6 +629,13 @@ pub fn handle_movement(
                     door_pos,
                 });
                 // ActionGuard cleared by handle_door_open via finish_turn.
+            }
+            BumpResult::LockedDoor(door_pos) => {
+                unlock_door_writer.write(UnlockDoorIntent {
+                    entity: intent.entity,
+                    door_pos,
+                });
+                // ActionGuard cleared by handle_unlock_door via finish_turn/free_turn.
             }
             BumpResult::HostileEntity(target) => {
                 melee_writer.write(MeleeIntent {
@@ -556,7 +662,7 @@ pub fn handle_movement(
                 if is_player {
                     free_turn(&mut commands, &mut free_writer, intent.entity);
                 } else {
-                    finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
+                    finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST, ActionKind::Movement);
                 }
             }
         }
@@ -595,7 +701,7 @@ pub fn handle_melee(
             .map(|props| (BASE_ACTION_COST as f32 * props.attack_speed).round() as u32)
             .unwrap_or(BASE_ACTION_COST);
 
-        finish_turn(&mut commands, &mut finish_writer, intent.attacker, attack_cost);
+        finish_turn(&mut commands, &mut finish_writer, intent.attacker, attack_cost, ActionKind::Attack);
     }
 }
 
@@ -605,7 +711,7 @@ pub fn handle_wait(
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
 ) {
     for intent in intents.read() {
-        finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
+        finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST, ActionKind::Movement);
     }
 }
 
@@ -620,7 +726,93 @@ pub fn handle_door_open(
             position: intent.door_pos,
             new_terrain: TerrainType::OpenDoor,
         });
-        finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
+        finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST, ActionKind::Movement);
+    }
+}
+
+/// Handles bumping a LockedDoor tile. Searches the player's inventory for a matching
+/// Key component. If found, consumes the key, converts the door to OpenDoor, and costs
+/// one turn. If not found, logs a message and does not consume a turn.
+pub fn handle_unlock_door(
+    mut commands: Commands,
+    mut intents: MessageReader<UnlockDoorIntent>,
+    mut finish_writer: MessageWriter<ActionFinishedEvent>,
+    mut free_writer: MessageWriter<FreeActionEvent>,
+    mut tile_mutation_writer: MessageWriter<TileMutationMessage>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+    mut inventory_query: Query<&mut Inventory>,
+    key_query: Query<&Key>,
+    locked_door_query: Query<(Entity, &Position, &LockedDoorData)>,
+    player_query: Query<Entity, With<Player>>,
+) {
+    for intent in intents.read() {
+        // Only the player can unlock doors via bump
+        let Ok(player_entity) = player_query.single() else {
+            finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST, ActionKind::Movement);
+            continue;
+        };
+        if intent.entity != player_entity {
+            // Non-player entities treat locked doors as walls
+            finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST, ActionKind::Movement);
+            continue;
+        }
+
+        // Find the LockedDoorData entity at this position to get the key name
+        let door_key_name = locked_door_query.iter().find_map(|(_, pos, data)| {
+            if pos.x == intent.door_pos.x && pos.y == intent.door_pos.y {
+                Some(data.key_name.clone())
+            } else {
+                None
+            }
+        });
+
+        let Some(required_key) = door_key_name else {
+            // No LockedDoorData entity found — treat as a generic locked door
+            log_writer.write(GameLogMessage("This door is locked. You need a key.".to_string()));
+            free_turn(&mut commands, &mut free_writer, intent.entity);
+            continue;
+        };
+
+        // Search player inventory for a matching key
+        let Ok(inventory) = inventory_query.get(player_entity) else {
+            log_writer.write(GameLogMessage("This door is locked. You need a key.".to_string()));
+            free_turn(&mut commands, &mut free_writer, intent.entity);
+            continue;
+        };
+
+        let matching_key = inventory.items.iter().find(|&&item_entity| {
+            key_query.get(item_entity).is_ok_and(|k| k.key_name == required_key)
+        }).copied();
+
+        if let Some(key_entity) = matching_key {
+            let key_display = required_key.clone();
+
+            // Remove key from inventory and despawn it
+            if let Ok(mut inv) = inventory_query.get_mut(player_entity) {
+                inv.items.retain(|&e| e != key_entity);
+            }
+            commands.entity(key_entity).despawn();
+
+            // Convert door to OpenDoor
+            tile_mutation_writer.write(TileMutationMessage {
+                position: intent.door_pos,
+                new_terrain: TerrainType::OpenDoor,
+            });
+
+            // Despawn the LockedDoorData marker entity
+            for (door_entity, pos, _) in locked_door_query.iter() {
+                if pos.x == intent.door_pos.x && pos.y == intent.door_pos.y {
+                    commands.entity(door_entity).despawn();
+                    break;
+                }
+            }
+
+            log_writer.write(GameLogMessage(format!("You unlock the door with the {}.", key_display)));
+            finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST, ActionKind::Movement);
+        } else {
+            log_writer.write(GameLogMessage("This door is locked. You need a key.".to_string()));
+            free_turn(&mut commands, &mut free_writer, intent.entity);
+        }
     }
 }
 
@@ -741,7 +933,7 @@ pub fn handle_open_chest(
 
     for intent in intents.read() {
         let Ok(chest_pos) = chest_query.get(intent.chest_entity) else {
-            finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
+            finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST, ActionKind::Movement);
             continue;
         };
         let pos = *chest_pos;
@@ -751,12 +943,12 @@ pub fn handle_open_chest(
 
         // Pick random items from the spawn table.
         let Some(spawn_table) = item_spawn_tables.get(&item_spawn_table_handle.0) else {
-            finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
+            finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST, ActionKind::Movement);
             continue;
         };
 
         let Some(item_manifest) = item_manifests.get(&item_manifest_handle.0) else {
-            finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
+            finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST, ActionKind::Movement);
             continue;
         };
 
@@ -771,7 +963,7 @@ pub fn handle_open_chest(
             if is_player {
                 log_writer.write(GameLogMessage("You open the chest but it's empty!".to_string()));
             }
-            finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
+            finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST, ActionKind::Movement);
             continue;
         }
 
@@ -861,7 +1053,7 @@ pub fn handle_open_chest(
             }
         }
 
-        finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST);
+        finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST, ActionKind::Movement);
     }
 }
 

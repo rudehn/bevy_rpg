@@ -60,6 +60,10 @@ impl StartPointBuilder {
         if build_data.map.depth() > 1 {
             build_data.map.set_tile(start_pos, TerrainType::UpStairs);
             build_data.map.set_liquid(start_pos, crate::map::tile::LiquidType::None);
+            bevy::log::info!(
+                "StartPointBuilder: placed UpStairs at ({}, {}) on floor {}",
+                start_pos.x, start_pos.y, build_data.map.depth()
+            );
         }
     }
 }

@@ -5,17 +5,16 @@ use crate::game::camera::UiCamera;
 use crate::game::{
     AppState,
     combat::{Health, HealthRegen},
-    magic::{
-        ActiveSpells, SpellCooldowns, StatusEffects,
-    },
-    stats::Mana,
+    magic::StatusEffects,
 };
 use crate::map::dungeon::Floor;
 use crate::player::Player;
 
 pub mod character_info;
 pub mod cheat_menu;
+pub mod enchant_select;
 pub mod game_log;
+pub mod staff_select;
 pub mod hover_info;
 pub mod inventory;
 pub mod log_history;
@@ -23,7 +22,6 @@ pub mod menu;
 pub mod modal;
 pub mod monster_info;
 pub mod nearby;
-pub mod spells;
 
 use character_info::CharacterInfoPlugin;
 use cheat_menu::CheatMenuPlugin;
@@ -31,7 +29,6 @@ use inventory::InventoryPlugin;
 use log_history::LogHistoryPlugin;
 use menu::MenuPlugin;
 use nearby::{NearbyListRoot, NearbyPlugin};
-use spells::SpellsPlugin;
 use game_log::{
     GameLog, GameLogMessage, GameLogSettings, add_log_message_system, game_log_input_system,
     spawn_game_log_ui, update_game_log_ui,
@@ -53,14 +50,7 @@ pub struct PlayerHealthBar;
 pub struct PlayerHealthBarBackground;
 
 #[derive(Component)]
-pub struct PlayerManaText;
-#[derive(Component)]
-pub struct PlayerManaBar;
-#[derive(Component)]
 pub struct FloorDepthText;
-/// Marker for a spell slot label in the HUD. Contains 0-based slot index.
-#[derive(Component)]
-pub struct SpellSlotHudLabel(pub usize);
 
 /// Container for player status effect icons in the HUD.
 /// Stores a snapshot of the last rendered effect count to avoid per-frame rebuilds.
@@ -152,44 +142,6 @@ fn spawn_player_stats_ui(
                     ));
                 });
 
-            // Mana Text
-            parent.spawn((
-                Text::new("Mana: ??/??"),
-                TextFont {
-                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                    font_size: 18.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(0.4, 0.6, 1.0)),
-                Node { margin: UiRect::top(Val::Px(8.0)), ..default() },
-                PlayerManaText,
-            ));
-
-            // Mana Bar
-            parent
-                .spawn((
-                    Node {
-                        width: Val::Percent(100.0),
-                        height: Val::Px(14.0),
-                        border: UiRect::all(Val::Px(1.0)),
-                        margin: UiRect::top(Val::Px(4.0)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.1, 0.1, 0.3)),
-                    BorderColor::all(Color::WHITE),
-                ))
-                .with_children(|parent| {
-                    parent.spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Percent(100.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.2, 0.4, 0.9)),
-                        PlayerManaBar,
-                    ));
-                });
-
             // Floor depth
             parent.spawn((
                 Text::new("Floor: 1"),
@@ -217,32 +169,6 @@ fn spawn_player_stats_ui(
                 PlayerStatusEffectsContainer { last_count: 0, last_hash: 0 },
             ));
 
-            // Spell slots header
-            parent.spawn((
-                Text::new("— SPELLS —"),
-                TextFont {
-                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                    font_size: 13.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(0.4, 0.4, 0.55)),
-                Node { margin: UiRect::top(Val::Px(10.0)), ..default() },
-            ));
-
-            // Spell slots 1–6
-            for i in 0..6 {
-                parent.spawn((
-                    Text::new(format!("[{}] ---", i + 1)),
-                    TextFont {
-                        font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                        font_size: 13.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.4, 0.4, 0.4)),
-                    SpellSlotHudLabel(i),
-                ));
-            }
-
             // Nearby entities container — populated each turn by NearbyPlugin
             parent.spawn((
                 Node {
@@ -268,15 +194,6 @@ fn spawn_player_stats_ui(
             ));
             parent.spawn((
                 Text::new("[I] Inventory"),
-                TextFont {
-                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                    font_size: 14.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(0.55, 0.55, 0.55)),
-            ));
-            parent.spawn((
-                Text::new("[S] Spells"),
                 TextFont {
                     font: asset_server.load("fonts/Macondo-Regular.ttf"),
                     font_size: 14.0,
@@ -318,21 +235,6 @@ fn update_player_stats_ui(
     }
 }
 
-fn update_player_mana_ui(
-    player_query: Query<&Mana, (With<Player>, Changed<Mana>)>,
-    mut mana_text_query: Query<&mut Text, With<PlayerManaText>>,
-    mut mana_bar_query: Query<&mut Node, With<PlayerManaBar>>,
-) {
-    let Ok(mana) = player_query.single() else { return };
-    let pct = if mana.max > 0 { mana.current as f32 / mana.max as f32 } else { 0.0 };
-    if let Ok(mut text) = mana_text_query.single_mut() {
-        text.0 = format!("Mana: {}/{}", mana.current, mana.max);
-    }
-    if let Ok(mut node) = mana_bar_query.single_mut() {
-        node.width = Val::Percent(pct.clamp(0.0, 1.0) * 100.0);
-    }
-}
-
 fn update_floor_ui(
     floor: Res<Floor>,
     mut text_query: Query<&mut Text, With<FloorDepthText>>,
@@ -340,43 +242,6 @@ fn update_floor_ui(
     if !floor.is_changed() { return }
     if let Ok(mut text) = text_query.single_mut() {
         text.0 = format!("Floor: {}", floor.0);
-    }
-}
-
-fn update_spell_slots_ui(
-    player_query: Query<(&ActiveSpells, &Mana, Option<&SpellCooldowns>), With<Player>>,
-    spell_registry_handle: Res<crate::assets::SpellRegistryHandle>,
-    spell_registries: Res<Assets<crate::game::spells::SpellRegistry>>,
-    mut slot_labels: Query<(&mut Text, &mut TextColor, &SpellSlotHudLabel)>,
-) {
-    let Ok((active, mana, cooldowns)) = player_query.single() else { return };
-    let registry = spell_registries.get(&spell_registry_handle.0);
-
-    for (mut text, mut color, label) in &mut slot_labels {
-        let i = label.0;
-        if let Some(Some(spell_id)) = active.slots.get(i) {
-            let spell = registry.and_then(|r| r.spells.get(spell_id));
-            let name = spell.map(|s| s.name.as_str()).unwrap_or(spell_id.as_str());
-            let cost = spell.map(|s| s.mana_cost).unwrap_or(0);
-            let cd_remaining = cooldowns
-                .and_then(|cd| cd.cooldowns.get(spell_id).copied())
-                .unwrap_or(0);
-            let on_cd = cd_remaining > 0;
-
-            if on_cd {
-                text.0 = format!("[{}] {} ({}t)", i + 1, name, cd_remaining);
-                color.0 = Color::srgb(0.5, 0.35, 0.35);
-            } else if mana.current < cost {
-                text.0 = format!("[{}] {} ({}mp)", i + 1, name, cost);
-                color.0 = Color::srgb(0.35, 0.35, 0.6);
-            } else {
-                text.0 = format!("[{}] {} ({}mp)", i + 1, name, cost);
-                color.0 = Color::srgb(0.5, 0.75, 1.0);
-            }
-        } else {
-            text.0 = format!("[{}] ---", i + 1);
-            color.0 = Color::srgb(0.3, 0.3, 0.3);
-        }
     }
 }
 
@@ -486,8 +351,9 @@ impl Plugin for UiPlugin {
             .add_message::<GameLogMessage>()
             .add_plugins((
                 CharacterInfoPlugin, CheatMenuPlugin, InventoryPlugin, LogHistoryPlugin,
-                MenuPlugin, NearbyPlugin, SpellsPlugin, monster_info::MonsterInfoPlugin,
-                hover_info::HoverInfoPlugin,
+                MenuPlugin, NearbyPlugin, monster_info::MonsterInfoPlugin,
+                hover_info::HoverInfoPlugin, enchant_select::EnchantSelectPlugin,
+                staff_select::StaffSelectPlugin,
             ))
             .add_systems(
                 OnEnter(AppState::InGame),
@@ -500,9 +366,7 @@ impl Plugin for UiPlugin {
                 Update,
                 (
                     update_player_stats_ui,
-                    update_player_mana_ui,
                     update_floor_ui,
-                    update_spell_slots_ui,
                     update_player_status_effects_ui,
                     add_log_message_system,
                     update_game_log_ui,

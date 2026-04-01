@@ -84,6 +84,9 @@ pub struct MonsterAI {
     pub kites: bool,
     pub kite_distance: u32,
 
+    /// If true, the monster never moves — it only uses abilities/ranged attacks.
+    pub stationary: bool,
+
     /// Runtime chase tracking
     pub chase_distance: u32,
     pub spawn_position: Option<Point>,
@@ -110,6 +113,11 @@ impl MonsterAI {
     #[allow(dead_code)]
     pub fn is_alert(&self) -> bool {
         self.mode != MonsterAIMode::Asleep
+    }
+
+    /// Returns true if this monster is still asleep (hasn't seen the player).
+    pub fn is_asleep(&self) -> bool {
+        self.mode == MonsterAIMode::Asleep
     }
 
     pub fn execute(&mut self, entity: Entity, world: &mut World) {
@@ -147,6 +155,20 @@ impl MonsterAI {
         let surface = |ent: Entity, w: &mut World| {
             w.commands().entity(ent).remove::<crate::components::Submerged>();
         };
+
+        // --- Stationary monsters: only use abilities/ranged, never move ---
+        if self.stationary {
+            if self.mode == MonsterAIMode::Hunting && ctx.is_player_visible {
+                if try_use_ability(entity, ctx.monster_pos, ctx.player_entity, world) {
+                    return;
+                }
+                if try_ranged_attack(entity, ctx.monster_pos, ctx.player_point, ctx.player_entity, world) {
+                    return;
+                }
+            }
+            world.write_message(WaitIntent { entity });
+            return;
+        }
 
         // --- Flee check (highest priority behavior) ---
         // Only flee when the player is visible — a monster that rounds a corner
@@ -434,16 +456,23 @@ pub fn try_stun_skip(entity: Entity, world: &mut World) -> bool {
     let Some(effects) = world.get::<StatusEffects>(entity) else {
         return false;
     };
-    if !effects.is_stunned() {
+    let is_entangled = effects.is_entangled();
+    if !effects.is_stunned() && !is_entangled {
         return false;
     }
     let name = world
         .get::<crate::components::Name>(entity)
         .map(|n| n.0.clone())
         .unwrap_or_else(|| "Something".to_string());
-    world.write_message(crate::ui::game_log::GameLogMessage(format!(
-        "{} is stunned and cannot act!", name
-    )));
+    if is_entangled {
+        world.write_message(crate::ui::game_log::GameLogMessage(format!(
+            "{} struggles against the cobwebs!", name
+        )));
+    } else {
+        world.write_message(crate::ui::game_log::GameLogMessage(format!(
+            "{} is stunned and cannot act!", name
+        )));
+    }
     if let Some(pos) = world.get::<Position>(entity) {
         let world_pos = crate::game::particles::grid_to_world(pos.x, pos.y);
         world.write_message(crate::game::particles::ParticleRequest::FloatingText {

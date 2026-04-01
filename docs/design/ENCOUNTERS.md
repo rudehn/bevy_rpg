@@ -15,6 +15,11 @@ Three decoupled layers drive the system:
 All encounters appear on **all floors**. The dungeon should feel alive and
 worth exploring from floor 1.
 
+Machines should always balance **risk vs. reward**. Every encounter the player
+finds should present a clear cost (danger, resource expenditure) and a clear
+payoff (loot, shortcuts, map control). The best machines make the player pause
+and plan.
+
 ---
 
 ## Layer 1: Hordes
@@ -122,6 +127,23 @@ Machines find chokepoints in the dungeon's topology, gate them, and populate
 the interior using hordes resolved by **tag**. Machines can contain
 **sub-machines** for nested encounters.
 
+### Design Philosophy
+
+Machines are the dungeon's storytelling engine. Each machine is a self-contained
+encounter that the player discovers, evaluates, and decides whether to engage.
+The best machines are:
+
+- **Composable** — Machines can contain sub-machines. A goblin fort contains a
+  locked treasury. A monster den has a hidden back room with better loot.
+- **Recursive** — Sub-machines follow the same rules as top-level machines.
+  They find chokepoints, gate them, and populate interiors. This enables
+  arbitrary nesting depth.
+- **Risk vs. reward** — Every machine presents a clear tradeoff. A locked vault
+  has two chests but a guardian inside. A hidden armory is free loot but takes
+  exploration to find.
+- **Optional** — The player can always find the stairs without engaging any
+  machine. Machines reward exploration, they don't punish avoidance.
+
 ### Tag Resolution
 
 At placement time, for each horde slot in a machine:
@@ -132,8 +154,7 @@ At placement time, for each horde slot in a machine:
 5. Log the resolution: `"Monster Den floor 8: slot 'guard' -> goblin_squad"`
 
 **All slots are required.** If any slot has no eligible horde on this floor,
-the machine does not place. The same horde can be picked for multiple slots
-(doubling up is fine).
+the machine does not place. The same horde can be picked for multiple slots.
 
 ### Placement Constraints
 
@@ -146,7 +167,6 @@ the machine does not place. The same horde can be picked for multiple slots
 |------|-------------|
 | Open | Normal door at the chokepoint |
 | Locked | Locked door — key placed elsewhere on the floor |
-| Hidden | Hidden door — discovered by search/proximity |
 | Guardian | Monster placed at the gate (no door change) |
 
 ### Interior Preparation
@@ -190,8 +210,7 @@ gating + population.
 |--------|---------------|
 | 1-3 | 2-3 |
 | 4-6 | 2-4 |
-| 7-9 | 3-5 |
-| 10 | Special (Tyrant floor) |
+| 7-10 | 3-5 |
 
 ---
 
@@ -253,7 +272,7 @@ items: [chest (DeepInterior), chest (DeepInterior)]
 
 **Hidden Armory**
 ```
-floors: 2-10, gate: Hidden, seclusion: 5-999, interior: 5-20, prep: Purge
+floors: 2-10, gate: Locked ("Armory Key"), seclusion: 5-999, interior: 5-20, prep: Purge
 hordes: (none — no tag requirements, always places)
 items: [chest (DeepInterior)]
 ```
@@ -285,7 +304,7 @@ items: [chest (DeepInterior)]
 
 **Fungal Grotto**
 ```
-floors: 3-9, gate: Hidden, seclusion: 15-999, interior: 10-40
+floors: 3-9, gate: Open, seclusion: 15-999, interior: 10-40
 fill_decoration: Fungus
 hordes:
   - tag: threat (Random, roam)
@@ -323,11 +342,48 @@ items: [chest (DeepInterior)]
 
 **Ambush Room**
 ```
-floors: 3-8, gate: Hidden, seclusion: 10-999, interior: 8-25
+floors: 3-8, gate: Guardian, seclusion: 10-999, interior: 8-25
 hordes:
   - tag: ambush (AlongWalls, guard)
 items: [chest (Center)]
 ```
+
+---
+
+## Chests
+
+All items are found in chests. Chests are never randomly scattered — they are
+always placed deliberately by machines, prefabs, or the item spawner in
+interesting locations.
+
+Chests are placed by machines and prefabs only. There is no standalone chest
+spawner — all loot is deliberately placed as part of encounters.
+
+### Chest Placement
+
+- **Inside machines** — the reward for clearing an encounter
+- **Guarded** — a chest with a guardian monster nearby
+- **Trapped** — opening triggers an effect (poison gas, alarm, explosion)
+- **Hidden** — behind hidden doors or in secluded nooks
+- **In difficult terrain** — surrounded by deep water or near lava
+
+### Trapped Chests
+
+| Trap | Effect | Floor Range |
+|------|--------|-------------|
+| Poison Gas | 2d4 poison damage in 3x3 area | 2-10 |
+| Alarm | Wakes all sleeping monsters within 15 tiles | 1-10 |
+| Explosion | 2d6 fire damage in 3x3 area | 4-10 |
+
+Trap chance scales with floor depth: 10% on floor 1, up to 40% on floor 10.
+
+Only chests placed by the Trapped Chest machine blueprint are trapped. Chests
+in other machines and prefabs are always safe.
+
+Trapped chests have a **subtle visual tell** (different sprite tint or detail)
+that is always visible — no perception check required. Attentive players who
+learn the tell can avoid traps entirely. The tell does not reveal which trap
+type is on the chest.
 
 ---
 
@@ -370,44 +426,14 @@ Machines with `Locked` gates create a lock-and-key puzzle.
 - Not found: "This door is locked. You need a key."
 - Keys are regular inventory items (pickable, droppable, not equippable)
 
-## Shrines
-
-Shrines use the machine system with small-region constraints:
-- Targets gated regions of **3-25 tiles** (nooks and alcoves)
-- Not within 10 tiles of player start
-- **3 shrines per floor** (stat + spell shrines share budget)
-- 30% chance for a guardian near the shrine gate
-
-**Stat Shrines** — cost essence, grant permanent bonuses. See TYRANT.md.
-**Spell Shrines** — cost essence, teach a visible spell. See SPELLS.md.
-
-## Corruption Sites
-
-Corruption Sites are deferred. They will be revisited once the core machine
-system is implemented and tested. The current concept (3 per run, Aspect
-Champions, Corruption Altars) is documented in TYRANT.md but not finalized.
-
 ## Design Notes
 
 - **Three decoupled layers.** Hordes define monster groups. The spawn table
   controls floor eligibility. Machines compose hordes by tag. Each layer can
   be edited independently.
 - **Tag resolution is logged.** Every machine placement logs which hordes were
-  resolved for each slot. Debugging is: check the log, check horde_spawns for
-  this floor, check which hordes have this tag.
+  resolved for each slot.
 - **Sub-machines enable depth.** A goblin fort can contain a locked treasury.
   A monster den can have a hidden back room. Composition replaces complexity.
 - **All slots required.** If a machine can't fill all its tag slots on this
-  floor, it doesn't place. This guarantees encounters are always complete —
-  no half-populated rooms.
-- **Coverage validation.** Use `tools/encounter_coverage.py` to verify all
-  machines have eligible hordes across their floor ranges.
-
-## Open Questions
-
-1. **Sub-machine depth limit** — Should sub-machines be allowed to contain
-   their own sub-machines? Or limit nesting to 1 level?
-2. **Machine weight by floor** — Should some blueprints be more likely to
-   appear on certain floors (weighted frequency)?
-3. **Mixed-faction narrative** — When a machine spawns goblins + dragon,
-   should there be any in-world justification, or just let it happen?
+  floor, it doesn't place. This guarantees encounters are always complete.

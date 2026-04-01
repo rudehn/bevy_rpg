@@ -39,6 +39,7 @@ pub struct OnBeingHitTriggerMessage {
     #[allow(dead_code)]
     pub final_damage: i32,
     pub source: DamageSource,
+    pub damage_type: DamageType,
 }
 
 // =====================================================================
@@ -97,6 +98,12 @@ pub struct Enrage {
 pub struct ExplodeOnDeath {
     pub damage: i32,
     pub radius: i32,
+    #[serde(default = "default_fire_damage_type")]
+    pub damage_type: DamageType,
+}
+
+fn default_fire_damage_type() -> DamageType {
+    DamageType::Fire
 }
 
 /// On death: spawn N monsters at adjacent tiles.
@@ -131,6 +138,16 @@ pub struct Rally {
 pub struct RallyBuff {
     pub armor_bonus: i32,
 }
+
+/// On-being-hit: split into two when hit, if HP is above threshold.
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
+pub struct SplitOnHit {
+    pub min_hp: i32,
+}
+
+/// Marker: entity disguised as a chest. Removed when player is adjacent.
+#[derive(Component, Debug, Clone)]
+pub struct MimicDisguise;
 
 /// Passive aura: enemies within radius deal -25% damage.
 #[derive(Component, Debug, Clone, Serialize, Deserialize)]
@@ -377,7 +394,7 @@ pub fn handle_explode_on_death(
                     attacker: event.target,
                     target: target_entity,
                     final_damage: explode.damage,
-                    damage_type: DamageType::Fire,
+                    damage_type: explode.damage_type,
                     source: DamageSource::Environment,
                 });
             }
@@ -573,6 +590,100 @@ pub fn terrify_aura_system(
     }
 }
 
+/// Split on Hit: when hit (non-fire), spawn a clone adjacent with half HP.
+pub fn handle_split_on_hit(
+    mut messages: MessageReader<OnBeingHitTriggerMessage>,
+    mut commands: Commands,
+    query: Query<(&Name, &Position, &SplitOnHit, &crate::game::combat::Health, &StatusEffects)>,
+    collider_query: Query<&Position, With<crate::components::Collider>>,
+    map: Res<Map>,
+    mut turn_manager: ResMut<crate::game::TurnManager>,
+    monster_manifests: Res<Assets<crate::assets::MonsterManifest>>,
+    monster_manifest_handle: Res<crate::assets::MonsterManifestHandle>,
+    monster_sprite_assets: Res<crate::assets::MonsterSpriteAssets>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+) {
+    for msg in messages.read() {
+        let Ok((name, pos, split, health, status_effects)) = query.get(msg.defender) else { continue; };
+
+        // Don't split from fire damage
+        if msg.damage_type == DamageType::Fire { continue; }
+
+        // Don't split if HP is too low
+        if health.current < split.min_hp { continue; }
+
+        // Find an adjacent walkable, unoccupied tile
+        let occupied: std::collections::HashSet<(i32, i32)> = collider_query
+            .iter()
+            .map(|p| (p.x, p.y))
+            .collect();
+
+        let directions = [(0, -1), (0, 1), (-1, 0), (1, 0), (-1, -1), (1, -1), (-1, 1), (1, 1)];
+        let mut spawn_point = None;
+        for (dx, dy) in &directions {
+            let nx = pos.x + dx;
+            let ny = pos.y + dy;
+            let idx = map.xy_idx(nx, ny);
+            if idx < map.tiles.len() && is_walkable(map.tiles[idx]) && !occupied.contains(&(nx, ny)) {
+                spawn_point = Some(bracket_lib::prelude::Point::new(nx, ny));
+                break;
+            }
+        }
+
+        let Some(point) = spawn_point else { continue; };
+
+        // Clone HP is floor(current / 2)
+        let clone_hp = health.current / 2;
+
+        // Spawn a clone using spawn_monster_by_name
+        if let Some(clone_entity) = crate::game::spawner::spawn_monster_by_name(
+            &mut commands,
+            &name.0,
+            &point,
+            &mut turn_manager,
+            &monster_manifests,
+            &monster_manifest_handle,
+            &monster_sprite_assets,
+            None,
+        ) {
+            // Override clone's HP
+            commands.entity(clone_entity).insert(crate::game::combat::Health {
+                current: clone_hp,
+                max: clone_hp,
+            });
+            // Inherit status effects from the original
+            commands.entity(clone_entity).insert(status_effects.clone());
+        }
+
+        log_writer.write(GameLogMessage(format!("{} splits into two!", name.0)));
+    }
+}
+
+/// Mimic reveal: if a MimicDisguise entity is adjacent to the player, wake it and remove disguise.
+pub fn mimic_reveal_system(
+    mut commands: Commands,
+    mut turn_end: MessageReader<crate::game::turns::TurnEndEvent>,
+    mimic_query: Query<(Entity, &Position, &Name), With<MimicDisguise>>,
+    player_query: Query<&Position, With<crate::player::Player>>,
+    mut ai_query: Query<&mut crate::game::MonsterAI>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+) {
+    for _ in turn_end.read() {
+        let Ok(player_pos) = player_query.single() else { continue; };
+
+        for (entity, mimic_pos, _name) in mimic_query.iter() {
+            let dist = (mimic_pos.x - player_pos.x).abs() + (mimic_pos.y - player_pos.y).abs();
+            if dist <= 1 {
+                commands.entity(entity).remove::<MimicDisguise>();
+                if let Ok(mut ai) = ai_query.get_mut(entity) {
+                    ai.alert_to_position(bracket_lib::prelude::Point::new(player_pos.x, player_pos.y));
+                }
+                log_writer.write(GameLogMessage("The chest was a mimic!".to_string()));
+            }
+        }
+    }
+}
+
 // =====================================================================
 // Plugin
 // =====================================================================
@@ -597,12 +708,15 @@ impl Plugin for AbilitiesPlugin {
                     // On-being-hit handlers
                     handle_rough_body.after(CombatDamageSet),
                     handle_enrage.after(CombatDamageSet),
+                    handle_split_on_hit.after(CombatDamageSet),
                     // On-death handlers
                     handle_explode_on_death.after(CombatDamageSet),
                     handle_summon_on_death.after(CombatDamageSet),
                     // Aura systems (run on turn end)
                     rally_aura_system,
                     terrify_aura_system,
+                    // Mimic reveal (run on turn end)
+                    mimic_reveal_system,
                 )
                     .run_if(in_state(crate::game::AppState::InGame)),
             );

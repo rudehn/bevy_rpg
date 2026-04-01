@@ -4,9 +4,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::{Equipped, FloorEntityMarker, GameEntityMarker, InInventory, Inventory, Item, Name, Position};
 use crate::constants::{BASE_ACTION_COST, UNARMED_DAMAGE, Z_ITEM};
-use crate::game::actions::{finish_turn, ActionFinishedEvent};
+use crate::game::actions::{finish_turn, ActionFinishedEvent, ActionKind};
 use crate::game::effects::Effect;
-use crate::game::stats::Armor;
+use crate::game::enchantment::{display_item_name, Enchantment, ItemArmorRunic, ItemWeaponRunic, RunicIdentified};
+use crate::game::actions::SpeedStats;
+use crate::game::combat::{Damage, Health, HealthRegen};
+use crate::game::stats::{Armor, DamageBonus, Dodge, HitBonus};
 use crate::player::Player;
 use crate::ui::game_log::GameLogMessage;
 
@@ -21,6 +24,7 @@ pub enum ItemKind {
     Ring,
     Amulet,
     Spellbook,
+    Staff,
 }
 
 impl std::fmt::Display for ItemKind {
@@ -32,6 +36,7 @@ impl std::fmt::Display for ItemKind {
             ItemKind::Ring => "Ring",
             ItemKind::Amulet => "Amulet",
             ItemKind::Spellbook => "Spellbook",
+            ItemKind::Staff => "Staff",
         };
         write!(f, "{}", s)
     }
@@ -125,7 +130,40 @@ pub struct ItemProperties {
     pub effect: Option<Effect>,
     /// Range for ranged weapons (> 1 = ranged; 0 or 1 = melee).
     pub weapon_range: u32,
+    /// Attack speed multiplier for weapons (0.5 = half cost / twice as fast, 1.0 = normal).
+    /// Defaults to 1.0 if not specified.
+    #[serde(default = "default_attack_speed")]
+    pub attack_speed: f32,
+    /// Staff effect type (only for Staff items).
+    #[serde(default)]
+    pub staff_effect: Option<crate::game::staves::StaffEffect>,
+    /// Base recharge rate for staves (turns per charge at +0 enchantment).
+    #[serde(default)]
+    pub base_recharge: u32,
+    /// Dodge bonus granted when equipped.
+    #[serde(default)]
+    pub dodge_bonus: i32,
+    /// Flat hit bonus granted when equipped.
+    #[serde(default)]
+    pub hit_bonus: i32,
+    /// Flat damage bonus granted when equipped (from rings/amulets, not weapon dice).
+    #[serde(default)]
+    pub damage_bonus: i32,
+    /// Regen rate bonus granted when equipped.
+    #[serde(default)]
+    pub regen_bonus: i32,
+    /// Max HP bonus granted when equipped.
+    #[serde(default)]
+    pub max_hp_bonus: i32,
+    /// Speed delay modifier when equipped (negative = faster, positive = slower).
+    #[serde(default)]
+    pub delay_modifier: f32,
+    /// Active weapon ability name (e.g. "Backstab", "Riposte").
+    #[serde(default)]
+    pub weapon_ability: Option<String>,
 }
+
+fn default_attack_speed() -> f32 { 1.0 }
 
 // --- Equipment Component ---
 
@@ -240,10 +278,32 @@ pub struct UnequipItemMessage {
 /// Helper: reverses the armor/damage effects of an equipped item.
 fn unapply_item_effects(
     props: &ItemProperties,
+    enchantment: Option<&crate::game::enchantment::Enchantment>,
     armor: &mut Armor,
+    dodge: &mut crate::game::stats::Dodge,
+    hit_bonus: &mut crate::game::stats::HitBonus,
     damage: &mut crate::game::combat::Damage,
+    damage_bonus: &mut crate::game::stats::DamageBonus,
+    health: &mut crate::game::combat::Health,
+    health_regen: &mut crate::game::combat::HealthRegen,
+    speed: &mut crate::game::actions::SpeedStats,
 ) {
     armor.0 -= props.defense;
+    dodge.0 -= props.dodge_bonus;
+    hit_bonus.0 -= props.hit_bonus;
+    damage_bonus.0 -= props.damage_bonus;
+    health.max -= props.max_hp_bonus;
+    health.current = health.current.min(health.max);
+    health_regen.regen_rate -= props.regen_bonus;
+    speed.base_movement_delay -= props.delay_modifier;
+    speed.base_attack_delay -= props.delay_modifier;
+    if let Some(ench) = enchantment {
+        match props.kind {
+            ItemKind::Weapon => { damage_bonus.0 -= ench.level; }
+            ItemKind::Armor => { armor.0 -= ench.level; }
+            _ => {}
+        }
+    }
     if props.kind == ItemKind::Weapon {
         damage.0 = UNARMED_DAMAGE.to_string();
     }
@@ -252,10 +312,32 @@ fn unapply_item_effects(
 /// Helper: applies the armor/damage effects of an equipped item.
 fn apply_item_effects(
     props: &ItemProperties,
+    enchantment: Option<&crate::game::enchantment::Enchantment>,
     armor: &mut Armor,
+    dodge: &mut crate::game::stats::Dodge,
+    hit_bonus: &mut crate::game::stats::HitBonus,
     damage: &mut crate::game::combat::Damage,
+    damage_bonus: &mut crate::game::stats::DamageBonus,
+    health: &mut crate::game::combat::Health,
+    health_regen: &mut crate::game::combat::HealthRegen,
+    speed: &mut crate::game::actions::SpeedStats,
 ) {
     armor.0 += props.defense;
+    dodge.0 += props.dodge_bonus;
+    hit_bonus.0 += props.hit_bonus;
+    damage_bonus.0 += props.damage_bonus;
+    health.max += props.max_hp_bonus;
+    health.current += props.max_hp_bonus;
+    health_regen.regen_rate += props.regen_bonus;
+    speed.base_movement_delay += props.delay_modifier;
+    speed.base_attack_delay += props.delay_modifier;
+    if let Some(ench) = enchantment {
+        match props.kind {
+            ItemKind::Weapon => { damage_bonus.0 += ench.level; }
+            ItemKind::Armor => { armor.0 += ench.level; }
+            _ => {}
+        }
+    }
     if props.kind == ItemKind::Weapon
         && let Some(dmg) = &props.damage {
             damage.0 = dmg.clone();
@@ -268,14 +350,14 @@ pub fn handle_equip_item(
     mut commands: Commands,
     mut messages: MessageReader<EquipItemMessage>,
     mut player_query: Query<
-        (Entity, &mut Equipment, &Inventory, &mut Armor, &mut crate::game::combat::Damage),
+        (Entity, &mut Equipment, &Inventory, &mut Armor, &mut Dodge, &mut HitBonus, &mut Damage, &mut DamageBonus, &mut Health, &mut HealthRegen, &mut SpeedStats),
         With<Player>,
     >,
-    item_query: Query<(&ItemProperties, &Name)>,
+    item_query: Query<(&ItemProperties, &Name, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>)>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
 ) {
-    let Ok((player_entity, mut equipment, inventory, mut armor, mut damage)) =
+    let Ok((player_entity, mut equipment, inventory, mut armor, mut dodge, mut hit_bonus, mut damage, mut damage_bonus, mut health, mut health_regen, mut speed)) =
         player_query.single_mut()
     else {
         return;
@@ -286,7 +368,7 @@ pub fn handle_equip_item(
         if !inventory.items.contains(&msg.item_entity) {
             continue;
         }
-        let Ok((props, name)) = item_query.get(msg.item_entity) else {
+        let Ok((props, name, enchant, weapon_runic, armor_runic, runic_id)) = item_query.get(msg.item_entity) else {
             continue;
         };
 
@@ -312,8 +394,8 @@ pub fn handle_equip_item(
 
         // Unequip whatever is currently in that slot
         if let Some(old_entity) = equipment.get_entity(slot) {
-            if let Ok((old_props, _)) = item_query.get(old_entity) {
-                unapply_item_effects(old_props, &mut armor, &mut damage);
+            if let Ok((old_props, _, old_enchant, _, _, _)) = item_query.get(old_entity) {
+                unapply_item_effects(old_props, old_enchant, &mut armor, &mut dodge, &mut hit_bonus, &mut damage, &mut damage_bonus, &mut health, &mut health_regen, &mut speed);
                 commands.entity(old_entity).remove::<Equipped>();
             } else {
                 warn!("Equipped item entity {:?} in slot '{}' no longer exists; clearing slot.", old_entity, slot);
@@ -324,10 +406,11 @@ pub fn handle_equip_item(
         // Equip the new item
         equipment.set_slot(slot, Some(msg.item_entity));
         commands.entity(msg.item_entity).insert(Equipped);
-        apply_item_effects(props, &mut armor, &mut damage);
+        apply_item_effects(props, enchant, &mut armor, &mut dodge, &mut hit_bonus, &mut damage, &mut damage_bonus, &mut health, &mut health_regen, &mut speed);
 
-        log_writer.write(GameLogMessage(format!("You equip the {}.", name.0)));
-        finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST);
+        let dname = display_item_name(&name.0, enchant, weapon_runic, armor_runic, runic_id);
+        log_writer.write(GameLogMessage(format!("You equip the {}.", dname)));
+        finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST, ActionKind::Movement);
     }
 }
 
@@ -336,14 +419,14 @@ pub fn handle_unequip_item(
     mut commands: Commands,
     mut messages: MessageReader<UnequipItemMessage>,
     mut player_query: Query<
-        (Entity, &mut Equipment, &mut Armor, &mut crate::game::combat::Damage),
+        (Entity, &mut Equipment, &mut Armor, &mut Dodge, &mut HitBonus, &mut Damage, &mut DamageBonus, &mut Health, &mut HealthRegen, &mut SpeedStats),
         With<Player>,
     >,
-    item_query: Query<(&ItemProperties, &Name)>,
+    item_query: Query<(&ItemProperties, &Name, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>)>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
 ) {
-    let Ok((player_entity, mut equipment, mut armor, mut damage)) =
+    let Ok((player_entity, mut equipment, mut armor, mut dodge, mut hit_bonus, mut damage, mut damage_bonus, mut health, mut health_regen, mut speed)) =
         player_query.single_mut()
     else {
         return;
@@ -353,7 +436,7 @@ pub fn handle_unequip_item(
         let Some(slot) = equipment.find_slot(msg.item_entity) else {
             continue;
         };
-        let Ok((props, name)) = item_query.get(msg.item_entity) else {
+        let Ok((props, name, enchant, weapon_runic, armor_runic, runic_id)) = item_query.get(msg.item_entity) else {
             warn!("Equipped item entity {:?} in slot '{}' no longer exists; clearing slot.", msg.item_entity, slot);
             equipment.set_slot(slot, None);
             continue;
@@ -361,10 +444,11 @@ pub fn handle_unequip_item(
 
         equipment.set_slot(slot, None);
         commands.entity(msg.item_entity).remove::<Equipped>();
-        unapply_item_effects(props, &mut armor, &mut damage);
+        unapply_item_effects(props, enchant, &mut armor, &mut dodge, &mut hit_bonus, &mut damage, &mut damage_bonus, &mut health, &mut health_regen, &mut speed);
 
-        log_writer.write(GameLogMessage(format!("You unequip the {}.", name.0)));
-        finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST);
+        let dname = display_item_name(&name.0, enchant, weapon_runic, armor_runic, runic_id);
+        log_writer.write(GameLogMessage(format!("You unequip the {}.", dname)));
+        finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST, ActionKind::Movement);
     }
 }
 
@@ -375,14 +459,14 @@ pub fn handle_drop_item(
     mut commands: Commands,
     mut messages: MessageReader<DropItemMessage>,
     mut player_query: Query<
-        (Entity, &mut Equipment, &mut Inventory, &Position, &mut Armor, &mut crate::game::combat::Damage),
+        (Entity, &mut Equipment, &mut Inventory, &Position, &mut Armor, &mut Dodge, &mut HitBonus, &mut Damage, &mut DamageBonus, &mut Health, &mut HealthRegen, &mut SpeedStats),
         With<Player>,
     >,
-    item_query: Query<(&Name, &ItemProperties, Option<&ItemStack>, &Sprite, &Transform)>,
+    item_query: Query<(&Name, &ItemProperties, Option<&ItemStack>, &Sprite, &Transform, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>)>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
 ) {
-    let Ok((player_entity, mut equipment, mut inv, player_pos, mut armor, mut damage)) =
+    let Ok((player_entity, mut equipment, mut inv, player_pos, mut armor, mut dodge, mut hit_bonus, mut damage, mut damage_bonus, mut health, mut health_regen, mut speed)) =
         player_query.single_mut()
     else {
         return;
@@ -393,8 +477,8 @@ pub fn handle_drop_item(
         if let Some(slot) = equipment.find_slot(msg.item_entity) {
             equipment.set_slot(slot, None);
             commands.entity(msg.item_entity).remove::<Equipped>();
-            if let Ok((_, props, _, _, _)) = item_query.get(msg.item_entity) {
-                unapply_item_effects(props, &mut armor, &mut damage);
+            if let Ok((_, props, _, _, _, enchant, _, _, _)) = item_query.get(msg.item_entity) {
+                unapply_item_effects(props, enchant, &mut armor, &mut dodge, &mut hit_bonus, &mut damage, &mut damage_bonus, &mut health, &mut health_regen, &mut speed);
             }
         }
 
@@ -402,13 +486,14 @@ pub fn handle_drop_item(
             continue;
         };
 
-        let Ok((item_name, item_props, item_stack, item_sprite, item_transform)) =
+        let Ok((item_name, item_props, item_stack, item_sprite, item_transform, item_enchant, item_weapon_runic, item_armor_runic, item_runic_id)) =
             item_query.get(msg.item_entity)
         else {
             continue;
         };
 
-        log_writer.write(GameLogMessage(format!("You drop the {}.", item_name.0)));
+        let dname = display_item_name(&item_name.0, item_enchant, item_weapon_runic, item_armor_runic, item_runic_id);
+        log_writer.write(GameLogMessage(format!("You drop the {}.", dname)));
 
         // For stackable items with count > 1, split off one item to the floor.
         if let Some(stack) = item_stack
@@ -442,7 +527,7 @@ pub fn handle_drop_item(
                     RenderLayers::layer(1),
                 ));
 
-                finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST);
+                finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST, ActionKind::Movement);
                 continue;
             }
 
@@ -455,7 +540,7 @@ pub fn handle_drop_item(
             .insert(FloorEntityMarker)
             .remove::<InInventory>();
 
-        finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST);
+        finish_turn(&mut commands, &mut finish_writer, player_entity, BASE_ACTION_COST, ActionKind::Movement);
     }
 }
 

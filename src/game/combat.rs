@@ -14,13 +14,13 @@ use crate::ui::game_log::GameLogMessage;
 // --- Damage Types & Resistances ---
 
 /// The elemental/physical type of damage dealt.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Reflect)]
 pub enum DamageType {
     #[default]
     Physical,
     Fire,
     Lightning,
-    Necrotic,
+    Poison,
 }
 
 impl DamageType {
@@ -28,7 +28,7 @@ impl DamageType {
         match s.to_lowercase().as_str() {
             "fire" => DamageType::Fire,
             "lightning" => DamageType::Lightning,
-            "necrotic" => DamageType::Necrotic,
+            "poison" => DamageType::Poison,
             _ => DamageType::Physical,
         }
     }
@@ -38,7 +38,7 @@ impl DamageType {
             DamageType::Physical => "physical",
             DamageType::Fire => "fire",
             DamageType::Lightning => "lightning",
-            DamageType::Necrotic => "necrotic",
+            DamageType::Poison => "poison",
         }
     }
 }
@@ -96,6 +96,10 @@ pub struct RegenSuppression(pub u32);
 /// Component for an entity's damage, using dice notation (e.g., "1d6").
 #[derive(Component, Debug)]
 pub struct Damage(pub String);
+
+/// Marker on the player entity: next melee attack costs 0 time (riposte after dodge).
+#[derive(Component, Debug, Clone)]
+pub struct RiposteReady;
 
 
 // --- Messages ---
@@ -165,7 +169,6 @@ pub struct ToggleGodModeMessage {
 pub struct DeathEvent {
     pub attacker: Entity,
     pub target: Entity,
-    pub xp: i32,
 }
 
 // --- Resources ---
@@ -201,17 +204,6 @@ pub fn apply_resistance(damage: i32, resist_percent: i32) -> i32 {
     (damage as f32 * multiplier).round() as i32
 }
 
-/// Apply spirit shield mana absorption. Returns `(remaining_damage, mana_absorbed)`.
-pub fn compute_spirit_shield(damage: i32, current_mana: i32) -> (i32, i32) {
-    let absorbed = damage.min(current_mana);
-    (damage - absorbed, absorbed)
-}
-
-/// Compute XP reward for killing an entity based on its max HP.
-pub fn xp_for_kill(max_hp: i32) -> i32 {
-    max_hp
-}
-
 /// Apply status multipliers to base damage.
 /// `is_enraged`: +50%. `is_terrified`: -25%.
 /// Crits are handled upstream by doubling the damage dice, not here.
@@ -231,11 +223,12 @@ pub fn apply_damage_multipliers(base: i32, is_enraged: bool, is_terrified: bool)
 /// System that handles health regeneration at the end of a global turn cycle.
 fn regen_system(
     mut turn_end_events: MessageReader<TurnEndEvent>,
-    mut query: Query<(&mut Health, &mut HealthRegen, Has<RegenSuppression>)>,
+    mut query: Query<(&mut Health, &mut HealthRegen, Has<RegenSuppression>, Option<&crate::game::magic::StatusEffects>)>,
 ) {
     for _ in turn_end_events.read() {
-        for (mut health, mut regen, is_suppressed) in query.iter_mut() {
-            if is_suppressed {
+        for (mut health, mut regen, is_suppressed, status_effects) in query.iter_mut() {
+            // Suppress regen if entity has RegenSuppression or is Poisoned
+            if is_suppressed || status_effects.is_some_and(|fx| fx.is_poisoned()) {
                 continue;
             }
             if health.current < health.max {
@@ -262,12 +255,14 @@ fn hit_check_system(
     mut log_writer: MessageWriter<GameLogMessage>,
     mut game_rng: ResMut<GameRng>,
     query: Query<(&Name, Option<&Dodge>, Option<&HitBonus>, Has<Player>)>,
+    player_equipment_query: Query<&crate::game::items::Equipment, With<Player>>,
+    weapon_props_query: Query<&crate::game::items::ItemProperties>,
 ) {
     for intent in intents.read() {
         let Ok((attacker_name, _, attacker_hit_bonus, is_player)) = query.get(intent.attacker) else {
             continue;
         };
-        let Ok((target_name, target_dodge, _, _)) = query.get(intent.target) else {
+        let Ok((target_name, target_dodge, _, target_is_player)) = query.get(intent.target) else {
             continue;
         };
 
@@ -296,6 +291,21 @@ fn hit_check_system(
                 attacker: intent.attacker,
                 target: intent.target,
             });
+
+            // Riposte: when the player dodges an attack and has a Riposte weapon,
+            // grant a free melee attack on their next turn.
+            if target_is_player && intent.source == DamageSource::Melee {
+                if let Ok(equipment) = player_equipment_query.get(intent.target) {
+                    if let Some(weapon_entity) = equipment.weapon {
+                        if let Ok(props) = weapon_props_query.get(weapon_entity) {
+                            if props.weapon_ability.as_deref() == Some("Riposte") {
+                                commands.entity(intent.target).insert(RiposteReady);
+                                log_writer.write(GameLogMessage("You prepare a riposte!".to_string()));
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -312,10 +322,14 @@ fn damage_roll_system(
         Option<&crate::game::magic::StatusEffects>,
         Has<crate::game::abilities::Terrified>,
         Option<&DamageBonus>,
+        Has<Player>,
     )>,
+    player_equipment_query: Query<&crate::game::items::Equipment, With<Player>>,
+    weapon_props_query: Query<&crate::game::items::ItemProperties>,
+    target_ai_query: Query<&crate::game::MonsterAI>,
 ) {
     for message in roll_messages.read() {
-        let Ok((damage_dice, status_effects, is_terrified, damage_bonus)) = query.get(message.attacker) else {
+        let Ok((damage_dice, status_effects, is_terrified, damage_bonus, attacker_is_player)) = query.get(message.attacker) else {
             continue;
         };
 
@@ -329,7 +343,25 @@ fn damage_roll_system(
         let bonus = damage_bonus.map(|d| d.0).unwrap_or(0);
 
         let is_enraged = status_effects.map(|e| e.is_enraged()).unwrap_or(false);
-        let raw_damage = apply_damage_multipliers(rolled_damage + bonus, is_enraged, is_terrified);
+        let mut raw_damage = apply_damage_multipliers(rolled_damage + bonus, is_enraged, is_terrified);
+
+        // Backstab: player with Backstab weapon attacking a sleeping monster deals triple damage.
+        if attacker_is_player && message.source == DamageSource::Melee {
+            if let Ok(equipment) = player_equipment_query.get(message.attacker) {
+                if let Some(weapon_entity) = equipment.weapon {
+                    if let Ok(props) = weapon_props_query.get(weapon_entity) {
+                        if props.weapon_ability.as_deref() == Some("Backstab") {
+                            if let Ok(target_ai) = target_ai_query.get(message.target) {
+                                if target_ai.is_asleep() {
+                                    raw_damage *= 3;
+                                    log_writer.write(GameLogMessage("Backstab! Triple damage!".to_string()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         reduction_writer.write(DamageReductionMessage {
             attacker: message.attacker,
@@ -406,15 +438,13 @@ fn damage_application_system(
         &mut Health,
         &Name,
         Has<GodMode>,
-        Option<&crate::game::magic::StatusEffects>,
-        Option<&mut crate::game::stats::Mana>,
         Has<Player>,
     )>,
     query_names: Query<(&Name, Has<Player>)>,
     mut run_stats: ResMut<crate::game::RunStats>,
 ) {
     for message in apply_messages.read() {
-        let Ok((mut target_health, target_name, has_god_mode, status_effects, mut mana, target_is_player)) =
+        let Ok((mut target_health, target_name, has_god_mode, target_is_player)) =
             query_health.get_mut(message.target)
         else {
             continue;
@@ -446,28 +476,8 @@ fn damage_application_system(
             run_stats.last_hit_by = attacker_name.0.clone();
         }
 
-        // Spirit Shield: absorb damage from mana first (1 mana = 1 damage)
-        let has_spirit_shield = status_effects.map(|e| e.has_spirit_shield()).unwrap_or(false);
-        let remaining_damage = if has_spirit_shield {
-            if let Some(ref mut mana) = mana {
-                let (overflow, absorbed) = compute_spirit_shield(message.final_damage, mana.current);
-                mana.current -= absorbed;
-                if absorbed > 0 {
-                    log_writer.write(GameLogMessage(format!(
-                        "{}'s spirit shield absorbs {} damage! ({} mana remaining)",
-                        target_name.0, absorbed, mana.current
-                    )));
-                }
-                overflow
-            } else {
-                message.final_damage
-            }
-        } else {
-            message.final_damage
-        };
-
-        if remaining_damage > 0 {
-            target_health.current -= remaining_damage;
+        if message.final_damage > 0 {
+            target_health.current -= message.final_damage;
             // Suppress HP regen for 5 turns after taking damage
             commands.entity(message.target).insert(RegenSuppression(5));
         }
@@ -486,6 +496,7 @@ fn damage_application_system(
                 defender: message.target,
                 final_damage: message.final_damage,
                 source: message.source,
+                damage_type: message.damage_type,
             });
         }
 
@@ -496,11 +507,9 @@ fn damage_application_system(
         )));
 
         if target_health.current <= 0 {
-            let xp = xp_for_kill(target_health.max);
             death_writer.write(DeathEvent {
                 attacker: message.attacker,
                 target: message.target,
-                xp,
             });
         }
 
@@ -594,7 +603,7 @@ pub fn drop_inventory_on_death(
 /// System that checks for entities with Health <= 0 and handles death.
 pub fn death_system(
     mut commands: Commands,
-    mut query_dead: Query<(Entity, &mut Health, &Name, Option<&Player>, Option<&Monster>)>,
+    mut query_dead: Query<(Entity, &mut Health, &Name, Option<&Player>, Option<&Monster>, Has<crate::components::Destructible>)>,
     mut next_state: ResMut<NextState<AppState>>,
     mut turn_manager: ResMut<TurnManager>,
     mut log_writer: MessageWriter<GameLogMessage>,
@@ -602,7 +611,7 @@ pub fn death_system(
     mut run_summary: ResMut<RunSummary>,
     mut run_stats: ResMut<crate::game::RunStats>,
 ) {
-    for (entity, mut health, name, is_player, is_monster) in query_dead.iter_mut() {
+    for (entity, mut health, name, is_player, is_monster, is_destructible) in query_dead.iter_mut() {
         if health.current <= 0 {
             if is_player.is_some() {
                 // Player died — permadeath: erase the save
@@ -629,6 +638,10 @@ pub fn death_system(
                 commands.entity(entity).despawn();
                 // Remove from turn queue if present
                 turn_manager.turn_queue.retain(|&(e, _)| e != entity);
+            } else if is_destructible {
+                // Destructible prop destroyed (e.g., barricade)
+                log_writer.write(GameLogMessage(format!("The {} crumbles!", name.0.to_lowercase())));
+                commands.entity(entity).despawn();
             }
         }
     }
@@ -729,43 +742,6 @@ mod tests {
         assert_eq!(apply_resistance(10, -50), 15);
     }
 
-    // --- compute_spirit_shield ---
-
-    #[test]
-    fn shield_absorbs_fully_when_mana_sufficient() {
-        let (remaining, absorbed) = compute_spirit_shield(8, 20);
-        assert_eq!(absorbed, 8);
-        assert_eq!(remaining, 0);
-    }
-
-    #[test]
-    fn shield_partial_absorption_when_mana_low() {
-        let (remaining, absorbed) = compute_spirit_shield(10, 3);
-        assert_eq!(absorbed, 3);
-        assert_eq!(remaining, 7);
-    }
-
-    #[test]
-    fn shield_no_absorption_with_zero_mana() {
-        let (remaining, absorbed) = compute_spirit_shield(5, 0);
-        assert_eq!(absorbed, 0);
-        assert_eq!(remaining, 5);
-    }
-
-    // --- xp_for_kill ---
-
-    #[test]
-    fn xp_equals_max_hp() {
-        assert_eq!(xp_for_kill(10), 10);
-        assert_eq!(xp_for_kill(20), 20);
-        assert_eq!(xp_for_kill(100), 100);
-    }
-
-    #[test]
-    fn xp_minimum_for_weakest_enemy() {
-        assert_eq!(xp_for_kill(1), 1);
-    }
-
     // --- apply_damage_multipliers ---
 
     #[test]
@@ -840,7 +816,7 @@ mod tests {
     fn damage_type_from_str() {
         assert_eq!(DamageType::from_str("fire"), DamageType::Fire);
         assert_eq!(DamageType::from_str("LIGHTNING"), DamageType::Lightning);
-        assert_eq!(DamageType::from_str("necrotic"), DamageType::Necrotic);
+        assert_eq!(DamageType::from_str("poison"), DamageType::Poison);
         assert_eq!(DamageType::from_str("unknown"), DamageType::Physical);
         assert_eq!(DamageType::from_str(""), DamageType::Physical);
     }
@@ -868,15 +844,4 @@ mod tests {
         assert_eq!(final_damage, -8);
     }
 
-    #[test]
-    fn full_pipeline_spirit_shield_overflow() {
-        // 20 raw - 5 armor = 15, 0% resistance = 15, shield with 10 mana
-        let after_armor = compute_after_armor(20, 5);
-        let after_resistance = apply_resistance(after_armor, 0);
-        let (remaining, absorbed) = compute_spirit_shield(after_resistance, 10);
-        assert_eq!(after_armor, 15);
-        assert_eq!(after_resistance, 15);
-        assert_eq!(absorbed, 10);
-        assert_eq!(remaining, 5); // 5 HP damage gets through
-    }
 }

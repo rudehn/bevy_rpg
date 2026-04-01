@@ -1,18 +1,6 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-// --- Kept Components ---
-
-/// Mana pool.
-#[derive(Component, Debug, Clone, Reflect, Default)]
-#[reflect(Component)]
-pub struct Mana {
-    pub current: i32,
-    pub max: i32,
-}
-
-// --- New Components ---
-
 /// Flat armor (damage reduction).
 #[derive(Component, Debug, Clone, Reflect, Default, Serialize, Deserialize)]
 #[reflect(Component)]
@@ -39,8 +27,7 @@ pub struct StatsPlugin;
 
 impl Plugin for StatsPlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<Mana>()
-            .register_type::<Armor>()
+        app.register_type::<Armor>()
             .register_type::<Dodge>()
             .register_type::<HitBonus>()
             .register_type::<DamageBonus>();

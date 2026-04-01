@@ -55,6 +55,18 @@ PropManifest(
             ascii_char: "o",
             ascii_fg: "#96783C",
         ),
+        "altar": PropAsset(
+            name: "Altar",
+            sprite: "sprites/props/totem_pole.png#0",
+            is_blocking: true,
+            is_opaque: false,
+            light_radius: Some(20.0),
+            light_color: Some((0.8, 0.9, 1.0)),
+            grid_size: Some((1, 1)),
+            tile_size: Some((447, 447)),
+            ascii_char: "π",
+            ascii_fg: "#C8C8FF",
+        ),
         "chest": PropAsset(
             name: "Chest",
             sprite: "sprites/props/chest.png#0",

@@ -19,9 +19,9 @@ use crate::{
         actions::SpeedStats,
         combat::{Damage, Health, HealthRegen},
         items::Equipment,
-        magic::{ActiveSpells, KnownSpells, ManaRegen, SpellCooldowns, StatusEffects},
+        magic::StatusEffects,
         spawn_item,
-        stats::{Armor, DamageBonus, Dodge, HitBonus, Mana},
+        stats::{Armor, DamageBonus, Dodge, HitBonus},
     },
     map::dungeon::{PlayerSpawnPoint, SpawnDungeonMessage, SpawnDungeonSet, StairCooldown},
     map::map::GRID_SIZE,
@@ -150,16 +150,8 @@ pub fn player_spawn_or_move_system(
                 HitBonus(0),
                 DamageBonus(0),
                 SpeedStats::default(),
-                Mana {
-                    current: 10,
-                    max: 10,
-                },
-                ManaRegen::default(),
             ))
             .insert((
-                KnownSpells::default(),
-                ActiveSpells::with_slots(1),
-                SpellCooldowns::default(),
                 StatusEffects::default(),
                 Faction(FactionKind::player()),
             ))
@@ -212,6 +204,7 @@ fn spawn_starting_items(
             item_manifests,
             item_manifest_handle,
             item_sprite_assets,
+            None,
             None,
         ) {
             commands

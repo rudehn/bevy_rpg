@@ -409,13 +409,21 @@ pub struct MonsterAsset {
     #[serde(default)]
     pub base_dodge: i32,
 
-    /// Action delay multiplier. 1.0 = normal speed, >1.0 = slower, <1.0 = faster.
+    /// Movement delay multiplier. 1.0 = normal speed, >1.0 = slower, <1.0 = faster.
     #[serde(default = "default_delay")]
-    pub delay: f32,
+    pub movement_delay: f32,
+
+    /// Attack delay multiplier. 1.0 = normal speed, >1.0 = slower, <1.0 = faster.
+    #[serde(default = "default_delay")]
+    pub attack_delay: f32,
 
     /// Movement mode controlling how this monster interacts with terrain.
     #[serde(default)]
     pub movement_mode: MovementMode,
+
+    /// If true, the monster never moves — it only uses abilities/ranged attacks.
+    #[serde(default)]
+    pub stationary: bool,
 }
 
 /// Infer the combat role of a monster from its asset data (replaces the old
@@ -452,14 +460,20 @@ pub enum AbilityDef {
     Enrage { threshold_percent: u32 },
 
     // On-death (trigger when this monster dies)
-    ExplodeOnDeath { damage: i32, radius: i32 },
+    ExplodeOnDeath { damage: i32, radius: i32, #[serde(default)] damage_type: Option<String> },
     SummonOnDeath { monster: String, count: u32 },
+
+    // On-being-hit (split)
+    SplitOnHit { min_hp: i32 },
 
     // Passive / aura
     PackTactics,
     WarCry { radius: i32, duration: u32 },
     Rally { radius: i32, armor_bonus: i32 },
     Terrify { radius: i32 },
+
+    // Disguise
+    MimicDisguise,
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
@@ -688,6 +702,30 @@ pub struct ItemAsset {
     /// Whether this item is ammunition (consumed by ranged attacks).
     #[serde(default)]
     pub is_ammo: bool,
+    /// Dodge bonus granted when equipped.
+    #[serde(default)]
+    pub dodge_bonus: i32,
+    /// Flat hit bonus granted when equipped.
+    #[serde(default)]
+    pub hit_bonus: i32,
+    /// Flat damage bonus granted when equipped.
+    #[serde(default)]
+    pub damage_bonus: i32,
+    /// Regen rate bonus granted when equipped.
+    #[serde(default)]
+    pub regen_bonus: i32,
+    /// Max HP bonus granted when equipped.
+    #[serde(default)]
+    pub max_hp_bonus: i32,
+    /// Speed delay modifier when equipped (negative = faster, positive = slower).
+    #[serde(default)]
+    pub delay_modifier: f32,
+    /// Active weapon ability name (e.g. "Backstab", "Riposte").
+    #[serde(default)]
+    pub weapon_ability: Option<String>,
+    /// Whether this item is a quest item required to win the game.
+    #[serde(default)]
+    pub is_quest_item: bool,
     #[serde(default)]
     pub ascii_char: String,
     #[serde(default = "default_white_hex", deserialize_with = "serde_helpers::deserialize_hex_color")]

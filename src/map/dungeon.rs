@@ -184,7 +184,7 @@ fn snapshot_floor(
     map: &Map,
     monster_query: &Query<(&Position, &Name, &crate::game::combat::Health, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>, Has<crate::components::Submerged>), With<Monster>>,
     item_query: &Query<(&Position, &Name, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>, Has<crate::components::Drifting>), (With<Item>, Without<InInventory>)>,
-    prop_query: &Query<(&Position, &Name), With<Prop>>,
+    prop_query: &Query<(&Position, &Name, Option<&crate::components::PropKey>), With<Prop>>,
 ) -> CachedFloor {
     use crate::save::{SavedMonster, SavedItem, SavedProp};
 
@@ -211,7 +211,7 @@ fn snapshot_floor(
             name: name.0.clone(),
             count: stack.map(|s| s.count).unwrap_or(1),
             enchantment: enchant.map(|e| e.level),
-            weapon_runic: weapon_runic.map(|w| w.0),
+            weapon_runic: weapon_runic.map(|w| w.0.clone()),
             armor_runic: armor_runic.map(|a| a.0),
             runic_identified: runic_id.map(|r| r.0),
             staff_effect: staff_data.map(|s| s.effect),
@@ -226,10 +226,12 @@ fn snapshot_floor(
 
     let props = prop_query
         .iter()
-        .map(|(pos, name)| SavedProp {
+        .map(|(pos, name, prop_key)| SavedProp {
             x: pos.x,
             y: pos.y,
-            name: name.0.clone(),
+            // Use the manifest key if available; fall back to display name
+            // for backward compatibility with old saves.
+            name: prop_key.map(|k| k.0.clone()).unwrap_or_else(|| name.0.clone()),
         })
         .collect();
 
@@ -296,6 +298,11 @@ fn player_stair_system(
     floor: Res<Floor>,
     mut down_writer: MessageWriter<MapTransitionMessage>,
     mut up_writer: MessageWriter<AscendStairsMessage>,
+    quest_item_query: Query<(), (With<crate::components::QuestItem>, With<InInventory>)>,
+    mut next_state: ResMut<NextState<AppState>>,
+    mut run_summary: ResMut<crate::game::RunSummary>,
+    run_stats: Res<crate::game::RunStats>,
+    mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     for (entity, pos, has_cooldown) in player_query.iter() {
         if has_cooldown {
@@ -312,6 +319,23 @@ fn player_stair_system(
                 }
                 TerrainType::UpStairs if floor.0 > 1 => {
                     up_writer.write(AscendStairsMessage);
+                }
+                TerrainType::Portal => {
+                    if quest_item_query.iter().next().is_some() {
+                        // Player has the Amulet of Yendor — victory!
+                        *run_summary = crate::game::RunSummary {
+                            floor_reached: floor.0,
+                            cause: "Escaped through the portal with the Amulet of Yendor.".to_string(),
+                            victory: true,
+                            enemies_killed: run_stats.enemies_killed,
+                        };
+                        crate::save::delete_save();
+                        next_state.set(AppState::Victory);
+                    } else {
+                        log_writer.write(GameLogMessage(
+                            "The portal hums with energy, but refuses to let you pass. You sense it requires something...".to_string()
+                        ));
+                    }
                 }
                 _ => {}
             }
@@ -330,7 +354,7 @@ fn map_transition_system(
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
     q_monsters: Query<(&Position, &Name, &crate::game::combat::Health, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>, Has<crate::components::Submerged>), With<Monster>>,
     q_items: Query<(&Position, &Name, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>, Has<crate::components::Drifting>), (With<Item>, Without<InInventory>)>,
-    q_props: Query<(&Position, &Name), With<Prop>>,
+    q_props: Query<(&Position, &Name, Option<&crate::components::PropKey>), With<Prop>>,
     mut turn_manager: ResMut<TurnManager>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
@@ -363,7 +387,7 @@ fn ascend_stairs_system(
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
     q_monsters: Query<(&Position, &Name, &crate::game::combat::Health, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>, Has<crate::components::Submerged>), With<Monster>>,
     q_items: Query<(&Position, &Name, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>, Has<crate::components::Drifting>), (With<Item>, Without<InInventory>)>,
-    q_props: Query<(&Position, &Name), With<Prop>>,
+    q_props: Query<(&Position, &Name, Option<&crate::components::PropKey>), With<Prop>>,
     mut turn_manager: ResMut<TurnManager>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,

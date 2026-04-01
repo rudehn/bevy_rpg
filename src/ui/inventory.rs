@@ -2,6 +2,7 @@ use bevy::prelude::*;
 
 use crate::components::{Equipped, Inventory, Name};
 use crate::game::actions::Action;
+use crate::game::enchantment::{display_item_name, Enchantment, ItemArmorRunic, ItemWeaponRunic, RunicIdentified};
 use crate::game::items::{Equipment, ItemKind, ItemProperties, ItemStack, SelectedInventorySlot};
 use crate::game::actions::PendingPlayerAction;
 use crate::game::turns::TurnState;
@@ -65,7 +66,7 @@ fn spawn_inventory_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
     spawn_modal(&mut commands, OnInventoryScreen, &font, &ModalConfig {
         title: "INVENTORY",
         title_color: Color::srgb(1.0, 0.84, 0.0),
-        footer: "↑/↓ Navigate  |  E - Equip/Unequip  |  U - Use  |  D - Drop  |  I/Esc - Close",
+        footer: "↑/↓ Navigate  |  PgUp/PgDn Jump  |  E - Equip  |  U - Use  |  D - Drop  |  I/Esc - Close",
         ..Default::default()
     }, |panel, font| {
         panel
@@ -120,7 +121,7 @@ fn update_inventory_ui(
     mut next_ingame: ResMut<NextState<InGameState>>,
     mut next_turn: ResMut<NextState<TurnState>>,
     inv_query: Query<(&Inventory, &Equipment), With<Player>>,
-    item_query: Query<(&Name, &ItemProperties, Has<Equipped>, Option<&ItemStack>)>,
+    item_query: Query<(&Name, &ItemProperties, Has<Equipped>, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>)>,
     mut slot_texts: Query<(&mut Text, &mut TextColor, &InventorySlotText)>,
     mut detail_text: Query<
         (&mut Text, &mut TextColor),
@@ -132,6 +133,19 @@ fn update_inventory_ui(
     };
     let item_count = inv.items.len();
 
+    // Build display-order: equipped items first, then unequipped
+    let mut display_order: Vec<Entity> = Vec::with_capacity(item_count);
+    for &e in &inv.items {
+        if item_query.get(e).is_ok_and(|(_, _, is_eq, _, _, _, _, _)| is_eq) {
+            display_order.push(e);
+        }
+    }
+    for &e in &inv.items {
+        if item_query.get(e).is_ok_and(|(_, _, is_eq, _, _, _, _, _)| !is_eq) {
+            display_order.push(e);
+        }
+    }
+
     // Navigation (no turn cost, stays in inventory)
     if (keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyK))
         && item_count > 0 && slot.0 > 0 {
@@ -141,11 +155,25 @@ fn update_inventory_ui(
         && item_count > 0 && slot.0 + 1 < item_count {
             slot.0 += 1;
         }
+    // Page Up/Down — jump 5 items
+    if keys.just_pressed(KeyCode::PageUp) && item_count > 0 {
+        slot.0 = slot.0.saturating_sub(5);
+    }
+    if keys.just_pressed(KeyCode::PageDown) && item_count > 0 {
+        slot.0 = (slot.0 + 5).min(item_count.saturating_sub(1));
+    }
+    // Home/End — jump to first/last
+    if keys.just_pressed(KeyCode::Home) && item_count > 0 {
+        slot.0 = 0;
+    }
+    if keys.just_pressed(KeyCode::End) && item_count > 0 {
+        slot.0 = item_count.saturating_sub(1);
+    }
 
-    // Equip / Unequip — costs a turn
+    // Equip / Unequip — costs a turn, stays in inventory
     if keys.just_pressed(KeyCode::KeyE)
-        && let Some(&item_entity) = inv.items.get(slot.0)
-            && let Ok((_, props, is_equipped, _)) = item_query.get(item_entity)
+        && let Some(&item_entity) = display_order.get(slot.0)
+            && let Ok((_, props, is_equipped, _, _, _, _, _)) = item_query.get(item_entity)
                 && Equipment::slot_for(props).is_some() {
                     let action = if is_equipped {
                         Action::UnequipItem { item: item_entity }
@@ -153,27 +181,23 @@ fn update_inventory_ui(
                         Action::EquipItem { item: item_entity }
                     };
                     pending.0 = Some(action);
-                    next_ingame.set(InGameState::Running);
                     next_turn.set(TurnState::Processing);
-                    return;
                 }
 
-    // Drop — costs a turn
+    // Drop — costs a turn, stays in inventory
     if keys.just_pressed(KeyCode::KeyD)
-        && let Some(&item_entity) = inv.items.get(slot.0) {
+        && let Some(&item_entity) = display_order.get(slot.0) {
             if slot.0 > 0 && slot.0 >= item_count.saturating_sub(1) {
                 slot.0 -= 1;
             }
             pending.0 = Some(Action::DropItem { item: item_entity });
-            next_ingame.set(InGameState::Running);
             next_turn.set(TurnState::Processing);
-            return;
         }
 
-    // Use / consume — costs a turn (consumables only)
+    // Use / consume — costs a turn, exits inventory (may trigger sub-screen like enchant)
     if keys.just_pressed(KeyCode::KeyU)
-        && let Some(&item_entity) = inv.items.get(slot.0)
-            && let Ok((_, props, _, _)) = item_query.get(item_entity)
+        && let Some(&item_entity) = display_order.get(slot.0)
+            && let Ok((_, props, _, _, _, _, _, _)) = item_query.get(item_entity)
                 && (props.kind == ItemKind::Consumable || props.kind == ItemKind::Spellbook) {
                     if slot.0 > 0 && slot.0 >= item_count.saturating_sub(1) {
                         slot.0 -= 1;
@@ -187,15 +211,16 @@ fn update_inventory_ui(
     // Update slot list
     for (mut text, mut color, slot_marker) in &mut slot_texts {
         let i = slot_marker.0;
-        if let Some(&item_entity) = inv.items.get(i) {
-            if let Ok((name, props, is_equipped, stack)) = item_query.get(item_entity) {
+        if let Some(&item_entity) = display_order.get(i) {
+            if let Ok((name, props, is_equipped, stack, enchant, weapon_runic, armor_runic, runic_id)) = item_query.get(item_entity) {
+                let display_name = display_item_name(&name.0, enchant, weapon_runic, armor_runic, runic_id);
                 let equipped_tag = if is_equipped { " [E]" } else { "" };
                 let stack_tag = match stack {
                     Some(s) if s.count > 1 => format!(" (x{})", s.count),
                     _ => String::new(),
                 };
-                text.0 = format!("{:2}. {}{}{}", i + 1, name.0, stack_tag, equipped_tag);
-                color.0 = props.rarity.color();
+                text.0 = format!("{:2}. {}{}{}", i + 1, display_name, stack_tag, equipped_tag);
+                color.0 = Color::WHITE;
             }
         } else {
             text.0 = format!("{:2}. ---", i + 1);
@@ -214,16 +239,17 @@ fn update_inventory_ui(
 
     // Update detail panel
     if let Ok((mut text, mut color)) = detail_text.single_mut() {
-        if let Some(&item_entity) = inv.items.get(slot.0) {
-            if let Ok((name, props, is_equipped, stack)) = item_query.get(item_entity) {
+        if let Some(&item_entity) = display_order.get(slot.0) {
+            if let Ok((name, props, is_equipped, stack, enchant, weapon_runic, armor_runic, runic_id)) = item_query.get(item_entity) {
+                let display_name = display_item_name(&name.0, enchant, weapon_runic, armor_runic, runic_id);
                 let kind_str = match &props.armor_slot {
                     Some(s) => format!("{} ({})", props.kind, s),
                     None => props.kind.to_string(),
                 };
 
                 let mut lines = vec![
-                    name.0.clone(),
-                    format!("{} — {}", kind_str, props.rarity),
+                    display_name,
+                    kind_str,
                 ];
 
                 if let Some(s) = stack
@@ -234,11 +260,50 @@ fn update_inventory_ui(
                 if is_equipped {
                     lines.push("[ EQUIPPED ]".to_string());
                 }
+                let ench_level = enchant.map(|e| e.level).unwrap_or(0);
                 if let Some(dmg) = &props.damage {
-                    lines.push(format!("Damage: {}", dmg));
+                    if ench_level > 0 {
+                        lines.push(format!("Damage: {} +{}", dmg, ench_level));
+                    } else {
+                        lines.push(format!("Damage: {}", dmg));
+                    }
                 }
-                if props.defense > 0 {
-                    lines.push(format!("Defense: +{}", props.defense));
+                if props.attack_speed != 0.0 && props.attack_speed != 1.0 {
+                    if props.attack_speed < 1.0 {
+                        lines.push(format!("Speed: Fast ({}x)", props.attack_speed));
+                    } else {
+                        lines.push(format!("Speed: Slow ({}x)", props.attack_speed));
+                    }
+                }
+                if props.defense > 0 || ench_level > 0 {
+                    let total_defense = props.defense + ench_level;
+                    if ench_level > 0 && props.defense > 0 {
+                        lines.push(format!("Defense: +{} ({}+{})", total_defense, props.defense, ench_level));
+                    } else {
+                        lines.push(format!("Defense: +{}", total_defense));
+                    }
+                }
+
+                // Show runic effect description if identified, with proc chance
+                let is_identified = runic_id.is_some_and(|r| r.0);
+                if let Some(wr) = weapon_runic {
+                    if is_identified {
+                        let damage_dice = props.damage.as_deref().unwrap_or("1d4");
+                        let chance = crate::game::enchantment::weapon_runic_proc_chance(&wr.0, ench_level, damage_dice);
+                        let desc = wr.0.description();
+                        lines.push(format!("Runic of {} ({}%): {}", wr.0.name(), chance, desc));
+                    } else {
+                        lines.push("Runic: ???".to_string());
+                    }
+                }
+                if let Some(ar) = armor_runic {
+                    if is_identified {
+                        let chance = crate::game::enchantment::armor_runic_proc_chance(ar.0, ench_level);
+                        let desc = ar.0.description();
+                        lines.push(format!("Runic of {} ({}%): {}", ar.0.name(), chance, desc));
+                    } else {
+                        lines.push("Runic: ???".to_string());
+                    }
                 }
 
                 lines.push(String::new());
@@ -253,7 +318,7 @@ fn update_inventory_ui(
                 lines.push("[D] Drop item".to_string());
 
                 text.0 = lines.join("\n");
-                color.0 = props.rarity.color();
+                color.0 = Color::WHITE;
             }
         } else {
             text.0 = "Select an item to\nsee its details.".to_string();

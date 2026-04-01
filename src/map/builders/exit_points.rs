@@ -1,4 +1,4 @@
-use bevy::log::{debug, info, warn};
+use bevy::log::{info, warn};
 use bracket_lib::prelude::{Algorithm2D, DijkstraMap, Point};
 
 use crate::constants::MAX_FLOOR;
@@ -118,11 +118,76 @@ impl DistantExit {
         let stairs_pos = build_data.map.index_to_point2d(stairs_idx);
 
         if build_data.map.depth >= MAX_FLOOR {
-            // Boss room handled by BossRoomBuilder — no stairs on final floor
-            debug!(
-                "DistantExit: floor {} is MAX_FLOOR ({}), skipping stair placement",
-                build_data.map.depth, MAX_FLOOR
+            // Final floor: place the Amulet of Yendor at the farthest point,
+            // then place an Escape Portal at the farthest point from the amulet.
+            let amulet_pos = stairs_pos; // reuse the farthest-from-start position
+
+            info!(
+                "DistantExit: final floor — placing Amulet of Yendor at ({}, {})",
+                amulet_pos.x, amulet_pos.y
             );
+            build_data.add_item_spawn(amulet_pos, "Amulet of Yendor".to_string(), 1);
+
+            // Second Dijkstra pass from the amulet position to place the portal
+            // at maximum distance from the amulet.
+            let amulet_idx = build_data.map.point2d_to_index(amulet_pos);
+            let amulet_starts: Vec<usize> = vec![amulet_idx];
+
+            // Temporarily flatten doors/stairs for Dijkstra traversal
+            let original_tiles2 = build_data.map.tiles.clone();
+            for tile in build_data.map.tiles.iter_mut() {
+                match tile.terrain {
+                    TerrainType::Door | TerrainType::UpStairs | TerrainType::DownStairs => {
+                        tile.terrain = TerrainType::Floor;
+                    }
+                    _ => {}
+                }
+            }
+            let dijkstra_from_amulet = DijkstraMap::new(
+                build_data.map.width() as usize,
+                build_data.map.height() as usize,
+                &amulet_starts,
+                &build_data.map,
+                3000.0,
+            );
+            build_data.map.tiles = original_tiles2;
+
+            let mut portal_tile: Option<(usize, f32)> = None;
+            for y in 0..build_data.map.height() {
+                for x in 0..build_data.map.width() {
+                    let pt = Point::new(x, y);
+                    let idx = build_data.map.point2d_to_index(pt);
+                    let tile = build_data.map.get_tile(pt);
+                    if tile.map(|t| t.terrain) == Some(TerrainType::Floor)
+                        && tile.map(|t| t.liquid) == Some(LiquidType::None)
+                    {
+                        let dist = dijkstra_from_amulet.map[idx];
+                        if dist != f32::MAX && dist > 0.0 {
+                            let better = match portal_tile {
+                                None => true,
+                                Some((_, best)) => dist > best,
+                            };
+                            if better {
+                                portal_tile = Some((idx, dist));
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some((portal_idx, portal_dist)) = portal_tile {
+                let portal_pos = build_data.map.index_to_point2d(portal_idx);
+                info!(
+                    "DistantExit: placing Escape Portal at ({}, {}) (distance {:.1} from amulet)",
+                    portal_pos.x, portal_pos.y, portal_dist
+                );
+                build_data.map.set_tile(portal_pos, TerrainType::Portal);
+                build_data.map.set_liquid(portal_pos, LiquidType::None);
+            } else {
+                warn!("DistantExit: could not find a portal location on the final floor!");
+            }
+
+            build_data.take_snapshot();
             return;
         }
 
