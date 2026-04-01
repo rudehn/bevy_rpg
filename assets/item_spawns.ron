@@ -1,24 +1,85 @@
 (
     spawns: [
-        // Consumables — common across all floors
-        (item: "Healing Potion",     min_floor: 1,  max_floor: 10, weight: 5, spawn_chance: 0.80),
-        (item: "Strength Potion",    min_floor: 2,  max_floor: 10, weight: 2, spawn_chance: 0.60),
-        (item: "Arrow",              min_floor: 1,  max_floor: 10, weight: 4, spawn_chance: 0.75, min_count: 5, max_count: 12),
+        // ===========================
+        // CONSUMABLES
+        // ===========================
+        (item: "Healing Potion",          min_floor: 1,  max_floor: 10, weight: 5),
+        (item: "Greater Healing Potion",  min_floor: 6,  max_floor: 10, weight: 2),
+        // Mana potions removed — mana system replaced.
+        (item: "Arrow",                   min_floor: 1,  max_floor: 10, weight: 4, min_count: 5, max_count: 12),
+        (item: "Swiftness Potion",         min_floor: 2,  max_floor: 10, weight: 2),
+        (item: "Fire Resistance Potion",  min_floor: 2,  max_floor: 10, weight: 2),
+        (item: "Antidote",                min_floor: 2,  max_floor: 10, weight: 2),
+        (item: "Scroll of Enchanting",    min_floor: 2,  max_floor: 10, weight: 2),
 
-        // Weapons — early tiers fade out as depth increases
-        (item: "Iron Sword",         min_floor: 1,  max_floor: 5,  weight: 3, spawn_chance: 0.70),
-        (item: "Steel Sword",        min_floor: 3,  max_floor: 10, weight: 2, spawn_chance: 0.65),
-        (item: "Short Bow",          min_floor: 1,  max_floor: 5,  weight: 2, spawn_chance: 0.50),
-        (item: "Long Bow",           min_floor: 3,  max_floor: 10, weight: 2, spawn_chance: 0.50),
-        
-        // Armor
-        (item: "Leather Armor",      min_floor: 1,  max_floor: 6,  weight: 3, spawn_chance: 0.70),
+        // ===========================
+        // WEAPONS (enchantment/runic rolled at spawn)
+        // ===========================
+        (item: "Dagger",                  min_floor: 1,  max_floor: 10, weight: 3),
+        (item: "Sword",                   min_floor: 1,  max_floor: 10, weight: 3),
+        (item: "Bow",                     min_floor: 1,  max_floor: 10, weight: 2),
 
-        // Accessories
-        (item: "Ring of Perception",      min_floor: 3,  max_floor: 10, weight: 1, spawn_chance: 0.40),
+        // ===========================
+        // ARMOR — Light (dodge-focused)
+        // ===========================
+        (item: "Leather Cap",             min_floor: 1,  max_floor: 10, weight: 3),
+        (item: "Robe",                    min_floor: 1,  max_floor: 10, weight: 3),
+        (item: "Leather Gloves",          min_floor: 1,  max_floor: 10, weight: 3),
+        (item: "Soft Boots",              min_floor: 1,  max_floor: 10, weight: 3),
 
-        // Spellbooks
-        (item: "Tome of Magic Missile",   min_floor: 1,  max_floor: 10, weight: 2, spawn_chance: 0.50),
-        (item: "Tome of Healing",         min_floor: 2,  max_floor: 10, weight: 2, spawn_chance: 0.50),
+        // ===========================
+        // ARMOR — Medium (mixed)
+        // ===========================
+        (item: "Iron Helm",               min_floor: 3,  max_floor: 10, weight: 2),
+        (item: "Chainmail",               min_floor: 3,  max_floor: 10, weight: 2),
+        (item: "Splint Gloves",           min_floor: 3,  max_floor: 10, weight: 2),
+        (item: "Iron Boots",              min_floor: 3,  max_floor: 10, weight: 2),
+
+        // ===========================
+        // ARMOR — Heavy (armor-focused)
+        // ===========================
+        (item: "Full Helm",               min_floor: 5,  max_floor: 10, weight: 1),
+        (item: "Plate Armor",             min_floor: 5,  max_floor: 10, weight: 1),
+        (item: "Gauntlets",               min_floor: 5,  max_floor: 10, weight: 1),
+        (item: "Heavy Boots",             min_floor: 5,  max_floor: 10, weight: 1),
+
+        // ===========================
+        // SHIELDS
+        // ===========================
+        (item: "Wooden Shield",           min_floor: 1,  max_floor: 10, weight: 3),
+        (item: "Iron Shield",             min_floor: 3,  max_floor: 10, weight: 2),
+        (item: "Tower Shield",            min_floor: 6,  max_floor: 10, weight: 1),
+
+        // ===========================
+        // STAVES
+        // ===========================
+        (item: "Staff of Lightning",      min_floor: 1,  max_floor: 10, weight: 2),
+        (item: "Staff of Poison",         min_floor: 1,  max_floor: 10, weight: 2),
+        (item: "Staff of Blinking",       min_floor: 3,  max_floor: 10, weight: 1),
+        (item: "Staff of Fire",          min_floor: 1,  max_floor: 10, weight: 2),
+        (item: "Staff of Healing",       min_floor: 1,  max_floor: 10, weight: 2),
+        (item: "Staff of Force",         min_floor: 2,  max_floor: 10, weight: 2),
+
+        // ===========================
+        // RINGS
+        // ===========================
+        (item: "Ring of Perception",      min_floor: 3,  max_floor: 10, weight: 1),
+        (item: "Ring of Protection",      min_floor: 3,  max_floor: 10, weight: 1),
+        (item: "Ring of Might",           min_floor: 3,  max_floor: 10, weight: 1),
+        (item: "Ring of Precision",       min_floor: 3,  max_floor: 10, weight: 1),
+        (item: "Ring of Evasion",         min_floor: 3,  max_floor: 10, weight: 1),
+        (item: "Ring of Regeneration",    min_floor: 3,  max_floor: 10, weight: 1),
+        (item: "Ring of Speed",           min_floor: 3,  max_floor: 10, weight: 1),
+        (item: "Ring of Vitality",        min_floor: 3,  max_floor: 10, weight: 1),
+
+        // ===========================
+        // AMULETS
+        // ===========================
+        (item: "Amulet of Life",          min_floor: 3,  max_floor: 10, weight: 1),
+        (item: "Amulet of Warding",       min_floor: 3,  max_floor: 10, weight: 1),
+        (item: "Amulet of Swiftness",     min_floor: 3,  max_floor: 10, weight: 1),
+        (item: "Amulet of the Inferno",   min_floor: 3,  max_floor: 10, weight: 1),
+        (item: "Amulet of Grounding",     min_floor: 3,  max_floor: 10, weight: 1),
+        (item: "Amulet of Antivenom",     min_floor: 3,  max_floor: 10, weight: 1),
     ]
 )

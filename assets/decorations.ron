@@ -1,0 +1,117 @@
+// Decoration Propagation Rules
+//
+// Each rule places a decoration type using BFS spreading from random seed points.
+//
+// == Seed Placement ==
+//   name:                  Human-readable label (not used in code)
+//   min_floor / max_floor: Depth range where this rule is active
+//   min_seeds / max_seeds: Random number of seed points placed (scaled by floor density)
+//   decoration:            The Decoration enum variant placed at each seed and spread tile
+//   requires_terrain:      Seed AND spread tiles must be one of these terrain types
+//
+// == Seed Constraints (all default false/off) ==
+//   wall_adjacent_only:    Seed must have a wall in a cardinal neighbor
+//   corner_only:           Seed must be in an L-shaped wall corner (two adjacent walls)
+//   requires_nearby_liquid: Seed must be within 3 tiles of any liquid (water, lava, etc.)
+//
+// == BFS Propagation ==
+//   propagation_chance:    Initial probability (0.0-1.0) that each cardinal neighbor gets the decoration
+//   propagation_decay:     Multiplier applied to chance at each BFS step (0.0-1.0, lower = faster falloff)
+//   max_propagation_depth: Maximum BFS steps from the seed (caps the spread radius)
+//
+//   Effective radius ≈ depth where (chance × decay^depth) drops below random threshold.
+//   Example: chance=0.60, decay=0.85, depth=12 → at step 6 the chance is 0.60×0.85^6 ≈ 0.23
+//
+// == Decoration Chaining ==
+//   chain:                 Optional. At each spread tile, roll chain.chance (0.0-1.0) to place
+//                          chain.decoration instead of the rule's main decoration.
+//                          Example: Grass patches with 20% TallGrass mixed in.
+//
+// == What constraints DON'T apply to spread ==
+//   wall_adjacent_only, corner_only, requires_nearby_liquid only constrain SEED placement.
+//   BFS spread only checks: in-bounds, requires_terrain, no existing decoration, not in exclusion zone.
+//
+(
+    rules: [
+        // TallGrass as the primary decoration with Grass at the fringes.
+        // Chain chance 0.40 = 40% of spread tiles become Grass instead, so the
+        // core is ~60% dense TallGrass and edges thin to Grass naturally.
+        ( name: "Tall Grass",
+          min_floor: 1, max_floor: 10,
+          min_seeds: 5, max_seeds: 15,
+          decoration: TallGrass,
+          requires_terrain: [Floor],
+          propagation_chance: 0.75,
+          propagation_decay: 0.85,
+          max_propagation_depth: 12,
+          chain: Some(( decoration: Grass, chance: 0.45 )),
+        ),
+        ( name: "Grass",
+          min_floor: 1, max_floor: 10,
+          min_seeds: 5, max_seeds: 15,
+          decoration: Grass,
+          requires_terrain: [Floor],
+          propagation_chance: 0.60,
+          propagation_decay: 0.85,
+          max_propagation_depth: 12,
+        ),
+        ( name: "Dead Grass",
+          min_floor: 3, max_floor: 8,
+          min_seeds: 1, max_seeds: 3,
+          decoration: DeadGrass,
+          requires_terrain: [Floor],
+          propagation_chance: 0.55,
+          propagation_decay: 0.80,
+          max_propagation_depth: 8,
+        ),
+        ( name: "Rubble",
+          min_floor: 1, max_floor: 10,
+          min_seeds: 1, max_seeds: 6,
+          decoration: Rubble,
+          requires_terrain: [Floor],
+          propagation_chance: 0.40,
+          propagation_decay: 0.90,
+          max_propagation_depth: 6,
+          wall_adjacent_only: true,
+        ),
+        ( name: "Moss Growth",
+          min_floor: 1, max_floor: 8,
+          min_seeds: 1, max_seeds: 3,
+          decoration: Moss,
+          requires_terrain: [Floor],
+          requires_nearby_liquid: true,
+          propagation_chance: 0.50,
+          propagation_decay: 0.80,
+          max_propagation_depth: 8,
+        ),
+        ( name: "Fungal Bloom",
+          min_floor: 5, max_floor: 10,
+          min_seeds: 1, max_seeds: 2,
+          decoration: Fungus,
+          requires_terrain: [Floor],
+          propagation_chance: 0.35,
+          propagation_decay: 0.75,
+          max_propagation_depth: 10,
+        ),
+        ( name: "Cobweb",
+          min_floor: 1, max_floor: 10,
+          min_seeds: 2, max_seeds: 4,
+          decoration: Cobweb,
+          requires_terrain: [Floor],
+          propagation_chance: 0.20,
+          propagation_decay: 0.70,
+          max_propagation_depth: 3,
+          wall_adjacent_only: true,
+          corner_only: true,
+        ),
+        ( name: "Bloodstain",
+          min_floor: 3, max_floor: 10,
+          min_seeds: 0, max_seeds: 2,
+          decoration: Bloodstain,
+          requires_terrain: [Floor],
+          propagation_chance: 0.25,
+          propagation_decay: 0.60,
+          max_propagation_depth: 4,
+        ),
+    ]
+)

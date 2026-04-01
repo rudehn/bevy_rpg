@@ -3,18 +3,18 @@
   <head>
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>IRONVEIL</title>
+    <title>THE VEILED TYRANT</title>
     <style>
       body { margin: 0; background: #000; }
       canvas { display: block; }
     </style>
-  <link rel="modulepreload" href="/bevy_rpg/bevy_rpg-3a55faa6a688dd99.js" crossorigin="anonymous" integrity="sha384-oMBYVpMlPdYFzZG0IqT4/PQYt6zQkFEwmEcWMek9tg8gJp1DtqH/8GTBkjLw3ah1"><link rel="preload" href="/bevy_rpg/bevy_rpg-3a55faa6a688dd99_bg.wasm" crossorigin="anonymous" integrity="sha384-CVdUJG4LfWKWrKrNezAbehqaubxE6804JfgKwGxMXqtdP4aqjdR7UNYHTwoOX9f6" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="/bevy_rpg/bevy_rpg-f62d45fc81395f15.js" crossorigin="anonymous" integrity="sha384-VAOfETUBS2x0iiYDgucPVkwY7DAtDFmJ1E5iI8rtcy3keDic63gnObd80guumXwA"><link rel="preload" href="/bevy_rpg/bevy_rpg-f62d45fc81395f15_bg.wasm" crossorigin="anonymous" integrity="sha384-32JEdN97qToGKcscMnwN9WIgiZGmzVq5Cdy72Yu9VsaggyO0+yCCHI8GdhrknMEl" as="fetch" type="application/wasm"></head>
   <body>
     <!-- Tell Trunk to compile and inject the Rust/WASM binary here -->
     
 <script type="module">
-import init, * as bindings from '/bevy_rpg/bevy_rpg-3a55faa6a688dd99.js';
-const wasm = await init({ module_or_path: '/bevy_rpg/bevy_rpg-3a55faa6a688dd99_bg.wasm' });
+import init, * as bindings from '/bevy_rpg/bevy_rpg-f62d45fc81395f15.js';
+const wasm = await init({ module_or_path: '/bevy_rpg/bevy_rpg-f62d45fc81395f15_bg.wasm' });
 
 
 window.wasmBindings = bindings;

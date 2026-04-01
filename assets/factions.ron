@@ -1,0 +1,32 @@
+(
+    relations: [
+        // Player is hostile to all monster factions
+        ( a: "Player",  b: "Monster", relation: Hostile ),
+        ( a: "Player",  b: "Kobold",  relation: Hostile ),
+        ( a: "Player",  b: "Goblin",  relation: Hostile ),
+        ( a: "Player",  b: "Orc",     relation: Hostile ),
+        ( a: "Player",  b: "Fungal",  relation: Hostile ),
+        ( a: "Player",  b: "Undead",  relation: Hostile ),
+        ( a: "Player",  b: "Giant",   relation: Hostile ),
+        ( a: "Player",  b: "Dragon",  relation: Hostile ),
+
+        // Monster factions are neutral to each other (don't infight)
+        ( a: "Monster", b: "Kobold",  relation: Neutral ),
+        ( a: "Monster", b: "Goblin",  relation: Neutral ),
+        ( a: "Monster", b: "Orc",     relation: Neutral ),
+        ( a: "Monster", b: "Fungal",  relation: Neutral ),
+        ( a: "Monster", b: "Undead",  relation: Neutral ),
+        ( a: "Monster", b: "Giant",   relation: Neutral ),
+        ( a: "Monster", b: "Dragon",  relation: Neutral ),
+
+        // Cross-faction relationships
+        ( a: "Goblin",  b: "Kobold",  relation: Neutral ),
+        ( a: "Goblin",  b: "Orc",     relation: Neutral ),
+        ( a: "Goblin",  b: "Fungal",  relation: Hostile ),
+        ( a: "Goblin",  b: "Undead",  relation: Hostile ),
+        ( a: "Orc",     b: "Kobold",  relation: Neutral ),
+        ( a: "Orc",     b: "Undead",  relation: Hostile ),
+        ( a: "Undead",  b: "Fungal",  relation: Neutral ),
+        ( a: "Dragon",  b: "Giant",   relation: Neutral ),
+    ],
+)
