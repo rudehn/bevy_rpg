@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use bevy::camera::visibility::RenderLayers;
 use bevy::ecs::component::Component;
 use bevy::prelude::{
-    Assets, Children, Commands, Entity, InheritedVisibility, Message, MessageReader, Query, Res,
+    Assets, Children, Commands, Entity, InheritedVisibility, Message, MessageReader, MessageWriter, Query, Res,
     ResMut, Resource, Sprite, Text2d, TextColor, TextFont, TextureAtlas, Transform, Vec3,
     ViewVisibility, Visibility, With, default, warn,
 };
@@ -70,6 +70,10 @@ pub enum Decoration {
     TrampledGrass,
     /// Fungus that was trampled. Regrows into Fungus over time.
     TrampledFungus,
+    /// Sputtering remains of a fire. Decays to Ash.
+    Embers,
+    /// Burned-out remains. Purely visual.
+    Ash,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -111,6 +115,14 @@ impl TerrainType {
             TerrainType::HiddenDoor => "HiddenDoor",
             TerrainType::LockedDoor => "LockedDoor",
             TerrainType::Portal => "Portal",
+        }
+    }
+
+    /// Chance (0-100) of igniting when exposed to adjacent fire.
+    pub fn flammability(&self) -> u8 {
+        match self {
+            TerrainType::Door | TerrainType::OpenDoor => 20,
+            _ => 0,
         }
     }
 
@@ -159,6 +171,23 @@ impl Decoration {
             Decoration::Bloodstain => "Bloodstain",
             Decoration::TrampledGrass => "TrumpledGrass",
             Decoration::TrampledFungus => "TrumpledFungus",
+            Decoration::Embers => "Embers",
+            Decoration::Ash => "Ash",
+        }
+    }
+
+    /// Chance (0-100) of igniting when exposed to adjacent fire.
+    pub fn flammability(&self) -> u8 {
+        match self {
+            Decoration::TallGrass => 75,
+            Decoration::Grass => 50,
+            Decoration::DeadGrass => 60,
+            Decoration::Fungus => 40,
+            Decoration::Cobweb => 100,
+            Decoration::Moss => 30,
+            Decoration::TrampledGrass => 40,
+            Decoration::TrampledFungus => 30,
+            _ => 0,
         }
     }
 
@@ -196,6 +225,11 @@ impl Decoration {
             Decoration::TrampledFungus => Some(PromotionRule {
                 target: PromotionTarget::Decoration(Decoration::Fungus),
                 chance_per_turn: 100,
+            }),
+            // Embers cool to ash (~10%/turn, Brogue: 300/10000 ≈ 3%)
+            Decoration::Embers => Some(PromotionRule {
+                target: PromotionTarget::Decoration(Decoration::Ash),
+                chance_per_turn: 1000,
             }),
             _ => None,
         }
@@ -415,7 +449,7 @@ pub fn spawn_tile_entity(
         // at the correct pixel size regardless of the atlas tile's native size.
         let inv_scale = Vec3::new(1.0 / scale_x, 1.0 / scale_y, 1.0);
 
-        // Determine background color: liquid overrides terrain
+        // Determine background color: liquid > terrain
         let bg_color = if tile.liquid != LiquidType::None {
             let liquid_asset = tile_manifest.tiles.get(tile.liquid.name());
             liquid_asset
@@ -426,6 +460,7 @@ pub fn spawn_tile_entity(
         };
 
         // Determine character: important terrain (stairs, doors) > decoration (dry only) > liquid > terrain
+        // Fire rendering is handled by the fire animation system, not here.
         let terrain_has_priority = matches!(
             tile.terrain,
             TerrainType::DownStairs
@@ -510,6 +545,67 @@ pub fn spawn_tile_entity(
 // Runtime tile mutation
 // ---------------------------------------------------------------------------
 
+/// Bundles the three tile mutation message writers into a single SystemParam.
+/// Use this instead of three separate `MessageWriter<...>` params to stay under
+/// Bevy's 16-parameter limit.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct TileMutationWriters<'w> {
+    pub terrain: MessageWriter<'w, TileMutationMessage>,
+    pub decoration: MessageWriter<'w, DecorationMutationMessage>,
+    pub fire_tiles: ResMut<'w, crate::game::fire::FireTiles>,
+    pub gas_tiles: ResMut<'w, crate::game::gas::GasTiles>,
+    pub light_sources: ResMut<'w, crate::map::light::LightSources>,
+}
+
+/// Resolves what a tile should display in ASCII mode. Returns (char, fg_color, bg_name)
+/// based on priority: fire > important terrain > decoration (dry) > liquid > terrain.
+pub fn resolve_tile_display(tile: Tile, manifest: &TileManifest) -> (String, bevy::prelude::Color, &str) {
+    let terrain_asset = manifest.tiles.get(tile.terrain.name());
+    let default_fg = terrain_asset.map(|a| a.ascii_fg).unwrap_or(bevy::prelude::Color::WHITE);
+    let default_char = terrain_asset
+        .map(|a| if a.ascii_char.is_empty() { tile.terrain.name().to_string() } else { a.ascii_char.clone() })
+        .unwrap_or_else(|| "?".to_string());
+
+    let terrain_has_priority = matches!(
+        tile.terrain,
+        TerrainType::DownStairs | TerrainType::UpStairs | TerrainType::Door
+        | TerrainType::OpenDoor | TerrainType::LockedDoor
+    );
+
+    if terrain_has_priority {
+        return (default_char, default_fg, tile.terrain.name());
+    }
+
+    if tile.decoration != Decoration::None && tile.liquid == LiquidType::None {
+        if let Some(da) = manifest.tiles.get(tile.decoration.name()) {
+            if !da.ascii_char.is_empty() {
+                return (da.ascii_char.clone(), da.ascii_fg, tile.terrain.name());
+            }
+        }
+    }
+
+    if tile.liquid != LiquidType::None {
+        if let Some(la) = manifest.tiles.get(tile.liquid.name()) {
+            if !la.ascii_char.is_empty() {
+                return (la.ascii_char.clone(), la.ascii_fg, tile.liquid.name());
+            }
+        }
+    }
+
+    (default_char, default_fg, tile.terrain.name())
+}
+
+/// Resolve the background color for a tile: fire > liquid > terrain.
+pub fn resolve_tile_bg(tile: Tile, manifest: &TileManifest) -> bevy::prelude::Color {
+    let terrain_bg = manifest.tiles.get(tile.terrain.name()).map(|a| a.ascii_bg)
+        .unwrap_or(bevy::prelude::Color::BLACK);
+
+    if tile.liquid != LiquidType::None {
+        return manifest.tiles.get(tile.liquid.name()).map(|a| a.ascii_bg).unwrap_or(terrain_bg);
+    }
+    terrain_bg
+}
+
 /// Request to change a tile's terrain at runtime. Handled by `apply_tile_mutations`,
 /// which updates both the `Map` resource and the ECS tile entity (sprite, collider,
 /// ASCII glyph, viewshed dirty flags).
@@ -525,13 +621,13 @@ pub fn apply_tile_mutations(
     mut messages: MessageReader<TileMutationMessage>,
     mut map: ResMut<Map>,
     tile_index: Res<TileEntityIndex>,
-    mut tile_query: Query<(&mut TerrainType, &mut Sprite, Option<&Children>)>,
-    mut glyph_query: Query<&mut Text2d, With<crate::game::ascii_mode::AsciiGlyph>>,
+    mut tile_query: Query<(&mut TerrainType, &mut Sprite)>,
     mut viewshed_query: Query<&mut Viewshed>,
     tile_manifests: Res<Assets<TileManifest>>,
     tile_manifest_handle: Res<TileManifestHandle>,
     tile_sprite_assets: Res<TileSpriteAssets>,
     mut promotion_cooldown: ResMut<crate::game::tile_promotion::PromotionCooldown>,
+    mut light_sources: ResMut<crate::map::light::LightSources>,
 ) {
     let mut any = false;
 
@@ -540,7 +636,12 @@ pub fn apply_tile_mutations(
     for msg in messages.read() {
         // 1. Update Map resource (source of truth for game logic).
         let idx = map.xy_idx(msg.position.x, msg.position.y);
+        let old_opaque = is_opaque(map.tiles[idx]);
         map.tiles[idx].terrain = msg.new_terrain;
+        // If opacity changed (door opened/closed), rebuild the light map.
+        if old_opaque != is_opaque(map.tiles[idx]) {
+            light_sources.dirty = true;
+        }
 
         // Mark this tile on cooldown so the promotion tick doesn't revert it same-turn.
         promotion_cooldown
@@ -556,7 +657,7 @@ pub fn apply_tile_mutations(
             continue;
         };
 
-        let Ok((mut terrain_type, mut sprite, children)) = tile_query.get_mut(tile_entity) else {
+        let Ok((mut terrain_type, mut sprite)) = tile_query.get_mut(tile_entity) else {
             warn!(
                 "TileMutationMessage at ({}, {}) — tile entity {:?} missing components",
                 msg.position.x, msg.position.y, tile_entity
@@ -583,22 +684,9 @@ pub fn apply_tile_mutations(
                 texture_atlas.layout = layout_handle.clone();
             }
 
-            // 5. Update ASCII glyph child.
-            if let Some(children) = children {
-                let new_char = if asset.ascii_char.is_empty() {
-                    msg.new_terrain.name()
-                } else {
-                    &asset.ascii_char
-                };
-                for &child in children.iter() {
-                    if let Ok(mut text) = glyph_query.get_mut(child) {
-                        **text = new_char.to_string();
-                    }
-                }
-            }
         }
 
-        // 6. Add or remove Collider based on walkability of the full tile.
+        // 5. Add or remove Collider based on walkability of the full tile.
         let full_tile = map.tiles[idx];
         if is_walkable(full_tile) {
             commands.entity(tile_entity).remove::<Collider>();
@@ -609,7 +697,7 @@ pub fn apply_tile_mutations(
         any = true;
     }
 
-    // 7. Mark all viewsheds dirty so FOV is recalculated.
+    // 6. Mark all viewsheds dirty so FOV is recalculated.
     if any {
         for mut viewshed in viewshed_query.iter_mut() {
             viewshed.dirty = true;
@@ -630,89 +718,28 @@ pub struct DecorationMutationMessage {
 pub fn apply_decoration_mutations(
     mut messages: MessageReader<DecorationMutationMessage>,
     mut map: ResMut<Map>,
-    tile_index: Res<TileEntityIndex>,
-    tile_query: Query<Option<&Children>, With<TileMarker>>,
-    mut glyph_query: Query<
-        (&mut Text2d, &mut TextColor),
-        With<crate::game::ascii_mode::AsciiGlyph>,
-    >,
-    mut color_query: Query<&mut crate::game::ascii_mode::AsciiGlyphColor>,
+    mut light_sources: ResMut<crate::map::light::LightSources>,
     mut viewshed_query: Query<&mut Viewshed>,
-    tile_manifests: Res<Assets<TileManifest>>,
-    tile_manifest_handle: Res<TileManifestHandle>,
 ) {
     let mut fov_changed = false;
-
-    let tile_manifest = tile_manifests.get(&tile_manifest_handle.0);
 
     for msg in messages.read() {
         let idx = map.xy_idx(msg.position.x, msg.position.y);
         let old_decoration = map.tiles[idx].decoration;
         map.tiles[idx].decoration = msg.new_decoration;
 
-        // Check if FOV changed (decoration blocking/unblocking vision).
-        if old_decoration.blocks_fov() != msg.new_decoration.blocks_fov() {
-            fov_changed = true;
+        // Update fungal glow lights on decoration transitions.
+        let was_fungus = old_decoration == Decoration::Fungus;
+        let is_fungus = msg.new_decoration == Decoration::Fungus;
+        if was_fungus && !is_fungus {
+            light_sources.remove_at(msg.position.x, msg.position.y);
+        }
+        if !was_fungus && is_fungus {
+            light_sources.add(crate::map::light::fungal_light(msg.position.x, msg.position.y));
         }
 
-        // Update ASCII glyph on the tile entity.
-        let Some(&tile_entity) = tile_index.0.get(&(msg.position.x, msg.position.y)) else {
-            continue;
-        };
-
-        let Ok(children) = tile_query.get(tile_entity) else {
-            continue;
-        };
-
-        // Determine what char/color the tile should display now.
-        // Priority: important terrain > decoration (dry only) > liquid > terrain
-        // (mirrors the logic in spawn_tile_entity)
-        let tile = map.tiles[idx];
-        let terrain_has_priority = matches!(
-            tile.terrain,
-            TerrainType::DownStairs
-                | TerrainType::UpStairs
-                | TerrainType::Door
-                | TerrainType::OpenDoor
-                | TerrainType::LockedDoor
-        );
-
-        if let Some(manifest) = tile_manifest
-            && !terrain_has_priority
-        {
-            // Pick the display source: decoration if present and dry, else terrain
-            let (display_name, is_decoration) = if tile.decoration != Decoration::None
-                && tile.liquid == crate::map::tile::LiquidType::None
-            {
-                (tile.decoration.name(), true)
-            } else {
-                (tile.terrain.name(), false)
-            };
-
-            if let Some(asset) = manifest.tiles.get(display_name) {
-                let new_char = if asset.ascii_char.is_empty() {
-                    display_name.to_string()
-                } else {
-                    asset.ascii_char.clone()
-                };
-                let new_color = if is_decoration {
-                    asset.ascii_fg
-                } else {
-                    asset.ascii_fg
-                };
-
-                if let Some(children) = children {
-                    for &child in children.iter() {
-                        if let Ok((mut text, mut text_color)) = glyph_query.get_mut(child) {
-                            **text = new_char.clone();
-                            text_color.0 = new_color;
-                        }
-                        if let Ok(mut glyph_color) = color_query.get_mut(child) {
-                            glyph_color.0 = new_color;
-                        }
-                    }
-                }
-            }
+        if old_decoration.blocks_fov() != msg.new_decoration.blocks_fov() {
+            fov_changed = true;
         }
     }
 
