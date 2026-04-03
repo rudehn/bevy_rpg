@@ -56,6 +56,10 @@ impl Plugin for MapPlugin {
                         // init_explored_tiles_system clears this flag once new tiles are ready.
                         .run_if(|init: Res<NeedsExploredInit>| !init.0)
                         .after(init_explored_tiles_system),
+                    crate::map::ascii_renderer::render_tile_ascii
+                        .after(update_tile_visibility)
+                        .run_if(|mode: Res<crate::game::ascii_mode::GraphicsMode>|
+                            *mode == crate::game::ascii_mode::GraphicsMode::Ascii),
                     handle_reveal_map_system.run_if(on_message::<RevealMapMessage>),
                 ).run_if(in_state(AppState::InGame)),
             );
@@ -118,28 +122,13 @@ pub fn init_explored_tiles_system(
     }
 }
 
-/// Add warm light to a base color. `light_amount` is 0.0 (no light) to 1.0 (max light).
-/// Uses additive warm tint: candles add (warm_r, warm_g, warm_b) scaled by light_amount.
-fn apply_light_to_color(base: Color, light_amount: f32) -> Color {
-    let srgba = base.to_srgba();
-    // Warm candle tint: add up to (0.15, 0.10, 0.03) at full light
-    let r = (srgba.red + light_amount * 0.15).min(1.0);
-    let g = (srgba.green + light_amount * 0.10).min(1.0);
-    let b = (srgba.blue + light_amount * 0.03).min(1.0);
-    Color::srgba(r, g, b, srgba.alpha)
-}
-
-/// Dim a color for explored-but-not-visible tiles.
-fn dim_color(base: Color, factor: f32) -> Color {
-    let srgba = base.to_srgba();
-    Color::srgba(srgba.red * factor, srgba.green * factor, srgba.blue * factor, srgba.alpha)
-}
-
 pub fn update_tile_visibility(
     player_query: Query<&Viewshed, With<Player>>,
     viewshed_changed: Query<(), (With<Player>, Changed<Viewshed>)>,
     mut map: ResMut<Map>,
     light_map: Res<LightMap>,
+    fire_tiles: Res<crate::game::fire::FireTiles>,
+    gas_tiles: Res<crate::game::gas::GasTiles>,
     mode: Res<crate::game::ascii_mode::GraphicsMode>,
     omniscient: Res<crate::game::systems::Omniscient>,
     mut sprite_set: ParamSet<(
@@ -151,16 +140,16 @@ pub fn update_tile_visibility(
             &mut Visibility,
             Option<&Children>,
         )>,
-        Query<(&mut Sprite, &crate::game::ascii_mode::AsciiBackground)>,
         Query<&mut Sprite, (With<crate::game::ascii_mode::LiquidOverlay>, Without<crate::game::ascii_mode::AsciiBackground>)>,
     )>,
-    mut ascii_glyph_query: Query<(&mut TextColor, &crate::game::ascii_mode::AsciiGlyphColor), With<crate::game::ascii_mode::AsciiGlyph>>,
 ) {
-    // Run when viewshed changes, graphics mode changes, or omniscient toggles.
+    // Run when viewshed changes, graphics mode changes, omniscient toggles,
+    // or fire/gas state changes (so extinguished tiles get repainted immediately).
     let viewshed_dirty = !viewshed_changed.is_empty();
     let mode_dirty = mode.is_changed();
     let omni_dirty = omniscient.is_changed();
-    if !viewshed_dirty && !mode_dirty && !omni_dirty {
+    let effects_dirty = fire_tiles.is_changed() || gas_tiles.is_changed();
+    if !viewshed_dirty && !mode_dirty && !omni_dirty && !effects_dirty {
         return;
     }
 
@@ -173,9 +162,6 @@ pub fn update_tile_visibility(
     let omni = omniscient.0;
 
     let mut newly_explored = Vec::new();
-    // Deferred ASCII child updates: (entity, light_amount, is_explored_dim).
-    // Applied after the tile query loop via ParamSet to avoid Sprite borrow conflict.
-    let mut ascii_child_updates: Vec<(Entity, f32, bool)> = Vec::new();
     // Deferred liquid overlay child updates: (entity, light_level, is_explored_dim, is_hidden).
     let mut liquid_child_updates: Vec<(Entity, f32, bool, bool)> = Vec::new();
 
@@ -184,36 +170,68 @@ pub fn update_tile_visibility(
     {
         let current_point = Point::new(tile_pos.x, tile_pos.y);
 
+        // In ASCII mode, fire/gas tile colors are owned by render_tile_ascii.
+        // Skip the normal color logic to prevent fights, but only for tiles in FOV.
+        if is_ascii
+            && (omni || fov_tiles.contains(&current_point))
+            && (fire_tiles.0.contains(&(tile_pos.x, tile_pos.y))
+                || gas_tiles.0.contains_key(&(tile_pos.x, tile_pos.y)))
+        {
+            *tile_visibility = TileVisibility::Visible;
+            if map.in_bounds(current_point) {
+                let idx = map.xy_idx(tile_pos.x, tile_pos.y);
+                if !map.explored_tiles[idx] {
+                    newly_explored.push(idx);
+                }
+            }
+            *tile_explored = TileExplored::Explored;
+            *visibility = Visibility::Visible;
+            sprite.color = Color::NONE;
+            continue;
+        }
+
         if omni || fov_tiles.contains(&current_point) {
             *tile_visibility = TileVisibility::Visible;
             *tile_explored = TileExplored::Explored;
             *visibility = Visibility::Visible;
 
-            let light = if map.in_bounds(current_point) {
+            let (light, light_color) = if map.in_bounds(current_point) {
                 let idx = map.xy_idx(tile_pos.x, tile_pos.y);
                 if !map.explored_tiles[idx] {
                     newly_explored.push(idx);
                 }
-                light_map.values.get(idx).copied().unwrap_or(0.0).max(AMBIENT)
+                let v = light_map.values.get(idx).copied().unwrap_or(0.0).max(AMBIENT);
+                let c = light_map.colors.get(idx).copied().unwrap_or([1.0, 1.0, 1.0]);
+                (v, c)
             } else {
-                AMBIENT
+                (AMBIENT, [1.0, 1.0, 1.0])
             };
 
             if is_ascii {
+                // In ASCII mode, render_tile_ascii owns all child colors.
+                // Just hide the parent sprite so the ASCII children show through.
                 sprite.color = Color::NONE;
-                // Additive light: 0.0 at ambient, 1.0 at max candle brightness
-                let light_amount = ((light - AMBIENT) / (1.0 - AMBIENT)).clamp(0.0, 1.0);
-                if let Some(children) = children {
-                    for child in children.iter() {
-                        ascii_child_updates.push((child, light_amount, false));
-                    }
-                }
             } else {
-                sprite.color = Color::srgb(light, light * 0.95, light * 0.8);
-                // Tint liquid overlay children to match the parent tile lighting
-                if let Some(children) = children {
-                    for child in children.iter() {
-                        liquid_child_updates.push((child, light, false, false));
+                sprite.color = Color::srgb(
+                    light * light_color[0],
+                    light * light_color[1] * 0.95,
+                    light * light_color[2] * 0.8,
+                );
+                // Tint liquid overlay children to match the parent tile lighting.
+                // Water tiles are skipped — animate_water_shimmer runs every frame
+                // and owns their liquid overlay colors.
+                let tile_idx = map.xy_idx(tile_pos.x, tile_pos.y);
+                let is_water_tile = tile_idx < map.tiles.len()
+                    && matches!(
+                        map.tiles[tile_idx].liquid,
+                        crate::map::tile::LiquidType::Water
+                            | crate::map::tile::LiquidType::ShallowWater
+                    );
+                if !is_water_tile {
+                    if let Some(children) = children {
+                        for child in children.iter() {
+                            liquid_child_updates.push((child, light, false, false));
+                        }
                     }
                 }
             }
@@ -222,12 +240,8 @@ pub fn update_tile_visibility(
             if *tile_explored == TileExplored::Explored {
                 *visibility = Visibility::Visible;
                 if is_ascii {
+                    // In ASCII mode, render_tile_ascii owns all child colors.
                     sprite.color = Color::NONE;
-                    if let Some(children) = children {
-                        for child in children.iter() {
-                            ascii_child_updates.push((child, 0.0, true));
-                        }
-                    }
                 } else {
                     sprite.color = Color::srgb(0.5, 0.5, 0.5);
                     // Dim liquid overlay children to match the explored-but-not-visible state
@@ -250,32 +264,10 @@ pub fn update_tile_visibility(
         }
     }
 
-    // Apply deferred ASCII child color updates via ParamSet's second query.
+    // Apply deferred liquid overlay sprite tinting via ParamSet's second query.
+    // Water tiles are immediately overridden by animate_water_shimmer (runs every frame).
     {
-        let mut bg_q = sprite_set.p1();
-        for &(entity, light_amount, is_dim) in &ascii_child_updates {
-            if let Ok((mut bg_sprite, bg_data)) = bg_q.get_mut(entity) {
-                bg_sprite.color = if is_dim {
-                    dim_color(bg_data.base_color, 0.35)
-                } else {
-                    apply_light_to_color(bg_data.base_color, light_amount)
-                };
-            }
-        }
-    }
-    for &(entity, light_amount, is_dim) in &ascii_child_updates {
-        if let Ok((mut text_color, glyph_data)) = ascii_glyph_query.get_mut(entity) {
-            *text_color = TextColor(if is_dim {
-                dim_color(glyph_data.0, 0.45)
-            } else {
-                apply_light_to_color(glyph_data.0, light_amount)
-            });
-        }
-    }
-
-    // Apply deferred liquid overlay sprite tinting via ParamSet's third query.
-    {
-        let mut liquid_q = sprite_set.p2();
+        let mut liquid_q = sprite_set.p1();
         for &(entity, light, is_dim, _is_hidden) in &liquid_child_updates {
             if let Ok(mut liquid_sprite) = liquid_q.get_mut(entity) {
                 if is_dim {
@@ -326,6 +318,10 @@ pub struct Map {
     /// Pathfinding treats blocked tiles as high-cost rather than impassable so
     /// monsters route around each other instead of lining up.
     pub blocked: Vec<bool>,
+    /// Mirrors `tiles` index-for-index: true when dense gas occupies this tile
+    /// (concentration above the gas type's FOV-blocking threshold).
+    /// Rebuilt each turn by `gas_tick_system`.
+    pub gas_opaque: Vec<bool>,
     pub width: i32,
     pub height: i32,
     pub depth: i32,
@@ -340,6 +336,7 @@ impl Map {
             tiles: vec![Tile { terrain: TerrainType::Wall, liquid: LiquidType::None, decoration: Decoration::None }; map_tile_count],
             explored_tiles: vec![false; map_tile_count],
             blocked: vec![false; map_tile_count],
+            gas_opaque: vec![false; map_tile_count],
             width,
             height,
             depth,
@@ -430,7 +427,7 @@ impl Map {
 
 impl BaseMap for Map {
     fn is_opaque(&self, idx: usize) -> bool {
-        is_opaque(self.tiles[idx])
+        is_opaque(self.tiles[idx]) || self.gas_opaque.get(idx).copied().unwrap_or(false)
     }
 
     fn get_available_exits(
@@ -555,7 +552,7 @@ impl<'a> MapWithMode<'a> {
 
 impl<'a> BaseMap for MapWithMode<'a> {
     fn is_opaque(&self, idx: usize) -> bool {
-        is_opaque(self.map.tiles[idx])
+        is_opaque(self.map.tiles[idx]) || self.map.gas_opaque.get(idx).copied().unwrap_or(false)
     }
 
     fn get_available_exits(&self, idx: usize) -> SmallVec<[(usize, f32); 10]> {
@@ -614,6 +611,7 @@ mod tests {
             tiles,
             explored_tiles: vec![false; count],
             blocked: vec![false; count],
+            gas_opaque: vec![false; count],
             width,
             height,
             depth: 1,

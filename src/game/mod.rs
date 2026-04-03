@@ -55,6 +55,8 @@ pub mod combat;
 pub mod effects;
 pub mod enchantment;
 pub mod factions;
+pub mod fire;
+pub mod gas;
 pub mod goap;
 pub mod items;
 pub mod machines;
@@ -132,16 +134,6 @@ impl Plugin for GamePlugin {
                 water::WaterPlugin,
                 ascii_mode::AsciiModePlugin,
             ))
-            // Catch-all for decoration/tile mutations written outside the Processing phase
-            // (e.g., entangle break-free from tick_status_effects_system). No-ops if queue is empty.
-            .add_systems(
-                Update,
-                (
-                    crate::map::tile::apply_tile_mutations,
-                    crate::map::tile::apply_decoration_mutations,
-                )
-                    .run_if(in_state(AppState::InGame)),
-            )
             // Position→Transform sync and camera run whenever in-game, including Targeting state.
             // move_camera runs after player_spawn_or_move_system so the camera snaps to the new
             // floor position in the same frame the player is teleported (floor transitions).
@@ -182,7 +174,17 @@ impl Plugin for GamePlugin {
             .add_systems(OnEnter(AppState::GameOver), (despawn_game_entities, despawn_map))
             .add_systems(OnEnter(AppState::Victory), (despawn_game_entities, despawn_map))
             .init_resource::<TurnManager>()
-            .init_resource::<tile_promotion::PromotionCooldown>();
+            .init_resource::<tile_promotion::PromotionCooldown>()
+            .init_resource::<fire::FireTiles>()
+            .init_resource::<gas::GasTiles>()
+            .init_resource::<water::WaterTiles>()
+            .add_systems(
+                Update,
+                (
+                    water::animate_water_shimmer,
+                )
+                    .run_if(in_state(AppState::InGame)),
+            );
     }
 }
 
