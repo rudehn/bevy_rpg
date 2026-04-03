@@ -3,14 +3,14 @@ use std::collections::HashMap;
 use bevy::camera::visibility::RenderLayers;
 use bevy::ecs::component::Component;
 use bevy::prelude::{
-    Assets, Children, Commands, Entity, InheritedVisibility, Message, MessageReader, MessageWriter, Query, Res,
-    ResMut, Resource, Sprite, Text2d, TextColor, TextFont, TextureAtlas, Transform, Vec3,
-    ViewVisibility, Visibility, With, default, warn,
+    Commands, Entity, InheritedVisibility, Message, MessageReader, MessageWriter,
+    Query, Res, ResMut, Resource, Sprite, Text2d, TextColor, TextFont, Transform, Vec3,
+    ViewVisibility, Visibility, default, warn,
 };
 use bracket_lib::prelude::Point;
 use serde::{Deserialize, Serialize};
 
-use crate::assets::{self, TileManifest, TileManifestHandle, TileSpriteAssets};
+use crate::assets::{TileManifest, TileManifestHandle};
 use crate::components::{Collider, MovementMode, Viewshed};
 use crate::map::Map;
 use crate::map::map::GRID_SIZE;
@@ -331,7 +331,6 @@ pub fn spawn_tile_entity(
     tile: Tile,
     pt: Point,
     tile_manifest: &TileManifest,
-    tile_sprite_assets: &TileSpriteAssets,
     ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
 ) -> Entity {
     let terrain_asset = tile_manifest
@@ -339,20 +338,8 @@ pub fn spawn_tile_entity(
         .get(tile.terrain.name())
         .expect("Terrain type not in manifest");
 
-    let (texture_path, index) = crate::assets::parse_sprite_path(&terrain_asset.sprite);
-
-    let texture_handle = tile_sprite_assets
-        .handles
-        .get(texture_path)
-        .expect("Texture handle not found")
-        .clone();
-    let layout_handle = tile_sprite_assets
-        .layouts
-        .get(texture_path)
-        .expect("Layout handle not found")
-        .clone();
-
-    // Determine scale to fit one game map tile (GRID_SIZE)
+    // Determine scale to fit one game map tile (GRID_SIZE).
+    // Still needed for ASCII children's inverse scale calculation.
     let tile_size = terrain_asset
         .tile_size
         .unwrap_or(bevy::prelude::UVec2::new(16, 16));
@@ -361,13 +348,6 @@ pub fn spawn_tile_entity(
 
     let mut command = commands.spawn((
         TileMarker,
-        Sprite::from_atlas_image(
-            texture_handle,
-            TextureAtlas {
-                index,
-                layout: layout_handle,
-            },
-        ),
         tile.terrain,
         tile.liquid,
         TileVisibility::Hidden,
@@ -376,15 +356,7 @@ pub fn spawn_tile_entity(
             translation: Vec3::new(
                 pt.x as f32 * GRID_SIZE.x,
                 pt.y as f32 * GRID_SIZE.y,
-                // Stairs render above liquid overlays (z=0.1) so they stay visible
-                if matches!(
-                    tile.terrain,
-                    TerrainType::DownStairs | TerrainType::UpStairs
-                ) {
-                    0.2
-                } else {
-                    0.0
-                },
+                0.0,
             ),
             scale: Vec3::new(scale_x, scale_y, 1.0),
             ..Default::default()
@@ -400,43 +372,6 @@ pub fn spawn_tile_entity(
     }
 
     let tile_entity = command.id();
-
-    // If there's a liquid, spawn it as a child overlay
-    if tile.liquid != LiquidType::None {
-        let liquid_asset = tile_manifest
-            .tiles
-            .get(tile.liquid.name())
-            .expect("Liquid type not in manifest");
-        let (l_texture_path, l_index) = crate::assets::parse_sprite_path(&liquid_asset.sprite);
-
-        let l_texture_handle = tile_sprite_assets
-            .handles
-            .get(l_texture_path)
-            .expect("Liquid texture not found")
-            .clone();
-        let l_layout_handle = tile_sprite_assets
-            .layouts
-            .get(l_texture_path)
-            .expect("Liquid layout not found")
-            .clone();
-
-        let l_child = commands
-            .spawn((
-                Sprite::from_atlas_image(
-                    l_texture_handle,
-                    TextureAtlas {
-                        index: l_index,
-                        layout: l_layout_handle,
-                    },
-                ),
-                Transform::from_translation(Vec3::new(0.0, 0.0, 0.1)), // Slightly above terrain
-                RenderLayers::layer(1),
-                crate::game::ascii_mode::LiquidOverlay,
-            ))
-            .id();
-
-        commands.entity(tile_entity).add_child(l_child);
-    }
 
     // NOTE: Decoration sprite overlays are not spawned yet — all decoration entries
     // in tiles.ron use floor_stone.png as placeholder. Once proper decoration sprites
@@ -621,17 +556,12 @@ pub fn apply_tile_mutations(
     mut messages: MessageReader<TileMutationMessage>,
     mut map: ResMut<Map>,
     tile_index: Res<TileEntityIndex>,
-    mut tile_query: Query<(&mut TerrainType, &mut Sprite)>,
+    mut tile_query: Query<&mut TerrainType>,
     mut viewshed_query: Query<&mut Viewshed>,
-    tile_manifests: Res<Assets<TileManifest>>,
-    tile_manifest_handle: Res<TileManifestHandle>,
-    tile_sprite_assets: Res<TileSpriteAssets>,
     mut promotion_cooldown: ResMut<crate::game::tile_promotion::PromotionCooldown>,
     mut light_sources: ResMut<crate::map::light::LightSources>,
 ) {
     let mut any = false;
-
-    let tile_manifest = tile_manifests.get(&tile_manifest_handle.0);
 
     for msg in messages.read() {
         // 1. Update Map resource (source of truth for game logic).
@@ -657,7 +587,7 @@ pub fn apply_tile_mutations(
             continue;
         };
 
-        let Ok((mut terrain_type, mut sprite)) = tile_query.get_mut(tile_entity) else {
+        let Ok(mut terrain_type) = tile_query.get_mut(tile_entity) else {
             warn!(
                 "TileMutationMessage at ({}, {}) — tile entity {:?} missing components",
                 msg.position.x, msg.position.y, tile_entity
@@ -668,25 +598,7 @@ pub fn apply_tile_mutations(
         // 3. Update ECS terrain component.
         *terrain_type = msg.new_terrain;
 
-        // 4. Update sprite from tile manifest.
-        if let Some(manifest) = tile_manifest
-            && let Some(asset) = manifest.tiles.get(msg.new_terrain.name())
-        {
-            let (texture_path, index) = assets::parse_sprite_path(&asset.sprite);
-
-            if let Some(texture_handle) = tile_sprite_assets.handles.get(texture_path) {
-                sprite.image = texture_handle.clone();
-            }
-            if let Some(layout_handle) = tile_sprite_assets.layouts.get(texture_path)
-                && let Some(ref mut texture_atlas) = sprite.texture_atlas
-            {
-                texture_atlas.index = index;
-                texture_atlas.layout = layout_handle.clone();
-            }
-
-        }
-
-        // 5. Add or remove Collider based on walkability of the full tile.
+        // 4. Add or remove Collider based on walkability of the full tile.
         let full_tile = map.tiles[idx];
         if is_walkable(full_tile) {
             commands.entity(tile_entity).remove::<Collider>();
@@ -697,7 +609,7 @@ pub fn apply_tile_mutations(
         any = true;
     }
 
-    // 6. Mark all viewsheds dirty so FOV is recalculated.
+    // 5. Mark all viewsheds dirty so FOV is recalculated.
     if any {
         for mut viewshed in viewshed_query.iter_mut() {
             viewshed.dirty = true;

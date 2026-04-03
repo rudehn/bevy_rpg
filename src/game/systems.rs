@@ -1,16 +1,15 @@
 use bevy::ecs::change_detection::DetectChanges;
 use bevy::ecs::world::Ref;
-use bevy::prelude::{Children, Color, Resource, Sprite, TextColor, Visibility};
+use bevy::prelude::{Resource, Visibility};
 use bevy::{
     ecs::{
         query::{Changed, Has, With, Without},
-        system::{Query, Res, ResMut},
+        system::{Query, Res},
     },
     transform::components::Transform,
 };
 use bracket_lib::prelude::{Algorithm2D, Point, field_of_view};
 
-use crate::game::magic::StatusEffects;
 use crate::map::map::GRID_SIZE;
 use crate::{
     components::{InInventory, Item, Monster, Position, Prop, Submerged, Viewshed},
@@ -29,9 +28,10 @@ pub fn fov_update_system(mut query: Query<(&mut Viewshed, Ref<Position>)>, map: 
     let map_changed = map.is_changed();
     for (mut viewshed, position) in query.iter_mut() {
         if viewshed.dirty || map_changed || viewshed.is_changed() || position.is_changed() {
-            viewshed.visible_tiles.clear();
             viewshed.visible_tiles =
-                field_of_view(Point::new(position.x, position.y), viewshed.range, &*map);
+                field_of_view(Point::new(position.x, position.y), viewshed.range, &*map)
+                    .into_iter()
+                    .collect();
             viewshed.dirty = false;
         }
     }
@@ -39,17 +39,14 @@ pub fn fov_update_system(mut query: Query<(&mut Viewshed, Ref<Position>)>, map: 
 
 pub fn update_monster_visibility(
     player_query: Query<&Viewshed, With<Player>>,
-    mode: Res<crate::game::ascii_mode::GraphicsMode>,
     omniscient: Res<Omniscient>,
-    mut monster_query: Query<(&Position, &mut Visibility, &mut Sprite, Has<Submerged>), With<Monster>>,
+    mut monster_query: Query<(&Position, &mut Visibility, Has<Submerged>), With<Monster>>,
 ) {
     let Ok(player_viewshed) = player_query.single() else {
         return;
     };
-    let is_ascii = *mode == crate::game::ascii_mode::GraphicsMode::Ascii;
 
-    for (monster_pos, mut monster_vis, mut sprite, is_submerged) in monster_query.iter_mut() {
-        // Submerged monsters are always invisible regardless of viewshed.
+    for (monster_pos, mut monster_vis, is_submerged) in monster_query.iter_mut() {
         if is_submerged {
             *monster_vis = Visibility::Hidden;
             continue;
@@ -60,7 +57,6 @@ pub fn update_monster_visibility(
 
         if is_visible {
             *monster_vis = Visibility::Visible;
-            sprite.color = if is_ascii { Color::NONE } else { Color::WHITE };
         } else {
             *monster_vis = Visibility::Hidden;
         }
@@ -69,21 +65,19 @@ pub fn update_monster_visibility(
 
 /// Updates floor item visibility to match the player's explored/visible state.
 /// - Unexplored tile: Hidden
-/// - Explored, not visible: Visible but dimmed (item "memory")
+/// - Explored, not visible: Visible (item "memory")
 /// - Currently visible: Full brightness
 pub fn update_item_visibility(
     player_query: Query<&Viewshed, With<Player>>,
     map: Res<Map>,
-    mode: Res<crate::game::ascii_mode::GraphicsMode>,
     omniscient: Res<Omniscient>,
-    mut item_query: Query<(&Position, &mut Visibility, &mut Sprite), (With<Item>, Without<InInventory>)>,
+    mut item_query: Query<(&Position, &mut Visibility), (With<Item>, Without<InInventory>)>,
 ) {
     let Ok(viewshed) = player_query.single() else {
         return;
     };
-    let is_ascii = *mode == crate::game::ascii_mode::GraphicsMode::Ascii;
 
-    for (pos, mut vis, mut sprite) in item_query.iter_mut() {
+    for (pos, mut vis) in item_query.iter_mut() {
         if !map.in_bounds(Point::new(pos.x, pos.y)) {
             continue;
         }
@@ -92,43 +86,10 @@ pub fn update_item_visibility(
 
         if omniscient.0 || viewshed.visible_tiles.contains(&pt) {
             *vis = Visibility::Visible;
-            sprite.color = if is_ascii { Color::NONE } else { Color::WHITE };
         } else if map.explored_tiles[idx] {
             *vis = Visibility::Visible;
-            sprite.color = if is_ascii { Color::NONE } else { Color::srgb(0.5, 0.5, 0.5) };
         } else {
             *vis = Visibility::Hidden;
-        }
-    }
-}
-
-/// Tints monster sprites based on active status effects.
-/// Priority: Stunned (yellow) > default (white).
-pub fn update_status_visuals(
-    mode: Res<crate::game::ascii_mode::GraphicsMode>,
-    mut query: Query<(Option<&StatusEffects>, &mut Sprite, Option<&Children>), With<Monster>>,
-    mut glyph_query: Query<&mut TextColor, With<crate::game::ascii_mode::AsciiGlyph>>,
-) {
-    let is_ascii = *mode == crate::game::ascii_mode::GraphicsMode::Ascii;
-
-    for (effects, mut sprite, children) in &mut query {
-        let tint = if effects.map(|e| e.is_stunned()).unwrap_or(false) {
-            Color::srgba(1.0, 1.0, 0.3, 1.0)
-        } else {
-            Color::WHITE
-        };
-
-        if is_ascii {
-            sprite.color = Color::NONE;
-            if let Some(children) = children {
-                for &child in children.iter() {
-                    if let Ok(mut text_color) = glyph_query.get_mut(child) {
-                        *text_color = TextColor(tint);
-                    }
-                }
-            }
-        } else {
-            sprite.color = tint;
         }
     }
 }
@@ -138,16 +99,14 @@ pub fn update_status_visuals(
 pub fn update_prop_visibility(
     player_query: Query<&Viewshed, With<Player>>,
     map: Res<Map>,
-    mode: Res<crate::game::ascii_mode::GraphicsMode>,
     omniscient: Res<Omniscient>,
-    mut prop_query: Query<(&Position, &mut Visibility, &mut Sprite), With<Prop>>,
+    mut prop_query: Query<(&Position, &mut Visibility), With<Prop>>,
 ) {
     let Ok(viewshed) = player_query.single() else {
         return;
     };
-    let is_ascii = *mode == crate::game::ascii_mode::GraphicsMode::Ascii;
 
-    for (pos, mut vis, mut sprite) in prop_query.iter_mut() {
+    for (pos, mut vis) in prop_query.iter_mut() {
         if !map.in_bounds(Point::new(pos.x, pos.y)) {
             continue;
         }
@@ -156,10 +115,8 @@ pub fn update_prop_visibility(
 
         if omniscient.0 || viewshed.visible_tiles.contains(&pt) {
             *vis = Visibility::Visible;
-            sprite.color = if is_ascii { Color::NONE } else { Color::WHITE };
         } else if map.explored_tiles[idx] {
             *vis = Visibility::Visible;
-            sprite.color = if is_ascii { Color::NONE } else { Color::srgb(0.5, 0.5, 0.5) };
         } else {
             *vis = Visibility::Hidden;
         }

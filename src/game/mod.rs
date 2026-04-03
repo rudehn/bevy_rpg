@@ -16,7 +16,7 @@ use crate::{
         magic::MagicPlugin,
         particles::ParticlesPlugin,
         stats::StatsPlugin,
-        systems::{fov_update_system, sync_entity_transforms, update_monster_visibility, update_item_visibility, update_prop_visibility, update_status_visuals},
+        systems::{fov_update_system, sync_entity_transforms, update_monster_visibility, update_item_visibility, update_prop_visibility},
         turns::TurnOrderPlugin,
     },
     map::{
@@ -144,7 +144,6 @@ impl Plugin for GamePlugin {
                     move_camera
                         .after(sync_entity_transforms)
                         .after(player_spawn_or_move_system),
-                    update_status_visuals,
                 )
                     .run_if(in_state(AppState::InGame)),
             )
@@ -156,7 +155,9 @@ impl Plugin for GamePlugin {
                         .run_if(|query: Query<(), Changed<Position>>| !query.is_empty())
                         .after(fov_update_system),
                     update_item_visibility
-                        .run_if(|query: Query<(), Changed<Viewshed>>| !query.is_empty())
+                        .run_if(|vs_query: Query<(), Changed<Viewshed>>, item_query: Query<(), (Changed<Visibility>, With<crate::components::Item>)>| {
+                            !vs_query.is_empty() || !item_query.is_empty()
+                        })
                         .after(fov_update_system),
                     update_prop_visibility
                         .run_if(|query: Query<(), Changed<Viewshed>>| !query.is_empty())
@@ -178,13 +179,7 @@ impl Plugin for GamePlugin {
             .init_resource::<fire::FireTiles>()
             .init_resource::<gas::GasTiles>()
             .init_resource::<water::WaterTiles>()
-            .add_systems(
-                Update,
-                (
-                    water::animate_water_shimmer,
-                )
-                    .run_if(in_state(AppState::InGame)),
-            );
+            ;
     }
 }
 

@@ -81,17 +81,8 @@ struct ItemPlan {
     pos: Point,
     name: String,
     count: u32,
-    /// Saved enchantment data; `None` means freshly generated (roll random).
-    enchantment: Option<i32>,
-    weapon_runic: Option<WeaponRunic>,
-    armor_runic: Option<ArmorRunic>,
-    runic_identified: Option<bool>,
-    staff_effect: Option<StaffEffect>,
-    base_recharge: Option<u32>,
-    staff_charges: Option<i32>,
-    staff_max_charges: Option<i32>,
-    staff_recharge_timer: Option<u32>,
-    staff_recharge_rate: Option<u32>,
+    /// Saved mutable item state; default means freshly generated (roll random).
+    state: crate::save::ItemMutableState,
     drifting: bool,
 }
 
@@ -211,7 +202,6 @@ pub(crate) fn spawn_tiles_into_ecs(
                 tile,
                 pt,
                 tile_manifest,
-                &tile_assets.sprite_assets,
                 ascii_font,
             );
             commands
@@ -255,16 +245,7 @@ fn items_from_saved(saved: Vec<SavedItem>) -> Vec<ItemPlan> {
             pos: Point::new(i.x, i.y),
             name: i.name,
             count: i.count,
-            enchantment: i.enchantment,
-            weapon_runic: i.weapon_runic,
-            armor_runic: i.armor_runic,
-            runic_identified: i.runic_identified,
-            staff_effect: i.staff_effect,
-            base_recharge: i.base_recharge,
-            staff_charges: i.staff_charges,
-            staff_max_charges: i.staff_max_charges,
-            staff_recharge_timer: i.staff_recharge_timer,
-            staff_recharge_rate: i.staff_recharge_rate,
+            state: i.state,
             drifting: i.drifting,
         })
         .collect()
@@ -329,16 +310,7 @@ impl FloorPlan {
                 pos: pt,
                 name,
                 count,
-                enchantment: None,
-                weapon_runic: None,
-                armor_runic: None,
-                runic_identified: None,
-                staff_effect: None,
-                base_recharge: None,
-                staff_charges: None,
-                staff_max_charges: None,
-                staff_recharge_timer: None,
-                staff_recharge_rate: None,
+                state: Default::default(),
                 drifting: false,
             })
             .collect();
@@ -528,9 +500,9 @@ pub fn materialize_floor(
     for i in &plan.items {
         // If the item has saved enchantment data, skip random enchantment rolling
         // by passing None for enchant_floor_depth.
-        let has_saved_enchantment = i.enchantment.is_some()
-            || i.weapon_runic.is_some()
-            || i.armor_runic.is_some();
+        let has_saved_enchantment = i.state.enchantment.is_some()
+            || i.state.weapon_runic.is_some()
+            || i.state.armor_runic.is_some();
         let enchant_depth = if has_saved_enchantment {
             None
         } else {
@@ -559,42 +531,12 @@ pub fn materialize_floor(
                     .insert(ItemStack { count: i.count, max_stack });
             }
 
-            // Restore saved enchantment and runic data
-            if let Some(level) = i.enchantment {
-                commands.entity(entity).insert(Enchantment { level });
-            }
-            if let Some(runic) = &i.weapon_runic {
-                commands.entity(entity).insert(ItemWeaponRunic(runic.clone()));
-            }
-            if let Some(runic) = i.armor_runic {
-                commands.entity(entity).insert(ItemArmorRunic(runic));
-            }
-            if let Some(identified) = i.runic_identified {
-                commands.entity(entity).insert(RunicIdentified(identified));
-            }
+            // Restore saved enchantment, runic, and staff data
+            crate::save::restore_item_mutable_state(commands, entity, &i.state);
 
             // Restore drifting state
             if i.drifting {
                 commands.entity(entity).insert(crate::components::Drifting);
-            }
-
-            // Restore staff data
-            if let Some(effect) = i.staff_effect {
-                let base_recharge = i.base_recharge.unwrap_or(250);
-                commands.entity(entity).insert(StaffData { effect, base_recharge });
-                if let (Some(charges), Some(max_charges), Some(recharge_timer), Some(recharge_rate)) = (
-                    i.staff_charges,
-                    i.staff_max_charges,
-                    i.staff_recharge_timer,
-                    i.staff_recharge_rate,
-                ) {
-                    commands.entity(entity).insert(Rechargeable {
-                        charges,
-                        max_charges,
-                        recharge_timer,
-                        recharge_rate,
-                    });
-                }
             }
         } else {
             warnings.push(format!("Failed to spawn item '{}'", i.name));

@@ -27,10 +27,29 @@ use crate::{
     map::map::GRID_SIZE,
 };
 
-/// Attach an AsciiGlyph child entity to a parent for ASCII rendering mode.
-/// The glyph starts hidden and becomes visible when GraphicsMode switches to Ascii.
+/// Attach an AsciiGlyph child entity to a parent for ASCII rendering.
 /// `parent_scale` is the parent entity's transform scale — the glyph counter-scales
-/// so text renders at the correct pixel size regardless of parent sprite scaling.
+/// so text renders at the correct pixel size regardless of parent scaling.
+
+/// Resolve sprite handles and scale from a sprite path and asset maps.
+/// Returns `None` if the texture or layout is missing.
+/// Used to determine the scale factor for ASCII glyph counter-scaling.
+pub fn resolve_sprite(
+    sprite_path: &str,
+    default_tile_size: UVec2,
+    tile_size_override: Option<UVec2>,
+    handles: &std::collections::HashMap<String, Handle<Image>>,
+    layouts: &std::collections::HashMap<String, Handle<bevy::prelude::TextureAtlasLayout>>,
+) -> Option<(Handle<Image>, Handle<bevy::prelude::TextureAtlasLayout>, usize, f32, f32)> {
+    let (texture_path, index) = crate::assets::parse_sprite_path(sprite_path);
+    let texture_handle = handles.get(texture_path).cloned()?;
+    let layout_handle = layouts.get(texture_path).cloned()?;
+    let tile_size = tile_size_override.unwrap_or(default_tile_size);
+    let scale_x = crate::map::map::GRID_SIZE.x / tile_size.x as f32;
+    let scale_y = crate::map::map::GRID_SIZE.y / tile_size.y as f32;
+    Some((texture_handle, layout_handle, index, scale_x, scale_y))
+}
+
 pub fn attach_ascii_glyph(
     commands: &mut Commands,
     parent: Entity,
@@ -42,9 +61,7 @@ pub fn attach_ascii_glyph(
     let display = if ascii_char.is_empty() { "?" } else { ascii_char };
     let inv_scale = Vec3::new(1.0 / parent_scale.x, 1.0 / parent_scale.y, 1.0);
     // Use Inherited so the glyph follows the parent's visibility.
-    // In ASCII mode the parent visibility system controls when items are
-    // shown/hidden; in Sprite mode apply_graphics_mode_swap sets all
-    // AsciiGlyph entities to Hidden on mode change.
+    // The parent visibility system controls when items are shown/hidden.
     let glyph = commands
         .spawn((
             Text2d::new(display.to_string()),
@@ -60,6 +77,7 @@ pub fn attach_ascii_glyph(
             },
             Visibility::Inherited,
             crate::game::ascii_mode::AsciiGlyph,
+            crate::game::ascii_mode::AsciiGlyphColor(ascii_fg),
             RenderLayers::layer(1),
         ))
         .id();
@@ -74,9 +92,16 @@ pub fn spawn_monster(
     monster_sprite_assets: &Res<MonsterSpriteAssets>,
     ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
 ) -> Option<Entity> {
-    let tile_size = monster_asset.tile_size.unwrap_or(UVec2::new(32, 32));
-    let scale_x = TILE_SIZE_X as f32 / tile_size.x as f32;
-    let scale_y = TILE_SIZE_Y as f32 / tile_size.y as f32;
+    let Some((texture_handle, layout_handle, index, scale_x, scale_y)) = resolve_sprite(
+        &monster_asset.sprite,
+        UVec2::new(32, 32),
+        monster_asset.tile_size,
+        &monster_sprite_assets.handles,
+        &monster_sprite_assets.layouts,
+    ) else {
+        error!("Missing monster sprite for '{}'", monster_asset.name);
+        return None;
+    };
 
     let new_pos = Transform {
         translation: Vec3::new(
@@ -90,17 +115,6 @@ pub fn spawn_monster(
     let new_grid_pos = Position {
         x: spawn_point.x,
         y: spawn_point.y,
-    };
-
-    let (texture_path, index) = crate::assets::parse_sprite_path(&monster_asset.sprite);
-
-    let Some(texture_handle) = monster_sprite_assets.handles.get(texture_path).cloned() else {
-        error!("Missing monster sprite texture: '{}'", texture_path);
-        return None;
-    };
-    let Some(layout_handle) = monster_sprite_assets.layouts.get(texture_path).cloned() else {
-        error!("Missing monster sprite layout: '{}'", texture_path);
-        return None;
     };
 
     let spawn_pt = Point::new(spawn_point.x, spawn_point.y);
@@ -151,13 +165,6 @@ pub fn spawn_monster(
             monster_asset.movement_mode,
         ))
         .insert((
-            Sprite::from_atlas_image(
-                texture_handle,
-                TextureAtlas {
-                    index,
-                    layout: layout_handle,
-                },
-            ),
             Visibility::Hidden,
             RenderLayers::layer(1),
         ))
@@ -330,6 +337,7 @@ pub fn spawn_monster(
                 None
             },
             roam_target: None,
+            last_action: None,
         });
     }
 
@@ -385,21 +393,16 @@ pub fn spawn_item(
         return None;
     };
 
-    let (texture_path, index) = crate::assets::parse_sprite_path(&asset.sprite);
-
-    let Some(texture_handle) = item_sprite_assets.handles.get(texture_path).cloned() else {
-        error!("Missing item sprite texture: '{}'", texture_path);
+    let Some((texture_handle, layout_handle, index, scale_x, scale_y)) = resolve_sprite(
+        &asset.sprite,
+        UVec2::new(32, 32),
+        asset.tile_size,
+        &item_sprite_assets.handles,
+        &item_sprite_assets.layouts,
+    ) else {
+        error!("Missing item sprite for '{}'", asset.name);
         return None;
     };
-    let Some(layout_handle) = item_sprite_assets.layouts.get(texture_path).cloned() else {
-        error!("Missing item sprite layout: '{}'", texture_path);
-        return None;
-    };
-
-    // Determine scale to fit one game map tile (GRID_SIZE)
-    let tile_size = asset.tile_size.unwrap_or(UVec2::new(32, 32));
-    let scale_x = GRID_SIZE.x / tile_size.x as f32;
-    let scale_y = GRID_SIZE.y / tile_size.y as f32;
 
     let mut entity = commands.spawn((
         Item,
@@ -407,13 +410,6 @@ pub fn spawn_item(
         GameEntityMarker,
         FloorEntityMarker,
         Position { x: spawn_point.x, y: spawn_point.y },
-        Sprite::from_atlas_image(
-            texture_handle,
-            TextureAtlas {
-                index,
-                layout: layout_handle,
-            },
-        ),
         Transform {
             translation: Vec3::new(
                 spawn_point.x as f32 * GRID_SIZE.x,
@@ -500,20 +496,13 @@ pub fn spawn_prop(
         None
     })?;
 
-    let (texture_path, index) = crate::assets::parse_sprite_path(&asset.sprite);
-
-    let texture_handle = prop_sprite_assets.handles.get(texture_path).cloned().or_else(|| {
-        error!("Missing prop sprite texture: '{}'", texture_path);
-        None
-    })?;
-    let layout_handle = prop_sprite_assets.layouts.get(texture_path).cloned().or_else(|| {
-        error!("Missing prop sprite layout: '{}'", texture_path);
-        None
-    })?;
-
-    let tile_size = asset.tile_size.unwrap_or(UVec2::new(16, 16));
-    let scale_x = TILE_SIZE_X as f32 / tile_size.x as f32;
-    let scale_y = TILE_SIZE_Y as f32 / tile_size.y as f32;
+    let (texture_handle, layout_handle, index, scale_x, scale_y) = resolve_sprite(
+        &asset.sprite,
+        UVec2::new(16, 16),
+        asset.tile_size,
+        &prop_sprite_assets.handles,
+        &prop_sprite_assets.layouts,
+    )?;
 
     let mut entity = commands.spawn((
         Prop,
@@ -522,13 +511,6 @@ pub fn spawn_prop(
         GameEntityMarker,
         FloorEntityMarker,
         Position { x: spawn_point.x, y: spawn_point.y },
-        Sprite::from_atlas_image(
-            texture_handle,
-            TextureAtlas {
-                index,
-                layout: layout_handle,
-            },
-        ),
         Transform {
             translation: Vec3::new(
                 spawn_point.x as f32 * GRID_SIZE.x,
@@ -544,9 +526,17 @@ pub fn spawn_prop(
 
     // Light-emitting props get the Candle component + animation timer so they
     // integrate with the existing lighting infrastructure.
-    if asset.light_radius.is_some() {
+    if let Some(radius) = asset.light_radius {
+        let color = asset.light_color
+            .map(|[r, g, b]| Color::srgb(r, g, b))
+            .unwrap_or(Color::srgb(1.0, 0.9, 0.6));
         entity.insert((
-            crate::map::light::Candle,
+            crate::map::light::LightSource {
+                radius,
+                intensity: 1.0,
+                color,
+                on_wall: true,
+            },
             crate::map::light::AnimationTimer(Timer::from_seconds(0.2, TimerMode::Repeating)),
         ));
     }
@@ -599,11 +589,6 @@ pub fn spawn_key(
             GameEntityMarker,
             FloorEntityMarker,
             Position { x: position.x, y: position.y },
-            Sprite {
-                color: Color::srgb(1.0, 0.85, 0.0), // yellow
-                custom_size: Some(GRID_SIZE),
-                ..default()
-            },
             Transform {
                 translation: Vec3::new(
                     position.x as f32 * GRID_SIZE.x,

@@ -1,18 +1,20 @@
 //! Unified ASCII tile renderer — the sole writer to tile ASCII components.
 //!
-//! Replaces: animate_fire_backgrounds, animate_gas_backgrounds,
-//! animate_water_shimmer (ASCII branch), update_tile_visibility (ASCII path),
-//! apply_tile_mutations glyph updates, apply_decoration_mutations glyph/bg updates.
+//! Handles: fire/gas/water background animation, tile visibility coloring,
+//! entity glyph overlay, and lighting tint for all tiles.
 
+use std::collections::HashMap;
 use std::f32::consts::TAU;
 
 use bevy::prelude::*;
 
 use crate::assets::{TileManifest, TileManifestHandle};
-use crate::components::{Position, Viewshed};
-use crate::game::ascii_mode::{AsciiBackground, AsciiGlyph, AsciiGlyphColor, LiquidOverlay};
+use crate::components::{InInventory, Item, Monster, Position, Prop, Submerged, Viewshed};
+use crate::map::tile::TileEntityIndex;
+use crate::game::ascii_mode::{AsciiBackground, AsciiGlyph, AsciiGlyphColor};
 use crate::game::fire::FireTiles;
 use crate::game::gas::GasTiles;
+use crate::game::magic::StatusEffects;
 use crate::game::systems::Omniscient;
 use crate::game::water::WaterTiles;
 use crate::map::light::LightMap;
@@ -26,8 +28,9 @@ use bracket_lib::prelude::Algorithm2D;
 /// Compute fire glyph foreground and background colors from sine-wave animation.
 /// Returns `(fg_color, bg_color)`. Fire is self-luminous — no lighting tint needed.
 pub fn compute_fire_colors(t: f32, phase: f32) -> (Color, Color) {
-    let wave1 = (t * 1.2 + phase * 6.28).sin() * 0.5 + 0.5;
-    let wave2 = (t * 0.7 + phase * 3.14).sin() * 0.5 + 0.5;
+    use std::f32::consts::{PI, TAU};
+    let wave1 = (t * 1.2 + phase * TAU).sin() * 0.5 + 0.5;
+    let wave2 = (t * 0.7 + phase * PI).sin() * 0.5 + 0.5;
     let blend = wave1 * 0.6 + wave2 * 0.4;
 
     let fg = Color::srgb(
@@ -51,7 +54,7 @@ pub fn compute_gas_bg(
     t: f32,
     phase: f32,
 ) -> Color {
-    let wave = (t * 0.6 + phase * 6.28).sin() * 0.5 + 0.5;
+    let wave = (t * 0.6 + phase * std::f32::consts::TAU).sin() * 0.5 + 0.5;
     let intensity = match concentration {
         3 => 0.6 + wave * 0.15,
         2 => 0.35 + wave * 0.15,
@@ -84,6 +87,103 @@ pub fn dim_color(base: Color, factor: f32) -> Color {
 /// Minimum brightness for tiles currently in the player's FOV but not near a candle.
 const AMBIENT: f32 = 0.55;
 
+/// Resolve the background color for a visible cell, applying tile effect cascade
+/// (fire glow > gas blend > water shimmer > lit base).
+fn resolve_cell_bg(
+    tile: crate::map::tile::Tile,
+    manifest: &TileManifest,
+    idx: usize,
+    light_map: &LightMap,
+    fire_tiles: &FireTiles,
+    gas_tiles: &GasTiles,
+    water_tiles: &WaterTiles,
+    x: i32, y: i32,
+    t: f32,
+    phase: f32,
+) -> Color {
+    if fire_tiles.0.contains(&(x, y)) {
+        let (_, fire_bg) = compute_fire_colors(t, phase);
+        return fire_bg;
+    }
+    if let Some(gas) = gas_tiles.0.get(&(x, y)) {
+        let (light, light_color) = get_light(idx, light_map);
+        let light_amount = ((light - AMBIENT) / (1.0 - AMBIENT)).clamp(0.0, 1.0);
+        let base_bg = apply_light_to_color(resolve_tile_bg(tile, manifest), light_amount, light_color);
+        let gas_bg = compute_gas_bg(gas.gas_type, gas.concentration, t, phase);
+        let alpha = match gas.concentration { 3 => 0.85, 2 => 0.6, _ => 0.35 };
+        let g = gas_bg.to_srgba();
+        let b = base_bg.to_srgba();
+        return Color::srgb(
+            g.red * alpha + b.red * (1.0 - alpha),
+            g.green * alpha + b.green * (1.0 - alpha),
+            g.blue * alpha + b.blue * (1.0 - alpha),
+        );
+    }
+    if let Some(liquid) = water_tiles.0.get(&(x, y)) {
+        let (light, _) = get_light(idx, light_map);
+        let variation = if *liquid == LiquidType::Water { 0.10 } else { 0.05 };
+        let bg_base = match liquid {
+            LiquidType::Water => [0.37_f32, 0.37, 0.79],
+            _ => [0.44_f32, 0.63, 0.93],
+        };
+        let r_wave = (t * 2.0 + phase * TAU).sin();
+        let g_wave = (t * 1.7 + phase * TAU + 1.0).sin();
+        let b_wave = (t * 1.3 + phase * TAU + 2.0).sin();
+        return Color::srgb(
+            (bg_base[0] * light * (1.0 + r_wave * variation)).clamp(0.0, 1.0),
+            (bg_base[1] * light * (1.0 + g_wave * variation)).clamp(0.0, 1.0),
+            (bg_base[2] * light * (1.0 + b_wave * variation)).clamp(0.0, 1.0),
+        );
+    }
+    // Normal lit base bg
+    let (light, light_color) = get_light(idx, light_map);
+    let light_amount = ((light - AMBIENT) / (1.0 - AMBIENT)).clamp(0.0, 1.0);
+    apply_light_to_color(resolve_tile_bg(tile, manifest), light_amount, light_color)
+}
+
+struct CellEntity {
+    glyph: String,
+    color: Color,
+}
+
+/// Bundled entity queries for spatial lookup in the ASCII tile renderer.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct EntityCellQueries<'w, 's> {
+    player_pos: Query<'w, 's, (&'static Position, &'static Children), With<Player>>,
+    monsters: Query<
+        'w,
+        's,
+        (&'static Position, Option<&'static StatusEffects>, &'static Children, Has<Submerged>),
+        With<Monster>,
+    >,
+    items: Query<'w, 's, (&'static Position, &'static Children), (With<Item>, Without<InInventory>)>,
+    props: Query<'w, 's, (&'static Position, &'static Children), With<Prop>>,
+}
+
+/// Extract ASCII glyph data from an entity's children.
+fn entity_glyph_from_children(
+    children: &Children,
+    glyph_query: &Query<
+        (&mut Text2d, &mut TextColor, &mut AsciiGlyphColor),
+        With<AsciiGlyph>,
+    >,
+    tint: Option<Color>,
+) -> Option<CellEntity> {
+    for child in children.iter() {
+        if let Ok((text, _text_color, base_color)) = glyph_query.get(child) {
+            let ch = text.as_str().to_string();
+            if ch.is_empty() {
+                continue;
+            }
+            return Some(CellEntity {
+                glyph: ch,
+                color: tint.unwrap_or(base_color.0),
+            });
+        }
+    }
+    None
+}
+
 /// Unified ASCII tile renderer. Runs every frame in ASCII mode.
 ///
 /// For each tile entity, resolves what to display using a priority cascade
@@ -93,6 +193,7 @@ const AMBIENT: f32 = 0.55;
 pub fn render_tile_ascii(
     time: Res<Time>,
     player_query: Query<&Viewshed, With<Player>>,
+    viewshed_changed: Query<(), (With<Player>, Changed<Viewshed>)>,
     map: Res<Map>,
     light_map: Res<LightMap>,
     fire_tiles: Res<FireTiles>,
@@ -101,15 +202,17 @@ pub fn render_tile_ascii(
     omniscient: Res<Omniscient>,
     tile_manifests: Res<Assets<TileManifest>>,
     tile_manifest_handle: Res<TileManifestHandle>,
+    tile_index: Res<TileEntityIndex>,
     tile_query: Query<
-        (&Position, &TileVisibility, &TileExplored, Option<&Children>),
+        (&TileVisibility, &TileExplored, Option<&Children>),
         With<TileMarker>,
     >,
     mut glyph_query: Query<
         (&mut Text2d, &mut TextColor, &mut AsciiGlyphColor),
         With<AsciiGlyph>,
     >,
-    mut bg_query: Query<(&mut Sprite, &mut AsciiBackground), Without<LiquidOverlay>>,
+    mut bg_query: Query<(&mut Sprite, &mut AsciiBackground)>,
+    entity_queries: EntityCellQueries,
 ) {
     let Ok(player_viewshed) = player_query.single() else {
         return;
@@ -120,34 +223,112 @@ pub fn render_tile_ascii(
     let fov_tiles = &player_viewshed.visible_tiles;
     let omni = omniscient.0;
     let t = time.elapsed_secs();
+    let fov_changed = !viewshed_changed.is_empty()
+        || fire_tiles.is_changed()
+        || gas_tiles.is_changed()
+        || omniscient.is_changed();
 
-    for (tile_pos, tile_vis, tile_explored, children) in tile_query.iter() {
-        let x = tile_pos.x;
-        let y = tile_pos.y;
-        let phase = (x as f32 * 1.7 + y as f32 * 2.3).fract();
+    // Build per-cell entity lookup. Priority: Player > Monster > Item > Prop.
+    // Insert lowest priority first — higher priority overwrites.
+    let mut cell_entities: HashMap<(i32, i32), CellEntity> = HashMap::new();
 
+    for (pos, children) in entity_queries.props.iter() {
+        let pt = bracket_lib::prelude::Point::new(pos.x, pos.y);
+        if !(omni || fov_tiles.contains(&pt)) {
+            continue;
+        }
+        if let Some(ce) = entity_glyph_from_children(children, &glyph_query, None) {
+            cell_entities.insert((pos.x, pos.y), ce);
+        }
+    }
+    for (pos, children) in entity_queries.items.iter() {
+        let pt = bracket_lib::prelude::Point::new(pos.x, pos.y);
+        if !(omni || fov_tiles.contains(&pt)) {
+            continue;
+        }
+        if let Some(ce) = entity_glyph_from_children(children, &glyph_query, None) {
+            cell_entities.insert((pos.x, pos.y), ce);
+        }
+    }
+    for (pos, effects, children, is_submerged) in entity_queries.monsters.iter() {
+        if is_submerged {
+            continue;
+        }
+        let pt = bracket_lib::prelude::Point::new(pos.x, pos.y);
+        if !(omni || fov_tiles.contains(&pt)) {
+            continue;
+        }
+        let status_tint = if effects.map(|e| e.is_stunned()).unwrap_or(false) {
+            Some(Color::srgba(1.0, 1.0, 0.3, 1.0))
+        } else {
+            None
+        };
+        if let Some(ce) = entity_glyph_from_children(children, &glyph_query, status_tint) {
+            cell_entities.insert((pos.x, pos.y), ce);
+        }
+    }
+    // Player is NOT added to cell_entities — the player's own AsciiGlyph child
+    // stays visible in ASCII mode and follows the player's Transform, avoiding
+    // one-frame lag when the camera moves before the tile renderer runs.
+
+    // Collect positions to process: FOV tiles (always) + explored tiles (only on change).
+    // This avoids iterating all 4800 tile entities every frame.
+    let mut positions_to_process: Vec<(i32, i32)> = Vec::new();
+
+    if omni {
+        // Omniscient: process all tiles, but only on change
+        if !fov_changed { return; }
+        for y in 0..map.height {
+            for x in 0..map.width {
+                positions_to_process.push((x, y));
+            }
+        }
+    } else {
+        // Always process FOV tiles (animated effects need per-frame updates)
+        for pt in fov_tiles.iter() {
+            positions_to_process.push((pt.x, pt.y));
+        }
+        // On viewshed change, also process explored-but-not-visible tiles
+        // (they need dimming when they leave FOV)
+        if fov_changed {
+            for y in 0..map.height {
+                for x in 0..map.width {
+                    let idx = map.xy_idx(x, y);
+                    if idx < map.explored_tiles.len()
+                        && map.explored_tiles[idx]
+                        && !fov_tiles.contains(&bracket_lib::prelude::Point::new(x, y))
+                    {
+                        positions_to_process.push((x, y));
+                    }
+                }
+            }
+        }
+    }
+
+    for (x, y) in &positions_to_process {
+        let x = *x;
+        let y = *y;
+        let Some(&tile_entity) = tile_index.0.get(&(x, y)) else {
+            continue;
+        };
+        let Ok((tile_vis, tile_explored, children)) = tile_query.get(tile_entity) else {
+            continue;
+        };
         let Some(children) = children else {
             continue;
         };
-
-        // Unexplored tiles: skip entirely.
         if *tile_explored != TileExplored::Explored {
             continue;
         }
 
-        let current_point = bracket_lib::prelude::Point::new(x, y);
-        let in_fov = omni || fov_tiles.contains(&current_point);
+        let phase = (x as f32 * 1.7 + y as f32 * 2.3).fract();
+        let in_fov = omni || fov_tiles.contains(&bracket_lib::prelude::Point::new(x, y));
 
-        let idx = if map.in_bounds(current_point) {
-            map.xy_idx(x, y)
-        } else {
+        let idx = map.xy_idx(x, y);
+        if idx >= map.tiles.len() {
             continue;
-        };
-        let tile = if idx < map.tiles.len() {
-            map.tiles[idx]
-        } else {
-            continue;
-        };
+        }
+        let tile = map.tiles[idx];
 
         let (glyph_char, fg_color, bg_color);
 
@@ -157,21 +338,47 @@ pub fn render_tile_ascii(
             let gas_data = gas_tiles.0.get(&(x, y));
             let water_data = water_tiles.0.get(&(x, y));
 
-            if is_fire {
+            if let Some(entity_cell) = cell_entities.get(&(x, y)) {
+                // Entity overrides tile glyph; background reflects tile effects
+                glyph_char = entity_cell.glyph.clone();
+                fg_color = entity_cell.color;
+                bg_color = resolve_cell_bg(
+                    tile, manifest, idx, &light_map, &fire_tiles, &gas_tiles,
+                    &water_tiles, x, y, t, phase,
+                );
+            } else if is_fire {
                 // 1. Fire: self-luminous, special glyph
                 glyph_char = "^".to_string();
                 let (fg, bg) = compute_fire_colors(t, phase);
                 fg_color = fg;
                 bg_color = bg;
             } else if let Some(gas) = gas_data {
-                // 2. Gas: keep base glyph, apply lighting to fg, gas bg is self-luminous
+                // 2. Gas: keep base glyph, apply lighting to fg, gas bg is self-luminous.
+                // Blend gas bg over the tile's base bg so thin gas doesn't black out the tile.
                 let (base_char, base_fg, _) = resolve_tile_display(tile, manifest);
                 glyph_char = base_char;
 
                 let (light, light_color) = get_light(idx, &light_map);
                 let light_amount = ((light - AMBIENT) / (1.0 - AMBIENT)).clamp(0.0, 1.0);
                 fg_color = apply_light_to_color(base_fg, light_amount, light_color);
-                bg_color = compute_gas_bg(gas.gas_type, gas.concentration, t, phase);
+
+                let gas_bg = compute_gas_bg(gas.gas_type, gas.concentration, t, phase);
+                let base_bg = apply_light_to_color(
+                    resolve_tile_bg(tile, manifest), light_amount, light_color,
+                );
+                // Alpha blend: thicker gas covers more of the base
+                let alpha = match gas.concentration {
+                    3 => 0.85,
+                    2 => 0.6,
+                    _ => 0.35,
+                };
+                let gas_s = gas_bg.to_srgba();
+                let base_s = base_bg.to_srgba();
+                bg_color = Color::srgb(
+                    gas_s.red * alpha + base_s.red * (1.0 - alpha),
+                    gas_s.green * alpha + base_s.green * (1.0 - alpha),
+                    gas_s.blue * alpha + base_s.blue * (1.0 - alpha),
+                );
             } else if let Some(liquid) = water_data {
                 // 3. Water: shimmer with per-channel sine waves
                 let (base_char, _, _) = resolve_tile_display(tile, manifest);
@@ -196,16 +403,17 @@ pub fn render_tile_ascii(
                 let g_wave = (t * 1.7 + phase * TAU + 1.0).sin();
                 let b_wave = (t * 1.3 + phase * TAU + 2.0).sin();
 
-                fn shimmer(base: [f32; 3], light: f32, light_color: [f32; 3], waves: [f32; 3], variation: f32) -> Color {
-                    let r = (base[0] * light * light_color[0] * (1.0 + waves[0] * variation)).clamp(0.0, 1.0);
-                    let g = (base[1] * light * light_color[1] * (1.0 + waves[1] * variation)).clamp(0.0, 1.0);
-                    let b = (base[2] * light * light_color[2] * (1.0 + waves[2] * variation)).clamp(0.0, 1.0);
+                // Water uses light level only (not warm light_color tint) to stay blue.
+                fn shimmer(base: [f32; 3], light: f32, waves: [f32; 3], variation: f32) -> Color {
+                    let r = (base[0] * light * (1.0 + waves[0] * variation)).clamp(0.0, 1.0);
+                    let g = (base[1] * light * (1.0 + waves[1] * variation)).clamp(0.0, 1.0);
+                    let b = (base[2] * light * (1.0 + waves[2] * variation)).clamp(0.0, 1.0);
                     Color::srgb(r, g, b)
                 }
 
                 let waves = [r_wave, g_wave, b_wave];
-                fg_color = shimmer(fg_base, light, light_color, waves, variation);
-                bg_color = shimmer(bg_base, light, light_color, waves, variation);
+                fg_color = shimmer(fg_base, light, waves, variation);
+                bg_color = shimmer(bg_base, light, waves, variation);
             } else {
                 // 4. Base: normal tile with lighting
                 let (base_char, base_fg, _) = resolve_tile_display(tile, manifest);
@@ -226,16 +434,26 @@ pub fn render_tile_ascii(
             bg_color = dim_color(base_bg, 0.35);
         }
 
-        // Write to children
+        // Write to children — conditional to avoid triggering Bevy change detection
         for child in children.iter() {
             if let Ok((mut text, mut text_color, mut glyph_base)) = glyph_query.get_mut(child) {
-                **text = glyph_char.clone();
-                text_color.0 = fg_color;
-                glyph_base.0 = fg_color;
+                if text.as_str() != glyph_char {
+                    **text = glyph_char.clone();
+                }
+                if text_color.0 != fg_color {
+                    text_color.0 = fg_color;
+                }
+                if glyph_base.0 != fg_color {
+                    glyph_base.0 = fg_color;
+                }
             }
             if let Ok((mut sprite, mut bg)) = bg_query.get_mut(child) {
-                sprite.color = bg_color;
-                bg.base_color = bg_color;
+                if sprite.color != bg_color {
+                    sprite.color = bg_color;
+                }
+                if bg.base_color != bg_color {
+                    bg.base_color = bg_color;
+                }
             }
         }
     }

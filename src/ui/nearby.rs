@@ -6,13 +6,18 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::components::{Chest, GameEntityMarker, InInventory, Item, Monster, Name, Position, Prop, Viewshed};
+use crate::game::ai::MonsterAI;
+use crate::game::combat::Health;
 use crate::game::enchantment::{display_item_name, Enchantment, ItemArmorRunic, ItemWeaponRunic, RunicIdentified};
+use crate::game::goap::GoapAI;
 use crate::game::items::ItemProperties;
+use crate::game::magic::StatusEffects;
 use crate::game::{AppState, InGameState};
 use crate::map::Map;
 use crate::map::map::GRID_SIZE;
 use crate::map::tile::TerrainType;
 use crate::player::Player;
+use crate::ui::{collect_status_effects_with_duration, spawn_status_badge};
 
 // --- Resources ---
 
@@ -90,18 +95,17 @@ fn tile_distance(a: &Position, b: &Position) -> i32 {
 fn update_nearby_panel(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    mode: Res<crate::game::ascii_mode::GraphicsMode>,
     ascii_font_res: Option<Res<crate::game::ascii_mode::AsciiFont>>,
     map: Res<Map>,
     player_query: Query<(&Viewshed, &Position), (With<Player>, Changed<Viewshed>)>,
-    monster_query: Query<(Entity, &Position, &Name, &Sprite, Option<&Children>), With<Monster>>,
+    monster_query: Query<(Entity, &Position, &Name, Option<&Children>, &Health, Option<&MonsterAI>, Option<&GoapAI>, Option<&StatusEffects>), With<Monster>>,
     item_query: Query<
-        (Entity, &Position, &Name, &ItemProperties, &Sprite, Option<&Children>,
+        (Entity, &Position, &Name, &ItemProperties, Option<&Children>,
          Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>),
         (With<Item>, Without<InInventory>),
     >,
     chest_query: Query<
-        (Entity, &Position, &Name, &Sprite, Option<&Children>),
+        (Entity, &Position, &Name, Option<&Children>),
         (With<Chest>, With<Prop>),
     >,
     glyph_query: Query<(&Text2d, &TextColor), With<crate::game::ascii_mode::AsciiGlyph>>,
@@ -119,8 +123,6 @@ fn update_nearby_panel(
         .map(|p| (p.x, p.y))
         .collect();
 
-    let is_ascii = *mode == crate::game::ascii_mode::GraphicsMode::Ascii;
-
     // Helper: find ASCII glyph info from children
     let get_ascii_info = |children: Option<&Children>| -> Option<(String, Color)> {
         children.and_then(|ch| {
@@ -133,31 +135,67 @@ fn update_nearby_panel(
         })
     };
 
-    // (entity, dist, name, image, atlas, ascii_char, ascii_color)
-    type NearbyEntry = (Entity, i32, String, Handle<Image>, Option<TextureAtlas>, Option<String>, Option<Color>);
+    // (entity, dist, name, ascii_char, ascii_color)
+    type NearbyEntry = (Entity, i32, String, Option<String>, Option<Color>);
+
+    // Monster entry with extra display data
+    struct MonsterEntry {
+        base: NearbyEntry,
+        health_pct: f32,
+        ai_state: &'static str,
+        ai_color: Color,
+        status_effects: Vec<(String, Color, u32, u32)>,
+    }
+
+    fn ai_state_color(state: &str) -> Color {
+        match state {
+            "Sleeping" => Color::srgb(0.5, 0.5, 0.5),
+            "Wandering" => Color::srgb(0.8, 0.7, 0.4),
+            "Hunting" => Color::srgb(0.9, 0.3, 0.3),
+            "Fleeing" => Color::srgb(0.3, 0.8, 0.8),
+            "Looting" => Color::srgb(0.9, 0.7, 0.2),
+            _ => Color::srgb(0.5, 0.5, 0.5),
+        }
+    }
 
     // Collect visible monsters
-    let mut monsters: Vec<NearbyEntry> =
+    let mut monsters: Vec<MonsterEntry> =
         monster_query
             .iter()
             .filter(|(_, pos, ..)| visible.contains(&(pos.x, pos.y)))
-            .map(|(entity, pos, name, sprite, children)| {
+            .map(|(entity, pos, name, children, health, monster_ai, goap_ai, status)| {
                 let dist = tile_distance(player_pos, pos);
                 let (ac, acol) = get_ascii_info(children).unzip();
-                (entity, dist, name.0.clone(), sprite.image.clone(), sprite.texture_atlas.clone(), ac, acol)
+                let health_pct = if health.max > 0 { health.current as f32 / health.max as f32 } else { 1.0 };
+                let ai_state = if let Some(goap) = goap_ai {
+                    goap.display_state()
+                } else if let Some(fsm) = monster_ai {
+                    fsm.display_state()
+                } else {
+                    "Unknown"
+                };
+                let ai_color = ai_state_color(ai_state);
+                let status_effects = collect_status_effects_with_duration(status);
+                MonsterEntry {
+                    base: (entity, dist, name.0.clone(), ac, acol),
+                    health_pct,
+                    ai_state,
+                    ai_color,
+                    status_effects,
+                }
             })
             .collect();
-    monsters.sort_by_key(|(_, d, ..)| *d);
+    monsters.sort_by_key(|m| m.base.1);
 
     // Collect visible items
     let mut items: Vec<NearbyEntry> = item_query
         .iter()
         .filter(|(_, pos, ..)| visible.contains(&(pos.x, pos.y)))
-        .map(|(entity, pos, name, _props, sprite, children, ench, w_runic, a_runic, runic_id)| {
+        .map(|(entity, pos, name, _props, children, ench, w_runic, a_runic, runic_id)| {
             let dist = tile_distance(player_pos, pos);
             let (ac, acol) = get_ascii_info(children).unzip();
             let enriched = display_item_name(&name.0, ench, w_runic, a_runic, runic_id);
-            (entity, dist, enriched, sprite.image.clone(), sprite.texture_atlas.clone(), ac, acol)
+            (entity, dist, enriched, ac, acol)
         })
         .collect();
     items.sort_by_key(|(_, d, ..)| *d);
@@ -166,10 +204,10 @@ fn update_nearby_panel(
     let mut chests: Vec<NearbyEntry> = chest_query
         .iter()
         .filter(|(_, pos, ..)| visible.contains(&(pos.x, pos.y)))
-        .map(|(entity, pos, name, sprite, children)| {
+        .map(|(entity, pos, name, children)| {
             let dist = tile_distance(player_pos, pos);
             let (ac, acol) = get_ascii_info(children).unzip();
-            (entity, dist, name.0.clone(), sprite.image.clone(), sprite.texture_atlas.clone(), ac, acol)
+            (entity, dist, name.0.clone(), ac, acol)
         })
         .collect();
     chests.sort_by_key(|(_, d, ..)| *d);
@@ -196,7 +234,7 @@ fn update_nearby_panel(
     // Update entity list
     nearby_state.entity_list = monsters
         .iter()
-        .map(|(e, ..)| *e)
+        .map(|m| m.base.0)
         .chain(items.iter().map(|(e, ..)| *e))
         .chain(chests.iter().map(|(e, ..)| *e))
         .collect();
@@ -243,7 +281,8 @@ fn update_nearby_panel(
                 Node { margin: UiRect::top(Val::Px(4.0)), ..default() },
                 NearbyRow { entity: Entity::PLACEHOLDER },
             ));
-            for (i, (entity, dist, name, image, atlas, ascii_char, ascii_color)) in monsters.iter().enumerate() {
+            for (i, monster) in monsters.iter().enumerate() {
+                let (entity, _dist, name, ascii_char, ascii_color) = &monster.base;
                 let is_selected = sel == Some(i);
                 let bg = if is_selected {
                     BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15))
@@ -251,27 +290,33 @@ fn update_nearby_panel(
                     BackgroundColor(Color::NONE)
                 };
                 let truncated = truncate_name(name);
+                // Outer container: vertical column for all rows of this monster
                 parent
                     .spawn((
                         Node {
                             width: Val::Percent(100.0),
-                            flex_direction: FlexDirection::Row,
-                            align_items: AlignItems::Center,
+                            flex_direction: FlexDirection::Column,
                             padding: UiRect::axes(Val::Px(2.0), Val::Px(1.0)),
-                            margin: UiRect::top(Val::Px(1.0)),
+                            margin: UiRect::top(Val::Px(2.0)),
                             ..default()
                         },
                         bg,
                         NearbyRow { entity: *entity },
                     ))
-                    .with_children(|row| {
-                        if is_ascii {
-                            if let (Some(ch), Some(col)) = (ascii_char, ascii_color) {
+                    .with_children(|col| {
+                        // Row 1: icon + name
+                        col.spawn(Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        }).with_children(|row| {
+                            if let (Some(ch), Some(col_color)) = (ascii_char, ascii_color) {
                                 let afont = ascii_font_res.as_ref().map(|f| f.0.clone()).unwrap_or_else(|| font.clone());
                                 row.spawn((
                                     Text::new(ch.clone()),
                                     TextFont { font: afont, font_size: 14.0, ..default() },
-                                    TextColor(*col),
+                                    TextColor(*col_color),
                                     Node {
                                         width: Val::Px(14.0),
                                         margin: UiRect::right(Val::Px(4.0)),
@@ -279,26 +324,69 @@ fn update_nearby_panel(
                                     },
                                 ));
                             }
-                        } else {
-                            let mut img = ImageNode::new(image.clone());
-                            img.texture_atlas = atlas.clone();
+                            row.spawn((
+                                Text::new(truncated),
+                                TextFont { font: font.clone(), font_size: 12.0, ..default() },
+                                TextColor(Color::srgb(0.85, 0.85, 0.85)),
+                            ));
+                        });
+
+                        // Row 2: health bar + AI state
+                        col.spawn(Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            margin: UiRect::top(Val::Px(1.0)),
+                            padding: UiRect::left(Val::Px(18.0)),
+                            ..default()
+                        }).with_children(|row| {
+                            // Health bar background (red)
                             row.spawn((
                                 Node {
-                                    width: Val::Px(14.0),
-                                    height: Val::Px(14.0),
-                                    margin: UiRect::right(Val::Px(4.0)),
-                                    flex_shrink: 0.0,
+                                    width: Val::Px(80.0),
+                                    height: Val::Px(8.0),
+                                    border: UiRect::all(Val::Px(1.0)),
                                     ..default()
                                 },
-                                img,
+                                BackgroundColor(Color::srgb(0.5, 0.1, 0.1)),
+                                BorderColor::all(Color::srgb(0.4, 0.4, 0.4)),
+                            )).with_children(|bar| {
+                                // Health bar fill (green)
+                                bar.spawn((
+                                    Node {
+                                        width: Val::Percent(monster.health_pct * 100.0),
+                                        height: Val::Percent(100.0),
+                                        ..default()
+                                    },
+                                    BackgroundColor(Color::srgb(0.0, 0.8, 0.0)),
+                                ));
+                            });
+                            // AI state label
+                            row.spawn((
+                                Text::new(format!("({})", monster.ai_state)),
+                                TextFont { font: font.clone(), font_size: 10.0, ..default() },
+                                TextColor(monster.ai_color),
+                                Node { margin: UiRect::left(Val::Px(4.0)), ..default() },
                             ));
+                        });
+
+                        // Row 3: status effects (only if any)
+                        if !monster.status_effects.is_empty() {
+                            col.spawn(Node {
+                                width: Val::Percent(100.0),
+                                flex_direction: FlexDirection::Row,
+                                flex_wrap: FlexWrap::Wrap,
+                                column_gap: Val::Px(3.0),
+                                row_gap: Val::Px(2.0),
+                                margin: UiRect::top(Val::Px(1.0)),
+                                padding: UiRect::left(Val::Px(18.0)),
+                                ..default()
+                            }).with_children(|row| {
+                                for (label, color, turns_remaining, initial_duration) in &monster.status_effects {
+                                    spawn_status_badge(row, &font, label, *color, *turns_remaining, *initial_duration);
+                                }
+                            });
                         }
-                        row.spawn((
-                            Text::new(format!("{} {}", truncated, dist)),
-                            TextFont { font: font.clone(), font_size: 12.0, ..default() },
-                            TextColor(Color::srgb(0.85, 0.85, 0.85)),
-                            Node { flex_grow: 1.0, ..default() },
-                        ));
                     });
             }
         }
@@ -312,7 +400,7 @@ fn update_nearby_panel(
                 Node { margin: UiRect::top(Val::Px(4.0)), ..default() },
                 NearbyRow { entity: Entity::PLACEHOLDER },
             ));
-            for (i, (entity, dist, name, image, atlas, ascii_char, ascii_color)) in items.iter().enumerate() {
+            for (i, (entity, dist, name, ascii_char, ascii_color)) in items.iter().enumerate() {
                 let global_idx = monsters.len() + i;
                 let is_selected = sel == Some(global_idx);
                 let bg = if is_selected {
@@ -335,32 +423,17 @@ fn update_nearby_panel(
                         NearbyRow { entity: *entity },
                     ))
                     .with_children(|row| {
-                        if is_ascii {
-                            if let (Some(ch), Some(col)) = (ascii_char, ascii_color) {
-                                let afont = ascii_font_res.as_ref().map(|f| f.0.clone()).unwrap_or_else(|| font.clone());
-                                row.spawn((
-                                    Text::new(ch.clone()),
-                                    TextFont { font: afont, font_size: 14.0, ..default() },
-                                    TextColor(*col),
-                                    Node {
-                                        width: Val::Px(14.0),
-                                        margin: UiRect::right(Val::Px(4.0)),
-                                        ..default()
-                                    },
-                                ));
-                            }
-                        } else {
-                            let mut img = ImageNode::new(image.clone());
-                            img.texture_atlas = atlas.clone();
+                        if let (Some(ch), Some(col)) = (ascii_char, ascii_color) {
+                            let afont = ascii_font_res.as_ref().map(|f| f.0.clone()).unwrap_or_else(|| font.clone());
                             row.spawn((
+                                Text::new(ch.clone()),
+                                TextFont { font: afont, font_size: 14.0, ..default() },
+                                TextColor(*col),
                                 Node {
                                     width: Val::Px(14.0),
-                                    height: Val::Px(14.0),
                                     margin: UiRect::right(Val::Px(4.0)),
-                                    flex_shrink: 0.0,
                                     ..default()
                                 },
-                                img,
                             ));
                         }
                         row.spawn((
@@ -382,7 +455,7 @@ fn update_nearby_panel(
                 Node { margin: UiRect::top(Val::Px(4.0)), ..default() },
                 NearbyRow { entity: Entity::PLACEHOLDER },
             ));
-            for (i, (entity, dist, name, image, atlas, ascii_char, ascii_color)) in chests.iter().enumerate() {
+            for (i, (entity, dist, name, ascii_char, ascii_color)) in chests.iter().enumerate() {
                 let global_idx = monsters.len() + items.len() + i;
                 let is_selected = sel == Some(global_idx);
                 let bg = if is_selected {
@@ -405,32 +478,17 @@ fn update_nearby_panel(
                         NearbyRow { entity: *entity },
                     ))
                     .with_children(|row| {
-                        if is_ascii {
-                            if let (Some(ch), Some(col)) = (ascii_char, ascii_color) {
-                                let afont = ascii_font_res.as_ref().map(|f| f.0.clone()).unwrap_or_else(|| font.clone());
-                                row.spawn((
-                                    Text::new(ch.clone()),
-                                    TextFont { font: afont, font_size: 14.0, ..default() },
-                                    TextColor(*col),
-                                    Node {
-                                        width: Val::Px(14.0),
-                                        margin: UiRect::right(Val::Px(4.0)),
-                                        ..default()
-                                    },
-                                ));
-                            }
-                        } else {
-                            let mut img = ImageNode::new(image.clone());
-                            img.texture_atlas = atlas.clone();
+                        if let (Some(ch), Some(col)) = (ascii_char, ascii_color) {
+                            let afont = ascii_font_res.as_ref().map(|f| f.0.clone()).unwrap_or_else(|| font.clone());
                             row.spawn((
+                                Text::new(ch.clone()),
+                                TextFont { font: afont, font_size: 14.0, ..default() },
+                                TextColor(*col),
                                 Node {
                                     width: Val::Px(14.0),
-                                    height: Val::Px(14.0),
                                     margin: UiRect::right(Val::Px(4.0)),
-                                    flex_shrink: 0.0,
                                     ..default()
                                 },
-                                img,
                             ));
                         }
                         row.spawn((

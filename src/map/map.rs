@@ -5,7 +5,6 @@ use crate::{
     components::{Collider, MovementMode, Position, Viewshed},
     game::AppState,
     map::{
-        light::LightMap,
         tile::{Decoration, TileExplored, Tile, TerrainType, LiquidType, TileVisibility, is_opaque, is_passable, is_pathing_blocker, can_entity_enter_tile},
     },
     player::Player,
@@ -24,10 +23,6 @@ There are two map types.
 */
 pub const GRID_SIZE: Vec2 = Vec2 { x: 16.0, y: 16.0 };
 pub const MAP_SIZE: UVec2 = UVec2 { x: 80, y: 60 };
-
-/// Minimum brightness for tiles currently in the player's FOV but not near a candle.
-/// High enough that lighting enhances atmosphere rather than gating visibility.
-const AMBIENT: f32 = 0.55;
 
 #[derive(Message, Debug, Clone, Copy)]
 pub struct RevealMapMessage;
@@ -58,8 +53,7 @@ impl Plugin for MapPlugin {
                         .after(init_explored_tiles_system),
                     crate::map::ascii_renderer::render_tile_ascii
                         .after(update_tile_visibility)
-                        .run_if(|mode: Res<crate::game::ascii_mode::GraphicsMode>|
-                            *mode == crate::game::ascii_mode::GraphicsMode::Ascii),
+                        .after(crate::game::systems::fov_update_system),
                     handle_reveal_map_system.run_if(on_message::<RevealMapMessage>),
                 ).run_if(in_state(AppState::InGame)),
             );
@@ -76,7 +70,7 @@ pub struct DungeonECSMap; // Tag for entity holding the active ECS map marker
 
 pub fn handle_reveal_map_system(
     mut messages: MessageReader<RevealMapMessage>,
-    mut tile_render_query: Query<(&mut TileExplored, &mut Sprite, &mut Visibility)>,
+    mut tile_render_query: Query<(&mut TileExplored, &mut Visibility)>,
     mut map: ResMut<Map>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
@@ -86,10 +80,9 @@ pub fn handle_reveal_map_system(
         for flag in map.explored_tiles.iter_mut() {
             *flag = true;
         }
-        for (mut tile_explored, mut sprite, mut visibility) in tile_render_query.iter_mut() {
+        for (mut tile_explored, mut visibility) in tile_render_query.iter_mut() {
             *tile_explored = TileExplored::Explored;
             *visibility = Visibility::Visible;
-            sprite.color = Color::srgb(0.5, 0.5, 0.5);
         }
         log_writer.write(GameLogMessage("The map has been revealed!".to_string()));
     }
@@ -100,7 +93,7 @@ pub fn handle_reveal_map_system(
 pub fn init_explored_tiles_system(
     mut needs_init: ResMut<NeedsExploredInit>,
     map: Res<Map>,
-    mut tile_query: Query<(&Position, &mut TileExplored, &mut Sprite, &mut Visibility)>,
+    mut tile_query: Query<(&Position, &mut TileExplored, &mut Visibility)>,
 ) {
     if !needs_init.0 {
         return;
@@ -112,12 +105,11 @@ pub fn init_explored_tiles_system(
     }
     needs_init.0 = false;
 
-    for (pos, mut tile_explored, mut sprite, mut visibility) in tile_query.iter_mut() {
+    for (pos, mut tile_explored, mut visibility) in tile_query.iter_mut() {
         let idx = map.xy_idx(pos.x, pos.y);
         if map.explored_tiles.get(idx).copied().unwrap_or(false) {
             *tile_explored = TileExplored::Explored;
             *visibility = Visibility::Visible;
-            sprite.color = Color::srgb(0.5, 0.5, 0.5);
         }
     }
 }
@@ -126,30 +118,22 @@ pub fn update_tile_visibility(
     player_query: Query<&Viewshed, With<Player>>,
     viewshed_changed: Query<(), (With<Player>, Changed<Viewshed>)>,
     mut map: ResMut<Map>,
-    light_map: Res<LightMap>,
     fire_tiles: Res<crate::game::fire::FireTiles>,
     gas_tiles: Res<crate::game::gas::GasTiles>,
-    mode: Res<crate::game::ascii_mode::GraphicsMode>,
     omniscient: Res<crate::game::systems::Omniscient>,
-    mut sprite_set: ParamSet<(
-        Query<(
-            &Position,
-            &mut TileVisibility,
-            &mut TileExplored,
-            &mut Sprite,
-            &mut Visibility,
-            Option<&Children>,
-        )>,
-        Query<&mut Sprite, (With<crate::game::ascii_mode::LiquidOverlay>, Without<crate::game::ascii_mode::AsciiBackground>)>,
+    mut tile_query: Query<(
+        &Position,
+        &mut TileVisibility,
+        &mut TileExplored,
+        &mut Visibility,
     )>,
 ) {
-    // Run when viewshed changes, graphics mode changes, omniscient toggles,
+    // Run when viewshed changes, omniscient toggles,
     // or fire/gas state changes (so extinguished tiles get repainted immediately).
     let viewshed_dirty = !viewshed_changed.is_empty();
-    let mode_dirty = mode.is_changed();
     let omni_dirty = omniscient.is_changed();
     let effects_dirty = fire_tiles.is_changed() || gas_tiles.is_changed();
-    if !viewshed_dirty && !mode_dirty && !omni_dirty && !effects_dirty {
+    if !viewshed_dirty && !omni_dirty && !effects_dirty {
         return;
     }
 
@@ -158,123 +142,32 @@ pub fn update_tile_visibility(
     };
 
     let fov_tiles = &player_viewshed.visible_tiles;
-    let is_ascii = *mode == crate::game::ascii_mode::GraphicsMode::Ascii;
     let omni = omniscient.0;
 
     let mut newly_explored = Vec::new();
-    // Deferred liquid overlay child updates: (entity, light_level, is_explored_dim, is_hidden).
-    let mut liquid_child_updates: Vec<(Entity, f32, bool, bool)> = Vec::new();
 
-    for (tile_pos, mut tile_visibility, mut tile_explored, mut sprite, mut visibility, children) in
-        sprite_set.p0().iter_mut()
+    for (tile_pos, mut tile_visibility, mut tile_explored, mut visibility) in
+        tile_query.iter_mut()
     {
         let current_point = Point::new(tile_pos.x, tile_pos.y);
-
-        // In ASCII mode, fire/gas tile colors are owned by render_tile_ascii.
-        // Skip the normal color logic to prevent fights, but only for tiles in FOV.
-        if is_ascii
-            && (omni || fov_tiles.contains(&current_point))
-            && (fire_tiles.0.contains(&(tile_pos.x, tile_pos.y))
-                || gas_tiles.0.contains_key(&(tile_pos.x, tile_pos.y)))
-        {
-            *tile_visibility = TileVisibility::Visible;
-            if map.in_bounds(current_point) {
-                let idx = map.xy_idx(tile_pos.x, tile_pos.y);
-                if !map.explored_tiles[idx] {
-                    newly_explored.push(idx);
-                }
-            }
-            *tile_explored = TileExplored::Explored;
-            *visibility = Visibility::Visible;
-            sprite.color = Color::NONE;
-            continue;
-        }
 
         if omni || fov_tiles.contains(&current_point) {
             *tile_visibility = TileVisibility::Visible;
             *tile_explored = TileExplored::Explored;
             *visibility = Visibility::Visible;
 
-            let (light, light_color) = if map.in_bounds(current_point) {
+            if map.in_bounds(current_point) {
                 let idx = map.xy_idx(tile_pos.x, tile_pos.y);
                 if !map.explored_tiles[idx] {
                     newly_explored.push(idx);
-                }
-                let v = light_map.values.get(idx).copied().unwrap_or(0.0).max(AMBIENT);
-                let c = light_map.colors.get(idx).copied().unwrap_or([1.0, 1.0, 1.0]);
-                (v, c)
-            } else {
-                (AMBIENT, [1.0, 1.0, 1.0])
-            };
-
-            if is_ascii {
-                // In ASCII mode, render_tile_ascii owns all child colors.
-                // Just hide the parent sprite so the ASCII children show through.
-                sprite.color = Color::NONE;
-            } else {
-                sprite.color = Color::srgb(
-                    light * light_color[0],
-                    light * light_color[1] * 0.95,
-                    light * light_color[2] * 0.8,
-                );
-                // Tint liquid overlay children to match the parent tile lighting.
-                // Water tiles are skipped — animate_water_shimmer runs every frame
-                // and owns their liquid overlay colors.
-                let tile_idx = map.xy_idx(tile_pos.x, tile_pos.y);
-                let is_water_tile = tile_idx < map.tiles.len()
-                    && matches!(
-                        map.tiles[tile_idx].liquid,
-                        crate::map::tile::LiquidType::Water
-                            | crate::map::tile::LiquidType::ShallowWater
-                    );
-                if !is_water_tile {
-                    if let Some(children) = children {
-                        for child in children.iter() {
-                            liquid_child_updates.push((child, light, false, false));
-                        }
-                    }
                 }
             }
         } else {
             *tile_visibility = TileVisibility::Hidden;
             if *tile_explored == TileExplored::Explored {
                 *visibility = Visibility::Visible;
-                if is_ascii {
-                    // In ASCII mode, render_tile_ascii owns all child colors.
-                    sprite.color = Color::NONE;
-                } else {
-                    sprite.color = Color::srgb(0.5, 0.5, 0.5);
-                    // Dim liquid overlay children to match the explored-but-not-visible state
-                    if let Some(children) = children {
-                        for child in children.iter() {
-                            liquid_child_updates.push((child, 0.0, true, false));
-                        }
-                    }
-                }
             } else {
                 *visibility = Visibility::Hidden;
-                sprite.color = Color::BLACK;
-                // Hide liquid overlay children when tile is unexplored
-                if let Some(children) = children {
-                    for child in children.iter() {
-                        liquid_child_updates.push((child, 0.0, false, true));
-                    }
-                }
-            }
-        }
-    }
-
-    // Apply deferred liquid overlay sprite tinting via ParamSet's second query.
-    // Water tiles are immediately overridden by animate_water_shimmer (runs every frame).
-    {
-        let mut liquid_q = sprite_set.p1();
-        for &(entity, light, is_dim, _is_hidden) in &liquid_child_updates {
-            if let Ok(mut liquid_sprite) = liquid_q.get_mut(entity) {
-                if is_dim {
-                    liquid_sprite.color = Color::srgb(0.5, 0.5, 0.5);
-                } else {
-                    liquid_sprite.color = Color::srgb(light, light * 0.95, light * 0.8);
-                }
             }
         }
     }

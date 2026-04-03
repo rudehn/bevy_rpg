@@ -7,7 +7,6 @@ use bracket_lib::prelude::Point;
 use crate::{
     assets::{
         ItemManifest, ItemManifestHandle, ItemSpriteAssets, PlayerAsset, PlayerAssetHandle,
-        TileSpriteAssets,
     },
     components::{
         Collider, Faction, FactionKind, FloorEntityMarker, GameEntityMarker, InInventory, Inventory, Name, Position,
@@ -57,7 +56,6 @@ pub fn player_spawn_or_move_system(
     mut commands: Commands,
     player_asset_handle: Res<PlayerAssetHandle>,
     player_assets: Res<Assets<PlayerAsset>>,
-    tile_sprite_assets: Res<TileSpriteAssets>,
     item_manifest_handle: Res<ItemManifestHandle>,
     item_manifests: Res<Assets<ItemManifest>>,
     item_sprite_assets: Res<ItemSpriteAssets>,
@@ -89,19 +87,6 @@ pub fn player_spawn_or_move_system(
         // the player spawns on a stair tile (floor transitions).
         commands.entity(player_entity).insert(StairCooldown);
     } else {
-        let (texture_path, index) = crate::assets::parse_sprite_path(&player_asset.sprite);
-
-        let texture_handle = tile_sprite_assets
-            .handles
-            .get(texture_path)
-            .unwrap()
-            .clone();
-        let layout_handle = tile_sprite_assets
-            .layouts
-            .get(texture_path)
-            .unwrap()
-            .clone();
-
         let tile_size = UVec2::new(32, 32);
         let scale_x = GRID_SIZE.x / tile_size.x as f32;
         let scale_y = GRID_SIZE.y / tile_size.y as f32;
@@ -156,13 +141,6 @@ pub fn player_spawn_or_move_system(
                 Faction(FactionKind::player()),
             ))
             .insert((
-                Sprite::from_atlas_image(
-                    texture_handle,
-                    TextureAtlas {
-                        index,
-                        layout: layout_handle,
-                    },
-                ),
                 Transform {
                     translation: Vec3::new(0.0, 0.0, Z_PLAYER),
                     scale: Vec3::new(scale_x, scale_y, 1.0),
