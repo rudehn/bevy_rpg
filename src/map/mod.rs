@@ -1,3 +1,4 @@
+pub mod ascii_renderer;
 pub mod builders;
 pub mod dungeon;
 pub mod floor_materializer;
