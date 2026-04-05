@@ -6,7 +6,7 @@
         "Sewer Rat": (
             name: "Sewer Rat",
             vision: 12,
-            sprite: "sprites/monsters/rat.png",
+            sprite: "sprites/monsters/sewer_rat.png",
             damage: "1d3",
             base_hp: 5,
             movement_delay: 0.9,
@@ -19,7 +19,7 @@
         "Plague Rat": (
             name: "Plague Rat",
             vision: 12,
-            sprite: "sprites/monsters/rat.png",
+            sprite: "sprites/monsters/plague_rat.png",
             damage: "1d2",
             damage_type: "poison",
             base_hp: 5,
@@ -34,7 +34,7 @@
         "Rat Broodmother": (
             name: "Rat Broodmother",
             vision: 14,
-            sprite: "sprites/monsters/rat.png",
+            sprite: "sprites/monsters/rat_broodmother.png",
             damage: "1d4",
             base_hp: 20,
             base_armor: 1,
