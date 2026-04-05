@@ -99,6 +99,7 @@ pub enum InGameState {
     LogHistory,
     EnchantSelect,
     Help,
+    ChasmConfirm,
 }
 
 pub struct GamePlugin;
@@ -174,6 +175,7 @@ impl Plugin for GamePlugin {
             .add_systems(OnEnter(AppState::GameOver), (despawn_game_entities, despawn_map))
             .add_systems(OnEnter(AppState::Victory), (despawn_game_entities, despawn_map))
             .init_resource::<TurnManager>()
+            .init_resource::<crate::game::actions::PendingChasmFall>()
             .init_resource::<tile_promotion::PromotionCooldown>()
             .init_resource::<fire::FireTiles>()
             .init_resource::<gas::GasTiles>()

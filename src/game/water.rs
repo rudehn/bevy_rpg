@@ -72,6 +72,7 @@ fn deep_water_item_sweep_system(
                     .map(|n| n.0.clone())
                     .unwrap_or_else(|_| "item".to_string());
 
+                info!("Water sweep: ejecting item entity {:?} '{}' to ({}, {})", item_entity, item_name, pos.x, pos.y);
                 commands.entity(item_entity)
                     .remove::<InInventory>()
                     .insert(Position { x: pos.x, y: pos.y })
@@ -91,11 +92,13 @@ fn deep_water_item_sweep_system(
 /// Drift items with the `Drifting` component 1 tile per turn.
 /// Only drifts once per frame regardless of how many turn events fired.
 /// If they reach a non-deep-water tile, they stop drifting.
+/// If they drift into a chasm tile, the item is destroyed.
 fn item_drift_system(
     mut turn_end: MessageReader<TurnEndEvent>,
-    mut drifting_items: Query<(Entity, &mut Position), With<Drifting>>,
+    mut drifting_items: Query<(Entity, &mut Position, &Name), With<Drifting>>,
     mut commands: Commands,
     mut game_rng: ResMut<GameRng>,
+    mut log_writer: MessageWriter<GameLogMessage>,
     map: Res<Map>,
 ) {
     const OFFSETS: [(i32, i32); 8] = [
@@ -109,9 +112,9 @@ fn item_drift_system(
         return;
     }
 
-    for (entity, mut pos) in drifting_items.iter_mut() {
-        // Collect walkable adjacent tiles
-        let mut candidates: Vec<(i32, i32, bool)> = Vec::new();
+    for (entity, mut pos, name) in drifting_items.iter_mut() {
+        // Collect walkable adjacent tiles (and chasm tiles for destruction)
+        let mut candidates: Vec<(i32, i32, bool, bool)> = Vec::new();
         for &(dx, dy) in &OFFSETS {
             let nx = pos.x + dx;
             let ny = pos.y + dy;
@@ -119,9 +122,13 @@ fn item_drift_system(
                 continue;
             }
             let idx = map.xy_idx(nx, ny);
-            if idx < map.tiles.len() && is_walkable(map.tiles[idx]) {
-                let is_deep = map.tiles[idx].liquid == LiquidType::Water;
-                candidates.push((nx, ny, is_deep));
+            if idx < map.tiles.len() {
+                let tile = map.tiles[idx];
+                let is_chasm = tile.liquid == LiquidType::Chasm;
+                if is_chasm || is_walkable(tile) {
+                    let is_deep = tile.liquid == LiquidType::Water;
+                    candidates.push((nx, ny, is_deep, is_chasm));
+                }
             }
         }
 
@@ -130,12 +137,20 @@ fn item_drift_system(
             commands.entity(entity).remove::<Drifting>();
         } else {
             let pick = game_rng.0.range(0, candidates.len() as i32) as usize;
-            let (nx, ny, is_deep) = candidates[pick];
-            pos.x = nx;
-            pos.y = ny;
-            if !is_deep {
-                // Washed ashore
-                commands.entity(entity).remove::<Drifting>();
+            let (nx, ny, is_deep, is_chasm) = candidates[pick];
+            if is_chasm {
+                // Item falls into the chasm and is destroyed
+                log_writer.write(GameLogMessage(format!(
+                    "The {} falls into the chasm!", name.0
+                )));
+                commands.entity(entity).despawn();
+            } else {
+                pos.x = nx;
+                pos.y = ny;
+                if !is_deep {
+                    // Washed ashore
+                    commands.entity(entity).remove::<Drifting>();
+                }
             }
         }
     }
@@ -164,11 +179,11 @@ fn water_extinguish_system(
             if had_burning {
                 effects.remove_kind(|k| matches!(k, StatusEffectKind::Burning { .. }));
                 log_writer.write(GameLogMessage("The water extinguishes the flames!".to_string()));
-                // Burning creature extinguished by water → dramatic steam burst
+                // Burning creature extinguished by water → steam burst
                 crate::game::gas::spawn_gas(
                     &mut commands, pos.x, pos.y,
                     crate::game::gas::GasType::Steam,
-                    crate::game::gas::MAX_CONCENTRATION,
+                    300,
                     &mut gas_tiles,
                 );
             }

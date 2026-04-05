@@ -10,6 +10,7 @@ use crate::game::{
 use crate::map::dungeon::Floor;
 use crate::player::Player;
 
+pub mod chasm_confirm;
 pub mod cheat_menu;
 pub mod enchant_select;
 pub mod game_log;
@@ -479,7 +480,7 @@ impl Plugin for UiPlugin {
                 CheatMenuPlugin, InventoryPlugin, LogHistoryPlugin,
                 MenuPlugin, NearbyPlugin, monster_info::MonsterInfoPlugin,
                 hover_info::HoverInfoPlugin, enchant_select::EnchantSelectPlugin,
-                help::HelpPlugin,
+                help::HelpPlugin, chasm_confirm::ChasmConfirmPlugin,
             ))
             .add_systems(
                 OnEnter(AppState::InGame),

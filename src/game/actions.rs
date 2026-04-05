@@ -137,6 +137,14 @@ impl Default for SpeedStats {
     }
 }
 
+/// Compute the effective action cost after applying a speed delay multiplier.
+/// `base_cost` is the raw action cost (e.g. `BASE_ACTION_COST`), `delay` is
+/// from `SpeedStats::delay_for()`.  Returns `round(base_cost * delay)`.
+#[allow(dead_code)]
+pub fn compute_action_cost(base_cost: u32, delay: f32) -> u32 {
+    (base_cost as f32 * delay).round() as u32
+}
+
 /// Emitted by any action system when an action successfully resolves (or fails)
 /// to signal the turn manager to move to the next entity.
 #[derive(Message)]
@@ -153,6 +161,10 @@ pub struct ActionFinishedEvent {
 pub struct FreeActionEvent {
     pub entity: Entity,
 }
+
+/// Holds the target position for a pending chasm fall confirmation.
+#[derive(Resource, Default)]
+pub struct PendingChasmFall(pub Option<crate::components::Position>);
 
 /// Holds the player's queued action for the current turn.
 /// Written by `handle_player_input` and consumed by `dispatch_player_action`.
@@ -293,7 +305,8 @@ fn try_stack_pickup(
         commands.entity(floor_entity)
             .insert(InInventory)
             .insert(Visibility::Hidden)
-            .remove::<crate::components::FloorEntityMarker>();
+            .remove::<crate::components::FloorEntityMarker>()
+            .remove::<Position>();
         total_transferred += remaining;
         remaining = 0;
         moved_to_inv = true;
@@ -364,7 +377,8 @@ pub fn handle_pickup(
                                 .entity(item_entity)
                                 .insert(InInventory)
                                 .insert(Visibility::Hidden)
-                                .remove::<crate::components::FloorEntityMarker>();
+                                .remove::<crate::components::FloorEntityMarker>()
+                                .remove::<Position>();
                             let dname = display_item_name(&item_name.0, item_enchant, item_weapon_runic, item_armor_runic, item_runic_id);
                             log_writer.write(GameLogMessage(format!("You pick up the {}.", dname)));
                             picked_up = true;
@@ -385,7 +399,8 @@ pub fn handle_pickup(
                     .entity(item_entity)
                     .insert(InInventory)
                     .insert(Visibility::Hidden)
-                    .remove::<crate::components::FloorEntityMarker>();
+                    .remove::<crate::components::FloorEntityMarker>()
+                    .remove::<Position>();
                 break;
             } else {
                 // Entity without inventory: just despawn the item.
@@ -422,6 +437,8 @@ enum BumpResult {
     Machine(Entity),
     /// Tile has a non-hostile entity with a Collider.
     BlockedByCollider,
+    /// Tile has a chasm — prompt the player for confirmation before falling.
+    Chasm,
 }
 
 /// Determines what happens when an actor tries to move into `target_pt`.
@@ -505,7 +522,15 @@ fn resolve_bump(
         // Non-hostile, non-blocking occupant — fall through to walkability check.
     }
 
-    // 4. Wall/obstacle check (mode-aware)
+    // 4. Chasm check — player gets a confirmation dialog; others treat as wall.
+    if target_tile.liquid == crate::map::tile::LiquidType::Chasm {
+        if actor_is_player {
+            return BumpResult::Chasm;
+        }
+        return BumpResult::Wall;
+    }
+
+    // 5. Wall/obstacle check (mode-aware)
     if !can_entity_enter_tile(target_tile, actor_movement_mode) {
         return BumpResult::Wall;
     }
@@ -524,8 +549,7 @@ pub fn handle_movement(
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut free_writer: MessageWriter<FreeActionEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
-    mut tile_mutation_writer: MessageWriter<crate::map::tile::TileMutationMessage>,
-    mut decoration_mutation_writer: MessageWriter<crate::map::tile::DecorationMutationMessage>,
+    mut tile_writers: crate::map::tile::TileMutationWriters,
     mut actors_query: Query<(
         Entity,
         &mut Position,
@@ -540,6 +564,7 @@ pub fn handle_movement(
     mut status_query: Query<&mut crate::game::magic::StatusEffects>,
     map: Res<Map>,
     faction_matrix: Res<FactionMatrix>,
+    mut next_ingame_state: ResMut<NextState<crate::game::InGameState>>,
 ) {
     for intent in intents.read() {
         let Ok((_, pos, is_player, actor_faction, _, _, _, movement_mode, _)) = actors_query.get(intent.entity) else {
@@ -591,13 +616,13 @@ pub fn handle_movement(
                     if let Some(target) = decoration.on_step_promotion() {
                         match target {
                             PromotionTarget::Decoration(new_dec) => {
-                                decoration_mutation_writer.write(DecorationMutationMessage {
+                                tile_writers.decoration.write(DecorationMutationMessage {
                                     position: bracket_lib::prelude::Point::new(target_pt.x, target_pt.y),
                                     new_decoration: new_dec,
                                 });
                             }
                             PromotionTarget::Terrain(new_terrain) => {
-                                tile_mutation_writer.write(crate::map::tile::TileMutationMessage {
+                                tile_writers.terrain.write(crate::map::tile::TileMutationMessage {
                                     position: bracket_lib::prelude::Point::new(target_pt.x, target_pt.y),
                                     new_terrain,
                                 });
@@ -616,6 +641,23 @@ pub fn handle_movement(
                                     "Something is caught in the cobwebs!".to_string()
                                 };
                                 log_writer.write(GameLogMessage(msg));
+                            }
+                        }
+                    }
+                }
+
+                // Gas poisoning on step
+                if let Some(gas_data) = tile_writers.gas_tiles.0.get(&(target_pt.x, target_pt.y)) {
+                    if let Some((effect_kind, duration)) = gas_data.gas_type.on_step_effect(gas_data.concentration) {
+                        if let Ok(mut effects) = status_query.get_mut(intent.entity) {
+                            if !gas_data.gas_type.is_immune(&effects) {
+                                effects.add(effect_kind, duration);
+                                if is_player {
+                                    log_writer.write(GameLogMessage(format!(
+                                        "You inhale {}!",
+                                        gas_data.gas_type.name(gas_data.concentration)
+                                    )));
+                                }
                             }
                         }
                     }
@@ -657,6 +699,15 @@ pub fn handle_movement(
                     machine_entity,
                 });
                 // ActionGuard cleared by handle_machine_bump via finish_turn.
+            }
+            BumpResult::Chasm => {
+                // Store the target position and open the confirmation dialog.
+                commands.insert_resource(PendingChasmFall(Some(crate::components::Position {
+                    x: target_pt.x,
+                    y: target_pt.y,
+                })));
+                next_ingame_state.set(crate::game::InGameState::ChasmConfirm);
+                free_turn(&mut commands, &mut free_writer, intent.entity);
             }
             BumpResult::OutOfBounds | BumpResult::Wall | BumpResult::BlockedByCollider => {
                 if is_player {
@@ -1095,5 +1146,141 @@ mod tests {
     fn floor_beyond_10_uses_deepest_tier() {
         let w = rarity_weights_for_floor(15);
         assert_eq!(w, [25, 40, 27, 8]);
+    }
+
+    // --- SpeedStats tests ---
+
+    #[test]
+    fn delay_for_movement_returns_movement_delay() {
+        let stats = SpeedStats::new(0.8, 1.2);
+        assert_eq!(stats.delay_for(ActionKind::Movement), 0.8);
+    }
+
+    #[test]
+    fn delay_for_attack_returns_attack_delay() {
+        let stats = SpeedStats::new(0.8, 1.2);
+        assert_eq!(stats.delay_for(ActionKind::Attack), 1.2);
+    }
+
+    #[test]
+    fn default_speed_stats_has_unit_delays() {
+        let stats = SpeedStats::default();
+        assert_eq!(stats.movement_delay, 1.0);
+        assert_eq!(stats.attack_delay, 1.0);
+        assert_eq!(stats.base_movement_delay, 1.0);
+        assert_eq!(stats.base_attack_delay, 1.0);
+    }
+
+    #[test]
+    fn new_speed_stats_sets_effective_equal_to_base() {
+        let stats = SpeedStats::new(0.5, 2.0);
+        assert_eq!(stats.movement_delay, stats.base_movement_delay);
+        assert_eq!(stats.attack_delay, stats.base_attack_delay);
+    }
+
+    // --- Action cost calculation tests ---
+
+    #[test]
+    fn default_delay_preserves_base_cost() {
+        let stats = SpeedStats::default();
+        let cost = compute_action_cost(BASE_ACTION_COST, stats.delay_for(ActionKind::Movement));
+        assert_eq!(cost, BASE_ACTION_COST);
+    }
+
+    #[test]
+    fn fast_entity_halves_cost() {
+        let stats = SpeedStats::new(0.5, 0.5);
+        let cost = compute_action_cost(BASE_ACTION_COST, stats.delay_for(ActionKind::Movement));
+        assert_eq!(cost, BASE_ACTION_COST / 2);
+    }
+
+    #[test]
+    fn slow_entity_doubles_cost() {
+        let stats = SpeedStats::new(2.0, 2.0);
+        let cost = compute_action_cost(BASE_ACTION_COST, stats.delay_for(ActionKind::Attack));
+        assert_eq!(cost, BASE_ACTION_COST * 2);
+    }
+
+    #[test]
+    fn action_cost_rounds_correctly() {
+        // 100 * 1.5 = 150.0 -> 150 (exact)
+        assert_eq!(compute_action_cost(100, 1.5), 150);
+        // 100 * 0.75 = 75.0 -> 75 (exact)
+        assert_eq!(compute_action_cost(100, 0.75), 75);
+        // 100 * 0.33 = 33.0 -> 33 (exact)
+        assert_eq!(compute_action_cost(100, 0.33), 33);
+        // 7 * 0.3 = 2.1 -> rounds to 2
+        assert_eq!(compute_action_cost(7, 0.3), 2);
+        // 7 * 0.5 = 3.5 -> rounds to 4 (round half up)
+        assert_eq!(compute_action_cost(7, 0.5), 4);
+    }
+
+    #[test]
+    fn zero_base_cost_always_zero() {
+        assert_eq!(compute_action_cost(0, 1.0), 0);
+        assert_eq!(compute_action_cost(0, 2.5), 0);
+    }
+
+    #[test]
+    fn action_kind_selects_correct_delay_field() {
+        let stats = SpeedStats::new(0.6, 1.4);
+        let move_cost = compute_action_cost(BASE_ACTION_COST, stats.delay_for(ActionKind::Movement));
+        let attack_cost = compute_action_cost(BASE_ACTION_COST, stats.delay_for(ActionKind::Attack));
+        assert_eq!(move_cost, 60);
+        assert_eq!(attack_cost, 140);
+    }
+
+    // --- Direction tests ---
+
+    #[test]
+    fn direction_offset_all_eight_directions() {
+        assert_eq!(Direction::N.offset(), Point { x: 0, y: 1 });
+        assert_eq!(Direction::NE.offset(), Point { x: 1, y: 1 });
+        assert_eq!(Direction::E.offset(), Point { x: 1, y: 0 });
+        assert_eq!(Direction::SE.offset(), Point { x: 1, y: -1 });
+        assert_eq!(Direction::S.offset(), Point { x: 0, y: -1 });
+        assert_eq!(Direction::SW.offset(), Point { x: -1, y: -1 });
+        assert_eq!(Direction::W.offset(), Point { x: -1, y: 0 });
+        assert_eq!(Direction::NW.offset(), Point { x: -1, y: 1 });
+    }
+
+    #[test]
+    fn direction_offset_no_direction_is_zero() {
+        assert_eq!(Direction::NoDirection.offset(), Point { x: 0, y: 0 });
+    }
+
+    #[test]
+    fn direction_from_pos_roundtrip() {
+        let origin = Position { x: 5, y: 5 };
+        for dir in Direction::ALL {
+            let off = dir.offset();
+            let target = Position { x: origin.x + off.x, y: origin.y + off.y };
+            let recovered = Direction::from_pos(&origin, &target);
+            assert_eq!(recovered, dir, "roundtrip failed for {:?}", dir);
+        }
+    }
+
+    #[test]
+    fn direction_from_pos_same_position_gives_no_direction() {
+        let pos = Position { x: 3, y: 7 };
+        assert_eq!(Direction::from_pos(&pos, &pos), Direction::NoDirection);
+    }
+
+    #[test]
+    fn direction_opposite_is_involutory() {
+        for dir in Direction::ALL {
+            assert_eq!(dir.opposite().opposite(), dir, "double opposite failed for {:?}", dir);
+        }
+        assert_eq!(Direction::NoDirection.opposite(), Direction::NoDirection);
+    }
+
+    #[test]
+    fn direction_opposite_offsets_cancel() {
+        for dir in Direction::ALL {
+            let fwd = dir.offset();
+            let back = dir.opposite().offset();
+            assert_eq!(fwd.x + back.x, 0, "x offset didn't cancel for {:?}", dir);
+            assert_eq!(fwd.y + back.y, 0, "y offset didn't cancel for {:?}", dir);
+        }
     }
 }

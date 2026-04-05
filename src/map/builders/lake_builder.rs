@@ -33,10 +33,15 @@ impl LakeBuilder {
     fn pick_liquid_type(&self, rng: &mut impl Rng) -> LiquidType {
         let roll: f32 = rng.random();
         match self.depth {
-            1..=5 => LiquidType::Water,
+            1..=5 => {
+                if roll < 0.70 { LiquidType::Water }
+                else if roll < 0.85 { LiquidType::Lava }
+                else { LiquidType::Chasm }
+            }
             6..=10 => {
-                if roll < 0.60 { LiquidType::Water }
-                else { LiquidType::Lava }
+                if roll < 0.40 { LiquidType::Water }
+                else if roll < 0.75 { LiquidType::Lava }
+                else { LiquidType::Chasm }
             }
             _ => {
                 if roll < 0.20 { LiquidType::Water }
@@ -447,5 +452,104 @@ impl MetaMapBuilder for LakeBuilder {
         clean_up_lake_boundaries(build_data);
 
         // Note: isolated lake cleanup is now handled by IsolatedAreaCuller later in the pipeline
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify that depths 1-5 can produce all three liquid types (Water, Lava, Chasm).
+    #[test]
+    fn pick_liquid_type_early_depths_include_all_types() {
+        let builder = LakeBuilder { depth: 3 };
+        let mut rng = rand::rng();
+        let mut saw_water = false;
+        let mut saw_lava = false;
+        let mut saw_chasm = false;
+        for _ in 0..2000 {
+            match builder.pick_liquid_type(&mut rng) {
+                LiquidType::Water => saw_water = true,
+                LiquidType::Lava => saw_lava = true,
+                LiquidType::Chasm => saw_chasm = true,
+                _ => {}
+            }
+        }
+        assert!(saw_water, "depth 3 should produce water");
+        assert!(saw_lava, "depth 3 should produce lava");
+        assert!(saw_chasm, "depth 3 should produce chasm");
+    }
+
+    /// Verify that depths 6-10 can produce all three liquid types.
+    #[test]
+    fn pick_liquid_type_late_depths_include_all_types() {
+        let builder = LakeBuilder { depth: 8 };
+        let mut rng = rand::rng();
+        let mut saw_water = false;
+        let mut saw_lava = false;
+        let mut saw_chasm = false;
+        for _ in 0..2000 {
+            match builder.pick_liquid_type(&mut rng) {
+                LiquidType::Water => saw_water = true,
+                LiquidType::Lava => saw_lava = true,
+                LiquidType::Chasm => saw_chasm = true,
+                _ => {}
+            }
+        }
+        assert!(saw_water, "depth 8 should produce water");
+        assert!(saw_lava, "depth 8 should produce lava");
+        assert!(saw_chasm, "depth 8 should produce chasm");
+    }
+
+    /// Verify early-depth distribution is roughly 70/15/15.
+    #[test]
+    fn pick_liquid_type_early_depth_distribution() {
+        let builder = LakeBuilder { depth: 2 };
+        let mut rng = rand::rng();
+        let n = 10_000;
+        let mut water = 0;
+        let mut lava = 0;
+        let mut chasm = 0;
+        for _ in 0..n {
+            match builder.pick_liquid_type(&mut rng) {
+                LiquidType::Water => water += 1,
+                LiquidType::Lava => lava += 1,
+                LiquidType::Chasm => chasm += 1,
+                _ => {}
+            }
+        }
+        let water_pct = water as f64 / n as f64;
+        let lava_pct = lava as f64 / n as f64;
+        let chasm_pct = chasm as f64 / n as f64;
+        // Allow 5% tolerance
+        assert!((water_pct - 0.70).abs() < 0.05, "water {:.2} expected ~0.70", water_pct);
+        assert!((lava_pct - 0.15).abs() < 0.05, "lava {:.2} expected ~0.15", lava_pct);
+        assert!((chasm_pct - 0.15).abs() < 0.05, "chasm {:.2} expected ~0.15", chasm_pct);
+    }
+
+    /// Verify late-depth distribution is roughly 40/35/25.
+    #[test]
+    fn pick_liquid_type_late_depth_distribution() {
+        let builder = LakeBuilder { depth: 7 };
+        let mut rng = rand::rng();
+        let n = 10_000;
+        let mut water = 0;
+        let mut lava = 0;
+        let mut chasm = 0;
+        for _ in 0..n {
+            match builder.pick_liquid_type(&mut rng) {
+                LiquidType::Water => water += 1,
+                LiquidType::Lava => lava += 1,
+                LiquidType::Chasm => chasm += 1,
+                _ => {}
+            }
+        }
+        let water_pct = water as f64 / n as f64;
+        let lava_pct = lava as f64 / n as f64;
+        let chasm_pct = chasm as f64 / n as f64;
+        // Allow 5% tolerance
+        assert!((water_pct - 0.40).abs() < 0.05, "water {:.2} expected ~0.40", water_pct);
+        assert!((lava_pct - 0.35).abs() < 0.05, "lava {:.2} expected ~0.35", lava_pct);
+        assert!((chasm_pct - 0.25).abs() < 0.05, "chasm {:.2} expected ~0.25", chasm_pct);
     }
 }

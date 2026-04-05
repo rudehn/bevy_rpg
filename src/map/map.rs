@@ -211,10 +211,6 @@ pub struct Map {
     /// Pathfinding treats blocked tiles as high-cost rather than impassable so
     /// monsters route around each other instead of lining up.
     pub blocked: Vec<bool>,
-    /// Mirrors `tiles` index-for-index: true when dense gas occupies this tile
-    /// (concentration above the gas type's FOV-blocking threshold).
-    /// Rebuilt each turn by `gas_tick_system`.
-    pub gas_opaque: Vec<bool>,
     pub width: i32,
     pub height: i32,
     pub depth: i32,
@@ -229,7 +225,6 @@ impl Map {
             tiles: vec![Tile { terrain: TerrainType::Wall, liquid: LiquidType::None, decoration: Decoration::None }; map_tile_count],
             explored_tiles: vec![false; map_tile_count],
             blocked: vec![false; map_tile_count],
-            gas_opaque: vec![false; map_tile_count],
             width,
             height,
             depth,
@@ -295,7 +290,12 @@ impl Map {
             return None;
         }
 
-        // Pathing blockers (deep water, lava, chasm): AI avoids but CAN
+        // Chasms are completely impassable for pathfinding (same as walls).
+        if tile.liquid == LiquidType::Chasm {
+            return None;
+        }
+
+        // Pathing blockers (deep water, lava): AI avoids but CAN
         // path through as a last resort. Cost 5x normal — enough to prefer
         // dry routes but not so high that A* gives up or hits iteration limits.
         if crate::map::tile::is_pathing_blocker(tile) {
@@ -320,7 +320,7 @@ impl Map {
 
 impl BaseMap for Map {
     fn is_opaque(&self, idx: usize) -> bool {
-        is_opaque(self.tiles[idx]) || self.gas_opaque.get(idx).copied().unwrap_or(false)
+        is_opaque(self.tiles[idx])
     }
 
     fn get_available_exits(
@@ -396,6 +396,10 @@ impl<'a> MapWithMode<'a> {
 
         match self.mode {
             MovementMode::Land => {
+                // Chasms are completely impassable (same as walls).
+                if tile.liquid == LiquidType::Chasm {
+                    return None;
+                }
                 // Land creatures cannot pathfind through deep water.
                 // (Players bypass A* via direct bump movement, so this
                 // only prevents monster AI from wading into water.)
@@ -413,6 +417,10 @@ impl<'a> MapWithMode<'a> {
                 Some(1.0)
             }
             MovementMode::ImmuneToWater => {
+                // Chasms are completely impassable (same as walls).
+                if tile.liquid == LiquidType::Chasm {
+                    return None;
+                }
                 // Water is free; other blockers still penalized.
                 if tile.liquid == LiquidType::Water {
                     return Some(tile.decoration.movement_cost().max(1.0));
@@ -445,7 +453,7 @@ impl<'a> MapWithMode<'a> {
 
 impl<'a> BaseMap for MapWithMode<'a> {
     fn is_opaque(&self, idx: usize) -> bool {
-        is_opaque(self.map.tiles[idx]) || self.map.gas_opaque.get(idx).copied().unwrap_or(false)
+        is_opaque(self.map.tiles[idx])
     }
 
     fn get_available_exits(&self, idx: usize) -> SmallVec<[(usize, f32); 10]> {
@@ -504,7 +512,6 @@ mod tests {
             tiles,
             explored_tiles: vec![false; count],
             blocked: vec![false; count],
-            gas_opaque: vec![false; count],
             width,
             height,
             depth: 1,
@@ -529,6 +536,10 @@ mod tests {
 
     fn lava() -> Tile {
         Tile { terrain: TerrainType::Floor, liquid: LiquidType::Lava, decoration: Decoration::None }
+    }
+
+    fn chasm() -> Tile {
+        Tile { terrain: TerrainType::Floor, liquid: LiquidType::Chasm, decoration: Decoration::None }
     }
 
     // ---- Map::get_pathing_cost ----
@@ -769,5 +780,60 @@ mod tests {
             &mwm,
         );
         assert!(!path.success, "should not find path across dry gap");
+    }
+
+    // ---- Chasm pathfinding tests ----
+
+    #[test]
+    fn pathing_cost_chasm_is_none() {
+        let mut tiles = vec![floor(); 9];
+        tiles[4] = chasm(); // center
+        let map = make_map(3, 3, tiles);
+        assert_eq!(map.get_pathing_cost(1, 1), None, "chasm should be impassable");
+    }
+
+    #[test]
+    fn land_mode_chasm_is_impassable() {
+        let mut tiles = vec![floor(); 9];
+        tiles[4] = chasm();
+        let map = make_map(3, 3, tiles);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::Land };
+        assert_eq!(mwm.get_pathing_cost(1, 1), None, "land mode should block chasms");
+    }
+
+    #[test]
+    fn immune_to_water_chasm_is_impassable() {
+        let mut tiles = vec![floor(); 9];
+        tiles[4] = chasm();
+        let map = make_map(3, 3, tiles);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::ImmuneToWater };
+        assert_eq!(mwm.get_pathing_cost(1, 1), None, "immune-to-water mode should block chasms");
+    }
+
+    #[test]
+    fn restricted_to_liquid_chasm_is_impassable() {
+        let mut tiles = vec![floor(); 9];
+        tiles[4] = chasm();
+        let map = make_map(3, 3, tiles);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::RestrictedToLiquid };
+        assert_eq!(mwm.get_pathing_cost(1, 1), None, "restricted-to-liquid mode should block chasms");
+    }
+
+    #[test]
+    fn land_mode_paths_around_chasm() {
+        // 5x3 map: row 1 has chasm in the middle
+        let mut tiles = vec![floor(); 15];
+        tiles[5 + 2] = chasm(); // (2, 1)
+        let map = make_map(5, 3, tiles);
+        let mwm = MapWithMode { map: &map, mode: MovementMode::Land };
+
+        let path = bracket_lib::prelude::a_star_search(
+            mwm.point2d_to_index(Point::new(0, 1)),
+            mwm.point2d_to_index(Point::new(4, 1)),
+            &mwm,
+        );
+        assert!(path.success, "should find a path around chasm");
+        let chasm_idx = map.xy_idx(2, 1);
+        assert!(!path.steps.contains(&chasm_idx), "should NOT path through chasm");
     }
 }
