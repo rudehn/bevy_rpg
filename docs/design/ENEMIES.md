@@ -27,6 +27,7 @@ mirrors the player's staff system — both sides operate on cooldowns/charges.
 | Faction | Floors | Role |
 |---------|--------|------|
 | Animals | 1-6 | Nature's hazards. Teach basic combat, speed, swarms, DoT. |
+| Rats | 1-10 | Background fauna. Danger from volume, not individual power. |
 | Goblins | 1-10 | The star faction. Evolve from disorganized to structured. |
 | Kobolds | 1-5 | Cowardly hoarders. Steal loot, flee from combat. |
 | Undead | 4-9 | Resistant physical threats. Ranged + melee combos. |
@@ -38,13 +39,13 @@ mirrors the player's staff system — both sides operate on cooldowns/charges.
 
 | Floors | Primary | Secondary | Tertiary | Rare/Out-of-Depth |
 |--------|---------|-----------|----------|-------------------|
-| 1-2 | Animals | Goblins (disorganized) | Kobolds | — |
-| 3-4 | Goblins (disorganized) | Animals, Fungal | Kobolds | — |
-| 5 | Goblins (organizing) | Animals, Undead | Fungal | Cave Troll, Dragon Whelp |
-| 6-7 | Goblins (organized) | Dragons, Undead | Fungal | Cave Troll |
-| 8 | Goblins (fortified) | Dragons, Undead | — | — |
-| 9 | Goblins (elite) | Dragons | Undead | — |
-| 10 | All factions (final gauntlet) | — | — | — |
+| 1-2 | Animals | Goblins (disorganized) | Rats, Kobolds | — |
+| 3-4 | Goblins (disorganized) | Animals, Rats, Fungal | Kobolds | — |
+| 5 | Goblins (organizing) | Rats, Animals, Undead | Fungal | Cave Troll, Dragon Whelp |
+| 6-7 | Goblins (organized) | Rats, Dragons, Undead | Fungal | Cave Troll |
+| 8 | Goblins (fortified) | Rats, Dragons, Undead | — | — |
+| 9 | Goblins (elite) | Rats, Dragons | Undead | — |
+| 10 | All factions (final gauntlet), including Rats | — | — | — |
 
 ## Stat System
 
@@ -184,6 +185,106 @@ monster has direct stats — no attribute derivation.
 - **Behavior:** Erratic movement (30% random direction like Giant Bat). Fast
   (0.8x delay) and aggressive when player enters water.
 - **Group size:** 1 (solo)
+
+---
+
+## Faction: Rats
+
+*Background dungeon fauna. Present on all floors. Danger comes from volume and
+persistence, not individual power. Rats are hostile only to the player; they are
+neutral to all monster factions.*
+
+### Sewer Rat
+**Floors 1-10 | Swarm vermin**
+
+| HP | Damage | Hit | Dodge | Armor | Delay | Vision |
+|----|--------|-----|-------|-------|-------|--------|
+| 5 | 1d3 | 0 | 0 | 0 | 0.9x | 12 |
+
+- **Identity:** Trivial alone, dangerous in numbers. Enduring swarm threat.
+- **Mechanic:** Introduces **persistent group encounters**. Unlike other swarms
+  that thin naturally, rat packs keep respawning (via Broodmother) or endlessly
+  reforming from new spawns. The player must avoid sustained engagement.
+- **Group size by floor:** 1-3 (floor 1), 2-4 (floor 2), 4-6 (floors 3-5),
+  5-8 (floors 6-8), 6-9 (floors 9-10)
+- **Behavior:** FSM AI — flees when below 25% HP, otherwise aggressive. Chase
+  leash of 8 tiles. When packed together, they stand and fight; when thinned
+  below 50% squad morale, they scatter and flee.
+- **Squad behavior:** Leaderless ambient packs. Shared alerting at 12 tiles.
+  Scatter on leader death (natural for leaderless packs) or when morale drops
+  below 50%.
+
+### Plague Rat
+**Floors 3-10 | Poisonous swarm variant**
+
+| HP | Damage | Hit | Dodge | Armor | Delay | Vision |
+|----|--------|-----|-------|-------|-------|--------|
+| 5 | 1d2 | 0 | 0 | 0 | 0.9x | 12 |
+
+- **Identity:** Poison-dealing variant. Teaches: "don't let rats sustain contact."
+- **Mechanic:** Introduces **poison DoT in swarms**. Plague rats trade raw damage
+  for guaranteed poison application. Hit multiple times and the poison stacks.
+- **On-hit:** PoisonStrike — applies 1 poison damage/turn for 3 turns (100% chance)
+- **Behavior:** Same FSM AI as Sewer Rat (flee at 25%, chase leash 8)
+- **Spawn patterns:**
+  - Mixed into Sewer Rat packs: floors 3-5 include 1 plague rat per group;
+    floors 6-10 include 1-2 plague rats per group
+  - Pure groups: 2-4 Plague Rats (independent spawn entry, floors 3-10)
+- **Squad behavior:** Same leaderless pack rules as Sewer Rat
+
+### Rat Broodmother
+**Floors 5-10 | Summoning matriarch**
+
+| HP | Damage | Hit | Dodge | Armor | Delay | Vision |
+|----|--------|-----|-------|-------|-------|--------|
+| 20 | 1d4 | 1 | 0 | 1 | 1.2x | 14 |
+
+- **Identity:** Mobile summoner that maintains a living swarm. The tactical puzzle.
+- **Mechanic:** Introduces **summoning swarms** and **action economy pressure**.
+  Killing her swarm is futile while she lives — she'll replace them on a 2-turn
+  cooldown. The player must reach and kill the Broodmother herself.
+- **Ability — Summon Swarm:** Summons 1 rat (70% Sewer, 30% Plague) at a random
+  adjacent walkable tile. Cooldown: 2 turns. Max active summons: 6. Summons
+  join her squad.
+- **AI:** GOAP (Cowardly + Support traits). Priority: flee when player adjacent →
+  summon if count < 6 → retreat and maintain distance → wander
+- **Group size:** 1 (always spawns with escort)
+- **Starting Escort:** 3-4 Sewer Rats + 1 Plague Rat (counts toward 6-summon cap)
+  Start with ~4-5 summons filled, able to summon 1-2 more before hitting cap
+- **Squad behavior:** Broodmother is SquadLeader, granting +0.2 morale to escorts
+  and summoned rats. Makes the pack harder to scatter. On death: -0.3 morale hit
+  + scatter. Remaining rats flee and do not re-form.
+- **Morale recovery:** Out of combat, slow natural recovery. With Broodmother alive,
+  squad recovers faster. Leaderless survivors (post-death) recover very slowly
+  and typically remain scattered.
+
+### Rat Faction Behaviors
+
+**Faction Hostility:**
+- Hostile to: Player only
+- Neutral to: All other monster factions (Goblins, Kobolds, Undead, Fungal, Dragons,
+  Animals). Rats coexist as dungeon scavengers and do not engage other monsters.
+
+**Leaderless Pack Logic:**
+- Ambient Sewer/Plague Rat packs have no designated leader
+- Shared alerting: when any rat spots the player or takes damage, all rats within
+  12 tiles converge toward the threat
+- Scatter threshold: when squad morale drops below 50%, surviving rats flee
+  individually and do not re-form
+
+**Broodmother Pack Logic:**
+- Broodmother acts as SquadLeader (+0.2 morale bonus to all squad members)
+- Summoned rats inherit her squad and are protected by her leadership morale
+- On her death, -0.3 morale penalty + immediate scatter order
+- Remaining summoned rats become leaderless and typically rout
+
+**Summon Cap System:**
+- Each summoned rat gets a `SummonedBy` component pointing back to the Broodmother
+- Broodmother has a `SummonCap { max: 6 }` component
+- Before summoning, the ability queries all living entities with her `SummonedBy`
+- If count < 6 and ability is off cooldown, summon action is available
+- When a summoned rat dies, it despawns naturally. Next turn, query count is lower
+  and summoning becomes available again
 
 ---
 
