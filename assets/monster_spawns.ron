@@ -1,11 +1,41 @@
 (
   spawns: [
-    // ==================== VERMIN (Floors 1-6) ====================
+    // ==================== RATS (Floors 1-10) ====================
 
-    // Sewer Rats — scaling packs
-    (monster: "Sewer Rat",     min_floor: 1,  max_floor: 3,  min_group: 1, max_group: 2),
-    (monster: "Sewer Rat",     min_floor: 4,  max_floor: 5,  min_group: 2, max_group: 3),
-    (monster: "Sewer Rat",     min_floor: 6,  max_floor: 8,  min_group: 3, max_group: 4),
+    // Sewer Rat — ambient packs, floor-scaled
+    (monster: "Sewer Rat", min_floor: 1, max_floor: 1, min_group: 1, max_group: 3),
+    (monster: "Sewer Rat", min_floor: 2, max_floor: 2, min_group: 2, max_group: 4),
+    (monster: "Sewer Rat", min_floor: 3, max_floor: 5, min_group: 4, max_group: 6,
+     on_leader_death: "scatter", flee_threshold: 0.5),
+    (monster: "Sewer Rat", min_floor: 6, max_floor: 8, min_group: 5, max_group: 8,
+     on_leader_death: "scatter", flee_threshold: 0.5),
+    (monster: "Sewer Rat", min_floor: 9, max_floor: 10, min_group: 6, max_group: 9,
+     on_leader_death: "scatter", flee_threshold: 0.5),
+
+    // Sewer Rat + Plague Rat mixed packs (floors 3-5)
+    (group: [
+        (monster: "Sewer Rat",  min_count: 3, max_count: 5),
+        (monster: "Plague Rat", min_count: 1, max_count: 1),
+    ], min_floor: 3, max_floor: 5, on_leader_death: "scatter", flee_threshold: 0.5),
+
+    // Sewer Rat + Plague Rat mixed packs (floors 6-10)
+    (group: [
+        (monster: "Sewer Rat",  min_count: 4, max_count: 6),
+        (monster: "Plague Rat", min_count: 1, max_count: 2),
+    ], min_floor: 6, max_floor: 10, on_leader_death: "scatter", flee_threshold: 0.5),
+
+    // Pure Plague Rat groups (floors 3-10)
+    (monster: "Plague Rat", min_floor: 3, max_floor: 10, min_group: 2, max_group: 4,
+     on_leader_death: "scatter", flee_threshold: 0.5),
+
+    // Rat Broodmother with escort (floors 5-10)
+    (group: [
+        (monster: "Rat Broodmother", min_count: 1, max_count: 1),
+        (monster: "Sewer Rat",       min_count: 3, max_count: 4),
+        (monster: "Plague Rat",      min_count: 1, max_count: 1),
+    ], min_floor: 5, max_floor: 10, on_leader_death: "scatter", flee_threshold: 0.5),
+
+    // ==================== VERMIN (Floors 1-6) ====================
 
     // // Giant Bats — erratic scouts
     (monster: "Giant Bat",     min_floor: 1,  max_floor: 2,  min_group: 1, max_group: 1),
