@@ -94,12 +94,11 @@ pub enum AppState {
 pub enum InGameState {
     #[default]
     Running,
-    CharacterInfo,
     Inventory,
     Targeting,
     LogHistory,
     EnchantSelect,
-    StaffSelect,
+    Help,
 }
 
 pub struct GamePlugin;

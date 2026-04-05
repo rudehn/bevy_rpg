@@ -10,11 +10,10 @@ use crate::game::{
 use crate::map::dungeon::Floor;
 use crate::player::Player;
 
-pub mod character_info;
 pub mod cheat_menu;
 pub mod enchant_select;
 pub mod game_log;
-pub mod staff_select;
+pub mod help;
 pub mod hover_info;
 pub mod inventory;
 pub mod log_history;
@@ -23,7 +22,6 @@ pub mod modal;
 pub mod monster_info;
 pub mod nearby;
 
-use character_info::CharacterInfoPlugin;
 use cheat_menu::CheatMenuPlugin;
 use inventory::InventoryPlugin;
 use log_history::LogHistoryPlugin;
@@ -94,26 +92,26 @@ fn spawn_player_stats_ui(
             GameEntityMarker,
         ))
         .with_children(|parent| {
-            // Title
+            // Player name
             parent.spawn((
-                Text::new("PLAYER STATS"),
+                Text::new("@: You"),
                 TextFont {
                     font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                    font_size: 24.0,
+                    font_size: 14.0,
                     ..default()
                 },
                 TextColor(Color::WHITE),
             ));
 
-            // Health Text
+            // Health text (hidden, used for accessibility/screen readers)
             parent.spawn((
                 Text::new("Health: ??/??"),
                 TextFont {
                     font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                    font_size: 20.0,
+                    font_size: 1.0,
                     ..default()
                 },
-                TextColor(Color::WHITE),
+                TextColor(Color::NONE),
                 PlayerHealthText,
             ));
 
@@ -122,13 +120,13 @@ fn spawn_player_stats_ui(
                 .spawn((
                     Node {
                         width: Val::Percent(100.0),
-                        height: Val::Px(14.0),
+                        height: Val::Px(10.0),
                         border: UiRect::all(Val::Px(1.0)),
-                        margin: UiRect::top(Val::Px(4.0)),
+                        margin: UiRect::top(Val::Px(2.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgb(1.0, 0.0, 0.0)), // Red
-                    BorderColor::all(Color::WHITE),
+                    BackgroundColor(Color::srgb(0.5, 0.1, 0.1)),
+                    BorderColor::all(Color::srgb(0.4, 0.4, 0.4)),
                 ))
                 .with_children(|parent| {
                     parent.spawn((
@@ -137,23 +135,10 @@ fn spawn_player_stats_ui(
                             height: Val::Percent(100.0),
                             ..default()
                         },
-                        BackgroundColor(Color::srgb(0.0, 1.0, 0.0)), // Green
+                        BackgroundColor(Color::srgb(0.0, 0.8, 0.0)),
                         PlayerHealthBar,
                     ));
                 });
-
-            // Floor depth
-            parent.spawn((
-                Text::new("Floor: 1"),
-                TextFont {
-                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                    font_size: 18.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(0.8, 0.7, 0.4)),
-                Node { margin: UiRect::top(Val::Px(10.0)), ..default() },
-                FloorDepthText,
-            ));
 
             // Status effects container (dynamically populated)
             parent.spawn((
@@ -161,12 +146,25 @@ fn spawn_player_stats_ui(
                     width: Val::Percent(100.0),
                     flex_direction: FlexDirection::Row,
                     flex_wrap: FlexWrap::Wrap,
-                    column_gap: Val::Px(6.0),
+                    column_gap: Val::Px(3.0),
                     row_gap: Val::Px(2.0),
-                    margin: UiRect::top(Val::Px(6.0)),
+                    margin: UiRect::top(Val::Px(2.0)),
                     ..default()
                 },
                 PlayerStatusEffectsContainer { last_count: 0, last_hash: 0 },
+            ));
+
+            // Floor depth
+            parent.spawn((
+                Text::new("Floor: 1"),
+                TextFont {
+                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                    font_size: 12.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.8, 0.7, 0.4)),
+                Node { margin: UiRect::top(Val::Px(4.0)), ..default() },
+                FloorDepthText,
             ));
 
             // Nearby entities container — populated each turn by NearbyPlugin
@@ -184,16 +182,7 @@ fn spawn_player_stats_ui(
             parent.spawn(Node { flex_grow: 1.0, ..default() });
 
             parent.spawn((
-                Text::new("[C] Character"),
-                TextFont {
-                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
-                    font_size: 14.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(0.55, 0.55, 0.55)),
-            ));
-            parent.spawn((
-                Text::new("[I] Inventory"),
+                Text::new("[I/C] Inventory"),
                 TextFont {
                     font: asset_server.load("fonts/Macondo-Regular.ttf"),
                     font_size: 14.0,
@@ -252,6 +241,88 @@ pub fn collect_status_effects(effects: Option<&StatusEffects>) -> Vec<(String, C
         .unwrap_or_default()
 }
 
+/// Collects active status effects with duration info: (label, color, turns_remaining, initial_duration).
+pub fn collect_status_effects_with_duration(effects: Option<&StatusEffects>) -> Vec<(String, Color, u32, u32, String)> {
+    effects
+        .map(|e| e.display_entries_with_duration().into_iter().map(|(n, c, tr, id, desc)| (n.to_string(), c, tr, id, desc)).collect())
+        .unwrap_or_default()
+}
+
+/// Spawns a status effect badge with a depleting progress bar.
+pub fn spawn_status_badge(
+    parent: &mut ChildSpawnerCommands,
+    font: &Handle<Font>,
+    name: &str,
+    color: Color,
+    turns_remaining: u32,
+    initial_duration: u32,
+    description: &str,
+) {
+    let progress = if initial_duration > 0 {
+        turns_remaining as f32 / initial_duration as f32
+    } else {
+        1.0
+    };
+
+    // Show description with remaining turns, e.g. "Burning: 2 fire dmg/turn, 3 turns"
+    let label = format!("{} ({}t)", name, turns_remaining);
+
+    parent.spawn((
+        Node {
+            flex_direction: FlexDirection::Column,
+            border: UiRect::all(Val::Px(1.0)),
+            overflow: Overflow::clip(),
+            ..default()
+        },
+        BorderColor::all(color),
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
+        Interaction::None,
+        Tooltip(description.to_string()),
+    ))
+    .with_children(|badge| {
+        // Top row: label with turns
+        badge.spawn((
+            Text::new(&label),
+            TextFont {
+                font: font.clone(),
+                font_size: 9.0,
+                ..default()
+            },
+            TextColor(color),
+            Node {
+                padding: UiRect::horizontal(Val::Px(3.0)),
+                ..default()
+            },
+        ));
+        // Bottom: progress bar
+        badge.spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Px(2.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.3)),
+        )).with_children(|bar_bg| {
+            bar_bg.spawn((
+                Node {
+                    width: Val::Percent(progress * 100.0),
+                    height: Val::Percent(100.0),
+                    ..default()
+                },
+                BackgroundColor(color.with_alpha(0.6)),
+            ));
+        });
+    });
+}
+
+/// Marker for UI elements with tooltip text, displayed on mouse hover.
+#[derive(Component)]
+pub struct Tooltip(pub String);
+
+/// Marker for the floating tooltip popup entity.
+#[derive(Component)]
+struct TooltipPopup;
+
 #[allow(clippy::type_complexity)]
 fn update_player_status_effects_ui(
     mut commands: Commands,
@@ -269,13 +340,14 @@ fn update_player_status_effects_ui(
         return;
     };
 
-    let effects = collect_status_effects(status_effects);
+    let effects = collect_status_effects_with_duration(status_effects);
 
-    // Quick hash: combine effect count with sum of turns to detect changes
+    // Quick hash: combine effect labels + turns_remaining to detect changes
     use std::hash::Hash;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for (label, _) in &effects {
+    for (label, _, turns_remaining, _, _) in &effects {
         label.hash(&mut hasher);
+        turns_remaining.hash(&mut hasher);
     }
     let hash = std::hash::Hasher::finish(&hasher);
 
@@ -295,27 +367,8 @@ fn update_player_status_effects_ui(
     let font: Handle<Font> = asset_server.load("fonts/Macondo-Regular.ttf");
 
     commands.entity(container).with_children(|parent| {
-        for (label, color) in &effects {
-            parent.spawn((
-                Node {
-                    padding: UiRect::axes(Val::Px(4.0), Val::Px(1.0)),
-                    border: UiRect::all(Val::Px(1.0)),
-                    ..default()
-                },
-                BorderColor::all(*color),
-                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
-            ))
-            .with_children(|badge| {
-                badge.spawn((
-                    Text::new(label.clone()),
-                    TextFont {
-                        font: font.clone(),
-                        font_size: 11.0,
-                        ..default()
-                    },
-                    TextColor(*color),
-                ));
-            });
+        for (label, color, turns_remaining, initial_duration, desc) in &effects {
+            spawn_status_badge(parent, &font, label, *color, *turns_remaining, *initial_duration, desc);
         }
     });
 }
@@ -340,6 +393,79 @@ pub fn get_speed_trait(multiplier: f32, category: &str) -> Option<(String, Color
     }
 }
 
+// --- Tooltip hover system ---
+
+fn update_tooltip_popup(
+    mut commands: Commands,
+    windows: Query<&Window>,
+    tooltip_query: Query<(&Interaction, &Tooltip)>,
+    existing_popup: Query<Entity, With<TooltipPopup>>,
+    asset_server: Res<AssetServer>,
+) {
+    // Find the hovered tooltip (if any)
+    let mut hovered_text: Option<&str> = None;
+    for (interaction, tooltip) in tooltip_query.iter() {
+        if *interaction == Interaction::Hovered {
+            hovered_text = Some(&tooltip.0);
+            break;
+        }
+    }
+
+    // Despawn old popup
+    for entity in existing_popup.iter() {
+        commands.entity(entity).despawn();
+    }
+
+    // Spawn new popup if hovering
+    let Some(text) = hovered_text else { return };
+    let Ok(window) = windows.single() else { return };
+    let Some(cursor) = window.cursor_position() else { return };
+
+    let font = asset_server.load("fonts/SourceCodePro.ttf");
+    let window_width = window.width();
+    let window_height = window.height();
+
+    // Estimate tooltip size (rough: 7px per char width, 18px height + padding)
+    let estimated_width = text.len() as f32 * 7.0 + 16.0;
+    let estimated_height = 22.0;
+    let margin = 12.0;
+
+    // Position horizontally: prefer right of cursor, flip to left if it would overflow
+    let left = if cursor.x + margin + estimated_width < window_width {
+        cursor.x + margin
+    } else {
+        (cursor.x - margin - estimated_width).max(0.0)
+    };
+
+    // Position vertically: prefer below cursor, flip above if it would overflow
+    let top = if cursor.y + margin + estimated_height < window_height {
+        cursor.y + margin
+    } else {
+        (cursor.y - margin - estimated_height).max(0.0)
+    };
+
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(left),
+            top: Val::Px(top),
+            padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
+            border: UiRect::all(Val::Px(1.0)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.9)),
+        BorderColor::all(Color::srgb(0.5, 0.5, 0.5)),
+        ZIndex(300),
+        TooltipPopup,
+    )).with_children(|popup| {
+        popup.spawn((
+            Text::new(text),
+            TextFont { font, font_size: 12.0, ..default() },
+            TextColor(Color::WHITE),
+        ));
+    });
+}
+
 // --- Plugin ---
 
 pub struct UiPlugin;
@@ -350,10 +476,10 @@ impl Plugin for UiPlugin {
             .init_resource::<GameLogSettings>()
             .add_message::<GameLogMessage>()
             .add_plugins((
-                CharacterInfoPlugin, CheatMenuPlugin, InventoryPlugin, LogHistoryPlugin,
+                CheatMenuPlugin, InventoryPlugin, LogHistoryPlugin,
                 MenuPlugin, NearbyPlugin, monster_info::MonsterInfoPlugin,
                 hover_info::HoverInfoPlugin, enchant_select::EnchantSelectPlugin,
-                staff_select::StaffSelectPlugin,
+                help::HelpPlugin,
             ))
             .add_systems(
                 OnEnter(AppState::InGame),
@@ -371,6 +497,7 @@ impl Plugin for UiPlugin {
                     add_log_message_system,
                     update_game_log_ui,
                     game_log_input_system,
+                    update_tooltip_popup,
                 )
                     .run_if(in_state(AppState::InGame)),
             );
