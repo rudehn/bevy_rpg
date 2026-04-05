@@ -178,3 +178,9 @@ impl FactionKind {
     pub fn monster() -> Self { Self(Self::MONSTER.to_string()) }
     pub fn kobold() -> Self { Self(Self::KOBOLD.to_string()) }
 }
+
+/// Tracks which entity summoned this creature. Used by the summon cap system.
+#[derive(Component, Clone, Debug)]
+pub struct SummonedBy {
+    pub summoner: Entity,
+}

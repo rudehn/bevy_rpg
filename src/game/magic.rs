@@ -58,6 +58,21 @@ impl StatusEffectKind {
         }
     }
 
+    /// Human-readable description with damage/effect details.
+    pub fn description(&self, turns_remaining: u32) -> String {
+        match self {
+            Self::Burning { damage_per_turn } => format!("{} fire dmg/turn, {} turns", damage_per_turn, turns_remaining),
+            Self::Poisoned { damage_per_turn } => format!("{} poison dmg/turn, {} turns", damage_per_turn, turns_remaining),
+            Self::Hasted => format!("Move faster, {} turns", turns_remaining),
+            Self::Slowed => format!("Move slower, {} turns", turns_remaining),
+            Self::Stunned => format!("Cannot act, {} turns", turns_remaining),
+            Self::Entangled => format!("Cannot move, {} turns", turns_remaining),
+            Self::Enraged => format!("+50% damage, {} turns", turns_remaining),
+            Self::FireResistance => format!("Immune to fire, {} turns", turns_remaining),
+            Self::PoisonResistance => format!("Immune to poison, {} turns", turns_remaining),
+        }
+    }
+
     fn same_kind(&self, other: &Self) -> bool {
         std::mem::discriminant(self) == std::mem::discriminant(other)
     }
@@ -67,7 +82,12 @@ impl StatusEffectKind {
 pub struct ActiveStatusEffect {
     pub kind: StatusEffectKind,
     pub turns_remaining: u32,
+    /// The original duration when the effect was first applied. Used for progress bar UI.
+    #[serde(default = "default_initial_duration")]
+    pub initial_duration: u32,
 }
+
+fn default_initial_duration() -> u32 { 1 }
 
 /// Unified container for all status effects on an entity.
 #[derive(Component, Debug, Clone, Default, Serialize, Deserialize, Reflect)]
@@ -78,7 +98,10 @@ impl StatusEffects {
     /// Add or refresh a status effect. If the same kind already exists, takes the longer duration.
     pub fn add(&mut self, kind: StatusEffectKind, turns: u32) {
         if let Some(existing) = self.0.iter_mut().find(|e| e.kind.same_kind(&kind)) {
-            existing.turns_remaining = existing.turns_remaining.max(turns);
+            if turns > existing.turns_remaining {
+                existing.turns_remaining = turns;
+                existing.initial_duration = turns;
+            }
             // For DoT effects, take the higher damage_per_turn
             match (&mut existing.kind, &kind) {
                 (StatusEffectKind::Burning { damage_per_turn: old }, StatusEffectKind::Burning { damage_per_turn: new }) => {
@@ -90,7 +113,7 @@ impl StatusEffects {
                 _ => {}
             }
         } else {
-            self.0.push(ActiveStatusEffect { kind, turns_remaining: turns });
+            self.0.push(ActiveStatusEffect { kind, turns_remaining: turns, initial_duration: turns });
         }
     }
 
@@ -120,6 +143,18 @@ impl StatusEffects {
 
     pub fn is_poisoned(&self) -> bool {
         self.0.iter().any(|e| matches!(e.kind, StatusEffectKind::Poisoned { .. }))
+    }
+
+    pub fn is_burning(&self) -> bool {
+        self.0.iter().any(|e| matches!(e.kind, StatusEffectKind::Burning { .. }))
+    }
+
+    pub fn is_poison_resistant(&self) -> bool {
+        self.0.iter().any(|e| matches!(e.kind, StatusEffectKind::PoisonResistance))
+    }
+
+    pub fn is_fire_resistant(&self) -> bool {
+        self.0.iter().any(|e| matches!(e.kind, StatusEffectKind::FireResistance))
     }
 
     pub fn burning_damage(&self) -> Option<i32> {
@@ -162,100 +197,88 @@ impl StatusEffects {
     pub fn display_entries(&self) -> Vec<(&str, Color)> {
         self.0.iter().map(|e| (e.kind.name(), e.kind.color())).collect()
     }
+
+    /// Returns display entries with duration info: (name, color, turns_remaining, initial_duration, description).
+    pub fn display_entries_with_duration(&self) -> Vec<(&str, Color, u32, u32, String)> {
+        self.0.iter().map(|e| {
+            (e.kind.name(), e.kind.color(), e.turns_remaining, e.initial_duration, e.kind.description(e.turns_remaining))
+        }).collect()
+    }
 }
 
 // =====================================================================
 // Tick Systems (run on TurnEndEvent)
 // =====================================================================
 
-/// Unified tick system for all status effects via `StatusEffects` component.
-pub fn tick_status_effects_system(
+/// Apply burning and poison damage-over-time each turn.
+pub fn apply_dot_damage_system(
     mut turn_end: MessageReader<TurnEndEvent>,
-    mut query: Query<(Entity, &mut StatusEffects, &Name, &crate::components::Position)>,
+    query: Query<(Entity, &StatusEffects, &Name)>,
     mut damage_writer: MessageWriter<ApplyDamageMessage>,
-    mut decoration_mutation_writer: MessageWriter<crate::map::tile::DecorationMutationMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
-    for _ in turn_end.read() {
-        for (entity, mut effects, name, pos) in query.iter_mut() {
-            // Process burning damage before ticking
-            if let Some(dmg) = effects.burning_damage() {
-                log_writer.write(GameLogMessage(format!(
-                    "{} takes {} fire damage from burning!",
-                    name.0, dmg
-                )));
-                damage_writer.write(ApplyDamageMessage {
-                    attacker: entity,
-                    target: entity,
-                    final_damage: dmg,
-                    damage_type: DamageType::Fire,
-                    source: DamageSource::Environment,
-                });
-            }
+    if turn_end.read().count() == 0 { return; }
 
-            // Process poison damage before ticking
-            if let Some(dmg) = effects.poison_damage() {
-                log_writer.write(GameLogMessage(format!(
-                    "{} takes {} poison damage!",
-                    name.0, dmg
-                )));
-                damage_writer.write(ApplyDamageMessage {
-                    attacker: entity,
-                    target: entity,
-                    final_damage: dmg,
-                    damage_type: DamageType::Poison,
-                    source: DamageSource::Environment,
-                });
-            }
+    for (entity, effects, name) in query.iter() {
+        if let Some(dmg) = effects.burning_damage() {
+            log_writer.write(GameLogMessage(format!(
+                "{} takes {} fire damage from burning!", name.0, dmg
+            )));
+            damage_writer.write(ApplyDamageMessage {
+                attacker: entity, target: entity,
+                final_damage: dmg, damage_type: DamageType::Fire,
+                source: DamageSource::Environment,
+            });
+        }
+        if let Some(dmg) = effects.poison_damage() {
+            log_writer.write(GameLogMessage(format!(
+                "{} takes {} poison damage!", name.0, dmg
+            )));
+            damage_writer.write(ApplyDamageMessage {
+                attacker: entity, target: entity,
+                final_damage: dmg, damage_type: DamageType::Poison,
+                source: DamageSource::Environment,
+            });
+        }
+    }
+}
 
-            let expired = effects.tick_all();
-            for kind in expired {
-                match kind {
-                    StatusEffectKind::Stunned => {
-                        log_writer.write(GameLogMessage(format!(
-                            "{} is no longer stunned.",
-                            name.0
-                        )));
-                    }
-                    StatusEffectKind::Entangled => {
-                        log_writer.write(GameLogMessage(format!(
-                            "{} breaks free of the cobwebs!",
-                            name.0
-                        )));
-                        // Remove the cobweb at this entity's position
-                        decoration_mutation_writer.write(
-                            crate::map::tile::DecorationMutationMessage {
-                                position: bracket_lib::prelude::Point::new(pos.x, pos.y),
-                                new_decoration: crate::map::tile::Decoration::None,
-                            },
-                        );
-                    }
-                    StatusEffectKind::Burning { .. } => {
-                        log_writer.write(GameLogMessage(format!(
-                            "{} is no longer burning.",
-                            name.0
-                        )));
-                    }
-                    StatusEffectKind::Poisoned { .. } => {
-                        log_writer.write(GameLogMessage(format!(
-                            "{} is no longer poisoned.",
-                            name.0
-                        )));
-                    }
-                    StatusEffectKind::FireResistance => {
-                        log_writer.write(GameLogMessage(format!(
-                            "{}'s fire resistance fades.",
-                            name.0
-                        )));
-                    }
-                    StatusEffectKind::PoisonResistance => {
-                        log_writer.write(GameLogMessage(format!(
-                            "{}'s poison resistance fades.",
-                            name.0
-                        )));
-                    }
-                    _ => {}
+/// Decrement all status effect durations and handle expirations.
+pub fn tick_status_durations_system(
+    mut turn_end: MessageReader<TurnEndEvent>,
+    mut query: Query<(&mut StatusEffects, &Name, &crate::components::Position)>,
+    mut decoration_writer: MessageWriter<crate::map::tile::DecorationMutationMessage>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+) {
+    if turn_end.read().count() == 0 { return; }
+
+    for (mut effects, name, pos) in query.iter_mut() {
+        let expired = effects.tick_all();
+        for kind in expired {
+            match kind {
+                StatusEffectKind::Stunned => {
+                    log_writer.write(GameLogMessage(format!("{} is no longer stunned.", name.0)));
                 }
+                StatusEffectKind::Entangled => {
+                    log_writer.write(GameLogMessage(format!("{} breaks free of the cobwebs!", name.0)));
+                    decoration_writer.write(crate::map::tile::DecorationMutationMessage {
+                        position: bracket_lib::prelude::Point::new(pos.x, pos.y),
+                        new_decoration: crate::map::tile::Decoration::None,
+                    });
+                }
+                StatusEffectKind::Burning { .. } => {
+                    log_writer.write(GameLogMessage(format!("{} is no longer burning.", name.0)));
+                }
+                StatusEffectKind::Poisoned { .. } => {
+                    log_writer.write(GameLogMessage(format!("{} is no longer poisoned.", name.0)));
+                }
+                StatusEffectKind::FireResistance => {
+                    log_writer.write(GameLogMessage(format!("{}'s fire resistance fades.", name.0)));
+                }
+                StatusEffectKind::PoisonResistance => {
+                    log_writer.write(GameLogMessage(format!("{}'s poison resistance fades.", name.0)));
+                }
+                _ => {}
             }
         }
     }
@@ -278,6 +301,34 @@ pub fn apply_speed_effects_system(
 // Pending Summon — used by monster abilities for summoning
 // =====================================================================
 
+/// Count alive entities summoned by a specific summoner.
+pub fn count_active_summons(summoner: Entity, world: &mut World) -> u32 {
+    let mut query = world.query::<&crate::components::SummonedBy>();
+    query.iter(world)
+        .filter(|sb| sb.summoner == summoner)
+        .count() as u32
+}
+
+/// Pick a monster name from a weighted list.
+pub fn pick_weighted_monster(
+    weights: &[(String, u32)],
+    rng: &mut bracket_lib::random::RandomNumberGenerator,
+) -> String {
+    let total: u32 = weights.iter().map(|(_, w)| *w).sum();
+    if total == 0 {
+        return weights[0].0.clone();
+    }
+    let roll = rng.range(0, total as i32) as u32;
+    let mut acc = 0u32;
+    for (name, weight) in weights {
+        acc += weight;
+        if roll < acc {
+            return name.clone();
+        }
+    }
+    weights.last().unwrap().0.clone()
+}
+
 /// Resource written by ability handlers, consumed by process_pending_summon.
 #[derive(Resource)]
 pub struct PendingSummon {
@@ -285,6 +336,10 @@ pub struct PendingSummon {
     pub caster_label: String,
     pub monster_name: String,
     pub count: u32,
+    /// If set, summoned creatures get a SummonedBy component.
+    pub caster_entity: Option<Entity>,
+    /// If set, summoned creatures join this squad.
+    pub squad_id: Option<crate::game::squad::SquadId>,
 }
 
 pub fn process_pending_summon(
@@ -325,7 +380,7 @@ pub fn process_pending_summon(
     if !spawn_points.is_empty() {
         let spawned = spawn_points.len();
         for point in spawn_points {
-            crate::game::spawner::spawn_monster_by_name(
+            let spawned_entity = crate::game::spawner::spawn_monster_by_name(
                 &mut commands,
                 &summon.monster_name,
                 &point,
@@ -335,9 +390,24 @@ pub fn process_pending_summon(
                 &monster_sprite_assets,
                 None,
             );
+            if let Some(spawned_ent) = spawned_entity {
+                if let Some(caster) = summon.caster_entity {
+                    commands.entity(spawned_ent).insert(crate::components::SummonedBy { summoner: caster });
+                }
+                if let Some(sid) = summon.squad_id {
+                    commands.entity(spawned_ent).insert((
+                        sid,
+                        crate::game::squad::SquadConfig {
+                            on_leader_death: crate::game::squad::LeaderDeathBehavior::Scatter,
+                            flee_threshold: 0.5,
+                        },
+                        crate::game::squad::Morale::new(0.6),
+                    ));
+                }
+            }
         }
         log_writer.write(GameLogMessage(format!(
-            "{} raises {} {}!",
+            "{} summons {} {}!",
             summon.caster_label, spawned, summon.monster_name
         )));
     }
@@ -359,7 +429,8 @@ impl Plugin for MagicPlugin {
             .add_systems(
                 Update,
                 (
-                    tick_status_effects_system,
+                    // tick_status_effects_system is registered in ProcessingPhase::Cleanup
+                    // (turns.rs) so its mutations get processed in the same chain.
                     apply_speed_effects_system,
                     process_pending_summon,
                 )
@@ -451,5 +522,52 @@ mod tests {
         effects.add(StatusEffectKind::Slowed, 5);
         // 1.0 * 0.5 * 1.5 = 0.75
         assert_eq!(effects.speed_delay_multiplier(), 0.75);
+    }
+
+    #[test]
+    fn count_active_summons_zero_when_none_exist() {
+        let mut world = World::new();
+        let summoner = world.spawn_empty().id();
+        let count = count_active_summons(summoner, &mut world);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn count_active_summons_counts_matching_entities() {
+        let mut world = World::new();
+        let summoner = world.spawn_empty().id();
+        let other = world.spawn_empty().id();
+        world.spawn(crate::components::SummonedBy { summoner });
+        world.spawn(crate::components::SummonedBy { summoner });
+        world.spawn(crate::components::SummonedBy { summoner: other });
+        let count = count_active_summons(summoner, &mut world);
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn count_active_summons_excludes_despawned() {
+        let mut world = World::new();
+        let summoner = world.spawn_empty().id();
+        let minion = world.spawn(crate::components::SummonedBy { summoner }).id();
+        world.spawn(crate::components::SummonedBy { summoner });
+        assert_eq!(count_active_summons(summoner, &mut world), 2);
+        world.despawn(minion);
+        assert_eq!(count_active_summons(summoner, &mut world), 1);
+    }
+
+    #[test]
+    fn pick_weighted_monster_always_picks_only_nonzero() {
+        let weights = vec![("Sewer Rat".to_string(), 100u32), ("Plague Rat".to_string(), 0u32)];
+        let mut rng = bracket_lib::random::RandomNumberGenerator::new();
+        for _ in 0..20 {
+            assert_eq!(pick_weighted_monster(&weights, &mut rng), "Sewer Rat");
+        }
+    }
+
+    #[test]
+    fn pick_weighted_monster_single_entry() {
+        let weights = vec![("Plague Rat".to_string(), 30u32)];
+        let mut rng = bracket_lib::random::RandomNumberGenerator::new();
+        assert_eq!(pick_weighted_monster(&weights, &mut rng), "Plague Rat");
     }
 }

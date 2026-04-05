@@ -16,7 +16,7 @@ use crate::game::combat::{
 };
 use crate::game::enchantment::Enchantment;
 use crate::game::magic::{StatusEffectKind, StatusEffects};
-use crate::game::turns::{ProcessingPhase, TurnEndEvent};
+use crate::game::turns::TurnEndEvent;
 use crate::map::map::Map;
 use crate::map::tile::is_walkable;
 use crate::player::Player;
@@ -212,6 +212,69 @@ impl Rechargeable {
 }
 
 // =====================================================================
+// Staff Zap Initiation
+// =====================================================================
+
+/// Result of attempting to begin a staff zap.
+pub enum ZapResult {
+    /// Staff has no charges.
+    NoCharges,
+    /// Self-targeting staff (e.g. Healing) — action is ready, no targeting needed.
+    SelfTarget {
+        action: crate::game::actions::Action,
+    },
+    /// Needs targeting — caller should set InGameState::Targeting.
+    NeedsTargeting,
+}
+
+/// Set up targeting context for a staff zap and return what the caller should do.
+/// Caller is responsible for state transitions based on the result.
+pub fn begin_staff_zap(
+    staff_entity: Entity,
+    player_entity: Entity,
+    staff_data: &StaffData,
+    rech: &Rechargeable,
+    enchant: Option<&crate::game::enchantment::Enchantment>,
+    targeting_context: &mut crate::game::targeting::TargetingContext,
+) -> ZapResult {
+    if rech.charges <= 0 {
+        return ZapResult::NoCharges;
+    }
+
+    let enchant_level = enchant.map(|e| e.level).unwrap_or(0);
+    let range = staff_data.effect.range(enchant_level);
+
+    // Self-targeting staves skip targeting screen
+    if !staff_data.effect.needs_target() {
+        return ZapResult::SelfTarget {
+            action: crate::game::actions::Action::ZapStaff {
+                staff_entity,
+                target: player_entity,
+                target_pos: None,
+            },
+        };
+    }
+
+    // Set targeting mode based on staff effect
+    match staff_data.effect {
+        StaffEffect::Blinking | StaffEffect::Fire => {
+            targeting_context.mode = crate::game::targeting::TargetingMode::Tile {
+                slot: 0,
+                range,
+                radius: if staff_data.effect == StaffEffect::Fire { 1 } else { 0 },
+            };
+        }
+        _ => {
+            targeting_context.mode = crate::game::targeting::TargetingMode::Staff {
+                staff_entity,
+            };
+        }
+    }
+    targeting_context.staff_entity = Some(staff_entity);
+    ZapResult::NeedsTargeting
+}
+
+// =====================================================================
 // Messages
 // =====================================================================
 
@@ -265,6 +328,7 @@ pub fn handle_zap_staff(
     mut heal_writer: MessageWriter<HealMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
+    mut tile_writers: crate::map::tile::TileMutationWriters,
     collider_query: Query<&Position, With<Collider>>,
     map: Res<Map>,
 ) {
@@ -397,15 +461,19 @@ pub fn handle_zap_staff(
                 }
             }
             StaffEffect::Fire => {
-                // AoE fire damage in 3x3 area centered on target position
-                let Ok((_, _, target_pos, _, _)) = target_query.get(msg.target) else { continue; };
+                // AoE fire damage in 3x3 area centered on target tile position.
+                // Uses target_pos (tile coordinates) since fire can target ground.
+                let (center_x, center_y) = if let Some((tx, ty)) = msg.target_pos {
+                    (tx, ty)
+                } else if let Ok((_, _, tp, _, _)) = target_query.get(msg.target) {
+                    (tp.x, tp.y)
+                } else {
+                    continue;
+                };
                 let (low, high) = fire_damage(enchant_level);
-                let center_x = target_pos.x;
-                let center_y = target_pos.y;
                 let mut hit_count = 0;
 
                 for (entity, pos) in all_positions.iter() {
-                    if entity == msg.zapper { continue; }
                     let dx = (pos.x - center_x).abs();
                     let dy = (pos.y - center_y).abs();
                     if dx <= 1 && dy <= 1 {
@@ -433,6 +501,22 @@ pub fn handle_zap_staff(
 
                 if hit_count == 0 {
                     log_writer.write(GameLogMessage("The fire blast hits nothing.".to_string()));
+                }
+
+                // Ignite flammable tiles in the 3x3 area
+                for dy in -1..=1i32 {
+                    for dx in -1..=1i32 {
+                        let tx = center_x + dx;
+                        let ty = center_y + dy;
+                        crate::game::fire::ignite_tile_at(
+                            &mut commands, tx, ty, &map,
+                            &mut tile_writers.fire_tiles,
+                            &mut tile_writers.decoration,
+                            &mut tile_writers.terrain,
+                            &mut tile_writers.light_sources,
+                            &mut tile_writers.gas_tiles,
+                        );
+                    }
                 }
             }
             StaffEffect::Healing => {
@@ -546,6 +630,11 @@ pub enum MonsterAbilityKind {
     SelfBuff { effect: StatusEffectKind, duration: u32 },
     /// Summon allied monsters.
     Summon { monster: String, count: u32 },
+    /// Summon a creature from a weighted list, respecting a maximum active count.
+    SummonCapped {
+        weights: Vec<(String, u32)>,
+        max_summons: u32,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
@@ -589,10 +678,10 @@ impl Plugin for StavesPlugin {
             .register_type::<Rechargeable>()
             .register_type::<MonsterAbilities>()
             .add_message::<ZapStaffMessage>()
+            // handle_zap_staff registered in TurnOrderPlugin (turns.rs)
             .add_systems(
                 Update,
                 (
-                    handle_zap_staff.in_set(ProcessingPhase::ResolveActions),
                     staff_recharge_system,
                     tick_monster_abilities_system,
                 )

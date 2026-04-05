@@ -840,6 +840,22 @@ pub struct GoapAI {
     pub hoard_position: Option<Point>,
     /// Current roam destination. Cleared when reached or when a higher-priority action fires.
     pub roam_target: Option<Point>,
+    /// Last action chosen by the planner, for UI display.
+    pub last_action: Option<&'static str>,
+}
+
+impl GoapAI {
+    /// Returns a human-readable label for the current AI state.
+    pub fn display_state(&self) -> &'static str {
+        match self.last_action {
+            Some("attack_melee" | "ranged_attack") => "Hunting",
+            Some("flee") => "Fleeing",
+            Some("pick_up_item" | "move_to_item" | "loot_chest" | "drop_at_hoard") => "Looting",
+            Some("roam" | "move_to_leader") => "Wandering",
+            None => "Sleeping",
+            _ => "Hunting",
+        }
+    }
 }
 
 /// Message emitted when a GOAP entity drops all inventory items at its current position.
@@ -890,7 +906,10 @@ fn execute_goap(entity: Entity, ai: &mut GoapAI, world: &mut World) {
         name
     };
 
-    // 4. Dispatch action
+    // 4. Store last action for UI display
+    ai.last_action = action_name;
+
+    // 5. Dispatch action
     match action_name {
         Some(name) => dispatch_action(entity, name, ai, world),
         None => {
@@ -914,7 +933,7 @@ fn execute_goap(entity: Entity, ai: &mut GoapAI, world: &mut World) {
 fn gather_world_state(entity: Entity, ai: &GoapAI, world: &mut World) -> WorldState {
     // Snapshot all entity data, then snapshot resources, releasing borrows before queries.
     let pos = world.get::<Position>(entity).map(|p| p.to_point()).unwrap_or(Point::new(0, 0));
-    let visible_tiles: Vec<Point> = world.get::<Viewshed>(entity)
+    let visible_tiles: std::collections::HashSet<Point> = world.get::<Viewshed>(entity)
         .map(|v| v.visible_tiles.clone())
         .unwrap_or_default();
     let actor_faction = world.get::<Faction>(entity).cloned();
@@ -1051,10 +1070,23 @@ fn gather_world_state(entity: Entity, ai: &GoapAI, world: &mut World) -> WorldSt
         near_leader,
         self_morale_low,
         can_cast_useful_spell: {
-            // Check if entity has any monster ability off cooldown
-            world.get::<crate::game::staves::MonsterAbilities>(entity)
-                .map(|ma| ma.0.iter().any(|a| a.current_cooldown == 0))
-                .unwrap_or(false)
+            // Check if entity has any monster ability off cooldown.
+            // SummonCapped abilities are only useful when below their cap.
+            let abilities = world.get::<crate::game::staves::MonsterAbilities>(entity)
+                .map(|ma| ma.0.clone());
+            if let Some(abilities) = abilities {
+                abilities.iter().any(|a| {
+                    if a.current_cooldown > 0 { return false; }
+                    match &a.kind {
+                        crate::game::staves::MonsterAbilityKind::SummonCapped { max_summons, .. } => {
+                            crate::game::magic::count_active_summons(entity, world) < *max_summons
+                        }
+                        _ => true,
+                    }
+                })
+            } else {
+                false
+            }
         },
         ally_between_self_and_threat,
     }

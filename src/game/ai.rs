@@ -120,6 +120,15 @@ impl MonsterAI {
         self.mode == MonsterAIMode::Asleep
     }
 
+    /// Returns a human-readable label for the current AI state.
+    pub fn display_state(&self) -> &'static str {
+        match self.mode {
+            MonsterAIMode::Asleep => "Sleeping",
+            MonsterAIMode::Hunting => "Hunting",
+            MonsterAIMode::Idle => "Wandering",
+        }
+    }
+
     pub fn execute(&mut self, entity: Entity, world: &mut World) {
         // Stunned entities skip their turn entirely.
         if try_stun_skip(entity, world) {
@@ -350,7 +359,9 @@ impl AIContext {
         if viewshed.dirty {
             let map = world.resource::<Map>();
             viewshed.visible_tiles =
-                bracket_lib::prelude::field_of_view(monster_pos, viewshed.range, map);
+                bracket_lib::prelude::field_of_view(monster_pos, viewshed.range, map)
+                    .into_iter()
+                    .collect();
             viewshed.dirty = false;
             // Write the computed viewshed back to the entity.
             if let Some(mut vs) = world.get_mut::<Viewshed>(entity) {
@@ -638,6 +649,36 @@ fn try_use_ability(entity: Entity, monster_pos: Point, player_entity: Option<Ent
                     caster_label: caster_name.clone(),
                     monster_name: monster.clone(),
                     count: *count,
+                    caster_entity: None,
+                    squad_id: None,
+                });
+                world.write_message(crate::ui::game_log::GameLogMessage(format!(
+                    "{} casts {}!", caster_name, ability.name
+                )));
+                if let Some(mut ma) = world.get_mut::<MonsterAbilities>(entity) {
+                    ma.0[idx].current_cooldown = ability.cooldown;
+                }
+                return true;
+            }
+            MonsterAbilityKind::SummonCapped { weights, max_summons } => {
+                let current_count = crate::game::magic::count_active_summons(entity, world);
+                if current_count >= *max_summons { continue; }
+
+                let caster_pos_comp = world.get::<Position>(entity).cloned();
+                let Some(caster_pos_comp) = caster_pos_comp else { continue; };
+
+                let squad_id = world.get::<crate::game::squad::SquadId>(entity).copied();
+
+                let mut rng = bracket_lib::random::RandomNumberGenerator::new();
+                let monster_name = crate::game::magic::pick_weighted_monster(weights, &mut rng);
+
+                world.insert_resource(crate::game::magic::PendingSummon {
+                    caster_pos: caster_pos_comp,
+                    caster_label: caster_name.clone(),
+                    monster_name,
+                    count: 1,
+                    caster_entity: Some(entity),
+                    squad_id,
                 });
                 world.write_message(crate::ui::game_log::GameLogMessage(format!(
                     "{} casts {}!", caster_name, ability.name
