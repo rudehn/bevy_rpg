@@ -416,6 +416,53 @@ pub fn process_pending_summon(
 }
 
 // =====================================================================
+// Post-spawn wiring
+// =====================================================================
+
+/// After floor materialization, attach `SummonedBy` to escort members of summoner squads.
+/// This ensures escort rats (or other minions) spawned from the spawn table count toward
+/// the summoner's cap and prevent the Broodmother from over-summoning on the first turn.
+pub fn wire_summoner_escorts(
+    leader_query: Query<
+        (Entity, &crate::game::squad::SquadId, &crate::game::staves::MonsterAbilities),
+        With<crate::game::squad::SquadLeader>,
+    >,
+    member_query: Query<
+        (Entity, &crate::game::squad::SquadId),
+        (With<crate::components::Monster>, Without<crate::game::squad::SquadLeader>),
+    >,
+    existing_summons: Query<&crate::components::SummonedBy>,
+    mut commands: Commands,
+) {
+    for (leader_entity, leader_squad, abilities) in leader_query.iter() {
+        let has_summon_cap = abilities.0.iter().any(|a| {
+            matches!(
+                a.kind,
+                crate::game::staves::MonsterAbilityKind::SummonCapped { .. }
+            )
+        });
+        if !has_summon_cap {
+            continue;
+        }
+
+        for (member_entity, member_squad) in member_query.iter() {
+            if member_squad.0 != leader_squad.0 {
+                continue;
+            }
+            // Don't double-attach if already has SummonedBy
+            if existing_summons.get(member_entity).is_ok() {
+                continue;
+            }
+            commands
+                .entity(member_entity)
+                .insert(crate::components::SummonedBy {
+                    summoner: leader_entity,
+                });
+        }
+    }
+}
+
+// =====================================================================
 // Plugin
 // =====================================================================
 

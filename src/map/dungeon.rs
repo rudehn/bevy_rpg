@@ -149,6 +149,13 @@ impl Plugin for DungeonPlugin {
                 )
                     .chain()
                     .run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(
+                Update,
+                crate::game::magic::wire_summoner_escorts
+                    .after(SpawnDungeonSet)
+                    .run_if(on_message::<SpawnDungeonMessage>)
+                    .run_if(in_state(AppState::InGame)),
             );
     }
 }
@@ -210,16 +217,7 @@ fn snapshot_floor(
             y: pos.y,
             name: name.0.clone(),
             count: stack.map(|s| s.count).unwrap_or(1),
-            enchantment: enchant.map(|e| e.level),
-            weapon_runic: weapon_runic.map(|w| w.0.clone()),
-            armor_runic: armor_runic.map(|a| a.0),
-            runic_identified: runic_id.map(|r| r.0),
-            staff_effect: staff_data.map(|s| s.effect),
-            base_recharge: staff_data.map(|s| s.base_recharge),
-            staff_charges: rechargeable.map(|r| r.charges),
-            staff_max_charges: rechargeable.map(|r| r.max_charges),
-            staff_recharge_timer: rechargeable.map(|r| r.recharge_timer),
-            staff_recharge_rate: rechargeable.map(|r| r.recharge_rate),
+            state: crate::save::build_item_state(enchant, weapon_runic, armor_runic, runic_id, staff_data, rechargeable),
             drifting: is_drifting,
         })
         .collect();
@@ -420,6 +418,10 @@ pub(crate) struct SpawnDungeonExtras<'w> {
     auto_save_pending: ResMut<'w, AutoSavePending>,
     needs_explored_init: ResMut<'w, NeedsExploredInit>,
     squad_counter: ResMut<'w, crate::game::squad::SquadIdCounter>,
+    light_sources: ResMut<'w, crate::map::light::LightSources>,
+    fire_tiles: ResMut<'w, crate::game::fire::FireTiles>,
+    gas_tiles: ResMut<'w, crate::game::gas::GasTiles>,
+    water_tiles: ResMut<'w, crate::game::water::WaterTiles>,
 }
 
 pub fn spawn_dungeon(
@@ -531,6 +533,39 @@ pub fn spawn_dungeon(
     }
 
     *map = result.map;
+
+    // Clear stale non-entity light sources (fire, fungal) from the previous floor.
+    // Entity-based wall lights (candles) are re-synced automatically.
+    extras.light_sources.remove_floor_sources();
+    // Clear fire/gas state — entities auto-despawn via FloorEntityMarker but
+    // the spatial indices must also be cleared.
+    extras.fire_tiles.0.clear();
+    extras.gas_tiles.0.clear();
+    // Rebuild water tile index for shimmer animation.
+    extras.water_tiles.0.clear();
+
+    // Add fungal glow for all Fungus tiles on this floor, and populate water tile index.
+    use crate::map::tile::{Decoration, LiquidType};
+    let mut fungal_count = 0u32;
+    for y in 0..map.height {
+        for x in 0..map.width {
+            let idx = map.xy_idx(x, y);
+            if map.tiles[idx].decoration == Decoration::Fungus {
+                extras.light_sources.add(crate::map::light::fungal_light(x, y));
+                fungal_count += 1;
+            }
+            match map.tiles[idx].liquid {
+                LiquidType::Water | LiquidType::ShallowWater => {
+                    extras.water_tiles.0.insert((x, y), map.tiles[idx].liquid);
+                }
+                _ => {}
+            }
+        }
+    }
+    if fungal_count > 0 {
+        info!("Added {} fungal glow lights", fungal_count);
+    }
+
     let spawn = result.player_spawn;
     let spawn_idx = map.xy_idx(spawn.x, spawn.y);
     let spawn_tile = map.tiles[spawn_idx];
