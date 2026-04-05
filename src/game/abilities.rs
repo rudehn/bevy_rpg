@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::{Name, Position};
 use crate::game::combat::{
-    ApplyDamageMessage, CombatDamageSet, DamageSource, DamageType, DeathEvent, GameRng,
+    ApplyDamageMessage, DamageSource, DamageType, DeathEvent, GameRng,
     HealMessage,
 };
 use crate::game::factions::FactionMatrix;
@@ -49,6 +49,14 @@ pub struct OnBeingHitTriggerMessage {
 /// On-hit effect: apply burning (fire DoT) to the target.
 #[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct BurningStrike {
+    pub damage_per_turn: i32,
+    pub duration: u32,
+    pub chance: u32,
+}
+
+/// On-hit effect: chance to apply Poisoned DoT to the defender.
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
+pub struct PoisonStrike {
     pub damage_per_turn: i32,
     pub duration: u32,
     pub chance: u32,
@@ -184,6 +192,33 @@ pub fn handle_burning_strike(
             }
             log_writer.write(GameLogMessage(format!(
                 "{}'s attack sets {} ablaze!",
+                attacker_name.0, defender_name.0
+            )));
+        }
+    }
+}
+
+/// Poison Strike: on hit, chance to apply Poisoned DoT.
+pub fn handle_poison_strike(
+    mut messages: MessageReader<OnHitTriggerMessage>,
+    mut game_rng: ResMut<GameRng>,
+    attacker_query: Query<(&Name, &PoisonStrike)>,
+    defender_query: Query<&Name>,
+    mut status_query: Query<&mut StatusEffects>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+) {
+    for msg in messages.read() {
+        if msg.source != DamageSource::Melee { continue; }
+        let Ok((attacker_name, poison_strike)) = attacker_query.get(msg.attacker) else { continue; };
+        let Ok(defender_name) = defender_query.get(msg.defender) else { continue; };
+
+        let roll = game_rng.0.roll_dice(1, 100);
+        if roll <= poison_strike.chance as i32 {
+            if let Ok(mut effects) = status_query.get_mut(msg.defender) {
+                effects.add(StatusEffectKind::Poisoned { damage_per_turn: poison_strike.damage_per_turn }, poison_strike.duration);
+            }
+            log_writer.write(GameLogMessage(format!(
+                "{}'s attack poisons {}!",
                 attacker_name.0, defender_name.0
             )));
         }
@@ -685,6 +720,23 @@ pub fn mimic_reveal_system(
 }
 
 // =====================================================================
+// Tests
+// =====================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn poison_strike_component_stores_fields() {
+        let ps = PoisonStrike { damage_per_turn: 2, duration: 5, chance: 75 };
+        assert_eq!(ps.damage_per_turn, 2);
+        assert_eq!(ps.duration, 5);
+        assert_eq!(ps.chance, 75);
+    }
+}
+
+// =====================================================================
 // Plugin
 // =====================================================================
 
@@ -693,32 +745,8 @@ pub struct AbilitiesPlugin;
 impl Plugin for AbilitiesPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<OnHitTriggerMessage>()
-            .add_message::<OnBeingHitTriggerMessage>()
-            .add_systems(
-                Update,
-                (
-                    // On-hit handlers
-                    handle_burning_strike.after(CombatDamageSet),
-                    handle_stunning_blow.after(CombatDamageSet),
-                    handle_life_drain.after(CombatDamageSet),
-                    handle_knockback.after(CombatDamageSet),
-                    handle_slow_strike.after(CombatDamageSet),
-                    handle_pack_tactics.after(CombatDamageSet),
-                    handle_war_cry.after(CombatDamageSet),
-                    // On-being-hit handlers
-                    handle_rough_body.after(CombatDamageSet),
-                    handle_enrage.after(CombatDamageSet),
-                    handle_split_on_hit.after(CombatDamageSet),
-                    // On-death handlers
-                    handle_explode_on_death.after(CombatDamageSet),
-                    handle_summon_on_death.after(CombatDamageSet),
-                    // Aura systems (run on turn end)
-                    rally_aura_system,
-                    terrify_aura_system,
-                    // Mimic reveal (run on turn end)
-                    mimic_reveal_system,
-                )
-                    .run_if(in_state(crate::game::AppState::InGame)),
-            );
+            .add_message::<OnBeingHitTriggerMessage>();
+        // All ability handlers (on-hit, on-being-hit, on-death, aura, mimic)
+        // registered in TurnOrderPlugin (turns.rs)
     }
 }

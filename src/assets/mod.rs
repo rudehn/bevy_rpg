@@ -450,6 +450,7 @@ pub fn infer_role(asset: &MonsterAsset) -> &'static str {
 pub enum AbilityDef {
     // On-hit (trigger when this monster lands an attack)
     BurningStrike { damage_per_turn: i32, duration: u32, chance: u32 },
+    PoisonStrike { damage_per_turn: i32, duration: u32, chance: u32 },
     StunningBlow { duration: u32, chance: u32 },
     SlowStrike { duration: u32, chance: u32 },
     LifeDrain { percent: i32 },

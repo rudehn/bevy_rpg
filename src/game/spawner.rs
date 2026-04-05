@@ -237,6 +237,13 @@ pub fn spawn_monster(
                     chance: *chance,
                 });
             }
+            AbilityDef::PoisonStrike { damage_per_turn, duration, chance } => {
+                commands.entity(monster_entity).insert(crate::game::abilities::PoisonStrike {
+                    damage_per_turn: *damage_per_turn,
+                    duration: *duration,
+                    chance: *chance,
+                });
+            }
             AbilityDef::StunningBlow { duration, chance } => {
                 commands.entity(monster_entity).insert(StunningBlow {
                     duration: *duration,
@@ -314,6 +321,11 @@ pub fn spawn_monster(
             }
         }
     }
+
+    commands.entity(monster_entity).insert(crate::game::ascii_mode::AsciiDisplay {
+        ch: if monster_asset.ascii_char.is_empty() { "?".to_string() } else { monster_asset.ascii_char.clone() },
+        color: monster_asset.ascii_fg,
+    });
 
     // ASCII glyph child
     if let Some(font) = ascii_font {
@@ -423,13 +435,20 @@ pub fn spawn_item(
         RenderLayers::layer(1),
     ));
 
+    // Staves get Effect::ZapStaff automatically so they can be used from inventory.
+    let effect = if asset.staff_effect.is_some() && asset.effect.is_none() {
+        Some(crate::game::effects::Effect::ZapStaff)
+    } else {
+        asset.effect.clone()
+    };
+
     entity.insert(ItemProperties {
         kind: asset.item_kind.clone(),
         armor_slot: asset.armor_slot.clone(),
         damage: asset.damage.clone(),
         defense: asset.defense,
         rarity: asset.rarity.clone(),
-        effect: asset.effect.clone(),
+        effect,
         weapon_range: asset.weapon_range,
         attack_speed: asset.attack_speed,
         staff_effect: asset.staff_effect,
@@ -445,6 +464,11 @@ pub fn spawn_item(
 
     entity.insert(ItemStack { count: 1, max_stack: asset.max_stack });
 
+    // Consumable items (potions, scrolls) are destroyed on use.
+    if matches!(asset.item_kind, crate::game::items::ItemKind::Consumable | crate::game::items::ItemKind::Spellbook) {
+        entity.insert(crate::components::Consumable);
+    }
+
     if asset.is_ammo {
         entity.insert(Ammo);
     }
@@ -452,6 +476,11 @@ pub fn spawn_item(
     if asset.is_quest_item {
         entity.insert(crate::components::QuestItem);
     }
+
+    entity.insert(crate::game::ascii_mode::AsciiDisplay {
+        ch: if asset.ascii_char.is_empty() { "?".to_string() } else { asset.ascii_char.clone() },
+        color: asset.ascii_fg,
+    });
 
     let item_entity = entity.id();
 
@@ -557,6 +586,11 @@ pub fn spawn_prop(
     if prop_name == "chest" {
         entity.insert(crate::components::Chest);
     }
+
+    entity.insert(crate::game::ascii_mode::AsciiDisplay {
+        ch: if asset.ascii_char.is_empty() { "?".to_string() } else { asset.ascii_char.clone() },
+        color: asset.ascii_fg,
+    });
 
     let prop_entity = entity.id();
 
