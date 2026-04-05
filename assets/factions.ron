@@ -9,6 +9,17 @@
         ( a: "Player",  b: "Undead",  relation: Hostile ),
         ( a: "Player",  b: "Giant",   relation: Hostile ),
         ( a: "Player",  b: "Dragon",  relation: Hostile ),
+        ( a: "Player",  b: "Rat",     relation: Hostile ),
+
+        // Rat faction: hostile to Player, neutral to all monster factions
+        ( a: "Monster", b: "Rat",     relation: Neutral ),
+        ( a: "Rat",     b: "Kobold",  relation: Neutral ),
+        ( a: "Rat",     b: "Goblin",  relation: Neutral ),
+        ( a: "Rat",     b: "Orc",     relation: Neutral ),
+        ( a: "Rat",     b: "Fungal",  relation: Neutral ),
+        ( a: "Rat",     b: "Undead",  relation: Neutral ),
+        ( a: "Rat",     b: "Giant",   relation: Neutral ),
+        ( a: "Rat",     b: "Dragon",  relation: Neutral ),
 
         // Monster factions are neutral to each other (don't infight)
         ( a: "Monster", b: "Kobold",  relation: Neutral ),

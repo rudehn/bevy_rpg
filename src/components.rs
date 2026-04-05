@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use bevy::ecs::component::Component;
 use bevy::ecs::entity::Entity;
 use bevy::prelude::{Reflect, ReflectComponent};
@@ -27,7 +29,7 @@ impl Position {
 
 #[derive(Component, Clone, Default)]
 pub struct Viewshed {
-    pub visible_tiles: Vec<Point>,
+    pub visible_tiles: HashSet<Point>,
     pub range: i32,
     pub dirty: bool,
 }
@@ -35,7 +37,7 @@ pub struct Viewshed {
 impl Viewshed {
     pub fn new(range: i32) -> Self {
         Self {
-            visible_tiles: Vec::new(),
+            visible_tiles: HashSet::new(),
             range,
             dirty: true,
         }
@@ -80,6 +82,11 @@ pub struct Inventory {
 /// Items with this component are invisible and excluded from floor-level queries.
 #[derive(Component, Debug, Default)]
 pub struct InInventory;
+
+/// Marker for items consumed on use (potions, scrolls). Items without this
+/// (staves, equipment) stay in inventory after being used.
+#[derive(Component, Debug, Default)]
+pub struct Consumable;
 
 /// Marker component for items that are currently equipped by the player.
 /// Equipped items remain in Inventory.items and the UI shows them with [E].
@@ -165,6 +172,7 @@ impl FactionKind {
     pub const PLAYER: &str = "Player";
     pub const MONSTER: &str = "Monster";
     pub const KOBOLD: &str = "Kobold";
+    pub const RAT: &str = "Rat";
 
     pub fn player() -> Self { Self(Self::PLAYER.to_string()) }
     pub fn monster() -> Self { Self(Self::MONSTER.to_string()) }
