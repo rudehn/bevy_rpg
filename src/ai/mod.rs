@@ -21,5 +21,6 @@
 pub mod decisions;
 pub mod goap;
 pub mod monster_ai;
+pub mod pathfinding;
 
 pub use monster_ai::{MonsterAI, MonsterAIMode, GUARD_PATROL_RADIUS};

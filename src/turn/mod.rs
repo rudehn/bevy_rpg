@@ -1,9 +1,9 @@
 //! Turn scheduling primitives.
 //!
 //! This module owns the engine's turn scheduling core: the [`TurnManager`]
-//! resource (a time-sorted queue of `(Entity, u32)` pairs), the pure dequeue
-//! logic in [`dequeue_next_batch_pure`], and the [`compute_reinsert_time`]
-//! helper used by action cost computation.
+//! resource (a priority-queue of entities keyed by scheduled time), the pure
+//! dequeue logic in [`dequeue_next_batch_pure`], and the
+//! [`compute_reinsert_time`] helper used by action cost computation.
 //!
 //! The full Bevy plugin (`TurnOrderPlugin`, `TurnState`, `ProcessingPhase`,
 //! `CombatReactionSet`) still lives in the game crate for now; those pieces
@@ -11,18 +11,50 @@
 //! the plugin is eventually migrated, it will consume these primitives via
 //! `roguelike_engine::turn::*`.
 
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+
 use bevy::prelude::*;
+
+/// A single entry in the turn queue, ordered first by scheduled time and then
+/// by insertion order (to break ties deterministically, preserving FIFO
+/// semantics for equal times).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TurnEntry {
+    time: u32,
+    insertion_order: u64,
+    entity: Entity,
+}
+
+impl Ord for TurnEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.time
+            .cmp(&other.time)
+            .then(self.insertion_order.cmp(&other.insertion_order))
+    }
+}
+
+impl PartialOrd for TurnEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 /// Resource holding the turn queue for the engine's turn scheduler.
 ///
-/// Entries are `(Entity, scheduled_time)` pairs. The queue is kept sorted by
-/// `scheduled_time` via [`TurnManager::sort_queue`]. `current_time` is the
-/// global clock — when an actor is dequeued, `current_time` advances to
-/// match their scheduled time.
+/// Internally uses a min-heap (`BinaryHeap<Reverse<TurnEntry>>`) so that
+/// `peek` / `pop` always yield the earliest scheduled entity in O(log n)
+/// time. An `insertion_counter` guarantees stable FIFO ordering for entities
+/// scheduled at the same tick.
 #[derive(Resource, Default)]
 pub struct TurnManager {
-    /// `(Entity, scheduled_time)` pairs. Kept sorted by `scheduled_time`.
-    pub turn_queue: Vec<(Entity, u32)>,
+    /// Min-heap of turn entries. Wrapped in `Reverse` so `BinaryHeap`
+    /// (which is a max-heap) yields the *smallest* `(time, insertion_order)`
+    /// first.
+    turn_queue: BinaryHeap<Reverse<TurnEntry>>,
+    /// Monotonically increasing counter used to break ties in scheduled time
+    /// so that entities inserted first are dequeued first.
+    insertion_counter: u64,
     /// Global clock. Advances as actors are dequeued.
     pub current_time: u32,
 }
@@ -30,26 +62,60 @@ pub struct TurnManager {
 impl TurnManager {
     /// Insert `entity` at the current global time.
     pub fn add_entity(&mut self, entity: Entity) {
-        self.turn_queue.push((entity, self.current_time));
+        let order = self.insertion_counter;
+        self.insertion_counter += 1;
+        self.turn_queue.push(Reverse(TurnEntry {
+            time: self.current_time,
+            insertion_order: order,
+            entity,
+        }));
     }
 
-    /// Insert an entity at a specific scheduled time, maintaining sorted order.
+    /// Insert an entity at a specific scheduled time.
     pub fn insert_at(&mut self, entity: Entity, time: u32) {
-        self.turn_queue.push((entity, time));
-        self.sort_queue();
+        let order = self.insertion_counter;
+        self.insertion_counter += 1;
+        self.turn_queue.push(Reverse(TurnEntry {
+            time,
+            insertion_order: order,
+            entity,
+        }));
     }
 
-    /// Sort the turn queue by scheduled time (stable sort preserves
-    /// insertion order for ties — important so actors inserted at the same
-    /// tick act in the order they were added).
+    /// No-op retained for backward compatibility.
+    ///
+    /// With the old `Vec`-based queue, callers needed to explicitly re-sort
+    /// after bulk mutations. The `BinaryHeap` is always in heap order, so
+    /// this method does nothing.
     pub fn sort_queue(&mut self) {
-        self.turn_queue.sort_by_key(|&(_, time)| time);
+        // Heap is always sorted — nothing to do.
     }
 
     /// Peek at the next scheduled time without removing anything. Returns
     /// `None` if the queue is empty.
     pub fn peek_time(&self) -> Option<u32> {
-        self.turn_queue.first().map(|&(_, t)| t)
+        self.turn_queue.peek().map(|Reverse(entry)| entry.time)
+    }
+
+    /// Returns the number of entities currently in the turn queue.
+    pub fn len(&self) -> usize {
+        self.turn_queue.len()
+    }
+
+    /// Returns `true` if the turn queue contains no entities.
+    pub fn is_empty(&self) -> bool {
+        self.turn_queue.is_empty()
+    }
+
+    /// Returns `true` if the given entity is anywhere in the turn queue.
+    pub fn contains(&self, entity: Entity) -> bool {
+        self.turn_queue.iter().any(|Reverse(e)| e.entity == entity)
+    }
+
+    /// Remove all occurrences of `entity` from the turn queue.
+    pub fn remove_entity(&mut self, entity: Entity) {
+        let old = std::mem::take(&mut self.turn_queue);
+        self.turn_queue = old.into_iter().filter(|Reverse(e)| e.entity != entity).collect();
     }
 }
 
@@ -95,27 +161,25 @@ pub fn dequeue_next_batch_pure(
 ) -> DequeueOutcome {
     let mut npc_batch: Vec<Entity> = Vec::new();
 
-    while !turn_manager.turn_queue.is_empty() {
-        let (entity, time) = turn_manager.turn_queue[0];
-
-        if time > turn_manager.current_time {
+    while let Some(Reverse(entry)) = turn_manager.turn_queue.peek() {
+        if entry.time > turn_manager.current_time {
             break;
         }
 
-        if is_player(entity) {
+        if is_player(entry.entity) {
             if !npc_batch.is_empty() {
                 break;
             }
-            turn_manager.turn_queue.remove(0);
-            return DequeueOutcome::PlayerReady(entity);
+            let Reverse(entry) = turn_manager.turn_queue.pop().unwrap();
+            return DequeueOutcome::PlayerReady(entry.entity);
         }
 
         if npc_batch.len() as u32 >= MAX_NPC_BATCH {
             break;
         }
 
-        turn_manager.turn_queue.remove(0);
-        npc_batch.push(entity);
+        let Reverse(entry) = turn_manager.turn_queue.pop().unwrap();
+        npc_batch.push(entry.entity);
     }
 
     if !npc_batch.is_empty() {
@@ -142,12 +206,17 @@ mod tests {
     }
 
     /// Build a TurnManager with a given current_time and pre-sorted queue entries.
+    /// Entries are inserted in order so insertion_order reflects their position
+    /// in the slice, preserving FIFO semantics for equal times.
     fn make_tm(current_time: u32, entries: &[(Entity, u32)]) -> TurnManager {
         let mut tm = TurnManager {
-            turn_queue: entries.to_vec(),
+            turn_queue: BinaryHeap::new(),
+            insertion_counter: 0,
             current_time,
         };
-        tm.sort_queue();
+        for &(entity, time) in entries {
+            tm.insert_at(entity, time);
+        }
         tm
     }
 
@@ -160,7 +229,9 @@ mod tests {
         let mut tm = TurnManager::default();
         tm.current_time = 50;
         tm.add_entity(entity(1));
-        assert_eq!(tm.turn_queue, vec![(entity(1), 50)]);
+        assert_eq!(tm.len(), 1);
+        assert_eq!(tm.peek_time(), Some(50));
+        assert!(tm.contains(entity(1)));
     }
 
     #[test]
@@ -170,20 +241,29 @@ mod tests {
         tm.insert_at(entity(2), 100);
         tm.insert_at(entity(3), 200);
 
-        let times: Vec<u32> = tm.turn_queue.iter().map(|&(_, t)| t).collect();
+        // Drain the heap and collect times in dequeue order.
+        let mut times = Vec::new();
+        while let Some(Reverse(entry)) = tm.turn_queue.pop() {
+            times.push(entry.time);
+        }
         assert_eq!(times, vec![100, 200, 300]);
     }
 
     #[test]
     fn sort_queue_stable_for_equal_times() {
-        // Entities inserted in order at the same time should keep that order after sort.
+        // Entities inserted in order at the same time should keep that order
+        // when dequeued (guaranteed by insertion_order tiebreaker).
         let mut tm = TurnManager::default();
-        tm.turn_queue.push((entity(1), 100));
-        tm.turn_queue.push((entity(2), 100));
-        tm.turn_queue.push((entity(3), 100));
-        tm.sort_queue();
+        tm.current_time = 100;
+        tm.insert_at(entity(1), 100);
+        tm.insert_at(entity(2), 100);
+        tm.insert_at(entity(3), 100);
+        tm.sort_queue(); // no-op, but kept for API compat
 
-        let entities: Vec<Entity> = tm.turn_queue.iter().map(|&(e, _)| e).collect();
+        let mut entities = Vec::new();
+        while let Some(Reverse(entry)) = tm.turn_queue.pop() {
+            entities.push(entry.entity);
+        }
         assert_eq!(entities, vec![entity(1), entity(2), entity(3)]);
     }
 
@@ -205,27 +285,27 @@ mod tests {
 
     #[test]
     fn reinsert_time_default_speed() {
-        // delay=1.0, base_cost=100 → reinsert at current_time+100
+        // delay=1.0, base_cost=100 -> reinsert at current_time+100
         assert_eq!(compute_reinsert_time(0, 100, 1.0), 100);
     }
 
     #[test]
     fn reinsert_time_slow_entity() {
-        // delay=1.5, base_cost=100 → 150
+        // delay=1.5, base_cost=100 -> 150
         assert_eq!(compute_reinsert_time(0, 100, 1.5), 150);
     }
 
     #[test]
     fn reinsert_time_fast_entity() {
-        // delay=0.5, base_cost=100 → 50
+        // delay=0.5, base_cost=100 -> 50
         assert_eq!(compute_reinsert_time(0, 100, 0.5), 50);
     }
 
     #[test]
     fn reinsert_time_rounds_correctly() {
-        // delay=0.33, base_cost=100 → 33.0 → 33
+        // delay=0.33, base_cost=100 -> 33.0 -> 33
         assert_eq!(compute_reinsert_time(0, 100, 0.33), 33);
-        // delay=0.335, base_cost=100 → 33.5 → 34 (rounds up at .5)
+        // delay=0.335, base_cost=100 -> 33.5 -> 34 (rounds up at .5)
         assert_eq!(compute_reinsert_time(0, 100, 0.335), 34);
     }
 
@@ -243,7 +323,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // dequeue_next_batch_pure — empty queue
+    // dequeue_next_batch_pure -- empty queue
     // -----------------------------------------------------------------------
 
     #[test]
@@ -254,7 +334,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // dequeue_next_batch_pure — single entity
+    // dequeue_next_batch_pure -- single entity
     // -----------------------------------------------------------------------
 
     #[test]
@@ -263,7 +343,7 @@ mod tests {
         let mut tm = make_tm(0, &[(npc, 0)]);
         let result = dequeue_next_batch_pure(&mut tm, |_| false);
         assert_eq!(result, DequeueOutcome::NpcBatch(vec![npc]));
-        assert!(tm.turn_queue.is_empty());
+        assert!(tm.is_empty());
     }
 
     #[test]
@@ -272,11 +352,11 @@ mod tests {
         let mut tm = make_tm(0, &[(player, 0)]);
         let result = dequeue_next_batch_pure(&mut tm, |e| e == player);
         assert_eq!(result, DequeueOutcome::PlayerReady(player));
-        assert!(tm.turn_queue.is_empty());
+        assert!(tm.is_empty());
     }
 
     // -----------------------------------------------------------------------
-    // dequeue_next_batch_pure — player comes first
+    // dequeue_next_batch_pure -- player comes first
     // -----------------------------------------------------------------------
 
     #[test]
@@ -288,12 +368,12 @@ mod tests {
         let result = dequeue_next_batch_pure(&mut tm, |e| e == player);
         assert_eq!(result, DequeueOutcome::PlayerReady(player));
         // NPC should remain in queue
-        assert_eq!(tm.turn_queue.len(), 1);
-        assert_eq!(tm.turn_queue[0].0, npc_a);
+        assert_eq!(tm.len(), 1);
+        assert!(tm.contains(npc_a));
     }
 
     // -----------------------------------------------------------------------
-    // dequeue_next_batch_pure — NPCs batch before player
+    // dequeue_next_batch_pure -- NPCs batch before player
     // -----------------------------------------------------------------------
 
     #[test]
@@ -308,8 +388,8 @@ mod tests {
         let result = dequeue_next_batch_pure(&mut tm, |e| e == player);
         assert_eq!(result, DequeueOutcome::NpcBatch(vec![npc_a, npc_b]));
         // Player is still in the queue, not yet dequeued.
-        assert_eq!(tm.turn_queue.len(), 1);
-        assert_eq!(tm.turn_queue[0].0, player);
+        assert_eq!(tm.len(), 1);
+        assert!(tm.contains(player));
     }
 
     #[test]
@@ -324,11 +404,11 @@ mod tests {
         let result = dequeue_next_batch_pure(&mut tm, |e| e == player);
         assert_eq!(result, DequeueOutcome::NpcBatch(vec![npc]));
         // Player deferred to next dequeue cycle.
-        assert_eq!(tm.turn_queue.len(), 1);
+        assert_eq!(tm.len(), 1);
     }
 
     // -----------------------------------------------------------------------
-    // dequeue_next_batch_pure — NPC batch limit (MAX_NPC_BATCH)
+    // dequeue_next_batch_pure -- NPC batch limit (MAX_NPC_BATCH)
     // -----------------------------------------------------------------------
 
     #[test]
@@ -348,11 +428,11 @@ mod tests {
             other => panic!("Expected NpcBatch, got {:?}", other),
         }
         // Remaining 4 NPCs still in queue
-        assert_eq!(tm.turn_queue.len(), 4);
+        assert_eq!(tm.len(), 4);
     }
 
     // -----------------------------------------------------------------------
-    // dequeue_next_batch_pure — future entities not dequeued
+    // dequeue_next_batch_pure -- future entities not dequeued
     // -----------------------------------------------------------------------
 
     #[test]
@@ -363,7 +443,7 @@ mod tests {
         let result = dequeue_next_batch_pure(&mut tm, |_| false);
         assert_eq!(result, DequeueOutcome::Empty);
         // Entity remains in queue
-        assert_eq!(tm.turn_queue.len(), 1);
+        assert_eq!(tm.len(), 1);
     }
 
     #[test]
@@ -374,12 +454,14 @@ mod tests {
 
         let result = dequeue_next_batch_pure(&mut tm, |_| false);
         assert_eq!(result, DequeueOutcome::NpcBatch(vec![npc_ready]));
-        assert_eq!(tm.turn_queue.len(), 1);
-        assert_eq!(tm.turn_queue[0], (npc_future, 200));
+        assert_eq!(tm.len(), 1);
+        // The remaining entry is the future NPC.
+        assert!(tm.contains(npc_future));
+        assert_eq!(tm.peek_time(), Some(200));
     }
 
     // -----------------------------------------------------------------------
-    // dequeue_next_batch_pure — entities at or below current_time all dequeue
+    // dequeue_next_batch_pure -- entities at or below current_time all dequeue
     // -----------------------------------------------------------------------
 
     #[test]
@@ -392,8 +474,9 @@ mod tests {
 
         let result = dequeue_next_batch_pure(&mut tm, |_| false);
         assert_eq!(result, DequeueOutcome::NpcBatch(vec![npc_a, npc_b]));
-        assert_eq!(tm.turn_queue.len(), 1);
-        assert_eq!(tm.turn_queue[0], (npc_c, 150));
+        assert_eq!(tm.len(), 1);
+        assert!(tm.contains(npc_c));
+        assert_eq!(tm.peek_time(), Some(150));
     }
 
     // -----------------------------------------------------------------------
@@ -411,7 +494,7 @@ mod tests {
         // Advance time to the first scheduled actor.
         tm.current_time = tm.peek_time().unwrap();
 
-        // Player is first (lower entity id, same time).
+        // Player is first (lower insertion_order, same time).
         let result = dequeue_next_batch_pure(&mut tm, |e| e == player);
         assert_eq!(result, DequeueOutcome::PlayerReady(player));
 
@@ -419,7 +502,7 @@ mod tests {
         let player_reinsert = compute_reinsert_time(tm.current_time, 100, 1.0);
         tm.insert_at(player, player_reinsert);
 
-        // Now dequeue again — NPC should be next.
+        // Now dequeue again -- NPC should be next.
         let result = dequeue_next_batch_pure(&mut tm, |e| e == player);
         assert_eq!(result, DequeueOutcome::NpcBatch(vec![npc]));
 
@@ -431,7 +514,7 @@ mod tests {
         tm.sort_queue();
         tm.current_time = tm.peek_time().unwrap();
 
-        // Player at 100, NPC at 150 → player goes first.
+        // Player at 100, NPC at 150 -> player goes first.
         assert_eq!(tm.current_time, 100);
         let result = dequeue_next_batch_pure(&mut tm, |e| e == player);
         assert_eq!(result, DequeueOutcome::PlayerReady(player));
@@ -487,7 +570,9 @@ mod tests {
         // Simulate a free action: player goes back in at current_time.
         tm.insert_at(player, tm.current_time);
 
-        assert_eq!(tm.turn_queue[0], (player, 100));
+        // Player (time=100) is before NPC (time=200).
+        assert_eq!(tm.peek_time(), Some(100));
+        assert!(tm.contains(player));
         // Player acts before the NPC at 200.
         tm.current_time = tm.peek_time().unwrap();
         let result = dequeue_next_batch_pure(&mut tm, |e| e == player);
@@ -505,18 +590,18 @@ mod tests {
         let mut tm = make_tm(0, &[(ent, 100)]);
 
         // Simulate the dedup check from resolve_turn_end.
-        let already_present = tm.turn_queue.iter().any(|(e, _)| *e == ent);
+        let already_present = tm.contains(ent);
         assert!(already_present);
 
         // Should NOT insert again.
         if !already_present {
             tm.insert_at(ent, 200);
         }
-        assert_eq!(tm.turn_queue.len(), 1);
+        assert_eq!(tm.len(), 1);
     }
 
     // -----------------------------------------------------------------------
-    // Edge: identical scheduled times — stable ordering preserved
+    // Edge: identical scheduled times -- stable ordering preserved
     // -----------------------------------------------------------------------
 
     #[test]
@@ -525,19 +610,15 @@ mod tests {
         let b = entity(20);
         let c = entity(30);
 
-        let mut tm = TurnManager {
-            turn_queue: vec![(a, 100), (b, 100), (c, 100)],
-            current_time: 100,
-        };
-        // sort_by_key is stable — original order preserved for equal keys.
-        tm.sort_queue();
+        let mut tm = make_tm(100, &[(a, 100), (b, 100), (c, 100)]);
+        tm.sort_queue(); // no-op, kept for API compat
 
         let result = dequeue_next_batch_pure(&mut tm, |_| false);
         assert_eq!(result, DequeueOutcome::NpcBatch(vec![a, b, c]));
     }
 
     // -----------------------------------------------------------------------
-    // Edge: player scheduled after NPCs — NPCs batch, player waits
+    // Edge: player scheduled after NPCs -- NPCs batch, player waits
     // -----------------------------------------------------------------------
 
     #[test]
@@ -550,8 +631,9 @@ mod tests {
         let result = dequeue_next_batch_pure(&mut tm, |e| e == player);
         assert_eq!(result, DequeueOutcome::NpcBatch(vec![npc]));
         // Player still in queue at future time.
-        assert_eq!(tm.turn_queue.len(), 1);
-        assert_eq!(tm.turn_queue[0], (player, 200));
+        assert_eq!(tm.len(), 1);
+        assert!(tm.contains(player));
+        assert_eq!(tm.peek_time(), Some(200));
     }
 
     // -----------------------------------------------------------------------

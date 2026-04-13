@@ -23,6 +23,8 @@
 //! → resistance → apply) still lives in the game crate. Migration of
 //! the pipeline is tracked in the extraction plan.
 
+pub mod events;
+
 use bevy::prelude::{Component, Reflect, ReflectComponent};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -137,6 +139,16 @@ pub fn apply_resistance(damage: i32, resist_percent: i32) -> i32 {
     (damage as f32 * multiplier).round() as i32
 }
 
+/// A single damage multiplier to apply during the combat pipeline.
+///
+/// Multiple modifiers stack multiplicatively. The product is applied to
+/// base damage and the result is clamped to a minimum of 1.
+#[derive(Clone, Debug)]
+pub struct DamageModifier {
+    /// Multiplicative factor (e.g. 1.5 for +50%, 0.75 for -25%).
+    pub multiplier: f32,
+}
+
 /// Apply status multipliers to base damage.
 ///
 /// - `is_enraged`: +50% damage (multiplied, not added)
@@ -154,6 +166,25 @@ pub fn apply_damage_multipliers(base: i32, is_enraged: bool, is_terrified: bool)
         damage = damage * 3 / 4;
     }
     damage.max(1)
+}
+
+/// Apply a list of damage modifiers to base damage.
+///
+/// All modifiers stack multiplicatively. The result is clamped to a
+/// minimum of 1, so damage never rounds to zero from modifiers alone.
+/// An empty modifier list returns `base` unchanged.
+///
+/// This is the generalized version of [`apply_damage_multipliers`] —
+/// games with status effects, abilities, terrain bonuses, etc. can
+/// build a `Vec<DamageModifier>` and call this once rather than
+/// chaining boolean flags.
+pub fn apply_damage_modifiers(base: i32, modifiers: &[DamageModifier]) -> i32 {
+    if modifiers.is_empty() {
+        return base;
+    }
+    let product: f32 = modifiers.iter().map(|m| m.multiplier).product();
+    let result = (base as f32 * product).round() as i32;
+    result.max(1)
 }
 
 // =====================================================================
@@ -328,6 +359,62 @@ mod tests {
     #[test]
     fn minimum_damage_is_one() {
         assert_eq!(apply_damage_multipliers(1, false, true), 1);
+    }
+
+    // --- apply_damage_modifiers ---
+
+    #[test]
+    fn modifiers_empty_passes_through() {
+        assert_eq!(apply_damage_modifiers(10, &[]), 10);
+    }
+
+    #[test]
+    fn modifiers_single_buff() {
+        let mods = vec![DamageModifier { multiplier: 1.5 }];
+        assert_eq!(apply_damage_modifiers(10, &mods), 15);
+    }
+
+    #[test]
+    fn modifiers_single_debuff() {
+        let mods = vec![DamageModifier { multiplier: 0.5 }];
+        assert_eq!(apply_damage_modifiers(10, &mods), 5);
+    }
+
+    #[test]
+    fn modifiers_stack_multiplicatively() {
+        let mods = vec![
+            DamageModifier { multiplier: 1.5 },
+            DamageModifier { multiplier: 0.75 },
+        ];
+        // 10 * 1.5 * 0.75 = 11.25 -> 11
+        assert_eq!(apply_damage_modifiers(10, &mods), 11);
+    }
+
+    #[test]
+    fn modifiers_three_stack() {
+        let mods = vec![
+            DamageModifier { multiplier: 2.0 },
+            DamageModifier { multiplier: 0.5 },
+            DamageModifier { multiplier: 1.25 },
+        ];
+        // 10 * 2.0 * 0.5 * 1.25 = 12.5 -> 13
+        assert_eq!(apply_damage_modifiers(10, &mods), 13);
+    }
+
+    #[test]
+    fn modifiers_minimum_is_one() {
+        let mods = vec![DamageModifier { multiplier: 0.01 }];
+        assert_eq!(apply_damage_modifiers(10, &mods), 1);
+    }
+
+    #[test]
+    fn modifiers_extreme_reduction_still_one() {
+        let mods = vec![
+            DamageModifier { multiplier: 0.1 },
+            DamageModifier { multiplier: 0.1 },
+        ];
+        // 10 * 0.01 = 0.1 -> rounds to 0 -> clamped to 1
+        assert_eq!(apply_damage_modifiers(10, &mods), 1);
     }
 
     // --- Full pipeline integration: armor + resistance ---

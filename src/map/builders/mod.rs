@@ -14,7 +14,7 @@
 //!   builders can access game-specific fields.
 //! - [`BuilderChain`] — a pipeline runner that holds a list of boxed
 //!   builders and a context, runs them in sequence, and enforces
-//!   monotonic [`BuilderPhase`] ordering in debug builds.
+//!   monotonic [`BuilderPhase`] ordering.
 //! - [`BuilderPhase`] — an ordered enum for pipeline phases
 //!   (Geometry → TerrainCleanup → StructurePlacement →
 //!   ConnectivityCull → Spawning → Finalization).
@@ -225,7 +225,7 @@ pub struct FloorProfile {
 
 /// Logical pipeline phases. Builders declare their phase;
 /// [`BuilderChain`] enforces monotonically non-decreasing phase order
-/// via `debug_assert!`.
+/// via `assert!`.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BuilderPhase {
@@ -301,7 +301,7 @@ impl<C: BuildContext> BuilderChain<C> {
     }
 
     /// Run all builders in sequence. Enforces monotonic phase ordering
-    /// via `debug_assert!`.
+    /// via `assert!`.
     pub fn build_map(&mut self) {
         let total_start = Instant::now();
         let mut last_phase: Option<BuilderPhase> = None;
@@ -315,7 +315,7 @@ impl<C: BuildContext> BuilderChain<C> {
 
             if let Some(p) = *phase {
                 if let Some(prev) = last_phase {
-                    debug_assert!(
+                    assert!(
                         p >= prev,
                         "Builder [{label}] phase {p:?} is earlier than previous phase {prev:?}. \
                          Reorder the pipeline."
@@ -335,6 +335,32 @@ impl<C: BuildContext> BuilderChain<C> {
 
         debug!(
             "Total build_map: {:.1}ms",
+            total_start.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+
+    /// Run all builders in sequence without phase-ordering enforcement.
+    ///
+    /// Prefer [`build_map`] for normal use. This variant is for pipelines
+    /// that intentionally mix phases (e.g. emergency post-generation fixups).
+    pub fn build_map_unchecked(&mut self) {
+        let total_start = Instant::now();
+        for (i, (name, _phase, builder_fn)) in self.builders.iter_mut().enumerate() {
+            let label = if name.is_empty() {
+                format!("step_{}", i)
+            } else {
+                name.to_string()
+            };
+            let start = Instant::now();
+            builder_fn(&mut self.build_data);
+            debug!(
+                "Builder [{}]: {:.1}ms",
+                label,
+                start.elapsed().as_secs_f64() * 1000.0
+            );
+        }
+        debug!(
+            "Total build_map_unchecked: {:.1}ms",
             total_start.elapsed().as_secs_f64() * 1000.0
         );
     }
@@ -483,5 +509,68 @@ mod framework_tests {
             ctx.snapshots[1].tiles[0].terrain,
             TerrainType::Floor
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "earlier than previous phase")]
+    fn chain_panics_on_out_of_order_phases() {
+        struct LatePhaseBuilder;
+        impl<C: BuildContext> MapBuilder<C> for LatePhaseBuilder {
+            fn name(&self) -> &'static str {
+                "LatePhaseBuilder"
+            }
+            fn phase(&self) -> Option<BuilderPhase> {
+                Some(BuilderPhase::Finalization)
+            }
+            fn build(&mut self, _ctx: &mut C) {}
+        }
+
+        struct EarlyPhaseBuilder;
+        impl<C: BuildContext> MapBuilder<C> for EarlyPhaseBuilder {
+            fn name(&self) -> &'static str {
+                "EarlyPhaseBuilder"
+            }
+            fn phase(&self) -> Option<BuilderPhase> {
+                Some(BuilderPhase::Geometry)
+            }
+            fn build(&mut self, _ctx: &mut C) {}
+        }
+
+        let ctx = EngineBuilderMap::with_seed(1, 10, 10, "test", 42);
+        let mut chain = BuilderChain::new(ctx);
+        chain.add(LatePhaseBuilder);
+        chain.add(EarlyPhaseBuilder); // Out of order!
+        chain.build_map(); // Should panic
+    }
+
+    #[test]
+    fn chain_unchecked_allows_out_of_order_phases() {
+        struct LatePhaseBuilder;
+        impl<C: BuildContext> MapBuilder<C> for LatePhaseBuilder {
+            fn name(&self) -> &'static str {
+                "LatePhaseBuilder"
+            }
+            fn phase(&self) -> Option<BuilderPhase> {
+                Some(BuilderPhase::Finalization)
+            }
+            fn build(&mut self, _ctx: &mut C) {}
+        }
+
+        struct EarlyPhaseBuilder;
+        impl<C: BuildContext> MapBuilder<C> for EarlyPhaseBuilder {
+            fn name(&self) -> &'static str {
+                "EarlyPhaseBuilder"
+            }
+            fn phase(&self) -> Option<BuilderPhase> {
+                Some(BuilderPhase::Geometry)
+            }
+            fn build(&mut self, _ctx: &mut C) {}
+        }
+
+        let ctx = EngineBuilderMap::with_seed(1, 10, 10, "test", 42);
+        let mut chain = BuilderChain::new(ctx);
+        chain.add(LatePhaseBuilder);
+        chain.add(EarlyPhaseBuilder);
+        chain.build_map_unchecked(); // Should NOT panic
     }
 }

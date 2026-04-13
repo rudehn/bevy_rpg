@@ -7,6 +7,7 @@
 
 mod collider;
 mod faction;
+mod fov_system;
 mod inventory;
 mod movement_mode;
 mod name;
@@ -16,6 +17,7 @@ mod viewshed;
 
 pub use collider::Collider;
 pub use faction::{Faction, FactionKind};
+pub use fov_system::{FovPlugin, FovRevealsMap, FovSet, fov_update_system};
 pub use inventory::Inventory;
 pub use movement_mode::MovementMode;
 pub use name::Name;

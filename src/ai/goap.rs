@@ -32,6 +32,7 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::collections::BinaryHeap;
+use std::collections::HashSet;
 
 // =====================================================================
 // World State
@@ -225,11 +226,14 @@ fn search(
     }
 
     let mut heap = BinaryHeap::new();
+    let mut visited = HashSet::new();
+
     heap.push(SearchNode {
         state: current.clone(),
         actions: vec![],
         cost: 0,
     });
+    visited.insert(current.clone());
 
     let mut best: Option<Vec<usize>> = None;
     let mut best_cost = u32::MAX;
@@ -249,6 +253,12 @@ fn search(
 
             let mut new_state = node.state.clone();
             apply_effects(&mut new_state, action);
+
+            // Skip if we've already explored this state
+            if visited.contains(&new_state) {
+                continue;
+            }
+            visited.insert(new_state.clone());
 
             let mut new_actions = node.actions.clone();
             new_actions.push(i);
@@ -288,6 +298,28 @@ pub fn plan<'a>(
             if let Some(&first_action_idx) = plan.first() {
                 return Some(&actions[first_action_idx]);
             }
+        }
+    }
+    None
+}
+
+/// Like [`plan`], but returns the complete action sequence (all action
+/// names) instead of just the first action. Useful for debugging AI
+/// behavior and for tests that verify multi-step plans.
+pub fn plan_full<'a>(
+    current: &WorldState,
+    goals: &[Goal],
+    actions: &'a [ActionDef],
+) -> Option<Vec<&'a str>> {
+    let mut sorted_goals: Vec<&Goal> = goals.iter().collect();
+    sorted_goals.sort_by(|a, b| b.priority.cmp(&a.priority));
+
+    for goal in sorted_goals {
+        if goal_satisfied(current, goal) {
+            continue;
+        }
+        if let Some(plan_indices) = search(current, goal, actions, 4) {
+            return Some(plan_indices.iter().map(|&i| actions[i].name).collect());
         }
     }
     None
@@ -360,5 +392,277 @@ mod tests {
             desired: vec![(WorldStateProp::Custom { id: CUSTOM_ALERTED }, true)],
         };
         assert!(plan(&state, &[goal], &actions).is_none());
+    }
+
+    // --- Blessed prop tests ---
+
+    #[test]
+    fn plan_with_blessed_props_single_step() {
+        // Monster sees player, needs to be adjacent to attack
+        let mut current = WorldState::default();
+        current.player_visible = true;
+
+        let actions = vec![ActionDef {
+            name: "engage_enemy",
+            cost: 1,
+            preconditions: vec![(WorldStateProp::PlayerVisible, true)],
+            effects: vec![(WorldStateProp::AdjacentToThreat, true)],
+        }];
+        let goal = Goal {
+            name: "attack",
+            priority: 1,
+            desired: vec![(WorldStateProp::AdjacentToThreat, true)],
+        };
+        let result = plan(&current, &[goal], &actions);
+        assert_eq!(result.unwrap().name, "engage_enemy");
+    }
+
+    #[test]
+    fn plan_two_step_chain() {
+        // Must first spot player, then engage
+        let actions = vec![
+            ActionDef {
+                name: "search",
+                cost: 1,
+                preconditions: vec![],
+                effects: vec![(WorldStateProp::PlayerVisible, true)],
+            },
+            ActionDef {
+                name: "engage",
+                cost: 1,
+                preconditions: vec![(WorldStateProp::PlayerVisible, true)],
+                effects: vec![(WorldStateProp::AdjacentToThreat, true)],
+            },
+        ];
+        let goal = Goal {
+            name: "attack",
+            priority: 1,
+            desired: vec![(WorldStateProp::AdjacentToThreat, true)],
+        };
+        let current = WorldState::default();
+        let result = plan(&current, &[goal], &actions);
+        assert_eq!(result.unwrap().name, "search"); // First step of two-step plan
+    }
+
+    #[test]
+    fn plan_full_returns_complete_sequence() {
+        let actions = vec![
+            ActionDef {
+                name: "search",
+                cost: 1,
+                preconditions: vec![],
+                effects: vec![(WorldStateProp::PlayerVisible, true)],
+            },
+            ActionDef {
+                name: "engage",
+                cost: 1,
+                preconditions: vec![(WorldStateProp::PlayerVisible, true)],
+                effects: vec![(WorldStateProp::AdjacentToThreat, true)],
+            },
+        ];
+        let goal = Goal {
+            name: "attack",
+            priority: 1,
+            desired: vec![(WorldStateProp::AdjacentToThreat, true)],
+        };
+        let result = plan_full(&WorldState::default(), &[goal], &actions);
+        assert_eq!(result.unwrap(), vec!["search", "engage"]);
+    }
+
+    #[test]
+    fn plan_three_step_chain() {
+        let actions = vec![
+            ActionDef { name: "a", cost: 1, preconditions: vec![], effects: vec![(WorldStateProp::PlayerVisible, true)] },
+            ActionDef { name: "b", cost: 1, preconditions: vec![(WorldStateProp::PlayerVisible, true)], effects: vec![(WorldStateProp::HostileNearby, true)] },
+            ActionDef { name: "c", cost: 1, preconditions: vec![(WorldStateProp::HostileNearby, true)], effects: vec![(WorldStateProp::AdjacentToThreat, true)] },
+        ];
+        let goal = Goal { name: "g", priority: 1, desired: vec![(WorldStateProp::AdjacentToThreat, true)] };
+        let result = plan_full(&WorldState::default(), &[goal], &actions);
+        assert_eq!(result.unwrap(), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn plan_priority_ordering_higher_first() {
+        // Two goals: high-priority flee and low-priority attack
+        let mut current = WorldState::default();
+        current.hp_low = true;
+
+        let actions = vec![
+            ActionDef {
+                name: "flee",
+                cost: 1,
+                preconditions: vec![(WorldStateProp::HpLow, true)],
+                effects: vec![(WorldStateProp::HasEscapeRoute, true)],
+            },
+            ActionDef {
+                name: "attack",
+                cost: 1,
+                preconditions: vec![],
+                effects: vec![(WorldStateProp::AdjacentToThreat, true)],
+            },
+        ];
+        let goals = vec![
+            Goal { name: "survive", priority: 10, desired: vec![(WorldStateProp::HasEscapeRoute, true)] },
+            Goal { name: "kill", priority: 1, desired: vec![(WorldStateProp::AdjacentToThreat, true)] },
+        ];
+        let result = plan(&current, &goals, &actions);
+        assert_eq!(result.unwrap().name, "flee"); // Higher priority goal
+    }
+
+    #[test]
+    fn plan_unreachable_goal_returns_none() {
+        // Goal requires adjacent_to_threat, but no action produces it
+        let actions = vec![ActionDef {
+            name: "wander",
+            cost: 1,
+            preconditions: vec![],
+            effects: vec![(WorldStateProp::PlayerVisible, true)],
+        }];
+        let goal = Goal {
+            name: "attack",
+            priority: 1,
+            desired: vec![(WorldStateProp::AdjacentToThreat, true)],
+        };
+        assert!(plan(&WorldState::default(), &[goal], &actions).is_none());
+    }
+
+    #[test]
+    fn plan_empty_actions_returns_none() {
+        let goal = Goal {
+            name: "g",
+            priority: 1,
+            desired: vec![(WorldStateProp::PlayerVisible, true)],
+        };
+        assert!(plan(&WorldState::default(), &[goal], &[]).is_none());
+    }
+
+    #[test]
+    fn plan_all_goals_satisfied_returns_none() {
+        let mut current = WorldState::default();
+        current.player_visible = true;
+        current.adjacent_to_threat = true;
+
+        let actions = vec![ActionDef {
+            name: "attack",
+            cost: 1,
+            preconditions: vec![],
+            effects: vec![(WorldStateProp::AdjacentToThreat, true)],
+        }];
+        let goals = vec![
+            Goal { name: "see", priority: 2, desired: vec![(WorldStateProp::PlayerVisible, true)] },
+            Goal { name: "hit", priority: 1, desired: vec![(WorldStateProp::AdjacentToThreat, true)] },
+        ];
+        assert!(plan(&current, &goals, &actions).is_none());
+    }
+
+    #[test]
+    fn plan_chooses_cheaper_plan() {
+        // Two paths to same goal: cheap (cost 1) and expensive (cost 10)
+        let actions = vec![
+            ActionDef {
+                name: "cheap_engage",
+                cost: 1,
+                preconditions: vec![],
+                effects: vec![(WorldStateProp::AdjacentToThreat, true)],
+            },
+            ActionDef {
+                name: "expensive_engage",
+                cost: 10,
+                preconditions: vec![],
+                effects: vec![(WorldStateProp::AdjacentToThreat, true)],
+            },
+        ];
+        let goal = Goal {
+            name: "attack",
+            priority: 1,
+            desired: vec![(WorldStateProp::AdjacentToThreat, true)],
+        };
+        let result = plan(&WorldState::default(), &[goal], &actions);
+        assert_eq!(result.unwrap().name, "cheap_engage");
+    }
+
+    #[test]
+    fn plan_mixed_blessed_and_custom_props() {
+        let actions = vec![
+            ActionDef {
+                name: "scout",
+                cost: 1,
+                preconditions: vec![],
+                effects: vec![
+                    (WorldStateProp::PlayerVisible, true),
+                    (WorldStateProp::Custom { id: 42 }, true),
+                ],
+            },
+        ];
+        let goal = Goal {
+            name: "find",
+            priority: 1,
+            desired: vec![
+                (WorldStateProp::PlayerVisible, true),
+                (WorldStateProp::Custom { id: 42 }, true),
+            ],
+        };
+        let result = plan(&WorldState::default(), &[goal], &actions);
+        assert_eq!(result.unwrap().name, "scout");
+    }
+
+    #[test]
+    fn plan_skips_satisfied_goal_tries_next() {
+        // First goal already satisfied, second needs work
+        let mut current = WorldState::default();
+        current.player_visible = true;
+
+        let actions = vec![ActionDef {
+            name: "engage",
+            cost: 1,
+            preconditions: vec![],
+            effects: vec![(WorldStateProp::AdjacentToThreat, true)],
+        }];
+        let goals = vec![
+            Goal { name: "see", priority: 10, desired: vec![(WorldStateProp::PlayerVisible, true)] },
+            Goal { name: "hit", priority: 5, desired: vec![(WorldStateProp::AdjacentToThreat, true)] },
+        ];
+        let result = plan(&current, &goals, &actions);
+        assert_eq!(result.unwrap().name, "engage"); // Skips "see", works on "hit"
+    }
+
+    #[test]
+    fn plan_precondition_blocks_action() {
+        // Action has a precondition that's not met
+        let actions = vec![ActionDef {
+            name: "attack",
+            cost: 1,
+            preconditions: vec![(WorldStateProp::AdjacentToThreat, true)],
+            effects: vec![(WorldStateProp::HpLow, false)], // random effect
+        }];
+        let goal = Goal {
+            name: "g",
+            priority: 1,
+            desired: vec![(WorldStateProp::HpLow, false)],
+        };
+        // current has hp_low=false already by default, but let's set it true
+        let mut current = WorldState::default();
+        current.hp_low = true;
+        // adjacent_to_threat is false, so "attack" precondition fails
+        assert!(plan(&current, &[goal], &actions).is_none());
+    }
+
+    #[test]
+    fn plan_depth_limit_exceeded_returns_none() {
+        // Create a chain that requires 5 steps (depth limit is 4)
+        let actions = vec![
+            ActionDef { name: "step1", cost: 1, preconditions: vec![], effects: vec![(WorldStateProp::PlayerVisible, true)] },
+            ActionDef { name: "step2", cost: 1, preconditions: vec![(WorldStateProp::PlayerVisible, true)], effects: vec![(WorldStateProp::HostileNearby, true)] },
+            ActionDef { name: "step3", cost: 1, preconditions: vec![(WorldStateProp::HostileNearby, true)], effects: vec![(WorldStateProp::HasEscapeRoute, true)] },
+            ActionDef { name: "step4", cost: 1, preconditions: vec![(WorldStateProp::HasEscapeRoute, true)], effects: vec![(WorldStateProp::CarryingItems, true)] },
+            ActionDef { name: "step5", cost: 1, preconditions: vec![(WorldStateProp::CarryingItems, true)], effects: vec![(WorldStateProp::AdjacentToThreat, true)] },
+        ];
+        let goal = Goal {
+            name: "deep",
+            priority: 1,
+            desired: vec![(WorldStateProp::AdjacentToThreat, true)],
+        };
+        // Requires 5 steps but depth limit is 4
+        assert!(plan(&WorldState::default(), &[goal], &actions).is_none());
     }
 }

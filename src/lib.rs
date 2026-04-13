@@ -32,7 +32,9 @@
 //! |--------|-----------------|
 //! | [`map`] | `Map` resource, `Tile`/`TerrainType`/`LiquidType`/`Decoration` types, `BaseMap`/`Algorithm2D` bracket-lib integration |
 //! | [`map::builders`] | `BuildContext` trait, `BuilderChain<C>`, `MapBuilder<C>`, 13 pure builders (BrogueLike, BSP, cullers, corridors, lakes, doors, exit placement, ...) |
+//! | [`abilities`] | `AbilityDef`, `Abilities`, `AbilitySlot`, `TargetingRule`, `AbilityTarget`, `AbilityUseEvent`, targeting/cost helpers, `AbilityPlugin` |
 //! | [`combat`] | `DamageType`, `Resistances`, `Health`, `compute_after_armor`, `apply_resistance`, `apply_damage_multipliers` |
+//! | [`status`] | `StatusEffectKind`, `StatusEffects`, `StatusEffectInstance`, `compute_speed_modifier`, `compute_damage_modifier`, `StatusEffectPlugin` |
 //! | [`turn`] | `TurnManager`, `dequeue_next_batch_pure`, `compute_reinsert_time` |
 //! | [`ai`] | `MonsterAI` state machine data, pure decision helpers, GOAP planner (`WorldState`, `Goal`, `ActionDef`, `plan`) |
 //! | [`squad`] | `SquadPlugin` with alert propagation, leader-death effects, shared morale, tactical blackboard |
@@ -46,7 +48,7 @@
 //! # What the engine does NOT ship
 //!
 //! - Monsters, items, spells, or any content
-//! - Ability/spell systems
+//! - Ability resolution systems (the engine provides the framework; games wire up the logic)
 //! - Asset manifest schemas or RON file names
 //! - UI (inventory screens, character sheets, etc.)
 //! - Rendering (the engine is headless; games own their sprites)
@@ -59,13 +61,14 @@
 //! - `TerrainType::Custom`, `LiquidType::Custom`, `Decoration::Custom`
 //! - `DamageType::Custom`, `DamageSource::Custom`
 //! - `WorldStateProp::Custom`, `MovementMode::Custom`
-//! - `StatusEffectKind::Custom` (in the game crate, not yet engine-side)
+//! - `StatusEffectKind::Custom`
 //!
 //! Bevy plugins expose empty `SystemSet` markers (`SquadAlertSet`,
 //! `SquadReactionSet`, `CombatReactionSet`) that games configure with
 //! `.after()` / `.before()` / `.run_if()` — the engine never names
 //! game-side systems.
 
+pub mod abilities;
 pub mod ai;
 pub mod combat;
 pub mod components;
@@ -77,4 +80,5 @@ pub mod map;
 pub mod prelude;
 pub mod save;
 pub mod squad;
+pub mod status;
 pub mod turn;

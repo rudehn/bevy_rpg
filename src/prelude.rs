@@ -9,16 +9,26 @@
 //! (specific builders, save platform I/O, individual squad systems),
 //! import from the submodule directly.
 
+// ---- Abilities ----
+pub use crate::abilities::{
+    ability_action_cost, ability_aoe_tiles, is_in_ability_range, Abilities, AbilityDef,
+    AbilityPlugin, AbilitySet, AbilitySlot, AbilityTarget, AbilityUseEvent, TargetingRule,
+};
+
 // ---- Components ----
 pub use crate::components::{
-    Collider, Faction, FactionKind, Inventory, MovementMode, Name, PatrolRoute, PatrolState,
-    Position, Viewshed,
+    Collider, Faction, FactionKind, FovPlugin, FovRevealsMap, FovSet, Inventory, MovementMode,
+    Name, PatrolRoute, PatrolState, Position, Viewshed, fov_update_system,
 };
 
 // ---- Combat ----
 pub use crate::combat::{
-    apply_damage_multipliers, apply_resistance, compute_after_armor, DamageSource, DamageType,
-    DamageTypeTag, Health, HealthRegen, RegenSuppression, Resistances,
+    apply_damage_modifiers, apply_damage_multipliers, apply_resistance, compute_after_armor,
+    DamageModifier, DamageSource, DamageType, DamageTypeTag, Health, HealthRegen,
+    RegenSuppression, Resistances,
+};
+pub use crate::combat::events::{
+    CombatEventSet, CombatPlugin, DamageEvent, DeathEvent, HealEvent,
 };
 
 // ---- Map data ----
@@ -55,10 +65,12 @@ pub use crate::turn::{
 
 // ---- AI ----
 pub use crate::ai::decisions::{
-    flee_direction, should_flee, should_give_up_chase, should_kite_retreat,
-    should_move_erratically,
+    advance_waypoint, flee_direction, pick_sentry_target, should_flee, should_give_up_chase,
+    should_kite_retreat, should_move_erratically, should_retreat_to_squad, should_use_ranged,
+    threat_priority,
 };
-pub use crate::ai::goap::{plan, ActionDef, Goal, WorldState, WorldStateProp};
+pub use crate::ai::goap::{plan, plan_full, ActionDef, Goal, WorldState, WorldStateProp};
+pub use crate::ai::pathfinding::{find_path, next_step_toward, next_step_toward_with_mode};
 pub use crate::ai::{MonsterAI, MonsterAIMode, GUARD_PATROL_RADIUS};
 
 // ---- Squad ----
@@ -82,7 +94,16 @@ pub use crate::geometry::{
 pub use crate::dice::{avg_damage_from_dice, roll_dice_string};
 
 // ---- Save framework ----
-pub use crate::save::{SaveExists, SaveFrameworkConfig};
+pub use crate::save::{
+    apply_migrations, load_with_version, save_with_version, SaveEnvelope, SaveExists,
+    SaveFrameworkConfig, SaveLoadError, SaveMigration,
+};
+
+// ---- Status effects ----
+pub use crate::status::{
+    compute_damage_modifier, compute_speed_modifier, StatusAppliedEvent, StatusEffectInstance,
+    StatusEffectKind, StatusEffectPlugin, StatusEffectSet, StatusEffects, StatusExpiredEvent,
+};
 
 // ---- Constants ----
 pub use crate::constants::{BASE_ACTION_COST, TILE_SIZE_X, TILE_SIZE_Y, Z_ITEM, Z_MONSTER, Z_PLAYER};

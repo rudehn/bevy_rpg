@@ -83,6 +83,97 @@ pub fn flee_direction(monster_x: i32, monster_y: i32, threat_x: i32, threat_y: i
     }
 }
 
+/// Pick the highest-priority threat from a list of (entity_id, distance) pairs.
+///
+/// Returns the entity with the smallest distance (nearest threat).
+/// Ties are broken by the order in the input slice (first wins).
+/// Returns `None` if the list is empty.
+///
+/// `distances` is a slice of `(entity_id: u32, distance: i32)` pairs where
+/// `entity_id` is an opaque identifier (not a Bevy Entity — this stays pure)
+/// and `distance` is some distance metric (Manhattan, Chebyshev, squared
+/// Euclidean — caller decides).
+pub fn threat_priority(distances: &[(u32, i32)]) -> Option<u32> {
+    distances
+        .iter()
+        .min_by_key(|(_, dist)| *dist)
+        .map(|(id, _)| *id)
+}
+
+/// Should a monster with a ranged ability use it instead of moving into melee?
+///
+/// Returns `true` when the monster can cast AND is not cornered (adjacent
+/// to the threat). Ranged monsters that are already adjacent should prefer
+/// melee or fleeing rather than trying to cast at point-blank range.
+///
+/// - `can_cast`: whether the ability is off cooldown and usable
+/// - `target_adjacent`: whether the target is in an adjacent tile
+pub fn should_use_ranged(can_cast: bool, target_adjacent: bool) -> bool {
+    can_cast && !target_adjacent
+}
+
+/// Pick the next movement target for a sentry patrol.
+///
+/// Sentries guard a home position and wander within a small radius.
+/// Given the sentry's `home` position, `current` position, `patrol_radius`,
+/// and a random `roll` in `[0.0, 1.0)`, returns a jittered position
+/// within the patrol radius. The sentry stays near home but doesn't
+/// stand still every turn.
+///
+/// If the sentry is already outside the patrol radius (e.g. after being
+/// aggroed and returning), the function always returns `home` to pull
+/// it back.
+pub fn pick_sentry_target(
+    home_x: i32,
+    home_y: i32,
+    current_x: i32,
+    current_y: i32,
+    patrol_radius: i32,
+    roll_x: f32,
+    roll_y: f32,
+) -> (i32, i32) {
+    let dx = current_x - home_x;
+    let dy = current_y - home_y;
+    let dist = dx.abs().max(dy.abs()); // Chebyshev distance
+
+    // If outside patrol radius, return home
+    if dist > patrol_radius {
+        return (home_x, home_y);
+    }
+
+    // Jitter within patrol radius
+    let jitter_x = (roll_x * (patrol_radius * 2 + 1) as f32) as i32 - patrol_radius;
+    let jitter_y = (roll_y * (patrol_radius * 2 + 1) as f32) as i32 - patrol_radius;
+    (home_x + jitter_x, home_y + jitter_y)
+}
+
+/// Advance to the next waypoint in a patrol route.
+///
+/// Given the current waypoint `index` and the total number of `waypoints`,
+/// returns the next index, wrapping around to 0 at the end.
+/// Returns 0 if `waypoint_count` is 0 (degenerate case).
+pub fn advance_waypoint(current_index: usize, waypoint_count: usize) -> usize {
+    if waypoint_count == 0 {
+        return 0;
+    }
+    (current_index + 1) % waypoint_count
+}
+
+/// Should this monster move toward its squad leader rather than acting
+/// independently?
+///
+/// Returns `true` when morale is low (below `threshold`) and the monster
+/// is farther than `regroup_distance` from the leader. Monsters near their
+/// leader don't need to retreat further.
+pub fn should_retreat_to_squad(
+    morale: f32,
+    threshold: f32,
+    distance_to_leader: i32,
+    regroup_distance: i32,
+) -> bool {
+    morale < threshold && distance_to_leader > regroup_distance
+}
+
 // =====================================================================
 // Tests
 // =====================================================================
@@ -204,5 +295,101 @@ mod tests {
     #[test]
     fn flee_on_top_of_threat() {
         assert_eq!(flee_direction(5, 5, 5, 5), (0, 0));
+    }
+
+    // --- threat_priority ---
+
+    #[test]
+    fn threat_priority_picks_nearest() {
+        assert_eq!(threat_priority(&[(1, 5), (2, 3), (3, 7)]), Some(2));
+    }
+
+    #[test]
+    fn threat_priority_empty_returns_none() {
+        assert_eq!(threat_priority(&[]), None);
+    }
+
+    #[test]
+    fn threat_priority_single() {
+        assert_eq!(threat_priority(&[(42, 10)]), Some(42));
+    }
+
+    #[test]
+    fn threat_priority_tie_picks_first() {
+        assert_eq!(threat_priority(&[(1, 3), (2, 3)]), Some(1));
+    }
+
+    // --- should_use_ranged ---
+
+    #[test]
+    fn use_ranged_when_can_cast_not_adjacent() {
+        assert!(should_use_ranged(true, false));
+    }
+
+    #[test]
+    fn no_ranged_when_adjacent() {
+        assert!(!should_use_ranged(true, true));
+    }
+
+    #[test]
+    fn no_ranged_when_cannot_cast() {
+        assert!(!should_use_ranged(false, false));
+    }
+
+    // --- pick_sentry_target ---
+
+    #[test]
+    fn sentry_returns_home_when_outside_radius() {
+        let (x, y) = pick_sentry_target(5, 5, 20, 20, 3, 0.5, 0.5);
+        assert_eq!((x, y), (5, 5));
+    }
+
+    #[test]
+    fn sentry_jitters_within_radius() {
+        let (x, y) = pick_sentry_target(5, 5, 5, 5, 3, 0.5, 0.5);
+        // Should be within patrol_radius of home
+        assert!((x - 5).abs() <= 3);
+        assert!((y - 5).abs() <= 3);
+    }
+
+    // --- advance_waypoint ---
+
+    #[test]
+    fn advance_waypoint_increments() {
+        assert_eq!(advance_waypoint(0, 4), 1);
+        assert_eq!(advance_waypoint(2, 4), 3);
+    }
+
+    #[test]
+    fn advance_waypoint_wraps() {
+        assert_eq!(advance_waypoint(3, 4), 0);
+    }
+
+    #[test]
+    fn advance_waypoint_zero_count() {
+        assert_eq!(advance_waypoint(0, 0), 0);
+    }
+
+    // --- should_retreat_to_squad ---
+
+    #[test]
+    fn retreat_when_low_morale_far_from_leader() {
+        assert!(should_retreat_to_squad(0.2, 0.4, 8, 3));
+    }
+
+    #[test]
+    fn no_retreat_when_morale_ok() {
+        assert!(!should_retreat_to_squad(0.5, 0.4, 8, 3));
+    }
+
+    #[test]
+    fn no_retreat_when_near_leader() {
+        assert!(!should_retreat_to_squad(0.2, 0.4, 2, 3));
+    }
+
+    #[test]
+    fn no_retreat_at_exact_threshold() {
+        // At threshold, not below — no retreat
+        assert!(!should_retreat_to_squad(0.4, 0.4, 8, 3));
     }
 }
