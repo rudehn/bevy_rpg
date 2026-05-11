@@ -84,6 +84,8 @@ pub enum AppState {
     #[default]
     Loading,
     Menu,
+    /// Race / Class / Attribute allocation screen between Menu and InGame.
+    CharacterCreation,
     InGame,
     GameOver,
     Victory,

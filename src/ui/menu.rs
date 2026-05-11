@@ -187,7 +187,7 @@ fn menu_action(
         match selection.0 {
             0 => {
                 pending_game_load.0 = None;
-                next_state.set(AppState::InGame);
+                next_state.set(AppState::CharacterCreation);
             }
             1 => {
                 if save_exists.0 {
