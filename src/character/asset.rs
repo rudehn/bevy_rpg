@@ -146,6 +146,78 @@ mod tests {
         );
     }
 
+    /// Maintenance contract: every shipping race in `assets/races.ron` must
+    /// be documented in `docs/design/CHARACTER.md`. The trait keyword for
+    /// each race (Versatile, Stoneblood, Keen Senses, Lucky) must also
+    /// appear. Failing this test means you added or renamed a race in the
+    /// RON without updating the writeup. Fix the doc, not the test.
+    #[test]
+    fn character_md_documents_every_shipping_race() {
+        let doc = include_str!("../../docs/design/CHARACTER.md");
+        let src = include_str!("../../assets/races.ron");
+        let manifest: RaceManifest = ron::from_str(src).expect("parse races");
+
+        for (id, race_asset) in &manifest.races {
+            assert!(
+                doc.contains(&race_asset.name),
+                "CHARACTER.md is missing the race name '{}' (id={})",
+                race_asset.name,
+                id
+            );
+        }
+
+        // Each race's trait keyword must appear. Hardcoded list is fine —
+        // adding a new RaceTrait variant requires updating this test, which
+        // is the right place to also nudge updating the doc.
+        for trait_keyword in ["Versatile", "Stoneblood", "Keen Senses", "Lucky"] {
+            assert!(
+                doc.contains(trait_keyword),
+                "CHARACTER.md is missing the race trait keyword '{}'",
+                trait_keyword
+            );
+        }
+    }
+
+    /// Maintenance contract: every class in `assets/classes.ron` must be
+    /// documented in `docs/design/CHARACTER.md` with its name AND its
+    /// `base_hp` value appearing in the same row. Drift here means
+    /// players will see preview numbers that disagree with the writeup.
+    #[test]
+    fn character_md_documents_every_shipping_class() {
+        let doc = include_str!("../../docs/design/CHARACTER.md");
+        let src = include_str!("../../assets/classes.ron");
+        let manifest: ClassManifest = ron::from_str(src).expect("parse classes");
+
+        for (id, class_asset) in &manifest.classes {
+            assert!(
+                doc.contains(&class_asset.name),
+                "CHARACTER.md is missing the class name '{}' (id={})",
+                class_asset.name,
+                id
+            );
+            // Look for "| ClassName |" followed (eventually) by the base_hp
+            // value in the same markdown row. Single-line search by walking
+            // the doc for the row that starts with the class name.
+            let row = doc
+                .lines()
+                .find(|l| l.contains(&format!("| {} ", class_asset.name)))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "CHARACTER.md is missing the class-row line for '{}'",
+                        class_asset.name
+                    )
+                });
+            assert!(
+                row.contains(&format!(" {} ", class_asset.base_hp)),
+                "CHARACTER.md class row for '{}' is missing base_hp={} \
+                 (row was: {:?})",
+                class_asset.name,
+                class_asset.base_hp,
+                row
+            );
+        }
+    }
+
     /// Spec values from `docs/design/CHARACTER.md` §Classes. Bases drifting here
     /// breaks every HP-derivation downstream.
     #[test]

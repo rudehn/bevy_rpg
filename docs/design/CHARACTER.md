@@ -99,6 +99,13 @@ plus one passive trait. Halfling's trait is deliberately strong so it
 competes with Dwarf's poison resistance — a 5% reroll on every d20 is
 quietly massive.
 
+> **Maintenance contract:** every shipping race in `assets/races.ron`
+> must appear in this table with its trait keyword, and every trait
+> keyword listed here must match the `RaceTrait` enum in
+> `src/character/race.rs`. The `character_md_documents_every_shipping_race`
+> test enforces this — changing a race without updating this section
+> will fail the build.
+
 | Race | STR | DEX | CON | INT | Passive Trait |
 |---|---|---|---|---|---|
 | Human | +1 | +1 | +1 | +1 | **Versatile** — one of your 4 free points can exceed the per-stat allocation cap by 1 |
@@ -106,15 +113,30 @@ quietly massive.
 | Elf | 0 | +2 | 0 | +2 | **Keen Senses** — vision range +2 tiles |
 | Halfling | 0 | +2 | +1 | +1 | **Lucky** — reroll any natural 1 on a d20 (no cooldown); must take the second result |
 
+**Playstyle at a glance:**
+- **Human** — best for indecisive builds. Even stat spread plus one
+  attribute that can climb to 19 with allocation. Pairs well with any
+  class but shines when you want a melee/caster hybrid (Warrior+staff
+  finds or Mage+armor finds).
+- **Dwarf** — the toughest opener. Poison resistance is a quiet life-saver
+  on deep floors (jellies, spider venom, poison gas). STR+CON spread
+  makes Warrior the natural match.
+- **Elf** — vision and brains. The +2 vision range catches ambushes
+  earlier; INT+DEX spread is what Mages and Rogues want. Don't pick if
+  you're going Warrior — you'll feel the missing CON.
+- **Halfling** — the safest run. Lucky removes worst-case hit and save
+  rolls forever — no cap, no cooldown. DEX+CON+INT spread plays Rogue
+  cleanly and lets a low-STR Ranger function.
+
 **Implementation notes:**
 - Stoneblood stacks **multiplicatively** with the existing poison
   resistance pipeline ([damage_reduction_system](../../src/game/combat.rs)).
   A Dwarf wearing a 50%-poison-resistance ring takes 25% damage from poison.
 - Keen Senses applies to the player's `VisionRange` at spawn; later
   effects that modify vision (potions, items) stack on top.
-- Lucky is implemented in a single `d20_roll` helper that all d20 systems
-  must go through. Without the helper, individual call sites would have
-  to remember to apply the reroll. (See "Combat math integration" below.)
+- Lucky is implemented via the `roll_d20_with_race` helper in
+  [src/character/dice.rs](../../src/character/dice.rs). Every player d20
+  call site must route through it.
 - Versatile changes only the allocation UI — it's not a runtime effect.
 
 ## Classes
@@ -123,6 +145,12 @@ Class sets primary/secondary attribute focus, base HP, small flat
 attack/dodge bonuses, and a deliberately **weak** starting kit. The
 weak kit is intentional: the class teaches you the role without
 short-circuiting the gear discovery loop.
+
+> **Maintenance contract:** every class in `assets/classes.ron` must
+> appear in this table with its name and base HP. The
+> `character_md_documents_every_shipping_class` test enforces this —
+> changing a class's name or base HP without updating this section
+> fails the build.
 
 | Class | Primary / Secondary | Base HP | Attack Bonus | Dodge Bonus | Starting Kit |
 |---|---|---|---|---|---|
@@ -133,6 +161,23 @@ short-circuiting the gear discovery loop.
 
 **Class baselines:** primary attribute gets +2, secondary +1, others 0.
 Stacked on top of race bonuses, then free points apply.
+
+**Playstyle at a glance:**
+- **Warrior** — the highest base HP, +1 attack bonus on every melee
+  swing, heaviest starting armor. The forgiving entry-class; trades
+  finesse and magic for raw durability.
+- **Rogue** — fastest dodge ramp (+1 base + DEX scaling), Dagger gives
+  +1 hit, a single throwing knife for emergencies. Squishy at 8 HP —
+  positioning is everything. INT secondary opens scrolls/staves later.
+- **Mage** — the most fragile class at 6 HP, but INT scales the
+  damage of every staff zap they ever pick up (clamped at 0 — dump-INT
+  Mages can't make a staff weaker than baseline). Find or buy more
+  staves; until then your Apprentice Staff has one charge.
+- **Ranger** — DEX-primary like the Rogue but with STR secondary, so
+  bow-or-melee builds both feel okay. Six arrows to start; conserving
+  ammo is the early-floor puzzle. **Known limitation:** ranged hit and
+  damage currently use STR at runtime because the hit-check doesn't
+  branch by weapon type yet (see [§Combat Math Integration](#combat-math-integration)).
 
 ## Attribute Allocation
 
