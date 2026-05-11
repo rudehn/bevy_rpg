@@ -12,6 +12,7 @@
 mod asset;
 mod attributes;
 mod class;
+mod dice;
 mod race;
 
 pub use asset::{
@@ -21,6 +22,7 @@ pub use attributes::{
     ability_mod, compose_attributes, derive_stats, Attributes, CharacterChoice, DerivedStats,
 };
 pub use class::{Attribute, Class};
+pub use dice::{apply_lucky, roll_d20_with_race};
 pub use race::{Race, RaceTrait};
 
 use bevy::prelude::*;
@@ -34,6 +36,7 @@ impl Plugin for CharacterPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<Race>()
             .register_type::<Class>()
-            .register_type::<Attributes>();
+            .register_type::<Attributes>()
+            .insert_resource(CharacterChoice::default());
     }
 }

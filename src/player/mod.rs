@@ -8,6 +8,10 @@ use crate::{
     assets::{
         ItemManifest, ItemManifestHandle, ItemSpriteAssets, PlayerAsset, PlayerAssetHandle,
     },
+    character::{
+        compose_attributes, derive_stats, CharacterChoice, ClassManifest, ClassManifestHandle,
+        RaceManifest, RaceManifestHandle, Race, RaceTrait,
+    },
     components::{
         Collider, Faction, FactionKind, FloorEntityMarker, GameEntityMarker, InInventory, Inventory, Name, Position,
         VeiledTyrantFactions, Viewshed,
@@ -16,7 +20,7 @@ use crate::{
     game::{
         TurnManager,
         actions::SpeedStats,
-        combat::{Damage, Health, HealthRegen, Resistances},
+        combat::{Damage, DamageType, Health, HealthRegen, Resistances},
         items::Equipment,
         magic::StatusEffects,
         spawn_item,
@@ -63,6 +67,11 @@ pub fn player_spawn_or_move_system(
     mut q_player: Query<(Entity, &mut Transform, &mut Position), With<Player>>,
     mut turn_manager: ResMut<TurnManager>,
     ascii_font: Option<Res<crate::game::ascii_mode::AsciiFont>>,
+    character_choice: Res<CharacterChoice>,
+    race_manifest_handle: Res<RaceManifestHandle>,
+    race_manifests: Res<Assets<RaceManifest>>,
+    class_manifest_handle: Res<ClassManifestHandle>,
+    class_manifests: Res<Assets<ClassManifest>>,
 ) {
     let player_asset = player_assets
         .get(&player_asset_handle.0)
@@ -100,11 +109,48 @@ pub fn player_spawn_or_move_system(
             &item_sprite_assets,
         );
 
-        let viewshed_range = if player_asset.viewshed_range > 0 {
+        // Resolve race + class assets from the player's character-creation
+        // choice. The manifests are guaranteed loaded by the time we get here
+        // because check_assets_loaded gates the Menu→InGame transition on them.
+        let race_manifest = race_manifests
+            .get(&race_manifest_handle.0)
+            .expect("Race manifest not loaded");
+        let class_manifest = class_manifests
+            .get(&class_manifest_handle.0)
+            .expect("Class manifest not loaded");
+        let race_id = character_choice.race.name().to_lowercase();
+        let class_id = character_choice.class.name().to_lowercase();
+        let race_asset = race_manifest
+            .races
+            .get(&race_id)
+            .unwrap_or_else(|| panic!("races.ron missing entry for {race_id}"));
+        let class_asset = class_manifest
+            .classes
+            .get(&class_id)
+            .unwrap_or_else(|| panic!("classes.ron missing entry for {class_id}"));
+
+        let attributes =
+            compose_attributes(race_asset, class_asset, character_choice.free_points);
+        let derived = derive_stats(class_asset, &attributes);
+
+        // Apply Elf's Keen Senses (+2 vision) at spawn. Other race effects
+        // (Stoneblood poison resist, Halfling Lucky) are applied below via
+        // their respective components / d20 helper.
+        let mut viewshed_range = if player_asset.viewshed_range > 0 {
             player_asset.viewshed_range
         } else {
             8
         };
+        if character_choice.race.racial_trait() == RaceTrait::KeenSenses {
+            viewshed_range += 2;
+        }
+
+        // Resistances inherit the player-asset defaults, then Stoneblood
+        // stacks 50% poison resistance on top.
+        let mut resistances = Resistances::default();
+        if character_choice.race.racial_trait() == RaceTrait::Stoneblood {
+            *resistances.0.entry(DamageType::Poison).or_insert(0) += 50;
+        }
 
         let player_entity = commands
             .spawn((
@@ -123,8 +169,8 @@ pub fn player_spawn_or_move_system(
             ))
             .insert((
                 Health {
-                    current: player_asset.max_hp,
-                    max: player_asset.max_hp,
+                    current: derived.max_hp,
+                    max: derived.max_hp,
                 },
                 HealthRegen {
                     regen_rate: player_asset.regen_rate,
@@ -132,15 +178,21 @@ pub fn player_spawn_or_move_system(
                 },
                 Damage(player_asset.damage.clone()),
                 Armor(player_asset.armor),
-                Dodge(player_asset.dodge),
-                HitBonus(0),
-                DamageBonus(0),
+                Dodge(player_asset.dodge + derived.dodge),
+                // HitBonus / DamageBonus are baked with the **melee** mod
+                // (STR-driven). Ranged weapons should consume DEX instead;
+                // a follow-up commit branches the hit-check by weapon type.
+                HitBonus(derived.hit_bonus_melee),
+                DamageBonus(derived.damage_bonus_melee),
                 SpeedStats::default(),
             ))
             .insert((
                 StatusEffects::default(),
                 Faction(VeiledTyrantFactions::player()),
-                Resistances::default(),
+                resistances,
+                character_choice.race,
+                character_choice.class,
+                attributes,
             ))
             .insert((
                 Transform {

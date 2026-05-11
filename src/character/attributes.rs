@@ -81,7 +81,11 @@ impl Attributes {
 /// `free_points` is the player's allocation in (STR, DEX, CON, INT) order,
 /// applied **on top of** the race + class baselines. The UI is responsible
 /// for enforcing the per-stat cap and floor before constructing this.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Stored as a Bevy `Resource` so the spawner can read it at player-spawn
+/// time. The character-creation UI (later commit) overwrites the default
+/// before the run starts.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CharacterChoice {
     pub race: Race,
     pub class: Class,

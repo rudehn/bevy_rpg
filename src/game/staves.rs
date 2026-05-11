@@ -321,6 +321,7 @@ pub fn handle_zap_staff(
     mut game_rng: ResMut<GameRng>,
     mut staff_query: Query<(&StaffData, &mut Rechargeable, Option<&Enchantment>)>,
     zapper_query: Query<(&Name, &Position)>,
+    zapper_attrs_query: Query<&crate::character::Attributes>,
     target_query: Query<(Entity, &Name, &Position, &Health, Has<Submerged>), Without<Player>>,
     all_positions: Query<(Entity, &Position), With<Health>>,
     mut status_query: Query<&mut StatusEffects>,
@@ -347,6 +348,13 @@ pub fn handle_zap_staff(
 
         let enchant_level = enchant.map(|e| e.level).unwrap_or(0);
         let Ok((_zapper_name, zapper_pos)) = zapper_query.get(msg.zapper) else { continue; };
+        // INT_mod boosts staff damage; clamped at 0 so a low-INT Mage can't
+        // make a staff *do less* than its base. Phase 4 (Mana) will revisit.
+        let int_bonus = zapper_attrs_query
+            .get(msg.zapper)
+            .map(|attrs| attrs.int_mod())
+            .unwrap_or(0)
+            .max(0);
 
         // Submerged targets cannot be hit by staff zaps (except self-targeting effects).
         if staff_data.effect != StaffEffect::Blinking && staff_data.effect != StaffEffect::Healing {
@@ -384,7 +392,7 @@ pub fn handle_zap_staff(
                     // Check for entities at this position
                     for (entity, pos) in all_positions.iter() {
                         if entity != msg.zapper && pos.x == x && pos.y == y {
-                            let dmg = game_rng.0.range(low, high + 1);
+                            let dmg = game_rng.0.range(low, high + 1) + int_bonus;
                             damage_writer.write(DamageEvent {
                                 attacker: Some(msg.zapper),
                                 target: entity,
@@ -483,7 +491,7 @@ pub fn handle_zap_staff(
                     let dx = (pos.x - center_x).abs();
                     let dy = (pos.y - center_y).abs();
                     if dx <= 1 && dy <= 1 {
-                        let dmg = game_rng.0.range(low, high + 1);
+                        let dmg = game_rng.0.range(low, high + 1) + int_bonus;
                         damage_writer.write(DamageEvent {
                             attacker: Some(msg.zapper),
                             target: entity,
@@ -550,7 +558,7 @@ pub fn handle_zap_staff(
                 // Knockback target 3 tiles + physical damage
                 let Ok((_, target_name, target_pos, _, _)) = target_query.get(msg.target) else { continue; };
                 let (low, high) = force_damage(enchant_level);
-                let dmg = game_rng.0.range(low, high + 1);
+                let dmg = game_rng.0.range(low, high + 1) + int_bonus;
 
                 // Apply damage
                 damage_writer.write(DamageEvent {

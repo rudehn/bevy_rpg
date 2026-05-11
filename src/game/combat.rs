@@ -144,6 +144,7 @@ fn hit_check_system(
     mut log_writer: MessageWriter<GameLogMessage>,
     mut game_rng: ResMut<GameRng>,
     query: Query<(&Name, Option<&Dodge>, Option<&HitBonus>, Has<Player>)>,
+    race_query: Query<&crate::character::Race>,
 ) {
     for intent in intents.read() {
         let Ok((attacker_name, _, attacker_hit_bonus, is_player)) = query.get(intent.attacker) else {
@@ -153,7 +154,10 @@ fn hit_check_system(
             continue;
         };
 
-        let hit_roll = game_rng.0.roll_dice(1, 20);
+        // d20 with Halfling Lucky: if the attacker is a Halfling and rolls a
+        // natural 1, reroll once and take the second result.
+        let attacker_race = race_query.get(intent.attacker).ok().copied();
+        let hit_roll = crate::character::roll_d20_with_race(&mut game_rng.0, attacker_race);
 
         let hit_bonus = attacker_hit_bonus.map(|h| h.0).unwrap_or(0);
         let dodge_val = target_dodge.map(|d| d.0).unwrap_or(0);
