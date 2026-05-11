@@ -17,7 +17,9 @@ mod race;
 pub use asset::{
     ClassAsset, ClassManifest, ClassManifestHandle, RaceAsset, RaceManifest, RaceManifestHandle,
 };
-pub use attributes::ability_mod;
+pub use attributes::{
+    ability_mod, compose_attributes, derive_stats, Attributes, CharacterChoice, DerivedStats,
+};
 pub use class::{Attribute, Class};
 pub use race::{Race, RaceTrait};
 
@@ -30,6 +32,8 @@ pub struct CharacterPlugin;
 
 impl Plugin for CharacterPlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<Race>().register_type::<Class>();
+        app.register_type::<Race>()
+            .register_type::<Class>()
+            .register_type::<Attributes>();
     }
 }
