@@ -24,17 +24,17 @@ across types — the ability is what defines the weapon's playstyle.
 
 | Weapon | Base Damage | Speed Mod | Active Ability |
 |--------|-------------|-----------|----------------|
-| Sword | 1d6 | 1.0x | **Riposte** — After dodging an attack, your next attack is a free action (no turn cost). Cooldown: resets on dodge. |
+| Sword | 1d6 | 1.0x | **None — the Sword is the balance baseline.** Every other weapon is tuned against it. |
 | Dagger | 1d4 | 0.8x (fast) | **Backstab** — If you attack an enemy that hasn't seen you (asleep or unaware), deal triple damage. Passive, no cooldown. |
+| Axe | 1d4 | 1.2x (slow) | **Cleave** — Every melee swing also damages every monster in the 8 tiles surrounding *you* (excluding the primary target, who took the main hit). Splash equals the rolled damage. Trades raw damage for area coverage. Passive, no cooldown. |
+| Bow | 1d4 | 1.0x | **Ranged** — Press **F** to enter targeting; fires an arrow up to `weapon_range` tiles. Consumes one Arrow. Bow also functions as a basic 1d4 melee weapon if an enemy gets adjacent. |
 
 **Planned (not yet implemented):**
 
 | Weapon | Base Damage | Speed Mod | Active Ability |
 |--------|-------------|-----------|----------------|
-| Axe | 1d8 | 1.2x | **Cleave** — Attack hits the target and one adjacent enemy. Cooldown: 4 turns. |
 | Spear | 1d6 | 1.0x | **Lunge** — Attack a target 2 tiles away, moving into the adjacent tile. Cooldown: 3 turns. |
 | Mace | 1d6 | 1.1x | **Stun** — On hit, target loses their next turn. Cooldown: 6 turns. |
-| Bow | 1d6 | 1.0x | **Ranged** — Fire an arrow at a target within 8 tiles. Uses standard ranged attack rules. No melee capability. |
 
 ### Typed Damage Weapons
 
@@ -103,7 +103,7 @@ chosen strategy.
 |------|--------|
 | Wooden Shield | +2 armor |
 | Iron Shield | +3 armor |
-| Tower Shield | +5 armor, +0.1x delay (slower) |
+| Tower Shield | +5 armor, +0.1 delay (10% slower on every action) |
 
 ## Rings & Amulets
 
@@ -113,6 +113,7 @@ Passive effects — always-on when equipped. Two ring slots, one amulet slot.
 
 | Ring | Effect |
 |------|--------|
+| Ring of Perception | +2 hit bonus, +4 vision range |
 | Ring of Protection | +2 armor |
 | Ring of Might | +2 damage bonus |
 | Ring of Precision | +2 hit bonus |
@@ -215,12 +216,18 @@ Deeper floors produce better items:
 
 ### Runic Chance
 
+Tuned for the 26-floor dungeon. Formula: `floor < 5 ? 0 : min(50, (floor-4) * 5/2)`.
+Implemented as `runic_chance_for_floor` in `enchantment.rs`.
+
 | Floors | Runic Chance |
-|--------|-------------|
-| 1-4 | 0% |
-| 5-6 | 10% |
-| 7-8 | 20% |
-| 9-10 | 30% |
+|--------|--------------|
+| 1-4    | 0%           |
+| 5      | 2%           |
+| 9      | 12%          |
+| 13     | 22%          |
+| 17     | 32%          |
+| 21     | 42%          |
+| 24-26  | 50% (cap)    |
 
 ## Resolved Decisions
 
@@ -230,5 +237,8 @@ Deeper floors produce better items:
 - **No cursed items** for the POC
 - **No mana system** — staves use charges, not mana
 - **Enchant scrolls only** — no enchanting stations or alternative methods
-- **Weapon types:** Sword and Dagger implemented; Axe, Spear, Mace, and Bow are planned
+- **Weapon types:** Sword is the balance baseline (no active ability — every other weapon is tuned against it). Dagger has Backstab; Axe has Cleave (8-tile attacker-centered splash, lower base damage); Bow is fired with **F** for ranged + can also melee for 1d4. Spear (Lunge) and Mace (Stun) are planned.
+- **Riposte was removed.** It existed as the Sword's active ability but conflicted with the goal of having a clean balance baseline weapon. The `RiposteReady` component and free-action override are gone.
 - **Shrines provide permanent upgrades via essence currency** — see GAME.md for details
+- **Resistances on amulets** — Inferno/Grounding/Antivenom each grant +50% to one damage type; Warding grants +25% physical
+- **Spellbook item kind removed** — the genre's spellbook concept lives in monsters' cooldown abilities and the player's staves; never reintroduce a player spellbook item without a stronger justification than "more loot variety"

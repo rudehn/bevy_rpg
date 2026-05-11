@@ -1,5 +1,5 @@
 use crate::game::{AppState, InGameState};
-use crate::game::combat::{HealMessage, ToggleGodModeMessage};
+use crate::game::combat::{HealEvent, ToggleGodModeMessage};
 use crate::game::systems::Omniscient;
 use crate::map::dungeon::MapTransitionMessage;
 use crate::map::map::RevealMapMessage;
@@ -32,7 +32,7 @@ pub fn toggle_cheat_menu_system(
     root_query: Query<Entity, With<CheatMenuRoot>>,
     player_query: Query<Entity, With<Player>>,
     mut reveal_writer: MessageWriter<RevealMapMessage>,
-    mut heal_writer: MessageWriter<HealMessage>,
+    mut heal_writer: MessageWriter<HealEvent>,
     mut god_mode_writer: MessageWriter<ToggleGodModeMessage>,
     mut transition_writer: MessageWriter<MapTransitionMessage>,
     mut omniscient: ResMut<Omniscient>,
@@ -64,9 +64,10 @@ pub fn toggle_cheat_menu_system(
                 reveal_writer.write(RevealMapMessage);
             }
             if keyboard_input.just_pressed(KeyCode::KeyH) {
-                heal_writer.write(HealMessage {
-                    entity: player_entity,
+                heal_writer.write(HealEvent {
+                    target: player_entity,
                     amount: 999,
+                    source: None,
                 });
             }
             if keyboard_input.just_pressed(KeyCode::KeyG) {
@@ -94,7 +95,7 @@ fn spawn_cheat_menu(commands: &mut Commands, asset_server: &Res<AssetServer>) {
                 justify_content: JustifyContent::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, crate::ui::modal::MODAL_OVERLAY_OPACITY)),
             ZIndex(200),
             CheatMenuRoot,
         ))
@@ -194,7 +195,7 @@ pub fn cheat_menu_button_system(
     root_query: Query<Entity, With<CheatMenuRoot>>,
     player_query: Query<Entity, With<Player>>,
     mut reveal_writer: MessageWriter<RevealMapMessage>,
-    mut heal_writer: MessageWriter<HealMessage>,
+    mut heal_writer: MessageWriter<HealEvent>,
     mut god_mode_writer: MessageWriter<ToggleGodModeMessage>,
     mut transition_writer: MessageWriter<MapTransitionMessage>,
     mut omniscient: ResMut<Omniscient>,
@@ -211,9 +212,10 @@ pub fn cheat_menu_button_system(
                     }
                     CheatButton::HealPlayer => {
                         if let Some(entity) = player_entity {
-                            heal_writer.write(HealMessage {
-                                entity,
+                            heal_writer.write(HealEvent {
+                                target: entity,
                                 amount: 999,
+                                source: None,
                             });
                         }
                     }

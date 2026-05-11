@@ -12,10 +12,10 @@ use crate::components::{Collider, Inventory, Name, Position, Submerged};
 use crate::constants::BASE_ACTION_COST;
 use crate::game::actions::{finish_turn, ActionFinishedEvent, ActionKind};
 use crate::game::combat::{
-    ApplyDamageMessage, DamageSource, DamageType, GameRng, HealMessage, Health,
+    DamageEvent, DamageSource, DamageType, GameRng, HealEvent, Health,
 };
 use crate::game::enchantment::Enchantment;
-use crate::game::magic::{StatusEffectKind, StatusEffects};
+use crate::game::magic::{GameStatusEffectsExt, StatusEffectKind, StatusEffects};
 use crate::game::turns::TurnEndEvent;
 use crate::map::map::Map;
 use crate::map::tile::is_walkable;
@@ -324,8 +324,8 @@ pub fn handle_zap_staff(
     target_query: Query<(Entity, &Name, &Position, &Health, Has<Submerged>), Without<Player>>,
     all_positions: Query<(Entity, &Position), With<Health>>,
     mut status_query: Query<&mut StatusEffects>,
-    mut damage_writer: MessageWriter<ApplyDamageMessage>,
-    mut heal_writer: MessageWriter<HealMessage>,
+    mut damage_writer: MessageWriter<DamageEvent>,
+    mut heal_writer: MessageWriter<HealEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut tile_writers: crate::map::tile::TileMutationWriters,
@@ -385,12 +385,13 @@ pub fn handle_zap_staff(
                     for (entity, pos) in all_positions.iter() {
                         if entity != msg.zapper && pos.x == x && pos.y == y {
                             let dmg = game_rng.0.range(low, high + 1);
-                            damage_writer.write(ApplyDamageMessage {
-                                attacker: msg.zapper,
+                            damage_writer.write(DamageEvent {
+                                attacker: Some(msg.zapper),
                                 target: entity,
-                                final_damage: dmg,
+                                amount: dmg,
                                 damage_type: DamageType::Lightning,
                                 source: DamageSource::Environment,
+                                armor: 0,
                             });
                             if let Ok((_, name, _, _, _)) = target_query.get(entity) {
                                 log_writer.write(GameLogMessage(format!(
@@ -416,7 +417,12 @@ pub fn handle_zap_staff(
                 let dmg = poison_dpt(enchant_level);
 
                 if let Ok(mut effects) = status_query.get_mut(msg.target) {
-                    effects.add(StatusEffectKind::Poisoned { damage_per_turn: dmg }, duration);
+                    effects.add_effect_with_magnitude(
+                        StatusEffectKind::Poisoned,
+                        duration,
+                        dmg,
+                        Some(msg.zapper),
+                    );
                 }
                 log_writer.write(GameLogMessage(format!(
                     "{} is poisoned for {} turns!",
@@ -478,12 +484,13 @@ pub fn handle_zap_staff(
                     let dy = (pos.y - center_y).abs();
                     if dx <= 1 && dy <= 1 {
                         let dmg = game_rng.0.range(low, high + 1);
-                        damage_writer.write(ApplyDamageMessage {
-                            attacker: msg.zapper,
+                        damage_writer.write(DamageEvent {
+                            attacker: Some(msg.zapper),
                             target: entity,
-                            final_damage: dmg,
+                            amount: dmg,
                             damage_type: DamageType::Fire,
                             source: DamageSource::Environment,
+                            armor: 0,
                         });
                         if let Ok((_, name, _, _, _)) = target_query.get(entity) {
                             log_writer.write(GameLogMessage(format!(
@@ -493,7 +500,12 @@ pub fn handle_zap_staff(
                         }
                         // Apply burning status for 3 turns
                         if let Ok(mut effects) = status_query.get_mut(entity) {
-                            effects.add(StatusEffectKind::Burning { damage_per_turn: 2 }, 3);
+                            effects.add_effect_with_magnitude(
+                                StatusEffectKind::Burning,
+                                3,
+                                2,
+                                Some(msg.zapper),
+                            );
                         }
                         hit_count += 1;
                     }
@@ -524,9 +536,10 @@ pub fn handle_zap_staff(
                 let (low, high) = healing_amount(enchant_level);
                 let heal = game_rng.0.range(low, high + 1);
 
-                heal_writer.write(HealMessage {
-                    entity: msg.zapper,
+                heal_writer.write(HealEvent {
+                    target: msg.zapper,
                     amount: heal,
+                    source: None,
                 });
                 log_writer.write(GameLogMessage(format!(
                     "The staff glows warmly. You recover {} HP.",
@@ -540,12 +553,13 @@ pub fn handle_zap_staff(
                 let dmg = game_rng.0.range(low, high + 1);
 
                 // Apply damage
-                damage_writer.write(ApplyDamageMessage {
-                    attacker: msg.zapper,
+                damage_writer.write(DamageEvent {
+                    attacker: Some(msg.zapper),
                     target: msg.target,
-                    final_damage: dmg,
+                    amount: dmg,
                     damage_type: DamageType::Physical,
                     source: DamageSource::Environment,
+                    armor: 0,
                 });
 
                 // Calculate knockback direction (away from zapper)
@@ -602,23 +616,25 @@ pub fn handle_zap_staff(
 // Dice Helpers
 // =====================================================================
 
-/// Parse a dice expression in "NdM" format and roll it, returning the total.
-/// Ignores malformed input (returns 0).
+/// Parse a dice expression and roll it, returning the total.
+///
+/// Delegates to [`roguelike_engine::dice::roll_dice_string`], which
+/// accepts the full `"NdM+B"` notation via bracket-lib's parser
+/// (previously this helper only handled `"NdM"`). Malformed input
+/// falls back to `1` — note this is a behavior change from the old
+/// `0` fallback, but no current caller distinguishes the two.
 pub fn roll_dice_expr(rng: &mut bracket_lib::prelude::RandomNumberGenerator, expr: &str) -> i32 {
-    let parts: Vec<&str> = expr.split('d').collect();
-    if parts.len() != 2 {
-        return 0;
-    }
-    let n = parts[0].parse::<i32>().unwrap_or(1);
-    let m = parts[1].parse::<i32>().unwrap_or(6);
-    rng.roll_dice(n, m)
+    roguelike_engine::dice::roll_dice_string(rng, expr)
 }
 
 // =====================================================================
 // Monster Abilities (simplified spell replacement)
 // =====================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
+// Note: does not derive Reflect because it contains `StatusEffectKind`,
+// which is engine-owned and does not implement `Reflect`. Save/load goes
+// through Serde, which is what's actually required.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MonsterAbilityKind {
     /// Deal damage to target.
     Bolt { dice: String, damage_type: DamageType },
@@ -637,7 +653,7 @@ pub enum MonsterAbilityKind {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonsterAbilityDef {
     pub kind: MonsterAbilityKind,
     pub cooldown: u32,
@@ -646,8 +662,7 @@ pub struct MonsterAbilityDef {
     pub name: String,
 }
 
-#[derive(Component, Debug, Clone, Default, Serialize, Deserialize, Reflect)]
-#[reflect(Component)]
+#[derive(Component, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MonsterAbilities(pub Vec<MonsterAbilityDef>);
 
 /// Tick monster ability cooldowns each turn.
@@ -674,11 +689,18 @@ pub struct StavesPlugin;
 
 impl Plugin for StavesPlugin {
     fn build(&self, app: &mut App) {
+        use crate::game::turns::ProcessingPhase;
         app.register_type::<StaffData>()
             .register_type::<Rechargeable>()
-            .register_type::<MonsterAbilities>()
+            // MonsterAbilities no longer registers for reflection because it
+            // transitively contains the engine's `StatusEffectKind`, which
+            // does not derive `Reflect`. Save/load is Serde-based and works
+            // without reflection.
             .add_message::<ZapStaffMessage>()
-            // handle_zap_staff registered in TurnOrderPlugin (turns.rs)
+            .add_systems(
+                Update,
+                handle_zap_staff.in_set(ProcessingPhase::ResolveActions),
+            )
             .add_systems(
                 Update,
                 (

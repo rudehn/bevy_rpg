@@ -1,6 +1,5 @@
 (
     name: "You",
-    sprite: "sprites/hero.png",
     damage: "1d4",
     max_hp: 25,
     regen_rate: 10,
@@ -10,6 +9,7 @@
     starting_items: [
         (name: "Bow"),
         (name: "Arrow", count: 20),
+        (name: "Staff of Fire"),
     ],
     ascii_char: "@",
     ascii_fg: "#FFFFFF",

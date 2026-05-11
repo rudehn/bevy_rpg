@@ -881,3 +881,724 @@ fn check_connectivity_fast(
 
     visited_count >= total_walkable
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bracket_lib::prelude::Rect;
+    use std::collections::HashMap;
+
+    // -----------------------------------------------------------------------
+    // Helper constructors
+    // -----------------------------------------------------------------------
+
+    /// Build a minimal PrefabTemplate from a tile grid. Defaults: floor 1-26,
+    /// allow_rotate = true, allow_flip = true, placement = "any".
+    fn make_prefab(name: &str, tiles: &[&str]) -> PrefabTemplate {
+        let height = tiles.len() as i32;
+        let width = if tiles.is_empty() { 0 } else { tiles[0].len() as i32 };
+        PrefabTemplate {
+            name: name.to_string(),
+            width,
+            height,
+            min_floor: 1,
+            max_floor: 26,
+            tiles: tiles.iter().map(|s| s.to_string()).collect(),
+            props: Vec::new(),
+            monster_spawns: Vec::new(),
+            item_spawns: Vec::new(),
+            on_leader_death: String::new(),
+            flee_threshold: 0.5,
+            placement: "any".to_string(),
+            allow_rotate: true,
+            allow_flip: true,
+        }
+    }
+
+    /// Build a PrefabTemplate with explicit rotation/flip flags.
+    fn make_prefab_with_flags(
+        name: &str,
+        tiles: &[&str],
+        allow_rotate: bool,
+        allow_flip: bool,
+    ) -> PrefabTemplate {
+        let mut p = make_prefab(name, tiles);
+        p.allow_rotate = allow_rotate;
+        p.allow_flip = allow_flip;
+        p
+    }
+
+    /// Build a minimal MonsterRoleTable from a list of
+    /// (name, faction, role, min_floor, max_floor) tuples.
+    fn make_role_table(entries: &[(&str, &str, &str, i32, i32)]) -> MonsterRoleTable {
+        MonsterRoleTable {
+            entries: entries
+                .iter()
+                .map(|(name, faction, role, min_f, max_f)| MonsterRoleEntry {
+                    name: name.to_string(),
+                    faction_tag: faction.to_string(),
+                    role: role.to_string(),
+                    min_floor: *min_f,
+                    max_floor: *max_f,
+                })
+                .collect(),
+        }
+    }
+
+    // =======================================================================
+    // overlaps_placed
+    // =======================================================================
+
+    #[test]
+    fn overlaps_placed_empty_list_returns_false() {
+        let occupied: Vec<Rect> = Vec::new();
+        assert!(!overlaps_placed(&occupied, 10, 10, 5, 5));
+    }
+
+    #[test]
+    fn overlaps_placed_non_overlapping_rects() {
+        // Place one rect at (0,0) size 5x5.
+        let occupied = vec![Rect::with_size(0, 0, 5, 5)];
+        // Another rect far away.
+        assert!(!overlaps_placed(&occupied, 50, 50, 5, 5));
+    }
+
+    #[test]
+    fn overlaps_placed_directly_overlapping() {
+        let occupied = vec![Rect::with_size(10, 10, 5, 5)];
+        // Exact same position.
+        assert!(overlaps_placed(&occupied, 10, 10, 5, 5));
+    }
+
+    #[test]
+    fn overlaps_placed_partial_overlap() {
+        let occupied = vec![Rect::with_size(10, 10, 5, 5)];
+        // Shifted slightly to overlap.
+        assert!(overlaps_placed(&occupied, 12, 12, 5, 5));
+    }
+
+    #[test]
+    fn overlaps_placed_respects_padding_close_but_within_pad() {
+        // First rect at (10, 10) size 5x5 → occupies x 10..14, y 10..14.
+        let occupied = vec![Rect::with_size(10, 10, 5, 5)];
+        // Place a rect adjacent (1 tile gap) — padding is 2, so this should overlap.
+        // New rect at (16, 10) → with padding it expands to (14, 8) size (9, 9),
+        // which overlaps the existing rect ending at x=14.
+        assert!(overlaps_placed(&occupied, 16, 10, 5, 5));
+    }
+
+    #[test]
+    fn overlaps_placed_respects_padding_far_enough() {
+        // First rect at (10, 10) size 5x5 → Rect x1=10 x2=14, y1=10 y2=14.
+        let occupied = vec![Rect::with_size(10, 10, 5, 5)];
+        // Place rect far enough away that even with PREFAB_PADDING=2 there is no overlap.
+        // New rect at (20, 10) → with padding expands to (18, 8) size (9, 9) → x1=18..x2=26.
+        // Existing rect x2=14. 18 > 14, so no overlap.
+        assert!(!overlaps_placed(&occupied, 20, 10, 5, 5));
+    }
+
+    #[test]
+    fn overlaps_placed_multiple_occupied_regions() {
+        let occupied = vec![
+            Rect::with_size(0, 0, 5, 5),
+            Rect::with_size(30, 30, 5, 5),
+        ];
+        // Overlaps second region.
+        assert!(overlaps_placed(&occupied, 30, 30, 3, 3));
+        // Overlaps neither.
+        assert!(!overlaps_placed(&occupied, 15, 15, 3, 3));
+    }
+
+    // =======================================================================
+    // generate_orientations
+    // =======================================================================
+
+    #[test]
+    fn orientations_symmetric_square_deduplicates() {
+        // A fully symmetric 2x2 block of the same character should produce
+        // fewer unique orientations since rotations/flips are identical.
+        let prefab = make_prefab("sym", &["##", "##"]);
+        let orientations = generate_orientations(&prefab);
+        // All rotations and flips of a uniform grid are identical.
+        assert_eq!(orientations.len(), 1);
+    }
+
+    #[test]
+    fn orientations_asymmetric_prefab_produces_multiple() {
+        // An L-shaped prefab (asymmetric) should produce up to 8 variants.
+        let prefab = make_prefab("asym", &["#.", "##"]);
+        let orientations = generate_orientations(&prefab);
+        // With allow_rotate=true and allow_flip=true, an asymmetric shape
+        // should yield more than 1 unique orientation.
+        assert!(
+            orientations.len() > 1,
+            "expected multiple orientations, got {}",
+            orientations.len()
+        );
+        // Maximum possible is 8 (4 rotations * 2 flip states).
+        assert!(orientations.len() <= 8);
+    }
+
+    #[test]
+    fn orientations_no_rotate_returns_original_and_flip() {
+        let prefab = make_prefab_with_flags("no_rot", &["#.", "##"], false, true);
+        let orientations = generate_orientations(&prefab);
+        // Without rotation: identity + flip = at most 2.
+        assert!(orientations.len() <= 2);
+        assert!(orientations.len() >= 1);
+        // First orientation is always the original.
+        assert_eq!(orientations[0].tiles, prefab.tiles);
+    }
+
+    #[test]
+    fn orientations_no_rotate_no_flip_returns_only_original() {
+        let prefab = make_prefab_with_flags("static", &["#.", "##"], false, false);
+        let orientations = generate_orientations(&prefab);
+        assert_eq!(orientations.len(), 1);
+        assert_eq!(orientations[0].tiles, prefab.tiles);
+    }
+
+    #[test]
+    fn orientations_rotate_no_flip() {
+        let prefab = make_prefab_with_flags("rot_only", &["#.", "##"], true, false);
+        let orientations = generate_orientations(&prefab);
+        // Up to 4 rotations, deduplicated.
+        assert!(orientations.len() >= 1 && orientations.len() <= 4);
+    }
+
+    #[test]
+    fn orientations_preserves_dimensions_on_rotation() {
+        // A 3x2 prefab rotated 90 degrees becomes 2x3.
+        let prefab = make_prefab("rect", &["#.#", "##."]);
+        let orientations = generate_orientations(&prefab);
+        assert_eq!(orientations[0].width, 3);
+        assert_eq!(orientations[0].height, 2);
+
+        // Find a rotated variant (should have swapped dimensions).
+        let has_swapped = orientations.iter().any(|o| o.width == 2 && o.height == 3);
+        assert!(has_swapped, "expected a rotated orientation with swapped dimensions");
+    }
+
+    #[test]
+    fn orientations_identity_always_first() {
+        let prefab = make_prefab("first", &["#.", ".#", "##"]);
+        let orientations = generate_orientations(&prefab);
+        assert_eq!(orientations[0].tiles, prefab.tiles);
+        assert_eq!(orientations[0].width, prefab.width);
+        assert_eq!(orientations[0].height, prefab.height);
+    }
+
+    // =======================================================================
+    // rotate_90_cw
+    // =======================================================================
+
+    #[test]
+    fn rotate_90_cw_2x2() {
+        let prefab = make_prefab("r", &["AB", "CD"]);
+        let rotated = rotate_90_cw(&prefab);
+        // 90 CW: new_x = H-1-old_y, new_y = old_x
+        // Original: row0="AB", row1="CD"
+        // (0,0)=A → new(1,0), (1,0)=B → new(1,1), (0,1)=C → new(0,0), (1,1)=D → new(0,1)
+        // New row0: C A, New row1: D B
+        assert_eq!(rotated.tiles, vec!["CA", "DB"]);
+        assert_eq!(rotated.width, 2);
+        assert_eq!(rotated.height, 2);
+    }
+
+    #[test]
+    fn rotate_90_cw_rectangular() {
+        // 3 wide x 2 tall
+        let prefab = make_prefab("r", &["ABC", "DEF"]);
+        let rotated = rotate_90_cw(&prefab);
+        // Original: W=3, H=2 → New: W=2, H=3
+        // (0,0)=A→new(1,0), (1,0)=B→new(1,1), (2,0)=C→new(1,2)
+        // (0,1)=D→new(0,0), (1,1)=E→new(0,1), (2,1)=F→new(0,2)
+        // New row0: DA, row1: EB, row2: FC
+        assert_eq!(rotated.tiles, vec!["DA", "EB", "FC"]);
+        assert_eq!(rotated.width, 2);
+        assert_eq!(rotated.height, 3);
+    }
+
+    #[test]
+    fn rotate_180_is_double_rotation() {
+        let prefab = make_prefab("r", &["AB", "CD"]);
+        let rotated = rotate_prefab(&prefab, 2);
+        // 180: (0,0)=A→(1,1), (1,0)=B→(0,1), (0,1)=C→(1,0), (1,1)=D→(0,0)
+        // New row0: DC, row1: BA
+        assert_eq!(rotated.tiles, vec!["DC", "BA"]);
+    }
+
+    #[test]
+    fn rotate_360_returns_to_original() {
+        let prefab = make_prefab("r", &["ABC", "DEF"]);
+        let rotated = rotate_prefab(&prefab, 4);
+        assert_eq!(rotated.tiles, prefab.tiles);
+        assert_eq!(rotated.width, prefab.width);
+        assert_eq!(rotated.height, prefab.height);
+    }
+
+    // =======================================================================
+    // flip_prefab_h
+    // =======================================================================
+
+    #[test]
+    fn flip_horizontal_2x2() {
+        let prefab = make_prefab("f", &["AB", "CD"]);
+        let flipped = flip_prefab_h(&prefab);
+        assert_eq!(flipped.tiles, vec!["BA", "DC"]);
+        assert_eq!(flipped.width, prefab.width);
+        assert_eq!(flipped.height, prefab.height);
+    }
+
+    #[test]
+    fn flip_horizontal_rectangular() {
+        let prefab = make_prefab("f", &["ABC", "DEF"]);
+        let flipped = flip_prefab_h(&prefab);
+        assert_eq!(flipped.tiles, vec!["CBA", "FED"]);
+    }
+
+    #[test]
+    fn double_flip_returns_original() {
+        let prefab = make_prefab("f", &["#.", ".#", "##"]);
+        let flipped_twice = flip_prefab_h(&flip_prefab_h(&prefab));
+        assert_eq!(flipped_twice.tiles, prefab.tiles);
+    }
+
+    // =======================================================================
+    // MonsterRoleTable::eligible_factions
+    // =======================================================================
+
+    #[test]
+    fn eligible_factions_empty_table() {
+        let table = make_role_table(&[]);
+        let factions = table.eligible_factions(&["melee_guard"], 1);
+        assert!(factions.is_empty());
+    }
+
+    #[test]
+    fn eligible_factions_single_faction_all_roles() {
+        let table = make_role_table(&[
+            ("Goblin Warrior", "goblin", "melee_guard", 1, 5),
+            ("Goblin Archer", "goblin", "ranged", 1, 5),
+        ]);
+        let factions = table.eligible_factions(&["melee_guard", "ranged"], 3);
+        assert_eq!(factions.len(), 1);
+        assert_eq!(factions[0], "goblin");
+    }
+
+    #[test]
+    fn eligible_factions_excludes_faction_missing_role() {
+        let table = make_role_table(&[
+            ("Goblin Warrior", "goblin", "melee_guard", 1, 5),
+            // Goblins have no ranged — should be excluded when ranged is required.
+            ("Skeleton Archer", "undead", "ranged", 1, 5),
+            ("Skeleton Guard", "undead", "melee_guard", 1, 5),
+        ]);
+        let factions = table.eligible_factions(&["melee_guard", "ranged"], 3);
+        assert_eq!(factions.len(), 1);
+        assert_eq!(factions[0], "undead");
+    }
+
+    #[test]
+    fn eligible_factions_depth_filtering() {
+        let table = make_role_table(&[
+            ("Goblin Warrior", "goblin", "melee_guard", 1, 3),
+            ("Goblin Archer", "goblin", "ranged", 1, 3),
+        ]);
+        // At depth 3, goblins are eligible.
+        assert_eq!(table.eligible_factions(&["melee_guard", "ranged"], 3).len(), 1);
+        // At depth 4, goblins are out of range.
+        assert!(table.eligible_factions(&["melee_guard", "ranged"], 4).is_empty());
+    }
+
+    #[test]
+    fn eligible_factions_multiple_factions_qualify() {
+        let table = make_role_table(&[
+            ("Goblin Warrior", "goblin", "melee_guard", 1, 5),
+            ("Goblin Archer", "goblin", "ranged", 1, 5),
+            ("Skeleton Guard", "undead", "melee_guard", 1, 5),
+            ("Skeleton Archer", "undead", "ranged", 1, 5),
+        ]);
+        let mut factions = table.eligible_factions(&["melee_guard", "ranged"], 3);
+        factions.sort();
+        assert_eq!(factions, vec!["goblin", "undead"]);
+    }
+
+    #[test]
+    fn eligible_factions_no_roles_required() {
+        // With no roles required, every faction that has any entry in range qualifies.
+        let table = make_role_table(&[
+            ("Goblin Warrior", "goblin", "melee_guard", 1, 5),
+        ]);
+        let factions = table.eligible_factions(&[], 3);
+        // Empty needed set means all factions pass the "all needed" check.
+        assert!(!factions.is_empty());
+    }
+
+    #[test]
+    fn eligible_factions_duplicate_roles_treated_as_one() {
+        // Prefab might request ["melee_guard", "melee_guard"] — unique roles = {"melee_guard"}.
+        let table = make_role_table(&[
+            ("Goblin Warrior", "goblin", "melee_guard", 1, 5),
+        ]);
+        let factions = table.eligible_factions(&["melee_guard", "melee_guard"], 3);
+        assert_eq!(factions.len(), 1);
+    }
+
+    // =======================================================================
+    // MonsterRoleTable::resolve_role
+    // =======================================================================
+
+    #[test]
+    fn resolve_role_returns_valid_name() {
+        let table = make_role_table(&[
+            ("Goblin Warrior", "goblin", "melee_guard", 1, 5),
+            ("Goblin Brute", "goblin", "melee_guard", 1, 5),
+        ]);
+        let mut rng = RandomNumberGenerator::new();
+        let result = table.resolve_role("goblin", "melee_guard", 3, &mut rng);
+        assert!(result.is_some());
+        let name = result.unwrap();
+        assert!(
+            name == "Goblin Warrior" || name == "Goblin Brute",
+            "unexpected name: {name}"
+        );
+    }
+
+    #[test]
+    fn resolve_role_wrong_faction_returns_none() {
+        let table = make_role_table(&[
+            ("Goblin Warrior", "goblin", "melee_guard", 1, 5),
+        ]);
+        let mut rng = RandomNumberGenerator::new();
+        assert!(table.resolve_role("undead", "melee_guard", 3, &mut rng).is_none());
+    }
+
+    #[test]
+    fn resolve_role_wrong_role_returns_none() {
+        let table = make_role_table(&[
+            ("Goblin Warrior", "goblin", "melee_guard", 1, 5),
+        ]);
+        let mut rng = RandomNumberGenerator::new();
+        assert!(table.resolve_role("goblin", "caster", 3, &mut rng).is_none());
+    }
+
+    #[test]
+    fn resolve_role_out_of_depth_returns_none() {
+        let table = make_role_table(&[
+            ("Goblin Warrior", "goblin", "melee_guard", 1, 3),
+        ]);
+        let mut rng = RandomNumberGenerator::new();
+        assert!(table.resolve_role("goblin", "melee_guard", 5, &mut rng).is_none());
+    }
+
+    #[test]
+    fn resolve_role_at_exact_depth_boundaries() {
+        let table = make_role_table(&[
+            ("Goblin Warrior", "goblin", "melee_guard", 3, 7),
+        ]);
+        let mut rng = RandomNumberGenerator::new();
+        // At min_floor boundary.
+        assert!(table.resolve_role("goblin", "melee_guard", 3, &mut rng).is_some());
+        // At max_floor boundary.
+        assert!(table.resolve_role("goblin", "melee_guard", 7, &mut rng).is_some());
+        // Below min.
+        assert!(table.resolve_role("goblin", "melee_guard", 2, &mut rng).is_none());
+        // Above max.
+        assert!(table.resolve_role("goblin", "melee_guard", 8, &mut rng).is_none());
+    }
+
+    // =======================================================================
+    // is_walkable_terrain
+    // =======================================================================
+
+    #[test]
+    fn walkable_terrain_classification() {
+        assert!(is_walkable_terrain(TerrainType::Floor));
+        assert!(is_walkable_terrain(TerrainType::DownStairs));
+        assert!(is_walkable_terrain(TerrainType::UpStairs));
+        assert!(is_walkable_terrain(TerrainType::Door));
+        assert!(is_walkable_terrain(TerrainType::OpenDoor));
+        assert!(!is_walkable_terrain(TerrainType::Wall));
+        assert!(!is_walkable_terrain(TerrainType::Empty));
+    }
+
+    // =======================================================================
+    // count_walkable
+    // =======================================================================
+
+    #[test]
+    fn count_walkable_all_walls() {
+        let map = crate::map::Map::new(1, 10, 10, "test");
+        assert_eq!(count_walkable(&map), 0);
+    }
+
+    #[test]
+    fn count_walkable_mixed_tiles() {
+        let mut map = crate::map::Map::new(1, 10, 10, "test");
+        // Carve 3 walkable tiles at known indices.
+        map.tiles[11].terrain = TerrainType::Floor;  // (1, 1)
+        map.tiles[12].terrain = TerrainType::Floor;  // (2, 1)
+        map.tiles[13].terrain = TerrainType::Door;   // (3, 1)
+        assert_eq!(count_walkable(&map), 3);
+    }
+
+    // =======================================================================
+    // check_connectivity_fast
+    // =======================================================================
+
+    #[test]
+    fn connectivity_all_walls_zero_walkable() {
+        let map = crate::map::Map::new(1, 10, 10, "test");
+        // 0 walkable tiles ⇒ trivially connected.
+        assert!(check_connectivity_fast(&map, Point::new(5, 5), 0));
+    }
+
+    #[test]
+    fn connectivity_single_floor_tile() {
+        let mut map = crate::map::Map::new(1, 10, 10, "test");
+        let idx = map.xy_idx(5, 5);
+        map.tiles[idx].terrain = TerrainType::Floor;
+        assert!(check_connectivity_fast(&map, Point::new(5, 5), 1));
+    }
+
+    #[test]
+    fn connectivity_connected_corridor() {
+        let mut map = crate::map::Map::new(1, 10, 10, "test");
+        // Carve a horizontal corridor at y=5.
+        for x in 1..9 {
+            let idx = map.xy_idx(x, 5);
+            map.tiles[idx].terrain = TerrainType::Floor;
+        }
+        assert!(check_connectivity_fast(&map, Point::new(1, 5), 8));
+    }
+
+    #[test]
+    fn connectivity_disconnected_regions() {
+        let mut map = crate::map::Map::new(1, 20, 20, "test");
+        // Region A.
+        let idx_a1 = map.xy_idx(1, 1);
+        let idx_a2 = map.xy_idx(2, 1);
+        let idx_b = map.xy_idx(18, 18);
+        map.tiles[idx_a1].terrain = TerrainType::Floor;
+        map.tiles[idx_a2].terrain = TerrainType::Floor;
+        // Region B (disconnected).
+        map.tiles[idx_b].terrain = TerrainType::Floor;
+        // Total walkable = 3, but only 2 reachable from start.
+        assert!(!check_connectivity_fast(&map, Point::new(1, 1), 3));
+    }
+
+    // =======================================================================
+    // transform_behavior
+    // =======================================================================
+
+    #[test]
+    fn transform_behavior_sentry_unchanged() {
+        use crate::assets::MonsterBehavior;
+        let result = transform_behavior(&MonsterBehavior::Sentry, |x, y| (y, x));
+        assert!(matches!(result, MonsterBehavior::Sentry));
+    }
+
+    #[test]
+    fn transform_behavior_wander_unchanged() {
+        use crate::assets::MonsterBehavior;
+        let result = transform_behavior(&MonsterBehavior::Wander, |x, y| (y, x));
+        assert!(matches!(result, MonsterBehavior::Wander));
+    }
+
+    #[test]
+    fn transform_behavior_patrol_transforms_points() {
+        use crate::assets::MonsterBehavior;
+        let patrol = MonsterBehavior::Patrol(vec![(1, 2), (3, 4)]);
+        // Simple swap transform.
+        let result = transform_behavior(&patrol, |x, y| (y, x));
+        match result {
+            MonsterBehavior::Patrol(pts) => {
+                assert_eq!(pts, vec![(2, 1), (4, 3)]);
+            }
+            _ => panic!("expected Patrol"),
+        }
+    }
+
+    #[test]
+    fn transform_behavior_roam_normalizes_min_max() {
+        use crate::assets::MonsterBehavior;
+        let roam = MonsterBehavior::Roam {
+            min: (0, 0),
+            max: (5, 5),
+        };
+        // A flip transform: new_x = 10-x, new_y = y → (0,0)→(10,0), (5,5)→(5,5)
+        let result = transform_behavior(&roam, |x, y| (10 - x, y));
+        match result {
+            MonsterBehavior::Roam { min, max } => {
+                // min should be the component-wise minimum.
+                assert_eq!(min, (5, 0));
+                assert_eq!(max, (10, 5));
+            }
+            _ => panic!("expected Roam"),
+        }
+    }
+
+    // =======================================================================
+    // Budget and bounds (integration-level)
+    // =======================================================================
+
+    #[test]
+    fn base_prefab_budget_is_positive() {
+        assert!(BASE_PREFAB_BUDGET > 0);
+    }
+
+    #[test]
+    fn prefab_padding_is_positive() {
+        assert!(PREFAB_PADDING > 0);
+    }
+
+    #[test]
+    fn medium_threshold_is_reasonable() {
+        // Must be > 0 and less than a full map.
+        assert!(MEDIUM_THRESHOLD > 0);
+        assert!(MEDIUM_THRESHOLD < 80 * 60);
+    }
+
+    // =======================================================================
+    // MonsterRoleTable::from_manifest
+    // =======================================================================
+
+    #[test]
+    fn from_manifest_skips_group_spawns() {
+        use crate::assets::{GroupMember, MonsterSpawnInfo};
+        let mut monsters = HashMap::new();
+        monsters.insert("rat".to_string(), make_test_monster("rat", "vermin"));
+
+        let spawn_table = vec![MonsterSpawnInfo {
+            monster: String::new(),
+            min_floor: 1,
+            max_floor: 5,
+            min_group: 1,
+            max_group: 2,
+            group: vec![GroupMember {
+                monster: "rat".to_string(),
+                min_count: 2,
+                max_count: 2,
+            }],
+            on_leader_death: String::new(),
+            flee_threshold: 0.5,
+            spawn_on_liquid: false,
+        }];
+
+        let table = MonsterRoleTable::from_manifest(&monsters, &spawn_table);
+        assert!(table.entries.is_empty(), "group spawns should be skipped");
+    }
+
+    #[test]
+    fn from_manifest_populates_entries() {
+        use crate::assets::MonsterSpawnInfo;
+        let mut monsters = HashMap::new();
+        monsters.insert("rat".to_string(), make_test_monster("rat", "vermin"));
+
+        let spawn_table = vec![MonsterSpawnInfo {
+            monster: "rat".to_string(),
+            min_floor: 1,
+            max_floor: 3,
+            min_group: 1,
+            max_group: 1,
+            group: Vec::new(),
+            on_leader_death: String::new(),
+            flee_threshold: 0.5,
+            spawn_on_liquid: false,
+        }];
+
+        let table = MonsterRoleTable::from_manifest(&monsters, &spawn_table);
+        assert_eq!(table.entries.len(), 1);
+        assert_eq!(table.entries[0].name, "rat");
+        assert_eq!(table.entries[0].faction_tag, "vermin");
+        assert_eq!(table.entries[0].min_floor, 1);
+        assert_eq!(table.entries[0].max_floor, 3);
+    }
+
+    /// Build a minimal MonsterAsset for testing from_manifest.
+    fn make_test_monster(name: &str, faction: &str) -> crate::assets::MonsterAsset {
+        use bevy::prelude::Color;
+        crate::assets::MonsterAsset {
+            name: name.to_string(),
+            vision: 6,
+            sprite: String::new(),
+            grid_size: None,
+            tile_size: None,
+            base_hp: 10,
+            damage: "1d4".to_string(),
+            regen: None,
+            loot_table: Vec::new(),
+            damage_type: "physical".to_string(),
+            resistances: HashMap::new(),
+            base_armor: 0,
+            faction: faction.to_string(),
+            abilities: Vec::new(),
+            monster_abilities: Vec::new(),
+            ascii_char: String::new(),
+            ascii_fg: Color::WHITE,
+            ai: crate::assets::AiConfig::default(),
+            base_dodge: 0,
+            movement_delay: 1.0,
+            attack_delay: 1.0,
+            movement_mode: crate::components::MovementMode::default(),
+            stationary: false,
+            species: crate::components::Species::default(),
+        }
+    }
+
+    // =======================================================================
+    // Orientation transforms with monster_spawns / props / items
+    // =======================================================================
+
+    #[test]
+    fn rotate_transforms_monster_spawn_coordinates() {
+        let mut prefab = make_prefab("ms", &["#.", "##"]);
+        prefab.monster_spawns.push(crate::assets::PrefabMonsterSpawn {
+            x: 1,
+            y: 0,
+            role: "melee_guard".to_string(),
+            behavior: crate::assets::MonsterBehavior::Sentry,
+        });
+        // Original: W=2, H=2. Spawn at (1,0).
+        // 90 CW: new_x = H-1-old_y = 2-1-0 = 1, new_y = old_x = 1.
+        let rotated = rotate_90_cw(&prefab);
+        assert_eq!(rotated.monster_spawns.len(), 1);
+        assert_eq!(rotated.monster_spawns[0].x, 1);
+        assert_eq!(rotated.monster_spawns[0].y, 1);
+    }
+
+    #[test]
+    fn flip_transforms_item_spawn_coordinates() {
+        let mut prefab = make_prefab("is", &["#.", "##"]);
+        prefab.item_spawns.push(crate::assets::PrefabItemSpawn {
+            x: 0,
+            y: 1,
+            item: Some("sword".to_string()),
+        });
+        // Flip: new_x = W-1-old_x = 2-1-0 = 1, new_y = old_y = 1.
+        let flipped = flip_prefab_h(&prefab);
+        assert_eq!(flipped.item_spawns.len(), 1);
+        assert_eq!(flipped.item_spawns[0].x, 1);
+        assert_eq!(flipped.item_spawns[0].y, 1);
+    }
+
+    #[test]
+    fn flip_transforms_prop_coordinates() {
+        let mut prefab = make_prefab("ps", &["#.", "##"]);
+        prefab.props.push(crate::assets::PrefabPropEntry {
+            x: 1,
+            y: 0,
+            prop: "candle".to_string(),
+        });
+        // Flip: new_x = W-1-old_x = 2-1-1 = 0, new_y = old_y = 0.
+        let flipped = flip_prefab_h(&prefab);
+        assert_eq!(flipped.props.len(), 1);
+        assert_eq!(flipped.props[0].x, 0);
+        assert_eq!(flipped.props[0].y, 0);
+    }
+}

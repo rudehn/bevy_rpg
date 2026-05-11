@@ -94,10 +94,15 @@ impl SpawnEntry {
     }
 }
 
+// Re-export engine builder framework types so game builders can
+// reference them and future migrations can incrementally convert.
+pub use roguelike_engine::map::builders::{
+    BuildContext, BuilderPhase as EngineBuildPhase, EngineBuilderMap, MapBuilder,
+    BuilderChain as EngineBuilderChain,
+};
+
 #[allow(dead_code)]
 pub struct BuilderMap {
-    // pub spawn_list: Vec<(usize, String)>,
-    // pub modified_spawn_list: Vec<(SpawnOptions, String)>, // includes spawn options
     pub map: Map,
     pub starting_position: Option<Position>,
     pub rooms: Option<Vec<Rect>>,
@@ -109,6 +114,24 @@ pub struct BuilderMap {
     pub machine_spawn_list: Vec<machine_builder::MachineSpawn>,
     pub squad_counter: SquadIdCounter,
     pub decoration_exclusion_zones: Vec<Rect>,
+    /// Seeded RNG for deterministic map generation.
+    pub rng: RandomNumberGenerator,
+}
+
+/// Implement the engine's `BuildContext` so engine builders can operate on
+/// `BuilderMap` via `&mut dyn BuildContext` without knowing about spawn lists.
+impl BuildContext for BuilderMap {
+    fn map(&self) -> &Map { &self.map }
+    fn map_mut(&mut self) -> &mut Map { &mut self.map }
+    fn width(&self) -> i32 { self.width }
+    fn height(&self) -> i32 { self.height }
+    fn rooms(&self) -> Option<&Vec<Rect>> { self.rooms.as_ref() }
+    fn set_rooms(&mut self, rooms: Vec<Rect>) { self.rooms = Some(rooms); }
+    fn starting_position(&self) -> Option<Position> { self.starting_position }
+    fn set_starting_position(&mut self, pos: Position) { self.starting_position = Some(pos); }
+    fn exclusion_zones(&self) -> &[Rect] { &self.decoration_exclusion_zones }
+    fn add_exclusion_zone(&mut self, rect: Rect) { self.decoration_exclusion_zones.push(rect); }
+    fn rng(&mut self) -> &mut RandomNumberGenerator { &mut self.rng }
 }
 
 impl BuilderMap {
@@ -186,6 +209,7 @@ impl BuilderMap {
             machine_spawn_list: Vec::new(),
             squad_counter: SquadIdCounter::default(),
             decoration_exclusion_zones: Vec::new(),
+            rng: RandomNumberGenerator::new(),
         }
     }
 
@@ -239,6 +263,7 @@ impl BuilderChain {
                 machine_spawn_list: Vec::new(),
                 squad_counter,
                 decoration_exclusion_zones: Vec::new(),
+                rng: RandomNumberGenerator::new(),
             },
         }
     }
@@ -317,57 +342,43 @@ impl BuilderChain {
     // }
 }
 
-/// Controls how organic vs. structured the generated floor feels.
-#[derive(Clone, Copy)]
-pub struct FloorProfile {
-    /// Probability weight for cavern rooms (0-100). Higher = more caves.
-    pub cavern_weight: i32,
-    /// Whether the first room is forced to be a large cavern.
-    pub force_cavern_start: bool,
-    /// Target number of rooms to place.
-    pub target_rooms: i32,
-    /// Hallway attachment chance (0-100).
-    pub hallway_chance: i32,
-    /// Erosion chance per eligible wall tile (0-100).
-    #[allow(dead_code)]
-    pub erosion_percent: i32,
-    /// Whether cavern rooms can use relaxed (no-padding) fitting.
-    pub relaxed_fitting: bool,
-    /// Decoration density multiplier (0.0-1.0). Scales seed count per rule.
-    pub decoration_density: f32,
-}
+// `FloorProfile` struct now lives in the engine. Re-exported here so
+// game code using `crate::map::builders::FloorProfile` compiles unchanged.
+pub use roguelike_engine::map::builders::FloorProfile;
 
-impl FloorProfile {
-    pub fn for_depth(depth: i32) -> Self {
-        match depth {
-            1..=3 => Self {
-                cavern_weight: 20,
-                force_cavern_start: false,
-                target_rooms: 20,
-                hallway_chance: 25,
-                erosion_percent: 20,
-                relaxed_fitting: false,
-                decoration_density: 0.6,
-            },
-            4..=7 => Self {
-                cavern_weight: 40,
-                force_cavern_start: true,
-                target_rooms: 18,
-                hallway_chance: 40,
-                erosion_percent: 40,
-                relaxed_fitting: true,
-                decoration_density: 0.8,
-            },
-            _ => Self {
-                cavern_weight: 60,
-                force_cavern_start: true,
-                target_rooms: 14,
-                hallway_chance: 50,
-                erosion_percent: 55,
-                relaxed_fitting: true,
-                decoration_density: 1.0,
-            },
-        }
+/// The Veiled Tyrant's depth-based floor profile mapping.
+///
+/// Can't be an inherent impl on `FloorProfile` because the struct
+/// now lives in the engine crate. Free function instead.
+pub fn floor_profile_for_depth(depth: i32) -> FloorProfile {
+    match depth {
+        1..=3 => FloorProfile {
+            cavern_weight: 20,
+            force_cavern_start: false,
+            target_rooms: 20,
+            hallway_chance: 25,
+            erosion_percent: 20,
+            relaxed_fitting: false,
+            decoration_density: 0.6,
+        },
+        4..=7 => FloorProfile {
+            cavern_weight: 40,
+            force_cavern_start: true,
+            target_rooms: 18,
+            hallway_chance: 40,
+            erosion_percent: 40,
+            relaxed_fitting: true,
+            decoration_density: 0.8,
+        },
+        _ => FloorProfile {
+            cavern_weight: 60,
+            force_cavern_start: true,
+            target_rooms: 14,
+            hallway_chance: 50,
+            erosion_percent: 55,
+            relaxed_fitting: true,
+            decoration_density: 1.0,
+        },
     }
 }
 
@@ -469,18 +480,18 @@ pub fn floor_builder(
     if new_depth == 1 {
         map_name = "Entrance".to_owned();
     }
-    let profile = FloorProfile::for_depth(new_depth);
+    let profile = floor_profile_for_depth(new_depth);
     let mut builder = BuilderChain::new(new_depth, width, height, map_name, squad_counter);
 
     let role_table = MonsterRoleTable::from_manifest(monster_manifest, spawn_table);
 
     // MAP Generation
-    builder.start_with(brogelike::BrogueLikeBuilder::dungeon(
+    builder.start_with(Box::new(brogelike::BrogueLikeBuilder::dungeon(
         new_depth, width, height, profile,
-    ));
+    )));
     // builder.with_named("DiagonalCuller", DiagonalCuller::new());
-    builder.with_named("StartPoint", StartPointBuilder::new());
-    // builder.with_named("LakeBuilder", LakeBuilder::new(new_depth));
+    builder.with_named("StartPoint", Box::new(StartPointBuilder::new()));
+    builder.with_named("LakeBuilder", Box::new(LakeBuilder::new(new_depth)));
     // builder.with_named("DiagonalCuller2", DiagonalCuller::new());
     // builder.with_named("PillarCuller", PillarCuller::new());
     // builder.with_named("FinishDoors", FinishDoors::new());
@@ -489,11 +500,11 @@ pub fn floor_builder(
     // builder.with_named("IsolatedAreaCuller", IsolatedAreaCuller::new());
     // --- Spawners run after IsolatedAreaCuller so entities are never placed in walled-off regions ---
     // builder.with_named("CandleSpawner", CandleSpawner::new());
-    // builder.with_named("MonsterSpawner", MonsterSpawner::new(spawn_table));
+    builder.with_named("MonsterSpawner", MonsterSpawner::new(spawn_table));
     // builder.with_named("ItemSpawner", ItemSpawner::new());
     builder.with_named(
         "DecorationPropagator",
-        DecorationPropagator::new(decoration_rules, new_depth, profile.decoration_density),
+        Box::new(DecorationPropagator::new(decoration_rules, new_depth, profile.decoration_density)),
     );
     builder.with_named("DistantExit", DistantExit::new());
 

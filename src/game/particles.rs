@@ -6,7 +6,7 @@ use crate::{
     components::{GameEntityMarker, Position, Viewshed},
     game::{
         AppState,
-        combat::{ApplyDamageMessage, CombatDamageSet, HealMessage, MissMessage},
+        combat::{CombatDamageSet, CombatEventSet, DamageEvent, HealEvent, MissMessage},
     },
     map::{Map, tile::is_opaque},
     player::Player,
@@ -325,6 +325,9 @@ pub fn damage_type_color(dt: crate::game::combat::DamageType) -> Color {
         DamageType::Lightning => Color::srgb(0.5, 0.8, 1.0),
         DamageType::Poison => Color::srgb(0.3, 0.9, 0.3),
         DamageType::Physical => Color::srgb(0.9, 0.9, 0.9),
+        // `DamageType` is `#[non_exhaustive]` in the engine crate;
+        // unknown future variants get a neutral fallback.
+        _ => Color::srgb(0.9, 0.9, 0.9),
     }
 }
 
@@ -814,8 +817,8 @@ pub fn sprite_particle_update_system(
 
 /// Translates combat messages into ParticleRequests for visual feedback.
 pub fn combat_particle_bridge_system(
-    mut damage_messages: MessageReader<ApplyDamageMessage>,
-    mut heal_messages: MessageReader<HealMessage>,
+    mut damage_messages: MessageReader<DamageEvent>,
+    mut heal_messages: MessageReader<HealEvent>,
     mut miss_messages: MessageReader<MissMessage>,
     mut particle_writer: MessageWriter<ParticleRequest>,
     pos_query: Query<&Position>,
@@ -824,12 +827,12 @@ pub fn combat_particle_bridge_system(
         if let Ok(pos) = pos_query.get(msg.target) {
             particle_writer.write(ParticleRequest::damage(
                 grid_to_world(pos.x, pos.y),
-                msg.final_damage,
+                msg.amount,
             ));
         }
     }
     for msg in heal_messages.read() {
-        if let Ok(pos) = pos_query.get(msg.entity) {
+        if let Ok(pos) = pos_query.get(msg.target) {
             particle_writer.write(ParticleRequest::heal(
                 grid_to_world(pos.x, pos.y),
                 msg.amount,
@@ -854,7 +857,7 @@ impl Plugin for ParticlesPlugin {
             .add_systems(
                 Update,
                 (
-                    combat_particle_bridge_system.after(CombatDamageSet),
+                    combat_particle_bridge_system.after(CombatEventSet),
                     particle_spawn_system.after(combat_particle_bridge_system),
                     particle_update_system,
                     sprite_particle_update_system,

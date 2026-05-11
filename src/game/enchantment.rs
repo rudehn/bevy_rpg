@@ -16,10 +16,10 @@ use crate::components::{Name, Position};
 use crate::game::abilities::OnHitTriggerMessage;
 use crate::game::abilities::OnBeingHitTriggerMessage;
 use crate::game::combat::{
-    ApplyDamageMessage, CombatDamageSet, DamageSource, DamageType, GameRng, HealMessage, Health,
+    DamageEvent, DamageSource, DamageType, GameRng, HealEvent, Health,
 };
 use crate::game::items::{Equipment, ItemKind, ItemProperties};
-use crate::game::magic::{StatusEffectKind, StatusEffects};
+use crate::game::magic::{GameStatusEffectsExt, StatusEffectKind, StatusEffects};
 use crate::map::map::Map;
 use crate::map::tile::is_walkable;
 use crate::player::Player;
@@ -213,26 +213,10 @@ pub struct SpeedRunicProc;
 // Proc Chance Formulas
 // =====================================================================
 
-/// Compute the average damage from a dice string like "1d6" or "1d4+2".
-fn avg_damage_from_dice(dice_str: &str) -> f32 {
-    // Parse "NdM" or "NdM+B"
-    let dice_str = dice_str.trim();
-    let (dice_part, bonus) = if let Some(plus_idx) = dice_str.find('+') {
-        let bonus: f32 = dice_str[plus_idx + 1..].trim().parse().unwrap_or(0.0);
-        (&dice_str[..plus_idx], bonus)
-    } else {
-        (dice_str, 0.0)
-    };
-
-    if let Some(d_idx) = dice_part.find('d') {
-        let n: f32 = dice_part[..d_idx].trim().parse().unwrap_or(1.0);
-        let m: f32 = dice_part[d_idx + 1..].trim().parse().unwrap_or(4.0);
-        n * (m + 1.0) / 2.0 + bonus
-    } else {
-        // Flat damage
-        dice_str.parse::<f32>().unwrap_or(2.0)
-    }
-}
+// Re-export of the engine's [`roguelike_engine::dice::avg_damage_from_dice`].
+// Previously defined here; moved to the engine so all dice helpers
+// share one implementation.
+use roguelike_engine::dice::avg_damage_from_dice;
 
 /// Weapon runic proc chance (percentage, 0-100).
 /// Lower-damage weapons proc more often (Brogue design).
@@ -309,7 +293,7 @@ pub fn handle_weapon_runic_proc(
     )>,
     defender_query: Query<(&Name, &Health)>,
     mut status_query: Query<&mut StatusEffects>,
-    mut damage_writer: MessageWriter<ApplyDamageMessage>,
+    mut damage_writer: MessageWriter<DamageEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
     attacker_name_query: Query<&Name>,
     collider_query: Query<&Position, With<crate::components::Collider>>,
@@ -353,7 +337,7 @@ pub fn handle_weapon_runic_proc(
             WeaponRunic::Slowing => {
                 let duration = (3 + enchant_level).max(1) as u32;
                 if let Ok(mut effects) = status_query.get_mut(msg.defender) {
-                    effects.add(StatusEffectKind::Slowed, duration);
+                    effects.add_effect(StatusEffectKind::Slowed, duration);
                 }
                 if let Ok((defender_name, _)) = defender_query.get(msg.defender) {
                     log_writer.write(GameLogMessage(format!(
@@ -403,7 +387,7 @@ pub fn handle_weapon_runic_proc(
             WeaponRunic::Paralysis => {
                 let duration = (2 + enchant_level / 2).max(1) as u32;
                 if let Ok(mut effects) = status_query.get_mut(msg.defender) {
-                    effects.add(StatusEffectKind::Stunned, duration);
+                    effects.add_effect(StatusEffectKind::Stunned, duration);
                 }
                 if let Ok((defender_name, _)) = defender_query.get(msg.defender) {
                     log_writer.write(GameLogMessage(format!(
@@ -417,12 +401,13 @@ pub fn handle_weapon_runic_proc(
                 let threshold_pct = (3 + enchant_level) * 5;
                 let threshold_hp = defender_health.max * threshold_pct / 100;
                 if defender_health.current <= threshold_hp {
-                    damage_writer.write(ApplyDamageMessage {
-                        attacker: msg.attacker,
+                    damage_writer.write(DamageEvent {
+                        attacker: Some(msg.attacker),
                         target: msg.defender,
-                        final_damage: defender_health.current,
+                        amount: defender_health.current,
                         damage_type: DamageType::Physical,
                         source: DamageSource::Melee,
+                        armor: 0,
                     });
                     log_writer.write(GameLogMessage(format!(
                         "Your weapon's runic strikes {} down!",
@@ -432,12 +417,13 @@ pub fn handle_weapon_runic_proc(
             }
             WeaponRunic::Flames => {
                 let fire_damage = game_rng.0.roll_dice(1, 4);
-                damage_writer.write(ApplyDamageMessage {
-                    attacker: msg.attacker,
+                damage_writer.write(DamageEvent {
+                    attacker: Some(msg.attacker),
                     target: msg.defender,
-                    final_damage: fire_damage,
+                    amount: fire_damage,
                     damage_type: DamageType::Fire,
                     source: DamageSource::Melee,
+                    armor: 0,
                 });
                 let attacker_name = attacker_name_query.get(msg.attacker).map(|n| n.0.as_str()).unwrap_or("Your");
                 log_writer.write(GameLogMessage(format!(
@@ -447,15 +433,21 @@ pub fn handle_weapon_runic_proc(
             }
             WeaponRunic::Venom => {
                 let poison_damage = game_rng.0.roll_dice(1, 4);
-                damage_writer.write(ApplyDamageMessage {
-                    attacker: msg.attacker,
+                damage_writer.write(DamageEvent {
+                    attacker: Some(msg.attacker),
                     target: msg.defender,
-                    final_damage: poison_damage,
+                    amount: poison_damage,
                     damage_type: DamageType::Poison,
                     source: DamageSource::Melee,
+                    armor: 0,
                 });
                 if let Ok(mut effects) = status_query.get_mut(msg.defender) {
-                    effects.add(StatusEffectKind::Poisoned { damage_per_turn: 2 }, 3);
+                    effects.add_effect_with_magnitude(
+                        StatusEffectKind::Poisoned,
+                        3,
+                        2,
+                        Some(msg.attacker),
+                    );
                 }
                 let attacker_name = attacker_name_query.get(msg.attacker).map(|n| n.0.as_str()).unwrap_or("Your");
                 log_writer.write(GameLogMessage(format!(
@@ -465,12 +457,13 @@ pub fn handle_weapon_runic_proc(
             }
             WeaponRunic::Lightning => {
                 let lightning_damage = game_rng.0.roll_dice(1, 4);
-                damage_writer.write(ApplyDamageMessage {
-                    attacker: msg.attacker,
+                damage_writer.write(DamageEvent {
+                    attacker: Some(msg.attacker),
                     target: msg.defender,
-                    final_damage: lightning_damage,
+                    amount: lightning_damage,
                     damage_type: DamageType::Lightning,
                     source: DamageSource::Melee,
+                    armor: 0,
                 });
                 let attacker_name = attacker_name_query.get(msg.attacker).map(|n| n.0.as_str()).unwrap_or("Your");
                 log_writer.write(GameLogMessage(format!(
@@ -495,12 +488,13 @@ pub fn handle_weapon_runic_proc(
                         }
                         if let Some((arc_target, _)) = best {
                             let arc_damage = game_rng.0.roll_dice(1, 4);
-                            damage_writer.write(ApplyDamageMessage {
-                                attacker: msg.attacker,
+                            damage_writer.write(DamageEvent {
+                                attacker: Some(msg.attacker),
                                 target: arc_target,
-                                final_damage: arc_damage,
+                                amount: arc_damage,
                                 damage_type: DamageType::Lightning,
                                 source: DamageSource::Melee,
+                                armor: 0,
                             });
                             if let Ok((_, arc_pos, arc_name)) = monster_query.get(arc_target) {
                                 let _ = arc_pos; // suppress unused
@@ -523,12 +517,13 @@ pub fn handle_weapon_runic_proc(
                     if faction_matches {
                         // Deal 50% bonus damage (based on the hit's damage)
                         let bonus = (msg.final_damage / 2).max(1);
-                        damage_writer.write(ApplyDamageMessage {
-                            attacker: msg.attacker,
+                        damage_writer.write(DamageEvent {
+                            attacker: Some(msg.attacker),
                             target: msg.defender,
-                            final_damage: bonus,
+                            amount: bonus,
                             damage_type: DamageType::Physical,
                             source: DamageSource::Melee,
+                            armor: 0,
                         });
                         let attacker_name = attacker_name_query.get(msg.attacker).map(|n| n.0.as_str()).unwrap_or("Your");
                         log_writer.write(GameLogMessage(format!(
@@ -553,8 +548,8 @@ pub fn handle_armor_runic_proc(
         Option<&Enchantment>,
         Option<&RunicIdentified>,
     )>,
-    mut damage_writer: MessageWriter<ApplyDamageMessage>,
-    mut heal_writer: MessageWriter<HealMessage>,
+    mut damage_writer: MessageWriter<DamageEvent>,
+    mut heal_writer: MessageWriter<HealEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
     attacker_name_query: Query<&Name>,
 ) {
@@ -593,12 +588,13 @@ pub fn handle_armor_runic_proc(
                 ArmorRunic::Reprisal => {
                     let reflect_pct = (10 + enchant_level * 5).max(5);
                     let reflect_damage = (msg.final_damage * reflect_pct / 100).max(1);
-                    damage_writer.write(ApplyDamageMessage {
-                        attacker: msg.defender,
+                    damage_writer.write(DamageEvent {
+                        attacker: Some(msg.defender),
                         target: msg.attacker,
-                        final_damage: reflect_damage,
+                        amount: reflect_damage,
                         damage_type: DamageType::Physical,
                         source: DamageSource::Environment,
+                        armor: 0,
                     });
                     if let Ok(attacker_name) = attacker_name_query.get(msg.attacker) {
                         log_writer.write(GameLogMessage(format!(
@@ -614,9 +610,10 @@ pub fn handle_armor_runic_proc(
                     } else {
                         1
                     };
-                    heal_writer.write(HealMessage {
-                        entity: msg.defender,
+                    heal_writer.write(HealEvent {
+                        target: msg.defender,
                         amount: absorb,
+                        source: None,
                     });
                     log_writer.write(GameLogMessage(format!(
                         "Your armor absorbs {} damage!",
@@ -629,12 +626,13 @@ pub fn handle_armor_runic_proc(
                         // 30% chance to reflect
                         let reflect_roll = game_rng.0.roll_dice(1, 100);
                         if reflect_roll <= 30 {
-                            damage_writer.write(ApplyDamageMessage {
-                                attacker: msg.defender,
+                            damage_writer.write(DamageEvent {
+                                attacker: Some(msg.defender),
                                 target: msg.attacker,
-                                final_damage: msg.final_damage,
+                                amount: msg.final_damage,
                                 damage_type: msg.damage_type,
                                 source: DamageSource::Ranged,
+                                armor: 0,
                             });
                             log_writer.write(GameLogMessage(
                                 "Your armor reflects the projectile!".to_string(),
@@ -659,6 +657,44 @@ pub fn handle_armor_runic_proc(
 // Random Enchantment Generation
 // =====================================================================
 
+/// Per-floor maximum enchantment level (exclusive upper bound for the
+/// random roll). Tuned for the 26-floor dungeon.
+///
+/// | Floor | Max roll (exclusive) | Realistic drop |
+/// |-------|----------------------|----------------|
+/// | 1     | 2 | +0 to +1 |
+/// | 5     | 3 | +0 to +2 |
+/// | 10    | 4 | +0 to +3 |
+/// | 15    | 5 | +0 to +4 |
+/// | 20    | 6 | +0 to +5 |
+/// | 26    | 7 | +0 to +6 |
+pub fn enchant_level_cap_for_floor(floor: u32) -> u32 {
+    floor / 5 + 2
+}
+
+/// Per-floor probability (0–100, percent) that a fresh weapon/armor drop
+/// gets a runic. Tuned for the 26-floor dungeon:
+///
+/// | Floor | Chance |
+/// |-------|-------:|
+/// | 1–4   | 0%     |
+/// | 5     | 2%     |
+/// | 9     | 12%    |
+/// | 13    | 22%    |
+/// | 17    | 32%    |
+/// | 21    | 42%    |
+/// | 24+   | 50% (capped) |
+///
+/// Pure function so it can be tested without ECS.
+pub fn runic_chance_for_floor(floor: u32) -> u32 {
+    if floor < 5 {
+        return 0;
+    }
+    let above = floor - 4;
+    // 5 / 2 per floor, capped at 50%. Avoid f32 to keep this deterministic.
+    ((above * 5) / 2).min(50)
+}
+
 /// Roll random enchantment level and optional runic for a weapon or armor item.
 /// Called from spawner after item entity creation.
 pub fn enchant_item(
@@ -672,13 +708,17 @@ pub fn enchant_item(
         return;
     }
 
-    // Roll enchantment level: 0 to floor_depth/3 + 1
-    let max_enchant = (floor_depth / 3 + 2) as i32;
+    // Roll enchantment level. Formula tuned for the 26-floor dungeon so
+    // floor 26 caps at +7 instead of +10 (the old `floor/3 + 2` was
+    // sized for a 10-floor game). See `enchant_level_cap_for_floor`.
+    let max_enchant = enchant_level_cap_for_floor(floor_depth) as i32;
     let enchant_level = rng.range(0, max_enchant);
     commands.entity(item_entity).insert(Enchantment { level: enchant_level });
 
-    // Roll for runic
-    let runic_chance = 15 + floor_depth * 2;
+    // Roll for runic. Curve tuned for the 26-floor dungeon: no runics
+    // before floor 5, then ramps to a 50% cap by floor ~24. See
+    // `runic_chance_for_floor` for the formula and tests.
+    let runic_chance = runic_chance_for_floor(floor_depth);
     let runic_roll = rng.range(0, 100);
     if runic_roll < runic_chance as i32 {
         match item_kind {
@@ -702,17 +742,15 @@ pub struct EnchantmentPlugin;
 
 impl Plugin for EnchantmentPlugin {
     fn build(&self, app: &mut App) {
+        use crate::game::turns::CombatReactionSet;
         app.register_type::<Enchantment>()
             .register_type::<ItemWeaponRunic>()
             .register_type::<ItemArmorRunic>()
             .register_type::<RunicIdentified>()
             .add_systems(
                 Update,
-                (
-                    handle_weapon_runic_proc.after(CombatDamageSet),
-                    handle_armor_runic_proc.after(CombatDamageSet),
-                )
-                    .run_if(in_state(crate::game::AppState::InGame)),
+                (handle_weapon_runic_proc, handle_armor_runic_proc)
+                    .in_set(CombatReactionSet),
             );
     }
 }
@@ -725,13 +763,10 @@ impl Plugin for EnchantmentPlugin {
 mod tests {
     use super::*;
 
-    #[test]
-    fn avg_damage_parsing() {
-        assert!((avg_damage_from_dice("1d4") - 2.5).abs() < 0.01);
-        assert!((avg_damage_from_dice("1d6") - 3.5).abs() < 0.01);
-        assert!((avg_damage_from_dice("2d6") - 7.0).abs() < 0.01);
-        assert!((avg_damage_from_dice("1d4+2") - 4.5).abs() < 0.01);
-    }
+    // `avg_damage_parsing` moved to
+    // `roguelike_engine::dice::tests::{avg_1d4_is_two_and_a_half, ...}`.
+    // This test module only keeps the runic-proc-chance tests that
+    // depend on game-specific runic types.
 
     #[test]
     fn weapon_proc_chance_dagger_vs_sword() {
@@ -792,5 +827,75 @@ mod tests {
             display_item_name("Sword", Some(&ench), Some(&runic), None, Some(&id)),
             "+1 Sword (runic)"
         );
+    }
+
+    // --- runic_chance_for_floor ---
+
+    #[test]
+    fn runic_chance_zero_below_floor_5() {
+        // Design intent: no runics in the early game.
+        for floor in 0..=4 {
+            assert_eq!(runic_chance_for_floor(floor), 0, "floor {floor}");
+        }
+    }
+
+    #[test]
+    fn runic_chance_starts_low_at_floor_5() {
+        assert_eq!(runic_chance_for_floor(5), 2);
+        assert_eq!(runic_chance_for_floor(6), 5);
+    }
+
+    #[test]
+    fn runic_chance_ramps_smoothly_through_mid_dungeon() {
+        // Spot-check the ramp roughly hits the design table.
+        assert_eq!(runic_chance_for_floor(9), 12);
+        assert_eq!(runic_chance_for_floor(13), 22);
+        assert_eq!(runic_chance_for_floor(17), 32);
+        assert_eq!(runic_chance_for_floor(21), 42);
+    }
+
+    #[test]
+    fn runic_chance_caps_at_50_percent() {
+        // After floor ~24, the cap holds. Critical guard against runaway
+        // late-floor probabilities (the old `15 + 2*depth` formula hit
+        // ~67% by floor 26).
+        for floor in 24..=40 {
+            assert_eq!(runic_chance_for_floor(floor), 50, "floor {floor}");
+        }
+    }
+
+    #[test]
+    fn runic_chance_is_monotonically_non_decreasing() {
+        // Property: deeper floor never reduces the runic chance.
+        let mut prev = 0;
+        for floor in 0..=40 {
+            let c = runic_chance_for_floor(floor);
+            assert!(c >= prev, "non-monotonic at floor {floor}: {prev} -> {c}");
+            prev = c;
+        }
+    }
+
+    // --- enchant_level_cap_for_floor ---
+
+    #[test]
+    fn enchant_cap_spot_checks() {
+        // Tuned so a floor-26 drop caps at +6 (cap - 1), not the old +9.
+        assert_eq!(enchant_level_cap_for_floor(1), 2);
+        assert_eq!(enchant_level_cap_for_floor(5), 3);
+        assert_eq!(enchant_level_cap_for_floor(10), 4);
+        assert_eq!(enchant_level_cap_for_floor(15), 5);
+        assert_eq!(enchant_level_cap_for_floor(20), 6);
+        assert_eq!(enchant_level_cap_for_floor(25), 7);
+        assert_eq!(enchant_level_cap_for_floor(26), 7);
+    }
+
+    #[test]
+    fn enchant_cap_is_monotonically_non_decreasing() {
+        let mut prev = 0;
+        for floor in 0..=40 {
+            let c = enchant_level_cap_for_floor(floor);
+            assert!(c >= prev, "non-monotonic at floor {floor}: {prev} -> {c}");
+            prev = c;
+        }
     }
 }

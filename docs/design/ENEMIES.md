@@ -22,30 +22,97 @@ All monster special attacks are **cooldown-based abilities**, not spells. There
 is no mana system for monsters. Each ability has a cooldown in turns. This
 mirrors the player's staff system — both sides operate on cooldowns/charges.
 
+## Species
+
+Every monster declares a **species** — its biological category. Species is
+orthogonal to faction: faction is political alignment (who fights whom),
+species is biology (what kind of creature it is). A Goblin Conjurer and a
+Goblin (both faction `Goblin`) share species `Humanoid`; a Spectral Blade
+(also faction `Goblin`) is species `Construct` because it's animated steel,
+not a living goblin.
+
+Species is used by effects that care about biology — bane weapons
+("Dagger of Insect Slaying"), ecology ("Poison does not tick on Undead"),
+charm/polymorph restrictions, and UI labels. Faction-based effects
+(rally auras, pack tactics, faction hostility) still key off faction.
+
+| Species | Meaning | Examples |
+|---------|---------|----------|
+| `Beast` | Natural animals; mortal, breathes, bleeds | Sewer Rat, Plague Rat, Rat Broodmother, Eel, Wolf, Cave Bear, Giant Bat |
+| `Humanoid` | Intelligent bipeds | Goblin, Goblin Conjurer, Goblin Warchief, Kobold Hoarder, Kobold Marauder, Kobold Chieftain, Orc Warrior |
+| `Undead` | Formerly living; immune to mind / poison / bleed | Skeleton, Zombie, Bone Archer, Wraith, Necromancer, Bone Colossus, Lich Acolyte |
+| `Insect` | Arthropods / hive creatures | Giant Spider |
+| `Fungal` | Spore-based; can be burned, spread by moisture | Pit Bloat, Bloat, Fungal Spore, Spore Crawler, Fungal Shambler, Shrieking Mushroom, Mycoid Sovereign, Black Mold |
+| `Ooze` | Amorphous; no armor slots, immune to crits | Jelly |
+| `Dragon` | Reptilian apex; fire-affine by default | Dragon Whelp, Young Dragon, Drake, Wyrm, Dragon Priest, Elder Drake |
+| `Construct` | Animated / artificial; immune to bleed / poison | Spectral Blade, Arrow Turret, Goblin Totem, Mimic, Stone Sentinel |
+| `Aberration` | Eldritch or uncategorized | Shade, Imp |
+
+**Every new monster must declare a species** in `assets/monsters.ron`:
+
+```ron
+"Thing": (
+    name: "Thing",
+    faction: "Goblin",   // politics
+    species: Humanoid,   // biology — required
+    ...
+),
+```
+
+Missing the field defaults to `Unknown` and logs a warning on game load.
+
+---
+
+## Tier Structure (26 floors)
+
+The dungeon is divided into six tiers. Each tier escalates difficulty and
+teaches a distinct skill, mirroring Brogue's descent pacing.
+
+| Tier | Floors | Name | Player skill tested | Primary factions |
+|------|--------|------|---------------------|------------------|
+| T1 | 1-4 | **Shallows** | Basic melee, FOV, terrain | Animals, Rats, Kobolds, disorganized Goblins |
+| T2 | 5-9 | **Caves** | Status effects, packs, water/fire terrain | Rats (Broodmother peak), Animals, organizing Goblins, Fungal enters |
+| T3 | 10-14 | **Depths** | Ranged threats, armor, group tactics | Goblins (fortified), Orcs, Fungal, first Undead, Cave Trolls |
+| T4 | 15-19 | **Tombs** | Elemental resist, status cleansing, elite 1v1 | Undead (peak), Giants (first), Fungal elites, first Dragons |
+| T5 | 20-24 | **Deep Keep** | Apex combat, resource planning | Dragons, Giants (peak), Undead elites, Constructs |
+| T6 | 25-26 | **The Amulet** | Synthesis of everything | Mixed apex + Amulet Guardian on f26 |
+
+**Phasing principle:** every faction has a *rise → peak → fade* window.
+Factions do not stay present across all 26 floors — they introduce, dominate
+their tier, and retreat. Overlaps during transitions create faction-vs-faction
+moments. The `no_faction_is_present_on_every_floor` test enforces this.
+
 ## Factions
 
 | Faction | Floors | Role |
 |---------|--------|------|
-| Animals | 1-6 | Nature's hazards. Teach basic combat, speed, swarms, DoT. |
+| Animals | 1-10 | Nature's hazards. Teach basic combat, speed, swarms, DoT. |
 | Rats | 1-10 | Background fauna. Danger from volume, not individual power. |
-| Goblins | 1-10 | The star faction. Evolve from disorganized to structured. |
-| Kobolds | 1-5 | Cowardly hoarders. Steal loot, flee from combat. |
-| Undead | 4-9 | Resistant physical threats. Ranged + melee combos. |
-| Fungal | 3-8 | Poison-themed. Explosive on-death effects. |
-| Dragons | 5-10 | Apex predators. Rare, powerful, fire-themed. |
-| *(none)* | 3-10 | Various factionless solo threats. |
+| Goblins | 1-14 | The star faction. Evolve from disorganized rabble → organized patrols → fortified warbands. |
+| Kobolds | 1-22 | Hoarders (T1) → Alchemists (T2, kiting) → Marauders (T3) → Chieftain warbands (T4–T5). |
+| Orcs | 10-18 | T3-T4 organized aggressors. Warbands with leaders. |
+| Fungal | 2-22 | Poison-themed. Explosive on-death effects; Mycoid Sovereign at apex. |
+| Undead | 12-22 | Resistant physical threats. Ranged + melee combos; Necromancer, Bone Colossus. |
+| Giants | 15-25 | Brutes and casters. Regen + knockback; apex is Hill Giant. |
+| Dragons | 16-26 | Apex predators. Fire-themed; culminate in Elder Drake. |
+| *(none)* | 3-26 | Factionless solo threats (Jellies, Mimics, Wolves, Shades, Imps, Amulet Guardian). |
 
-### Faction Presence by Floor
+### Faction Presence by Floor (26-floor distribution)
 
-| Floors | Primary | Secondary | Tertiary | Rare/Out-of-Depth |
-|--------|---------|-----------|----------|-------------------|
-| 1-2 | Animals | Goblins (disorganized) | Rats, Kobolds | — |
-| 3-4 | Goblins (disorganized) | Animals, Rats, Fungal | Kobolds | — |
-| 5 | Goblins (organizing) | Rats, Animals, Undead | Fungal | Cave Troll, Dragon Whelp |
-| 6-7 | Goblins (organized) | Rats, Dragons, Undead | Fungal | Cave Troll |
-| 8 | Goblins (fortified) | Rats, Dragons, Undead | — | — |
-| 9 | Goblins (elite) | Rats, Dragons | Undead | — |
-| 10 | All factions (final gauntlet), including Rats | — | — | — |
+| Floors | Primary | Secondary | Tertiary | Rare / Out-of-Depth |
+|--------|---------|-----------|----------|---------------------|
+| 1-2 | Animals | Goblins (rabble) | Rats, Kobolds | — |
+| 3-4 | Rats | Goblins, Animals | Kobolds, Fungal (bloats) | Giant Spider |
+| 5-6 | Goblins (organizing) | Rats (Broodmother) | Fungal, Eels, Kobold Alchemists | Wolf, Salamander |
+| 7-9 | Goblins (organized) | Fungal | Rats, Eels, Kobold Alchemists | Cave Bear, Cave Troll |
+| 10-11 | Goblins (fortified) | Orcs, Fungal (spores), Kobold Marauders | Skeletons, Mimics | Dragon Whelp |
+| 12-14 | Undead (rising) | Goblin elites, Orcs | Fungal peak, Kobold Marauders | Shade, Imp |
+| 15-17 | Undead (peak) | Giants (trolls), Kobold Chieftain warbands | Fungal late | Dragon Whelp, Ogre |
+| 18-19 | Giants | Undead (wraiths, necromancers) | Fungal (Sovereign) | Drake |
+| 20-21 | Giants (Ogre Mage, Hill) | Dragons | Constructs (Sentinels) | Elder Undead |
+| 22-24 | Dragons (Drake, Wyrm, Priest) | Giants peak | Constructs | — |
+| 25 | All apex mixed | — | — | — |
+| 26 | Mixed gauntlet + **Amulet Guardian** | — | — | — |
 
 ## Stat System
 
@@ -115,6 +182,58 @@ monster has direct stats — no attribute derivation.
   direction 30% of the time instead of toward the player. High dodge makes
   them annoying to hit.
 - **Group size by floor:** 1 (floor 1), 1-2 (floor 2), 1-3 (floor 3)
+
+### Pit Bloat
+**Floors 2-6 | Environmental hazard**
+
+| HP | Damage | Hit | Dodge | Armor | Delay | Vision |
+|----|--------|-----|-------|-------|-------|--------|
+| 4 | 0 | 0 | 0 | 0 | 1.2x | 8 |
+
+- **Identity:** Erratic drifting bomb that creates permanent terrain hazards
+- **Mechanic:** Introduces **delayed environmental danger**. On melee hit, the
+  bloat explodes (killing itself), cracking floor tiles in a Manhattan radius
+  of 2. Cracked tiles collapse into chasms after ~3 turns (~33% chance per
+  turn). Chasms are permanent and impassable — entities on collapsing tiles
+  fall to the floor below (maintaining position, adjusted for walkability).
+  Does 0 damage directly; the threat is terrain destruction and forced floor
+  transitions.
+- **Behavior:** Erratic movement (60% random direction) — flits unpredictably
+  toward the player. Slow (1.2x delay). Never flees.
+- **Group size:** Always solo
+- **Counterplay:** Kill before it reaches you (only 4 HP). If it explodes,
+  move off cracked tiles within 3 turns. Use ranged attacks or staves to
+  avoid melee contact entirely.
+
+### Bloat
+**Floors 2-6 | Poison gas bomb**
+
+| HP | Damage | Hit | Dodge | Armor | Delay | Vision |
+|----|--------|-----|-------|-------|-------|--------|
+| 5 | 0 | 0 | 0 | 0 | 1.2x | 8 |
+
+- **Identity:** Swollen green pest that detonates into a poison gas cloud — on
+  contact or on death.
+- **Mechanic:** Introduces **area denial via poison gas**. Two triggers:
+  - **On melee hit (`ExplodeOnHit` with `GasCloud` effect):** when the Bloat
+    connects its zero-damage bump, it bursts immediately. Releases poison gas
+    in a Manhattan radius of 2 and self-destructs. The `GasOnDeath` ability
+    is stripped before the self-damage resolves, so the cloud spawns exactly
+    once.
+  - **On death by other means (`GasOnDeath`):** killed at range or by melee
+    counter-attack — gas releases as the Bloat dies.
+- The gas cloud persists and spreads through corridors, poisoning creatures
+  that stand in it (1 DMG/turn for 3 turns when concentration ≥ 100). Gas
+  decays over time.
+- **Behavior:** Same erratic movement as Pit Bloat (40% random). Slow (1.2x
+  delay). Deals no direct damage — the gas IS the threat, whether it reaches
+  you or you reach it.
+- **Group size:** Always solo
+- **Counterplay:** Kill at range to avoid standing in the gas. Letting it
+  touch you guarantees you're in the resulting cloud. Poison gas is
+  flammable — fire sources will ignite the cloud for AoE fire damage.
+- **Emergent interactions:** Multiple Bloats dying nearby stack gas
+  additively. Gas flows through corridors and doorways. Fire ignites the cloud.
 
 ### Wolf
 **Floors 2-5 | Pack hunter**
@@ -195,7 +314,7 @@ persistence, not individual power. Rats are hostile only to the player; they are
 neutral to all monster factions.*
 
 ### Sewer Rat
-**Floors 1-10 | Swarm vermin**
+**Floors 1-26 | Swarm vermin**
 
 | HP | Damage | Hit | Dodge | Armor | Delay | Vision |
 |----|--------|-----|-------|-------|-------|--------|
@@ -206,7 +325,7 @@ neutral to all monster factions.*
   that thin naturally, rat packs keep respawning (via Broodmother) or endlessly
   reforming from new spawns. The player must avoid sustained engagement.
 - **Group size by floor:** 1-3 (floor 1), 2-4 (floor 2), 4-6 (floors 3-5),
-  5-8 (floors 6-8), 6-9 (floors 9-10)
+  5-8 (floors 6-8), 6-9 (floors 9-26)
 - **Behavior:** FSM AI — flees when below 25% HP, otherwise aggressive. Chase
   leash of 8 tiles. When packed together, they stand and fight; when thinned
   below 50% squad morale, they scatter and flee.
@@ -215,7 +334,7 @@ neutral to all monster factions.*
   below 50%.
 
 ### Plague Rat
-**Floors 3-10 | Poisonous swarm variant**
+**Floors 3-26 | Poisonous swarm variant**
 
 | HP | Damage | Hit | Dodge | Armor | Delay | Vision |
 |----|--------|-----|-------|-------|-------|--------|
@@ -228,12 +347,12 @@ neutral to all monster factions.*
 - **Behavior:** Same FSM AI as Sewer Rat (flee at 25%, chase leash 8)
 - **Spawn patterns:**
   - Mixed into Sewer Rat packs: floors 3-5 include 1 plague rat per group;
-    floors 6-10 include 1-2 plague rats per group
-  - Pure groups: 2-4 Plague Rats (independent spawn entry, floors 3-10)
+    floors 6-26 include 1-2 plague rats per group
+  - Pure groups: 2-4 Plague Rats (independent spawn entry, floors 3-26)
 - **Squad behavior:** Same leaderless pack rules as Sewer Rat
 
 ### Rat Broodmother
-**Floors 5-10 | Summoning matriarch**
+**Floors 5-26 | Summoning matriarch**
 
 | HP | Damage | Hit | Dodge | Armor | Delay | Vision |
 |----|--------|-----|-------|-------|-------|--------|
@@ -299,7 +418,7 @@ the dungeon's escalating complexity.*
 | Depth | Goblin State | What Changes |
 |-------|-------------|--------------|
 | 1-3 | **Disorganized** | Small groups, no leaders, flee easily |
-| 4-5 | **Organizing** | Shamans appear. Archers provide ranged support. Brutes tank. |
+| 4-5 | **Organizing** | Shamans appear. Conjurers summon spectral blades. Brutes tank. |
 | 6-7 | **Organized** | Warchief-led squads with aura buffs. Firebombers add AoE. |
 | 8-9 | **Fortified** | Goblin camps and forts via machine system. Structured encounters. |
 
@@ -315,17 +434,31 @@ the dungeon's escalating complexity.*
 - **Group size:** 1-3
 - **Behavior:** Cowardly; flees at 30% HP
 
-### Goblin Archer
-**Floors 2-6 | Ranged support**
+### Goblin Conjurer
+**Floors 2-6 | Summoner support**
 
 | HP | Damage | Hit | Dodge | Armor | Delay | Vision |
 |----|--------|-----|-------|-------|-------|--------|
-| 5 | 1d6 | 1 | 1 | 0 | 1.0x | 10 |
+| 8 | 1d4 | 0 | 1 | 0 | 1.0x | 10 |
 
-- **Identity:** Fragile ranged threat that forces the player to close distance
-- **Mechanic:** Introduces **ranged combat**. Range 8 tiles. Keeps distance.
-- **Behavior:** Kites; retreats from melee range (within 3 tiles)
-- **Group size:** 1-2
+- **Identity:** Fragile caster that floods the field with spectral blades
+- **Mechanic:** Introduces **summoner enemies**. Summons up to 4 Spectral Blades.
+  Killing the conjurer kills all active blades. Teaches "kill the summoner" priority.
+- **Ability — Conjure Blades:** Summons 1 Spectral Blade adjacent. Max 4 active.
+  Cooldown: 3 turns.
+- **Behavior:** Cowardly + Support; stays in the back, summons blades
+- **Group size:** 1 (solo, but creates its own army)
+
+#### Spectral Blade (summoned)
+
+| HP | Damage | Hit | Dodge | Armor | Delay | Vision |
+|----|--------|-----|-------|-------|-------|--------|
+| 1 | 1d6+1 | 0 | 0 | 0 | 0.9x | 12 |
+
+- **Identity:** Glass-cannon summon. Fast, deadly, but dies to any hit.
+- **Behavior:** Aggressive FSM. Never flees. Pathfinds to nearest enemy.
+- **Dies when:** Hit by anything (1 HP) OR conjurer is killed.
+- **No loot.** Not spawned directly — only created by Goblin Conjurer.
 
 ### Goblin Brute
 **Floors 3-7 | Armored tank**
@@ -452,7 +585,7 @@ and run.*
 
 | HP | Damage | Hit | Dodge | Armor | Delay | Vision |
 |----|--------|-----|-------|-------|-------|--------|
-| 8 | 1d4 | 0 | 1 | 0 | 0.8x | 8 |
+| 7 | 1d4 | 0 | 1 | 0 | 0.8x | 8 |
 
 - **Identity:** Steals items from chests and hoards them — killing drops stolen loot
 - **Mechanic:** Introduces **item-stealing enemies** and **intelligent cowardice**.
@@ -461,6 +594,52 @@ and run.*
   and steals items from them. Killing a Kobold Hoarder drops all stolen loot.
 - **AI:** GOAP-driven. Goals: acquire items > flee from danger > fight (last resort)
 - **Group size:** 1-2
+
+### Kobold Alchemist
+**Floors 6-11 | Kiting poisoner**
+
+| HP | Damage | Hit | Dodge | Armor | Delay | Vision |
+|----|--------|-----|-------|-------|-------|--------|
+| 12 | 1d4 poison | 0 | 1 | 0 | 0.9x | 10 |
+
+- **Identity:** Fills the faction's mid-floor gap. Keeps distance and
+  throws poison flasks, teaching "not all kobolds flee — some harass."
+- **Mechanic:** Ranged poison (range 5), kites at distance 3, flees at 50% HP.
+  `PoisonStrike` on successful hit applies 2/turn for 3 turns.
+- **Behavior:** FSM kiter. Flees → kites → bolts → fights only cornered.
+- **Group size:** 1-2
+- **Loot:** 25% Antidote (thematic flavor: alchemist)
+
+### Kobold Marauder
+**Floors 10-14 | Pack aggressor**
+
+| HP | Damage | Hit | Dodge | Armor | Delay | Vision |
+|----|--------|-----|-------|-------|-------|--------|
+| 18 | 1d6 | 0 | 0 | 2 | 0.9x | 10 |
+
+- **Identity:** The faction's shift from cowards to fighters. Emboldened
+  by numbers, armored, willing to brawl.
+- **Mechanic:** `PackTactics` — +50% damage when a faction ally is adjacent
+  to the target. Teaches "flank the flanker."
+- **Behavior:** Aggressive + Intelligent GOAP, morale 0.65.
+- **Group size:** 1-2
+
+### Kobold Chieftain
+**Floors 15-22 | Warband commander**
+
+| HP | Damage | Hit | Dodge | Armor | Delay | Vision |
+|----|--------|-----|-------|-------|-------|--------|
+| 35 | 1d6+1 | 0 | 0 | 2 | 0.9x | 10 |
+
+- **Identity:** Late-game faction apex. Gives the Goblin↔Kobold hostility
+  climactic stakes when their warband meets a Goblin warchief group.
+- **Mechanic:** `PackTactics` + `WarCry(radius: 3, duration: 5)` — a 3-tile
+  aura at first sighting that damage-boosts every Kobold ally for 5 turns.
+  Priority target.
+- **Behavior:** Aggressive + Intelligent + Commander, morale 0.8.
+- **Loot:** 30% Sword, 30% Healing Potion, 10% Scroll of Enchanting.
+- **Group size:** 1 (solo), or as leader of a warband (Chieftain + 2-3
+  Marauders + optional Alchemist).
 
 ---
 
@@ -542,7 +721,7 @@ more dangerous than their life.*
 - **Behavior:** Slow, doesn't chase far (gives up after 10 tiles)
 
 ### Stone Sentinel
-**Floors 2-10 | Ancient guardian**
+**Floors 2-26 | Ancient guardian**
 
 | HP | Damage | Hit | Dodge | Armor | Delay | Vision |
 |----|--------|-----|-------|-------|-------|--------|
@@ -576,22 +755,8 @@ more dangerous than their life.*
   - **Fire damage prevents splitting** (the jelly dies without reproducing)
 - **Group size:** 1 (solo)
 
-### Bloat
-**Floors 1-5 | Walking bomb**
-
-| HP | Damage | Hit | Dodge | Armor | Delay | Vision |
-|----|--------|-----|-------|-------|-------|--------|
-| 1 | — | 0 | 0 | 0 | 1.2x | 8 |
-
-- **Identity:** A swollen fungal creature that explodes on contact or death
-- **Mechanic:** Introduces **explosive enemies** and **positional awareness**.
-- **On death (any cause):** Explodes — 3d6 fire damage, 3x3 AoE centered on
-  the bloat, friendly fire to all entities. Chain-reacts with nearby bloats.
-- **Group size:** 1 (solo, always)
-- **Behavior:** Mindless approach; no flee, no kiting
-
 ### Arrow Turret
-**Floors 3-10 | Stationary corridor hazard**
+**Floors 3-26 | Stationary corridor hazard**
 
 | HP | Damage | Hit | Dodge | Armor | Delay | Vision |
 |----|--------|-----|-------|-------|-------|--------|
@@ -635,7 +800,7 @@ more dangerous than their life.*
 - **Group size:** 1-2
 
 ### Ogre
-**Floors 6-10 | Devastating brute**
+**Floors 6-26 | Devastating brute**
 
 | HP | Damage | Hit | Dodge | Armor | Delay | Vision |
 |----|--------|-----|-------|-------|-------|--------|
@@ -649,7 +814,7 @@ more dangerous than their life.*
 - **Behavior:** Slow, short vision. Doesn't chase far but hits incredibly hard.
 
 ### Mimic
-**Floors 3-10 | Disguised ambusher**
+**Floors 3-26 | Disguised ambusher**
 
 | HP | Damage | Hit | Dodge | Armor | Delay | Vision |
 |----|--------|-----|-------|-------|-------|--------|
@@ -714,7 +879,7 @@ recruit dynamically.
 | Monster | Default Role | Reassigned When |
 |---------|-------------|-----------------|
 | Goblin | Guard | Scout (if unalerted goblins nearby), Flanker (if morale > 0.6) |
-| Goblin Archer | Skirmisher | — |
+| Goblin Conjurer | Support | — |
 | Goblin Brute | Bodyguard | Guard (if no warchief) |
 | Goblin Shaman | Support | — |
 | Goblin Warchief | Commander | — |
@@ -779,9 +944,9 @@ Goblins become more dangerous not just through stronger stat blocks, but through
 
 | Floor Range | Encounter Type | Description |
 |-------------|---------------|-------------|
-| 1-3 | Goblin Scuffle | Small room with 2-3 goblins and maybe an archer |
+| 1-3 | Goblin Scuffle | Small room with 2-3 goblins and maybe a conjurer |
 | 4-5 | Goblin Camp | Open room with goblins, a shaman, a totem, and a chest |
-| 6-7 | Goblin Outpost | Walled room with archers, brutes at the entrance, shaman in the back |
+| 6-7 | Goblin Outpost | Walled room with conjurers, brutes at the entrance, shaman in the back |
 | 8-9 | Goblin Fort | Multi-room encounter with firebombers, a warchief, and high-value loot |
 
 ## Design Notes
@@ -792,3 +957,48 @@ Goblins become more dangerous not just through stronger stat blocks, but through
   away, then fighting one on floor 6 with better gear, is a satisfying power arc.
 - **All abilities are cooldown-based.** No mana pools for monsters. This keeps
   monster design simple and predictable for the player to learn.
+
+---
+
+## New Monsters — T3-T6 Additions
+
+Monsters added during the 26-floor distribution pass. All follow the standard
+stat-block format; each includes species tag, faction (if any), floor range,
+and role.
+
+### Tier 1-2 Animals (design-backfill)
+
+**Giant Rat** — T1, f1-4, Beast — Trivial alone, dangerous in packs. HP 5, 1d3 damage, 0.9× delay. Teaches group encounters.
+
+**Giant Bat** — T1, f1-3, Beast — Erratic flyer (30% random direction), dodge 2. HP 4, 1d3, 0.8× delay. Teaches unpredictable movement.
+
+**Wolf** — T2, f4-7, Beast, PackTactics — Wide vision (12), pack coordination. HP 10, 1d6, 0.9× delay.
+
+**Cave Bear** — T2, f7-10, Beast — Slow but devastating. HP 25, armor 2, 2d6, 1.15× delay. Teaches kiting.
+
+### Tier 3 Gap-Fillers (f10-14)
+
+**Kobold Marauder** — T3, f10-14, Humanoid, Kobold faction — The kobolds who *didn't* flee. Armored + PackTactics. HP 18, armor 2, 1d6. Aggressive GOAP traits. Reintroduces Kobolds at depth as genuine threats, not loot-runners.
+
+**Goblin Sapper** — T3, f11-14, Humanoid, Goblin faction — Kiting ranged trap-layer. HP 12, dodge 1, 1d4, kites at range 3-5. On death: `ExplodeOnDeath(damage: 8, radius: 2)`. Players who melee-chase get caught in the blast radius.
+
+### Tier 4 Gap-Fillers (f15-19)
+
+**Black Mold** — T4, f15-19, Fungal, Fungal faction, **stationary** — Wall growth. HP 8, 1d4 poison, `PoisonStrike(duration: 4)` on adjacent hits, `ExplodeOnHit(GasCloud, volume: 400)`. Environmental threat; standing adjacent is punished, attacking it releases poison gas.
+
+**Lich Acolyte** — T4, f15-18, Undead, Undead faction — Bridges Skeleton/Zombie tier to Necromancer. HP 22, armor 1, 1d6 poison, 50% phys/poison resist, `Bolt(2d6 Poison, range 6, cooldown 3)`. First sustained Undead caster below f15.
+
+### Tier 5 Gap-Filler (f21-25)
+
+**Bone Colossus** — T5, f21-25, Undead, Undead faction — Undead apex (Necromancer alone was undertuned for this tier). HP 55, armor 4, 2d8+2, 60% phys / 100% poison resist, `RoughBody(2)` + `Rally(armor +2)` auras. Giant-sized — marches with lesser Undead escort.
+
+### Tier 6 — The Amulet Guardian (f26 only)
+
+**Amulet Guardian** — T6, f26, Construct, factionless — The last fight before grabbing the Amulet. HP 100, armor 6, 3d6+3, 75% fire / 100% poison / 25% phys resist. Abilities: `RoughBody(3)`, `Terrify(radius: 5)`, `SummonOnDeath(Stone Sentinel)`, self-buff `Strengthened` cooldown 10. Aggressive Commander GOAP. Escorted by 1-2 Stone Sentinels per the amulet_chamber horde.
+
+**Identity:** a towering gold warden with adamant mandate — kill it and it summons one Stone Sentinel from the rubble, forcing the player to commit to a second fight before reclaiming the Amulet. Terrify aura means players without fear resistance will be routed toward the walls.
+
+## Open Design Questions
+
+- **Ascent spawn rules** (GAME.md §Ascending). Floors are snapshotted on descent. Do deeper-tier monsters "climb up" during the ascent, creating a mixed difficulty on the way back? Current implementation: snapshotted-as-left.
+- **Stat-rebalance pass.** Several re-enabled monsters were tuned for a 10-floor game (e.g., Necromancer HP 28 originally f8-10, now f17-21). A balance pass may be needed to lift HP/damage for monsters relocated to higher floors.

@@ -18,6 +18,14 @@ pub struct AsciiGlyphColor(pub Color);
 #[derive(Component)]
 pub struct AsciiGlyph;
 
+/// Stores the ASCII character and color for an entity, used by the cell renderer
+/// to display entities on tile glyphs. Added directly to the entity (not a child).
+#[derive(Component, Clone)]
+pub struct AsciiDisplay {
+    pub ch: String,
+    pub color: Color,
+}
+
 /// Monospace font handle for ASCII glyphs.
 #[derive(Resource)]
 pub struct AsciiFont(pub Handle<Font>);
@@ -49,12 +57,10 @@ fn init_new_ascii_glyphs(
     mut new_glyphs: Query<(&mut Visibility, &ChildOf), (Added<AsciiGlyph>, Without<AsciiBackground>)>,
     mut new_bgs: Query<&mut Visibility, (Added<AsciiBackground>, Without<AsciiGlyph>)>,
     tile_markers: Query<(), With<TileMarker>>,
-    player_query: Query<(), With<crate::player::Player>>,
 ) {
     for (mut vis, child_of) in new_glyphs.iter_mut() {
         let is_tile_glyph = tile_markers.get(child_of.0).is_ok();
-        let is_player_glyph = player_query.get(child_of.0).is_ok();
-        *vis = if is_tile_glyph || is_player_glyph {
+        *vis = if is_tile_glyph {
             Visibility::Inherited
         } else {
             Visibility::Hidden

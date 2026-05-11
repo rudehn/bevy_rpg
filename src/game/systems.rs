@@ -21,21 +21,10 @@ use crate::{
 #[derive(Resource, Default)]
 pub struct Omniscient(pub bool);
 
-pub fn fov_update_system(mut query: Query<(&mut Viewshed, Ref<Position>)>, map: Res<Map>) {
-    // We check if the map itself has changed (e.g. new level loaded) because
-    // viewsheds calculated on the old map will be invalid even if the entity
-    // hasn't moved yet.
-    let map_changed = map.is_changed();
-    for (mut viewshed, position) in query.iter_mut() {
-        if viewshed.dirty || map_changed || viewshed.is_changed() || position.is_changed() {
-            viewshed.visible_tiles =
-                field_of_view(Point::new(position.x, position.y), viewshed.range, &*map)
-                    .into_iter()
-                    .collect();
-            viewshed.dirty = false;
-        }
-    }
-}
+// fov_update_system is now provided by the engine's FovPlugin.
+// Re-export so existing call sites (`crate::game::systems::fov_update_system`)
+// continue to compile.
+pub use roguelike_engine::components::fov_update_system;
 
 pub fn update_monster_visibility(
     player_query: Query<&Viewshed, With<Player>>,
@@ -134,5 +123,186 @@ pub fn sync_entity_transforms(mut query: Query<(&mut Transform, &Position), Chan
         // We keep the existing Z-axis to maintain layering (Player on top of Items)
         transform.translation.x = x;
         transform.translation.y = y;
+    }
+}
+
+/// Mark a viewshed dirty whenever its entity's `Position` changes, so the
+/// engine's FOV system recomputes visibility on the same frame the move
+/// resolves. Without this, only the player's first-turn FOV (set dirty by
+/// `Viewshed::new`) would compute correctly; subsequent moves would only
+/// update when an unrelated system happened to flip the dirty flag (door
+/// opens, tile mutations, equipping a vision-bonus item) — producing the
+/// "FOV randomly updates after several turns" symptom.
+///
+/// Catches every position-mutation path automatically: player movement,
+/// monster AI, blink staff, knockback, chasm landing, etc.
+pub fn mark_moved_viewsheds_dirty(
+    mut query: Query<&mut Viewshed, Changed<Position>>,
+) {
+    for mut viewshed in query.iter_mut() {
+        viewshed.dirty = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::prelude::*;
+
+    #[test]
+    fn changed_position_marks_viewshed_dirty() {
+        // The bug repro: a clean viewshed must flip dirty when its entity's
+        // position is mutated, so the engine FOV system will recompute it.
+        let mut app = App::new();
+        app.add_systems(Update, mark_moved_viewsheds_dirty);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position { x: 5, y: 5 },
+                Viewshed { range: 8, dirty: false, ..Default::default() },
+            ))
+            .id();
+
+        // First frame after spawn: Bevy treats every initial component write
+        // as Changed, so the watcher fires once and the viewshed becomes dirty.
+        app.update();
+        assert!(app.world().get::<Viewshed>(entity).unwrap().dirty);
+
+        // Reset and confirm a true mutation also flips it.
+        app.world_mut().get_mut::<Viewshed>(entity).unwrap().dirty = false;
+        let mut pos = app.world_mut().get_mut::<Position>(entity).unwrap();
+        pos.x = 6;
+        drop(pos);
+        app.update();
+        assert!(
+            app.world().get::<Viewshed>(entity).unwrap().dirty,
+            "viewshed must be marked dirty after Position mutation"
+        );
+    }
+
+    #[test]
+    fn unchanged_position_does_not_mark_dirty() {
+        // Idle frames must not gratuitously dirty viewsheds — that would
+        // make the engine recompute FOV every tick for every entity.
+        let mut app = App::new();
+        app.add_systems(Update, mark_moved_viewsheds_dirty);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position { x: 5, y: 5 },
+                Viewshed { range: 8, dirty: false, ..Default::default() },
+            ))
+            .id();
+
+        // Burn the first frame (initial-spawn Changed signal flips dirty).
+        app.update();
+        app.world_mut().get_mut::<Viewshed>(entity).unwrap().dirty = false;
+
+        // Now a frame with no position writes — dirty must stay false.
+        app.update();
+        assert!(
+            !app.world().get::<Viewshed>(entity).unwrap().dirty,
+            "viewshed must NOT be re-dirtied when position is unchanged"
+        );
+    }
+
+    #[test]
+    fn fov_updates_on_consecutive_moves() {
+        // End-to-end smoke test: with the engine FOV system + the watcher
+        // both registered, two back-to-back moves both produce fresh
+        // visible_tiles (i.e. neither move "skips" recomputation).
+        use roguelike_engine::components::FovSet;
+        use roguelike_engine::components::fov_update_system;
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_systems(
+            Update,
+            (
+                mark_moved_viewsheds_dirty.before(FovSet),
+                fov_update_system.in_set(FovSet),
+            ),
+        );
+
+        // Open 20x20 floor.
+        use crate::map::tile::{Decoration, LiquidType, TerrainType, Tile};
+        let w: i32 = 20;
+        let h: i32 = 20;
+        let mut tiles = vec![
+            Tile {
+                terrain: TerrainType::Floor,
+                liquid: LiquidType::None,
+                decoration: Decoration::None,
+            };
+            (w * h) as usize
+        ];
+        // Walls on the border so FOV has something to bound against.
+        for x in 0..w {
+            tiles[(0 * w + x) as usize].terrain = TerrainType::Wall;
+            tiles[((h - 1) * w + x) as usize].terrain = TerrainType::Wall;
+        }
+        for y in 0..h {
+            tiles[(y * w) as usize].terrain = TerrainType::Wall;
+            tiles[(y * w + (w - 1)) as usize].terrain = TerrainType::Wall;
+        }
+        app.insert_resource(Map {
+            name: "fov_test".into(),
+            tiles,
+            explored_tiles: vec![false; (w * h) as usize],
+            blocked: vec![false; (w * h) as usize],
+            width: w,
+            height: h,
+            depth: 1,
+        });
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                Position { x: 10, y: 10 },
+                Viewshed::new(6),
+            ))
+            .id();
+
+        // First frame: initial FOV computes around (10, 10).
+        app.update();
+        let visible_a: std::collections::HashSet<Point> = app
+            .world()
+            .get::<Viewshed>(entity)
+            .unwrap()
+            .visible_tiles
+            .clone();
+        assert!(visible_a.contains(&Point::new(10, 10)));
+
+        // Move and run another frame.
+        app.world_mut().get_mut::<Position>(entity).unwrap().x = 12;
+        app.update();
+        let visible_b: std::collections::HashSet<Point> = app
+            .world()
+            .get::<Viewshed>(entity)
+            .unwrap()
+            .visible_tiles
+            .clone();
+        assert!(visible_b.contains(&Point::new(12, 10)));
+        assert_ne!(
+            visible_a, visible_b,
+            "consecutive moves must produce different visible_tiles sets"
+        );
+
+        // Move again — this is the case that was failing before the fix.
+        app.world_mut().get_mut::<Position>(entity).unwrap().x = 14;
+        app.update();
+        let visible_c: std::collections::HashSet<Point> = app
+            .world()
+            .get::<Viewshed>(entity)
+            .unwrap()
+            .visible_tiles
+            .clone();
+        assert!(visible_c.contains(&Point::new(14, 10)));
+        assert_ne!(
+            visible_b, visible_c,
+            "third consecutive move must also recompute FOV"
+        );
     }
 }

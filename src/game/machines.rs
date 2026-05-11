@@ -10,7 +10,6 @@ use crate::components::{Name, Position};
 use crate::constants::BASE_ACTION_COST;
 use crate::game::actions::{finish_turn, ActionFinishedEvent, ActionKind};
 use crate::game::combat::Health;
-use crate::game::turns::ProcessingPhase;
 use crate::game::{AppState, TurnManager};
 use crate::map::map::Map;
 use crate::map::tile::TileMutationMessage;
@@ -389,11 +388,15 @@ pub struct MachinesPlugin;
 
 impl Plugin for MachinesPlugin {
     fn build(&self, app: &mut App) {
+        use crate::game::turns::ProcessingPhase;
         app.add_message::<MachineBumpMessage>()
             .add_systems(
                 Update,
+                handle_machine_bump.in_set(ProcessingPhase::ResolveActions),
+            )
+            .add_systems(
+                Update,
                 (
-                    handle_machine_bump.in_set(ProcessingPhase::ResolveActions),
                     machine_step_system,
                     process_pending_machine_item,
                     process_pending_machine_monsters,

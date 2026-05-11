@@ -11,11 +11,13 @@ use bevy::diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin};
 use bevy::prelude::*;
 
 use crate::assets::LoadingPlugin;
+use crate::character::CharacterPlugin;
 use crate::game::{AppState, GamePlugin};
 use crate::save::SavePlugin;
 use crate::ui::UiPlugin;
 
 mod assets;
+mod character;
 mod components;
 mod constants;
 mod game;
@@ -33,7 +35,7 @@ fn main() {
                     meta_check: AssetMetaCheck::Never,
                     ..default()
                 }),
-            (LoadingPlugin, SavePlugin, GamePlugin, UiPlugin),
+            (LoadingPlugin, SavePlugin, GamePlugin, UiPlugin, CharacterPlugin),
             FrameTimeDiagnosticsPlugin::default(),
         ))
         .init_state::<AppState>()

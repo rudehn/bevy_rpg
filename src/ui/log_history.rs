@@ -122,7 +122,7 @@ fn spawn_log_history_ui(mut commands: Commands, asset_server: Res<AssetServer>) 
                 padding: UiRect::all(Val::Px(20.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.93)),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, crate::ui::modal::MODAL_OVERLAY_OPACITY)),
             ZIndex(200),
             OnLogHistoryScreen,
         ))

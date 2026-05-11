@@ -120,11 +120,11 @@ pub fn move_camera(
             return;
         };
 
-        if keyboard_input.pressed(KeyCode::KeyZ) {
+        if keyboard_input.pressed(KeyCode::Minus) {
             ortho.scale += 0.1;
         }
 
-        if keyboard_input.pressed(KeyCode::KeyX) {
+        if keyboard_input.pressed(KeyCode::Equal) {
             ortho.scale -= 0.1;
         }
 

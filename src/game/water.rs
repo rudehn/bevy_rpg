@@ -6,7 +6,7 @@ use crate::{
     components::{Drifting, FloorEntityMarker, InInventory, Inventory, Name, Position},
     game::{
         combat::GameRng,
-        magic::{StatusEffectKind, StatusEffects},
+        magic::{GameStatusEffectsExt, StatusEffectKind, StatusEffects},
         turns::TurnEndEvent,
         AppState,
     },
@@ -175,9 +175,9 @@ fn water_extinguish_system(
             if liquid != LiquidType::Water && liquid != LiquidType::ShallowWater {
                 continue;
             }
-            let had_burning = effects.0.iter().any(|e| matches!(e.kind, StatusEffectKind::Burning { .. }));
+            let had_burning = effects.effects.iter().any(|e| matches!(e.kind, StatusEffectKind::Burning));
             if had_burning {
-                effects.remove_kind(|k| matches!(k, StatusEffectKind::Burning { .. }));
+                effects.remove_kind(|k| matches!(k, StatusEffectKind::Burning));
                 log_writer.write(GameLogMessage("The water extinguishes the flames!".to_string()));
                 // Burning creature extinguished by water → steam burst
                 crate::game::gas::spawn_gas(

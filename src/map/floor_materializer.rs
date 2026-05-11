@@ -143,7 +143,7 @@ pub struct FloorResult {
 /// Returns `target` if walkable, otherwise BFS outward to find the nearest
 /// walkable tile. Stair tiles are allowed — `StairCooldown` prevents
 /// `player_stair_system` from re-triggering after a floor transition.
-fn nearest_walkable(map: &Map, target: Point) -> Point {
+pub fn nearest_walkable(map: &Map, target: Point) -> Point {
     // Fast path: target itself is fine.
     if let Some(tile) = map.get_tile(target)
         && is_walkable(tile) {
@@ -174,6 +174,48 @@ fn nearest_walkable(map: &Map, target: Point) -> Point {
     // Absolute last resort — should never happen on a valid map.
     warn!("nearest_walkable: no walkable tile found anywhere on map!");
     target
+}
+
+/// Like [`nearest_walkable`] but skips tiles whose `(x, y)` is in `occupied`.
+/// Used to scatter a group of fallen entities so they don't all stack on the
+/// same tile. Falls back to [`nearest_walkable`] (ignoring occupancy) if no
+/// free tile is reachable — better to overlap than to lose the entity.
+pub fn nearest_walkable_avoiding(
+    map: &Map,
+    target: Point,
+    occupied: &std::collections::HashSet<(i32, i32)>,
+) -> Point {
+    // Fast path: target itself is free.
+    if let Some(tile) = map.get_tile(target)
+        && is_walkable(tile)
+        && !occupied.contains(&(target.x, target.y))
+    {
+        return target;
+    }
+    let total = (map.width * map.height) as usize;
+    let mut visited = vec![false; total];
+    let mut queue = std::collections::VecDeque::new();
+    let start_idx = map.xy_idx(target.x, target.y);
+    visited[start_idx] = true;
+    queue.push_back(start_idx);
+    while let Some(idx) = queue.pop_front() {
+        let (x, y) = map.idx_xy(idx);
+        for (dx, dy) in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
+            let nx = x + dx;
+            let ny = y + dy;
+            if nx < 0 || ny < 0 || nx >= map.width || ny >= map.height { continue; }
+            let nidx = map.xy_idx(nx, ny);
+            if visited[nidx] { continue; }
+            visited[nidx] = true;
+            if is_walkable(map.tiles[nidx]) && !occupied.contains(&(nx, ny)) {
+                return Point::new(nx, ny);
+            }
+            queue.push_back(nidx);
+        }
+    }
+    // No free walkable tile found — fall back to the plain nearest-walkable
+    // so the entity still spawns somewhere (at worst, stacked on another).
+    nearest_walkable(map, target)
 }
 
 pub(crate) fn spawn_tiles_into_ecs(
@@ -606,5 +648,76 @@ pub fn materialize_floor(
         map: plan.map,
         pending_player_load: plan.pending_player_load,
         warnings,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map::tile::{Decoration, LiquidType, Tile, TerrainType};
+    use std::collections::HashSet;
+
+    fn open_map(w: i32, h: i32) -> Map {
+        let mut map = Map::new(1, w, h, "test");
+        for t in map.tiles.iter_mut() {
+            *t = Tile {
+                terrain: TerrainType::Floor,
+                liquid: LiquidType::None,
+                decoration: Decoration::None,
+            };
+        }
+        map
+    }
+
+    #[test]
+    fn nearest_walkable_avoiding_returns_target_when_free() {
+        let map = open_map(10, 10);
+        let occupied = HashSet::new();
+        let got = nearest_walkable_avoiding(&map, Point::new(5, 5), &occupied);
+        assert_eq!((got.x, got.y), (5, 5));
+    }
+
+    #[test]
+    fn nearest_walkable_avoiding_skips_occupied() {
+        // (5, 5) is walkable but marked occupied — BFS picks a neighbor.
+        let map = open_map(10, 10);
+        let mut occupied = HashSet::new();
+        occupied.insert((5, 5));
+        let got = nearest_walkable_avoiding(&map, Point::new(5, 5), &occupied);
+        assert_ne!((got.x, got.y), (5, 5));
+        // And the neighbor is adjacent (Manhattan distance 1).
+        assert_eq!((got.x - 5).abs() + (got.y - 5).abs(), 1);
+    }
+
+    #[test]
+    fn nearest_walkable_avoiding_scatters_cluster() {
+        // Four entities all drop at (5, 5). They should land on four
+        // *distinct* tiles in the general area, not stack.
+        let map = open_map(10, 10);
+        let mut occupied = HashSet::new();
+        let mut placements = Vec::new();
+        for _ in 0..4 {
+            let p = nearest_walkable_avoiding(&map, Point::new(5, 5), &occupied);
+            occupied.insert((p.x, p.y));
+            placements.push((p.x, p.y));
+        }
+        let unique: HashSet<_> = placements.iter().copied().collect();
+        assert_eq!(unique.len(), 4, "expected 4 distinct tiles, got {placements:?}");
+        // Every placement sits within Manhattan distance 2 of (5, 5).
+        for (x, y) in &placements {
+            assert!((x - 5).abs() + (y - 5).abs() <= 2,
+                "placement ({x},{y}) too far from drop point");
+        }
+    }
+
+    #[test]
+    fn nearest_walkable_avoiding_falls_back_when_map_is_full() {
+        // A 1×1 open map: sole walkable tile is marked occupied. The fallback
+        // path returns that tile anyway rather than looping or panicking.
+        let map = open_map(1, 1);
+        let mut occupied = HashSet::new();
+        occupied.insert((0, 0));
+        let got = nearest_walkable_avoiding(&map, Point::new(0, 0), &occupied);
+        assert_eq!((got.x, got.y), (0, 0));
     }
 }

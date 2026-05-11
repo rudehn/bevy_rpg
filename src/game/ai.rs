@@ -1,18 +1,20 @@
 use crate::{
     components::{Faction, FactionKind, MovementMode, Position, Viewshed},
     game::factions::FactionMatrix,
+    game::magic::GameStatusEffectsExt,
     game::{
         actions::{Direction, MovementIntent, RangedAttackIntent, WaitIntent},
-        combat::{ApplyDamageMessage, DamageSource, Health, HealMessage},
+        combat::{DamageEvent, DamageSource, Health, HealEvent},
         magic::StatusEffects,
         ranged::RangedCapable,
         staves::{MonsterAbilities, MonsterAbilityKind},
     },
-    map::{Map, map::MapWithMode, tile::can_entity_enter_tile},
+    map::{Map, tile::can_entity_enter_tile},
     player::Player,
 };
 use bevy::prelude::*;
-use bracket_lib::prelude::{Algorithm2D, DistanceAlg, Point, a_star_search};
+use bracket_lib::prelude::{DistanceAlg, Point};
+use roguelike_engine::ai::pathfinding::next_step_toward_with_mode;
 use rand::rng;
 use rand::seq::SliceRandom;
 
@@ -28,108 +30,25 @@ pub trait ActorAI: Send + Sync {
     fn execute(&mut self, entity: Entity, world: &mut World);
 }
 
-/// Patrol behavior attached to monsters at spawn time.
-/// Absence of this component means the monster wanders freely.
-/// Coordinates stored as `(i32, i32)` for serde compatibility (bracket-lib Point
-/// doesn't derive Serialize/Deserialize in this fork).
-#[derive(Component, Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct PatrolRoute {
-    pub state: PatrolState,
-}
+// `PatrolRoute` and `PatrolState` now live in the engine crate. Re-exported
+// here so existing imports like `use crate::game::ai::{PatrolRoute, PatrolState}`
+// (save/mod.rs, floor_materializer.rs) and same-module references in this
+// file keep working unchanged.
+pub use roguelike_engine::components::{PatrolRoute, PatrolState};
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum PatrolState {
-    /// Hold position, jitter within GUARD_PATROL_RADIUS of home.
-    Sentry { home: (i32, i32) },
-    /// Walk waypoints in order, loop continuously.
-    Waypoint { points: Vec<(i32, i32)>, current_index: usize },
-    /// Random walk constrained to a bounding rectangle.
-    AreaRoam { min: (i32, i32), max: (i32, i32) },
-}
+// `MonsterAI`, `MonsterAIMode`, and `GUARD_PATROL_RADIUS` now live in
+// the engine crate. Re-exported so existing imports like
+// `use crate::game::ai::MonsterAI` continue to resolve.
+pub use roguelike_engine::ai::{MonsterAI, MonsterAIMode, GUARD_PATROL_RADIUS};
 
-impl PatrolState {
-    pub fn sentry(home: Point) -> Self {
-        PatrolState::Sentry { home: (home.x, home.y) }
-    }
-    pub fn waypoint(points: &[Point]) -> Self {
-        PatrolState::Waypoint {
-            points: points.iter().map(|p| (p.x, p.y)).collect(),
-            current_index: 0,
-        }
-    }
-    pub fn area_roam(min: Point, max: Point) -> Self {
-        PatrolState::AreaRoam { min: (min.x, min.y), max: (max.x, max.y) }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
-enum MonsterAIMode {
-    #[default]
-    Asleep,
-    Hunting,
-    Idle,
-}
-
-pub const GUARD_PATROL_RADIUS: i32 = 3;
-
-#[derive(Default, Component)]
-pub struct MonsterAI {
-    mode: MonsterAIMode,
-    last_known_player_position: Option<Point>,
-
-    /// Behavior flags (copied from asset at spawn time)
-    pub flee_at_hp_percent: f32,
-    pub erratic_chance: f32,
-    pub chase_leash: u32,
-    pub kites: bool,
-    pub kite_distance: u32,
-
-    /// If true, the monster never moves — it only uses abilities/ranged attacks.
-    pub stationary: bool,
-
-    /// Runtime chase tracking
-    pub chase_distance: u32,
-    pub spawn_position: Option<Point>,
-}
-
-impl MonsterAI {
-    /// Wake this monster and point it at a target. Transitions from
-    /// Asleep or Idle → Hunting; has no effect if already hunting.
-    pub fn alert_to_position(&mut self, target: Point) {
-        if self.mode == MonsterAIMode::Asleep || self.mode == MonsterAIMode::Idle {
-            self.mode = MonsterAIMode::Hunting;
-            self.last_known_player_position = Some(target);
-        }
-    }
-
-    /// Force this monster into Idle mode, clearing its target.
-    /// Used for squad scatter on leader death.
-    pub fn scatter(&mut self) {
-        self.mode = MonsterAIMode::Idle;
-        self.last_known_player_position = None;
-    }
-
-    /// Returns true if this monster is not asleep (i.e., hunting, wandering, or guarding).
-    #[allow(dead_code)]
-    pub fn is_alert(&self) -> bool {
-        self.mode != MonsterAIMode::Asleep
-    }
-
-    /// Returns true if this monster is still asleep (hasn't seen the player).
-    pub fn is_asleep(&self) -> bool {
-        self.mode == MonsterAIMode::Asleep
-    }
-
-    /// Returns a human-readable label for the current AI state.
-    pub fn display_state(&self) -> &'static str {
-        match self.mode {
-            MonsterAIMode::Asleep => "Sleeping",
-            MonsterAIMode::Hunting => "Hunting",
-            MonsterAIMode::Idle => "Wandering",
-        }
-    }
-
-    pub fn execute(&mut self, entity: Entity, world: &mut World) {
+/// Execute one turn for a monster AI.
+///
+/// This is the game-crate side of the AI loop. Previously it was
+/// `MonsterAI::execute(&mut self, entity, world)`, but Rust does not
+/// allow inherent methods on a type to be split across crates — the
+/// struct now lives in `roguelike_engine::ai`, so `execute` is a free
+/// function here and call sites are `execute_monster_ai(&mut ai, ...)`.
+pub fn execute_monster_ai(monster_ai: &mut MonsterAI, entity: Entity, world: &mut World) {
         // Stunned entities skip their turn entirely.
         if try_stun_skip(entity, world) {
             return;
@@ -142,7 +61,7 @@ impl MonsterAI {
         };
 
         // Update AI mode based on visibility.
-        self.update_mode(entity, &ctx, world);
+        update_mode(monster_ai, entity, &ctx, world);
 
         // --- Submerge / Surface logic for aquatic monsters ---
         let movement_mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
@@ -166,8 +85,8 @@ impl MonsterAI {
         };
 
         // --- Stationary monsters: only use abilities/ranged, never move ---
-        if self.stationary {
-            if self.mode == MonsterAIMode::Hunting && ctx.is_player_visible {
+        if monster_ai.stationary {
+            if monster_ai.mode == MonsterAIMode::Hunting && ctx.is_player_visible {
                 if try_use_ability(entity, ctx.monster_pos, ctx.player_entity, world) {
                     return;
                 }
@@ -182,9 +101,9 @@ impl MonsterAI {
         // --- Flee check (highest priority behavior) ---
         // Only flee when the player is visible — a monster that rounds a corner
         // and loses sight of the threat should stop fleeing and resume normal AI.
-        if self.mode == MonsterAIMode::Hunting && self.flee_at_hp_percent > 0.0 && ctx.is_player_visible
+        if monster_ai.mode == MonsterAIMode::Hunting && monster_ai.flee_at_hp_percent > 0.0 && ctx.is_player_visible
             && let Some(health) = world.get::<Health>(entity)
-                && should_flee(health.current, health.max, self.flee_at_hp_percent)
+                && should_flee(health.current, health.max, monster_ai.flee_at_hp_percent)
                     && let Some(intent) = try_flee_movement(
                         entity, ctx.monster_pos, ctx.player_point, world,
                     ) {
@@ -197,7 +116,7 @@ impl MonsterAI {
 
         // Try special actions (spell, ranged) before kiting.
         // Ranged monsters fire first, THEN kite on their next turn.
-        if self.mode == MonsterAIMode::Hunting && ctx.is_player_visible {
+        if monster_ai.mode == MonsterAIMode::Hunting && ctx.is_player_visible {
             if try_use_ability(entity, ctx.monster_pos, ctx.player_entity, world) {
                 surface(entity, world);
                 return;
@@ -210,11 +129,11 @@ impl MonsterAI {
 
         // --- Kite check (ranged monsters retreat when player is too close) ---
         // Runs AFTER ranged attack so archers shoot-then-retreat, not retreat-forever.
-        if self.mode == MonsterAIMode::Hunting && self.kites && ctx.is_player_visible
+        if monster_ai.mode == MonsterAIMode::Hunting && monster_ai.kites && ctx.is_player_visible
             && should_kite_retreat(
                 ctx.monster_pos.x, ctx.monster_pos.y,
                 ctx.player_point.x, ctx.player_point.y,
-                self.kite_distance,
+                monster_ai.kite_distance,
             )
                 && let Some(intent) = try_flee_movement(
                     entity, ctx.monster_pos, ctx.player_point, world,
@@ -226,10 +145,10 @@ impl MonsterAI {
                 // Retreat blocked — fall through to normal pathfinding.
 
         // --- Erratic movement check (before normal pathfinding) ---
-        if self.mode == MonsterAIMode::Hunting && self.erratic_chance > 0.0 {
+        if monster_ai.mode == MonsterAIMode::Hunting && monster_ai.erratic_chance > 0.0 {
             let mut rng_inst = rng();
             let roll: f32 = rand::Rng::random(&mut rng_inst);
-            if should_move_erratically(self.erratic_chance, roll) {
+            if should_move_erratically(monster_ai.erratic_chance, roll) {
                 let mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
                 let map = world.resource::<Map>();
                 let mut directions = [Direction::N, Direction::E, Direction::S, Direction::W].to_vec();
@@ -257,8 +176,8 @@ impl MonsterAI {
 
         // Pathfind and move.
         if let Some(intent) = resolve_movement(
-            entity, self.mode, ctx.monster_pos, leader_leash,
-            self.last_known_player_position, world,
+            entity, monster_ai.mode, ctx.monster_pos, leader_leash,
+            monster_ai.last_known_player_position, world,
         ) {
             world.write_message(intent);
         } else {
@@ -267,69 +186,74 @@ impl MonsterAI {
                 .unwrap_or_else(|| format!("{entity:?}"));
             bevy::log::info!(
                 "FSM {name}: WaitIntent (mode={:?}, last_known={:?}, leash={:?})",
-                self.mode, self.last_known_player_position, leader_leash
+                monster_ai.mode, monster_ai.last_known_player_position, leader_leash
             );
             world.write_message(WaitIntent { entity });
         }
-    }
+}
 
-    /// Update AI mode transitions based on player visibility.
-    fn update_mode(&mut self, entity: Entity, ctx: &AIContext, world: &mut World) {
-        match self.mode {
-            MonsterAIMode::Asleep => {
-                if ctx.is_player_visible {
-                    self.mode = MonsterAIMode::Hunting;
-                    self.last_known_player_position = Some(ctx.player_point);
-                    self.chase_distance = 0;
-                }
+/// Update AI mode transitions based on player visibility. Companion
+/// to `execute_monster_ai` — was previously the private method
+/// `MonsterAI::update_mode`.
+fn update_mode(monster_ai: &mut MonsterAI, entity: Entity, ctx: &AIContext, world: &mut World) {
+    match monster_ai.mode {
+        MonsterAIMode::Asleep => {
+            if ctx.is_player_visible {
+                monster_ai.mode = MonsterAIMode::Hunting;
+                monster_ai.last_known_player_position = Some(ctx.player_point);
+                monster_ai.chase_distance = 0;
             }
-            MonsterAIMode::Hunting => {
-                if ctx.is_player_visible {
-                    self.last_known_player_position = Some(ctx.player_point);
-                    self.chase_distance = 0; // Reset chase tracking when player is visible
-                } else {
-                    // Player not visible — increment chase distance for leash tracking
-                    self.chase_distance += 1;
+        }
+        MonsterAIMode::Hunting => {
+            if ctx.is_player_visible {
+                monster_ai.last_known_player_position = Some(ctx.player_point);
+                monster_ai.chase_distance = 0; // Reset chase tracking when player is visible
+            } else {
+                // Player not visible — increment chase distance for leash tracking
+                monster_ai.chase_distance += 1;
 
-                    // Land monsters give up faster when the player's last known
-                    // position is on deep water (unreachable territory).
-                    if let Some(last_pos) = self.last_known_player_position {
-                        let movement_mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
-                        if movement_mode == MovementMode::Land {
-                            let map = world.resource::<Map>();
-                            let idx = map.xy_idx(last_pos.x, last_pos.y);
-                            if map.tiles[idx].liquid == crate::map::tile::LiquidType::Water {
-                                self.chase_distance += 2;
-                            }
+                // Land monsters give up faster when the player's last known
+                // position is on deep water (unreachable territory).
+                if let Some(last_pos) = monster_ai.last_known_player_position {
+                    let movement_mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
+                    if movement_mode == MovementMode::Land {
+                        let map = world.resource::<Map>();
+                        let idx = map.xy_idx(last_pos.x, last_pos.y);
+                        if map.tiles[idx].liquid == crate::map::tile::LiquidType::Water {
+                            monster_ai.chase_distance += 2;
                         }
                     }
-
-                    // Chase leash: give up if chased too far without seeing player
-                    if should_give_up_chase(self.chase_distance, self.chase_leash) {
-                        self.mode = MonsterAIMode::Idle;
-                        self.last_known_player_position = None;
-                        self.chase_distance = 0;
-
-                        // Post-hunt: snap waypoint patrols to nearest waypoint.
-                        snap_to_nearest_waypoint(entity, ctx.monster_pos, world);
-                        return;
-                    }
                 }
-                if !ctx.is_player_visible && Some(ctx.monster_pos) == self.last_known_player_position {
-                    self.mode = MonsterAIMode::Idle;
-                    self.last_known_player_position = None;
-                    self.chase_distance = 0;
+
+                // Chase leash: give up if chased too far without seeing player
+                if should_give_up_chase(monster_ai.chase_distance, monster_ai.chase_leash) {
+                    monster_ai.mode = MonsterAIMode::Idle;
+                    monster_ai.last_known_player_position = None;
+                    monster_ai.chase_distance = 0;
 
                     // Post-hunt: snap waypoint patrols to nearest waypoint.
                     snap_to_nearest_waypoint(entity, ctx.monster_pos, world);
+                    return;
                 }
             }
-            MonsterAIMode::Idle => {
-                if ctx.is_player_visible {
-                    self.mode = MonsterAIMode::Hunting;
-                }
+            if !ctx.is_player_visible && Some(ctx.monster_pos) == monster_ai.last_known_player_position {
+                monster_ai.mode = MonsterAIMode::Idle;
+                monster_ai.last_known_player_position = None;
+                monster_ai.chase_distance = 0;
+
+                // Post-hunt: snap waypoint patrols to nearest waypoint.
+                snap_to_nearest_waypoint(entity, ctx.monster_pos, world);
             }
         }
+        MonsterAIMode::Idle => {
+            if ctx.is_player_visible {
+                monster_ai.mode = MonsterAIMode::Hunting;
+            }
+        }
+        // `MonsterAIMode` is `#[non_exhaustive]` — fall back to no
+        // transition for any future engine variant this game doesn't
+        // handle yet.
+        _ => {}
     }
 }
 
@@ -569,12 +493,13 @@ fn try_use_ability(entity: Entity, monster_pos: Point, player_entity: Option<Ent
 
                 let mut rng = bracket_lib::random::RandomNumberGenerator::new();
                 let damage = crate::game::staves::roll_dice_expr(&mut rng, dice).max(1);
-                world.write_message(ApplyDamageMessage {
-                    attacker: entity,
+                world.write_message(DamageEvent {
+                    attacker: Some(entity),
                     target: target_entity,
-                    final_damage: damage,
+                    amount: damage,
                     damage_type: *damage_type,
                     source: DamageSource::Spell,
+                    armor: 0,
                 });
                 world.write_message(crate::ui::game_log::GameLogMessage(format!(
                     "{} casts {}!", caster_name, ability.name
@@ -597,7 +522,7 @@ fn try_use_ability(entity: Entity, monster_pos: Point, player_entity: Option<Ent
 
                 let mut rng = bracket_lib::random::RandomNumberGenerator::new();
                 let amount = crate::game::staves::roll_dice_expr(&mut rng, dice).max(1);
-                world.write_message(HealMessage { entity: target, amount });
+                world.write_message(HealEvent { target, amount, source: Some(entity) });
                 world.write_message(crate::ui::game_log::GameLogMessage(format!(
                     "{} casts {}!", caster_name, ability.name
                 )));
@@ -612,7 +537,7 @@ fn try_use_ability(entity: Entity, monster_pos: Point, player_entity: Option<Ent
                 if dist > ability.range as i32 { continue; }
 
                 if let Some(mut effects) = world.get_mut::<StatusEffects>(target_entity) {
-                    effects.add(*effect, *duration);
+                    effects.add_effect(*effect, *duration);
                 }
                 world.write_message(crate::ui::game_log::GameLogMessage(format!(
                     "{} casts {}!", caster_name, ability.name
@@ -625,12 +550,12 @@ fn try_use_ability(entity: Entity, monster_pos: Point, player_entity: Option<Ent
             MonsterAbilityKind::SelfBuff { effect, duration } => {
                 // Check if already have this effect
                 let already_has = caster_effects.as_ref().map(|e| {
-                    e.0.iter().any(|ae| std::mem::discriminant(&ae.kind) == std::mem::discriminant(effect))
+                    e.effects.iter().any(|ae| std::mem::discriminant(&ae.kind) == std::mem::discriminant(effect))
                 }).unwrap_or(false);
                 if already_has { continue; }
 
                 if let Some(mut effects) = world.get_mut::<StatusEffects>(entity) {
-                    effects.add(*effect, *duration);
+                    effects.add_effect(*effect, *duration);
                 }
                 world.write_message(crate::ui::game_log::GameLogMessage(format!(
                     "{} casts {}!", caster_name, ability.name
@@ -770,22 +695,12 @@ fn resolve_movement(
 pub fn pathfind_toward(entity: Entity, from: Point, target: Point, world: &mut World) -> Option<MovementIntent> {
     let mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
     let map = world.resource::<Map>();
-    let map_with_mode = MapWithMode { map, mode };
-    let path = a_star_search(
-        map_with_mode.point2d_to_index(from),
-        map_with_mode.point2d_to_index(target),
-        &map_with_mode,
+    let next_step = next_step_toward_with_mode(map, from, target, mode)?;
+    let dir = Direction::from_pos(
+        &Position::from_point(from),
+        &Position::from_point(next_step),
     );
-    if path.success && path.steps.len() > 1 {
-        let next_step = map_with_mode.index_to_point2d(path.steps[1]);
-        let dir = Direction::from_pos(
-            &Position::from_point(from),
-            &Position::from_point(next_step),
-        );
-        Some(MovementIntent { entity, dir })
-    } else {
-        None
-    }
+    Some(MovementIntent { entity, dir })
 }
 
 /// Spells gated by boss phase comment preserved for reference.
@@ -801,28 +716,18 @@ pub fn idle_movement(
     let patrol = world.get::<PatrolRoute>(entity).cloned();
     let mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
     let map = world.resource::<Map>();
-    let map_with_mode = MapWithMode { map, mode };
 
     match patrol.as_ref().map(|p| &p.state) {
         Some(PatrolState::Sentry { home }) => {
             let home_pt = Point::new(home.0, home.1);
             let dist = DistanceAlg::Pythagoras.distance2d(monster_pos, home_pt);
             if dist > GUARD_PATROL_RADIUS as f32 {
-                let path = a_star_search(
-                    map_with_mode.point2d_to_index(monster_pos),
-                    map_with_mode.point2d_to_index(home_pt),
-                    &map_with_mode,
+                let next_step = next_step_toward_with_mode(map, monster_pos, home_pt, mode)?;
+                let dir = Direction::from_pos(
+                    &Position::from_point(monster_pos),
+                    &Position::from_point(next_step),
                 );
-                if path.success && path.steps.len() > 1 {
-                    let next_step = map_with_mode.index_to_point2d(path.steps[1]);
-                    let dir = Direction::from_pos(
-                        &Position::from_point(monster_pos),
-                        &Position::from_point(next_step),
-                    );
-                    Some(MovementIntent { entity, dir })
-                } else {
-                    None
-                }
+                Some(MovementIntent { entity, dir })
             } else {
                 let mut directions = Direction::ALL.to_vec();
                 directions.shuffle(rng);
@@ -844,8 +749,6 @@ pub fn idle_movement(
             let target = Point::new(points[*current_index].0, points[*current_index].1);
             if monster_pos == target {
                 // Arrived — advance index.
-                let _ = map;
-                drop(map_with_mode);
                 if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity)
                     && let PatrolState::Waypoint { ref points, ref mut current_index } = patrol.state {
                         *current_index = (*current_index + 1) % points.len();
@@ -853,47 +756,34 @@ pub fn idle_movement(
                 // Re-borrow and pathfind to next waypoint.
                 let patrol = world.get::<PatrolRoute>(entity).cloned();
                 let map = world.resource::<Map>();
-                let map_with_mode = MapWithMode { map, mode };
-                if let Some(PatrolRoute { state: PatrolState::Waypoint { ref points, current_index } }) = patrol {
-                    let next_target = Point::new(points[current_index].0, points[current_index].1);
-                    let path = a_star_search(
-                        map_with_mode.point2d_to_index(monster_pos),
-                        map_with_mode.point2d_to_index(next_target),
-                        &map_with_mode,
-                    );
-                    if path.success && path.steps.len() > 1 {
-                        let next_step = map_with_mode.index_to_point2d(path.steps[1]);
-                        let dir = Direction::from_pos(
-                            &Position::from_point(monster_pos),
-                            &Position::from_point(next_step),
-                        );
-                        return Some(MovementIntent { entity, dir });
-                    }
-                }
-                None
-            } else {
-                let path = a_star_search(
-                    map_with_mode.point2d_to_index(monster_pos),
-                    map_with_mode.point2d_to_index(target),
-                    &map_with_mode,
-                );
-                if path.success && path.steps.len() > 1 {
-                    let next_step = map_with_mode.index_to_point2d(path.steps[1]);
+                if let Some(PatrolRoute { state: PatrolState::Waypoint { ref points, current_index } }) = patrol
+                    && let Some(next_step) = next_step_toward_with_mode(
+                        map,
+                        monster_pos,
+                        Point::new(points[current_index].0, points[current_index].1),
+                        mode,
+                    )
+                {
                     let dir = Direction::from_pos(
                         &Position::from_point(monster_pos),
                         &Position::from_point(next_step),
                     );
-                    Some(MovementIntent { entity, dir })
-                } else {
-                    // Pathfinding failed — skip to next waypoint.
-                    let _ = map;
-                    drop(map_with_mode);
-                    if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity)
-                        && let PatrolState::Waypoint { ref points, ref mut current_index } = patrol.state {
-                            *current_index = (*current_index + 1) % points.len();
-                        }
-                    None
+                    return Some(MovementIntent { entity, dir });
                 }
+                None
+            } else if let Some(next_step) = next_step_toward_with_mode(map, monster_pos, target, mode) {
+                let dir = Direction::from_pos(
+                    &Position::from_point(monster_pos),
+                    &Position::from_point(next_step),
+                );
+                Some(MovementIntent { entity, dir })
+            } else {
+                // Pathfinding failed — skip to next waypoint.
+                if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity)
+                    && let PatrolState::Waypoint { ref points, ref mut current_index } = patrol.state {
+                        *current_index = (*current_index + 1) % points.len();
+                    }
+                None
             }
         }
         Some(PatrolState::AreaRoam { min, max }) => {
@@ -913,8 +803,10 @@ pub fn idle_movement(
                 }
             })
         }
-        None => {
-            // No PatrolRoute — wander freely.
+        None | Some(_) => {
+            // No PatrolRoute, or a `#[non_exhaustive]` variant the
+            // engine added that this game hasn't implemented yet —
+            // wander freely.
             let mut directions = Direction::ALL.to_vec();
             directions.shuffle(rng);
             directions.into_iter().find_map(|dir| {
@@ -938,150 +830,12 @@ pub fn idle_movement(
 // =====================================================================
 // AI Behavior Helpers (pure decision functions)
 // =====================================================================
-
-/// Should this monster flee? Returns true if current HP ratio is below the threshold.
-fn should_flee(current_hp: i32, max_hp: i32, flee_threshold: f32) -> bool {
-    if flee_threshold <= 0.0 || max_hp <= 0 {
-        return false;
-    }
-    (current_hp as f32 / max_hp as f32) < flee_threshold
-}
-
-/// Should this monster move erratically this turn?
-fn should_move_erratically(erratic_chance: f32, roll: f32) -> bool {
-    erratic_chance > 0.0 && roll < erratic_chance
-}
-
-/// Should this monster give up chasing and return to idle?
-fn should_give_up_chase(chase_distance: u32, chase_leash: u32) -> bool {
-    chase_leash > 0 && chase_distance >= chase_leash
-}
-
-/// Should a kiting monster retreat from the player?
-fn should_kite_retreat(
-    monster_x: i32, monster_y: i32, player_x: i32, player_y: i32, kite_distance: u32,
-) -> bool {
-    let dx = (monster_x - player_x).abs();
-    let dy = (monster_y - player_y).abs();
-    (dx * dx + dy * dy) < (kite_distance as i32 * kite_distance as i32)
-}
-
-/// Pick the best cardinal direction to flee AWAY from a threat position.
-pub fn flee_direction(monster_x: i32, monster_y: i32, threat_x: i32, threat_y: i32) -> (i32, i32) {
-    let dx = monster_x - threat_x;
-    let dy = monster_y - threat_y;
-    if dx == 0 && dy == 0 {
-        return (0, 0);
-    }
-    if dx.abs() >= dy.abs() { (dx.signum(), 0) } else { (0, dy.signum()) }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn flee_when_below_threshold() {
-        assert!(should_flee(2, 10, 0.3));
-    }
-
-    #[test]
-    fn no_flee_when_above_threshold() {
-        assert!(!should_flee(5, 10, 0.3));
-    }
-
-    #[test]
-    fn no_flee_when_threshold_zero() {
-        assert!(!should_flee(1, 10, 0.0));
-    }
-
-    #[test]
-    fn no_flee_when_at_exact_threshold() {
-        assert!(!should_flee(3, 10, 0.3));
-    }
-
-    #[test]
-    fn no_flee_when_max_hp_zero() {
-        assert!(!should_flee(0, 0, 0.5));
-    }
-
-    #[test]
-    fn erratic_with_low_roll() {
-        assert!(should_move_erratically(0.3, 0.1));
-    }
-
-    #[test]
-    fn not_erratic_with_high_roll() {
-        assert!(!should_move_erratically(0.3, 0.5));
-    }
-
-    #[test]
-    fn never_erratic_when_chance_zero() {
-        assert!(!should_move_erratically(0.0, 0.0));
-    }
-
-    #[test]
-    fn give_up_when_leash_exceeded() {
-        assert!(should_give_up_chase(10, 8));
-    }
-
-    #[test]
-    fn keep_chasing_within_leash() {
-        assert!(!should_give_up_chase(5, 8));
-    }
-
-    #[test]
-    fn give_up_at_exact_leash() {
-        assert!(should_give_up_chase(8, 8));
-    }
-
-    #[test]
-    fn never_give_up_when_leash_zero() {
-        assert!(!should_give_up_chase(100, 0));
-    }
-
-    #[test]
-    fn kite_when_adjacent() {
-        assert!(should_kite_retreat(5, 5, 6, 5, 3));
-    }
-
-    #[test]
-    fn kite_when_close() {
-        assert!(should_kite_retreat(5, 5, 7, 5, 3));
-    }
-
-    #[test]
-    fn no_kite_when_at_distance() {
-        assert!(!should_kite_retreat(5, 5, 8, 5, 3));
-    }
-
-    #[test]
-    fn no_kite_when_far() {
-        assert!(!should_kite_retreat(5, 5, 10, 5, 3));
-    }
-
-    #[test]
-    fn flee_away_east() {
-        assert_eq!(flee_direction(5, 5, 2, 5), (1, 0));
-    }
-
-    #[test]
-    fn flee_away_west() {
-        assert_eq!(flee_direction(5, 5, 8, 5), (-1, 0));
-    }
-
-    #[test]
-    fn flee_away_north() {
-        assert_eq!(flee_direction(5, 5, 5, 8), (0, -1));
-    }
-
-    #[test]
-    fn flee_away_south() {
-        assert_eq!(flee_direction(5, 5, 5, 2), (0, 1));
-    }
-
-    #[test]
-    fn flee_on_top_of_threat() {
-        assert_eq!(flee_direction(5, 5, 5, 5), (0, 0));
-    }
-}
+//
+// Pure decision helpers now live in `roguelike_engine::ai::decisions`.
+// Re-exported here so the rest of ai.rs (`MonsterAI::execute` and
+// helpers) keeps calling `should_flee`, `should_kite_retreat`, etc.
+// with their existing names and signatures.
+pub use roguelike_engine::ai::decisions::{
+    flee_direction, should_flee, should_give_up_chase, should_kite_retreat,
+    should_move_erratically,
+};

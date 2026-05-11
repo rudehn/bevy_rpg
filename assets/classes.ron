@@ -1,0 +1,67 @@
+// Class manifest for character creation. See docs/design/CHARACTER.md §Classes.
+//
+// Keys are the lowercase form of `Class` enum variant names. Starting kit item
+// names reference entries in items.ron — the four explicitly weak starter
+// items (Rusted Shortsword, Padded Armor, Cloth Wraps, Apprentice Staff,
+// Throwing Knife, Shortbow) will be added to items.ron when the spawner
+// integration lands. Until then this file is data-only and unconsumed at
+// runtime; tests only assert parsing and baseline numbers.
+
+(
+    classes: {
+        "warrior": (
+            name: "Warrior",
+            primary_attr: Str,
+            secondary_attr: Con,
+            base_hp: 12,
+            class_attack_bonus: 1,
+            class_dodge_bonus: 0,
+            starting_kit: [
+                (name: "Rusted Shortsword"),
+                (name: "Padded Armor"),
+            ],
+            description: "Steel and discipline. Trades finesse for HP and a steady +1 to attack rolls.",
+        ),
+        "rogue": (
+            name: "Rogue",
+            primary_attr: Dex,
+            secondary_attr: Int,
+            base_hp: 8,
+            class_attack_bonus: 0,
+            class_dodge_bonus: 1,
+            starting_kit: [
+                (name: "Dagger"),
+                (name: "Cloth Wraps"),
+                (name: "Throwing Knife", count: 1),
+            ],
+            description: "Light, slippery, and dangerous in the right opening. +1 dodge by default.",
+        ),
+        "mage": (
+            name: "Mage",
+            primary_attr: Int,
+            secondary_attr: Con,
+            base_hp: 6,
+            class_attack_bonus: 0,
+            class_dodge_bonus: 0,
+            starting_kit: [
+                (name: "Apprentice Staff"),
+                (name: "Robe"),
+            ],
+            description: "Frail but charged with potential. INT modifies staff zap damage.",
+        ),
+        "ranger": (
+            name: "Ranger",
+            primary_attr: Dex,
+            secondary_attr: Str,
+            base_hp: 8,
+            class_attack_bonus: 0,
+            class_dodge_bonus: 0,
+            starting_kit: [
+                (name: "Shortbow"),
+                (name: "Padded Armor"),
+                (name: "Arrow", count: 6),
+            ],
+            description: "Patient at range. Six arrows to start; find more in the dungeon.",
+        ),
+    },
+)

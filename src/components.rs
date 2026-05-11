@@ -1,48 +1,13 @@
-use std::collections::HashSet;
-
 use bevy::ecs::component::Component;
 use bevy::ecs::entity::Entity;
 use bevy::prelude::{Reflect, ReflectComponent};
-use bracket_lib::prelude::Point;
 
-#[derive(Component)]
-pub struct Collider;
-
-#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Position {
-    pub x: i32,
-    pub y: i32,
-}
-
-impl Position {
-    pub fn to_point(self) -> Point {
-        Point::new(self.x, self.y)
-    }
-
-    pub fn from_point(point: Point) -> Self {
-        Position {
-            x: point.x,
-            y: point.y,
-        }
-    }
-}
-
-#[derive(Component, Clone, Default)]
-pub struct Viewshed {
-    pub visible_tiles: HashSet<Point>,
-    pub range: i32,
-    pub dirty: bool,
-}
-
-impl Viewshed {
-    pub fn new(range: i32) -> Self {
-        Self {
-            visible_tiles: HashSet::new(),
-            range,
-            dirty: true,
-        }
-    }
-}
+// Foundation components now live in the engine crate. Re-exported here
+// so existing game code (hundreds of `use crate::components::Position`
+// style imports) continues to work unchanged.
+pub use roguelike_engine::components::{
+    Collider, Faction, FactionKind, Inventory, Name, Position, Viewshed,
+};
 
 #[allow(dead_code)]
 #[derive(Component, Debug, Clone)]
@@ -55,8 +20,7 @@ pub struct Hidden;
 #[derive(Component)]
 pub struct Monster;
 
-#[derive(Component)]
-pub struct Name(pub String);
+// `Name` is re-exported from `roguelike_engine::components` above.
 
 #[derive(Component)]
 pub struct Item;
@@ -71,12 +35,7 @@ pub struct FloorEntityMarker;
 #[reflect(Component)]
 pub struct GodMode;
 
-/// Holds entity IDs of all items currently in the player's inventory.
-#[derive(Component, Debug, Default)]
-pub struct Inventory {
-    pub items: Vec<Entity>,
-    pub capacity: usize,
-}
+// `Inventory` is re-exported from `roguelike_engine::components` above.
 
 /// Marker component for items currently held in an inventory (not on the floor).
 /// Items with this component are invisible and excluded from floor-level queries.
@@ -108,14 +67,10 @@ pub struct QuestItem;
 #[derive(Component, Debug, Default)]
 pub struct Drifting;
 
-/// Determines how an entity interacts with terrain for movement and pathfinding.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub enum MovementMode {
-    #[default]
-    Land,              // Normal movement, deep water penalized
-    ImmuneToWater,     // Ignores water penalties, no item displacement
-    RestrictedToLiquid, // Can ONLY move on liquid tiles (eels, kraken)
-}
+// `MovementMode` now lives in the engine crate. Re-exported so every
+// `use crate::components::MovementMode` call site (41 occurrences across
+// 5 files) continues to work unchanged.
+pub use roguelike_engine::components::MovementMode;
 
 /// Marker for aquatic monsters currently hiding beneath the water surface.
 /// While submerged the monster is invisible and cannot be targeted by ranged
@@ -158,29 +113,73 @@ pub struct Chest;
 
 // --- Faction ---
 
-/// Determines how this entity relates to others for AI targeting and spell scoring.
-/// Hostility is resolved via the `FactionMatrix` resource, not by comparing kinds directly.
-#[derive(Component, Clone, PartialEq, Eq, Debug)]
-pub struct Faction(pub FactionKind);
+// `Faction` and `FactionKind` now live in `roguelike_engine::components`.
+// Re-exported at the top of this file. The Veiled Tyrant's specific
+// faction roster (Player, Monster, Kobold, Rat) is defined below as
+// constants + constructors on the `VeiledTyrantFactions` helper.
 
-/// String-based faction identifier. Hostility between factions is determined
-/// by the `FactionMatrix` resource loaded from `factions.ron`.
-#[derive(Clone, PartialEq, Eq, Debug, Hash)]
-pub struct FactionKind(pub String);
+/// Game-specific faction constants and constructors for The Veiled Tyrant.
+///
+/// The engine's `FactionKind` is a generic `String` newtype — it ships
+/// no specific faction names. This helper centralizes the faction
+/// identifiers this game uses, so both the player spawn code and any
+/// future game-side faction-aware logic have one place to look.
+pub struct VeiledTyrantFactions;
 
-impl FactionKind {
-    pub const PLAYER: &str = "Player";
-    pub const MONSTER: &str = "Monster";
-    pub const KOBOLD: &str = "Kobold";
-    pub const RAT: &str = "Rat";
+impl VeiledTyrantFactions {
+    pub const PLAYER: &'static str = "Player";
+    pub const MONSTER: &'static str = "Monster";
+    pub const KOBOLD: &'static str = "Kobold";
+    pub const RAT: &'static str = "Rat";
 
-    pub fn player() -> Self { Self(Self::PLAYER.to_string()) }
-    pub fn monster() -> Self { Self(Self::MONSTER.to_string()) }
-    pub fn kobold() -> Self { Self(Self::KOBOLD.to_string()) }
+    pub fn player() -> FactionKind {
+        FactionKind::new(Self::PLAYER)
+    }
+    pub fn monster() -> FactionKind {
+        FactionKind::new(Self::MONSTER)
+    }
+    pub fn kobold() -> FactionKind {
+        FactionKind::new(Self::KOBOLD)
+    }
 }
 
 /// Tracks which entity summoned this creature. Used by the summon cap system.
 #[derive(Component, Clone, Debug)]
 pub struct SummonedBy {
     pub summoner: Entity,
+}
+
+/// Biological category of a monster. Orthogonal to `Faction` (which is political
+/// alignment) — species is biology. Consumed by future systems like bane weapons,
+/// ecology effects, and UI labels; see `docs/design/ENEMIES.md` for the canonical list.
+#[derive(Component, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Species {
+    Beast,
+    Humanoid,
+    Undead,
+    Insect,
+    Fungal,
+    Ooze,
+    Dragon,
+    Construct,
+    Aberration,
+    #[default]
+    Unknown,
+}
+
+impl std::fmt::Display for Species {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Species::Beast => "Beast",
+            Species::Humanoid => "Humanoid",
+            Species::Undead => "Undead",
+            Species::Insect => "Insect",
+            Species::Fungal => "Fungal",
+            Species::Ooze => "Ooze",
+            Species::Dragon => "Dragon",
+            Species::Construct => "Construct",
+            Species::Aberration => "Aberration",
+            Species::Unknown => "Unknown",
+        })
+    }
 }

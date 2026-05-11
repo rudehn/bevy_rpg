@@ -2,7 +2,7 @@
 
 ## Overview
 
-The dungeon is 10 floors of procedurally generated maps. Each floor is built by
+The dungeon is 26 floors of procedurally generated maps. Each floor is built by
 a composable **builder pipeline** that layers terrain, liquids, doors, decorations,
 and encounters. The map is 80x60 tiles on a 16x16 pixel grid.
 
@@ -34,7 +34,7 @@ BrogueLikeBuilder          (initial map: rooms, corridors, doors)
   -> DistantExit           (place down-stairs far from player)
 ```
 
-On floor 10, an additional step places the **Amulet of Ascension** and the
+On floor 26, an additional step places the **Amulet of Ascension** and the
 **Escape Portal** at distant points from each other and from the player start.
 
 ## Generation Style
@@ -47,7 +47,8 @@ become more prominent on deeper floors.
 | 1-3 | Primarily room-based with small cave pockets |
 | 4-6 | Hybrid — larger rooms, some cave corridors |
 | 7-9 | More cavernous — organic open spaces mixed with rooms |
-| 10 | Hybrid — normal dungeon content with amulet + portal placement |
+| 10-25 | Increasingly cavernous — deep dungeon with diverse hazards |
+| 26 | Hybrid — normal dungeon content with amulet + portal placement |
 
 The `BrogueLikeBuilder` already supports room types and cave generation. The
 ratio of rooms to caves shifts with depth via floor profile configuration.
@@ -83,6 +84,20 @@ Each tile has two layers: terrain + liquid.
 | ShallowWater | Yes | Extinguishes burning status |
 | DeepWater | Conditional | Player can traverse; land monsters cannot path through |
 | Lava | Yes | Instant death without fire resistance |
+| Chasm | No | Impassable void; player can voluntarily fall (2d6 damage, descend a floor) |
+
+### Chasms
+
+Chasms are impassable voids placed during map generation as lake bodies. They
+can also be **created at runtime** by Pit Bloat explosions: the bloat's
+`ExplodeOnHit` ability places `CrackedFloor` decorations, which collapse into
+chasms after ~3 turns via the tile promotion system.
+
+**Entities on collapsing tiles fall to the floor below**, maintaining their
+(x,y) position (adjusted to the nearest walkable tile via BFS). Monsters are
+snapshotted to `FallenEntities` and spawned when that floor is materialized.
+The player takes 2d6 fall damage and transitions to the next floor. On
+floor 26, entities fall into the void and are destroyed.
 
 ### Water Mechanics
 
@@ -100,6 +115,17 @@ Each tile has two layers: terrain + liquid.
 - **Aquatic monsters** (if any) can traverse deep water freely.
 - Creates risk/reward decisions: shortcut through water and risk losing gear,
   or take the long way around.
+
+**Water Shimmer (Visual):**
+- Water tiles animate with a Brogue-style "color dancing" shimmer effect
+- Each tile has a deterministic phase offset based on position, creating organic ripple patterns
+- Two overlapping sine waves at different frequencies produce irregular, natural-looking shimmer
+- Deep water: darker blue base (`0.5, 0.55, 0.85`) with wider color variation (±0.12)
+- Shallow water: lighter cyan base (`0.6, 0.75, 0.95`) with subtler variation (±0.06)
+- Shimmer integrates with the lighting system — light level and color tint are applied
+- Only visible tiles animate; explored-but-not-visible tiles remain dim gray
+- Runs every frame (trivial cost for ~200 tiles) to stay in sync with visibility updates
+- Implementation: `animate_water_shimmer` system in `src/game/water.rs`
 
 **Lava:**
 - **Instant death** for entities without fire resistance
@@ -132,12 +158,12 @@ Decorations are **purely visual for now**.
 |-----------|-----------|---------------|
 | Grass | Floor (floors 1-5) | BFS propagation from seeds |
 | TallGrass | Floor (floors 1-5) | Chain from Grass (20% chance) |
-| DeadGrass | Floor (floors 2-10) | BFS propagation |
+| DeadGrass | Floor (floors 2-26) | BFS propagation |
 | Rubble | Floor (all floors) | Wall-adjacent only |
 | Moss | Floor (floors 1-8) | Near liquid only |
-| Fungus | Floor (floors 3-10) | BFS propagation |
-| Cobweb | Floor (floors 1-6) | Wall-adjacent corners only |
-| Bloodstain | Floor (floors 3-10) | BFS propagation, small clusters |
+| Fungus | Floor (floors 3-26) | BFS propagation |
+| Cobweb | Floor (floors 1-26) | Wall-adjacent corners only |
+| Bloodstain | Floor (floors 3-26) | BFS propagation, small clusters |
 
 ### Propagation Algorithm
 
@@ -183,9 +209,9 @@ decorations, door states). This enables backtracking for exploration.
 
 The floor cache is serialized as part of the save file.
 
-## Floor 10: The Amulet
+## Floor 26: The Amulet
 
-Floor 10 is a full dungeon floor, not a boss arena. It contains:
+Floor 26 is a full dungeon floor, not a boss arena. It contains:
 - Normal machines, encounters, monsters, and chests
 - The **Amulet of Ascension** — placed in a secluded, dangerous location
 - The **Escape Portal** — placed far from the amulet

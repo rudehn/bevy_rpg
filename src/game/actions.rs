@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use bracket_lib::prelude::{Algorithm2D, Point};
 
+use crate::game::magic::GameStatusEffectsExt;
 use crate::{
     components::{Chest, Collider, Destructible, Faction, InInventory, Inventory, Key, LockedDoorData, MovementMode, Name, Position, Item},
     game::machines::{Machine, MachineBumpMessage},
@@ -627,14 +628,26 @@ pub fn handle_movement(
                                     new_terrain,
                                 });
                             }
+                            PromotionTarget::Liquid(new_liquid) => {
+                                tile_writers.liquid.write(crate::map::tile::LiquidMutationMessage {
+                                    position: bracket_lib::prelude::Point::new(target_pt.x, target_pt.y),
+                                    new_liquid,
+                                });
+                            }
                         }
                     }
 
                     // Cobweb entangle: immobilize for 3 turns, web persists until break-free
                     if decoration.entangles() {
                         if let Ok(mut effects) = status_query.get_mut(intent.entity) {
+                            use crate::game::magic::GameStatusEffectsExt;
                             if !effects.is_entangled() {
-                                effects.add(crate::game::magic::StatusEffectKind::Entangled, 3);
+                                effects.add_effect(
+                                    crate::game::magic::StatusEffectKind::Custom {
+                                        id: crate::game::magic::STATUS_ENTANGLED,
+                                    },
+                                    3,
+                                );
                                 let msg = if is_player {
                                     "You are caught in the cobwebs!".to_string()
                                 } else {
@@ -648,10 +661,10 @@ pub fn handle_movement(
 
                 // Gas poisoning on step
                 if let Some(gas_data) = tile_writers.gas_tiles.0.get(&(target_pt.x, target_pt.y)) {
-                    if let Some((effect_kind, duration)) = gas_data.gas_type.on_step_effect(gas_data.concentration) {
+                    if let Some((effect_kind, duration, magnitude)) = gas_data.gas_type.on_step_effect(gas_data.concentration) {
                         if let Ok(mut effects) = status_query.get_mut(intent.entity) {
                             if !gas_data.gas_type.is_immune(&effects) {
-                                effects.add(effect_kind, duration);
+                                effects.add_effect_with_magnitude(effect_kind, duration, magnitude, None);
                                 if is_player {
                                     log_writer.write(GameLogMessage(format!(
                                         "You inhale {}!",
@@ -867,97 +880,22 @@ pub fn handle_unlock_door(
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-#[allow(clippy::enum_variant_names)]
-pub enum Direction {
-    NW,
-    N,
-    NE,
-    E,
-    SE,
-    S,
-    SW,
-    W,
-    NoDirection,
-}
-
-impl Direction {
-    pub const ALL: [Self; 8] = [
-        Self::N,
-        Self::NE,
-        Self::E,
-        Self::SE,
-        Self::S,
-        Self::SW,
-        Self::W,
-        Self::NW,
-    ];
-
-    pub fn from_pos(current: &Position, target: &Position) -> Self {
-        match target.x.cmp(&current.x) {
-            std::cmp::Ordering::Less => match target.y.cmp(&current.y) {
-                std::cmp::Ordering::Less => Direction::SW,
-                std::cmp::Ordering::Equal => Direction::W,
-                std::cmp::Ordering::Greater => Direction::NW,
-            },
-            std::cmp::Ordering::Equal => match target.y.cmp(&current.y) {
-                std::cmp::Ordering::Less => Direction::S,
-                std::cmp::Ordering::Equal => Direction::NoDirection,
-                std::cmp::Ordering::Greater => Direction::N,
-            },
-            std::cmp::Ordering::Greater => match target.y.cmp(&current.y) {
-                std::cmp::Ordering::Less => Direction::SE,
-                std::cmp::Ordering::Equal => Direction::E,
-                std::cmp::Ordering::Greater => Direction::NE,
-            },
-        }
-    }
-
-    pub fn offset(&self) -> Point {
-        match self {
-            Direction::NW => Point { x: -1, y: 1 },
-            Direction::N => Point { x: 0, y: 1 },
-            Direction::NE => Point { x: 1, y: 1 },
-            Direction::E => Point { x: 1, y: 0 },
-            Direction::SE => Point { x: 1, y: -1 },
-            Direction::S => Point { x: 0, y: -1 },
-            Direction::SW => Point { x: -1, y: -1 },
-            Direction::W => Point { x: -1, y: 0 },
-            Direction::NoDirection => Point { x: 0, y: 0 },
-        }
-    }
-
-    /// Returns the two cardinal directions perpendicular to this one (left, right).
-    pub fn perpendiculars(&self) -> (Direction, Direction) {
-        match self {
-            Direction::N | Direction::S => (Direction::W, Direction::E),
-            Direction::E | Direction::W => (Direction::N, Direction::S),
-            _ => (Direction::NoDirection, Direction::NoDirection),
-        }
-    }
-
-    pub fn opposite(&self) -> Self {
-        match self {
-            Direction::NW => Direction::SE,
-            Direction::N => Direction::S,
-            Direction::NE => Direction::SW,
-            Direction::E => Direction::W,
-            Direction::SE => Direction::NW,
-            Direction::S => Direction::N,
-            Direction::SW => Direction::NE,
-            Direction::W => Direction::E,
-            Direction::NoDirection => Direction::NoDirection,
-        }
-    }
-}
+// `Direction` now lives in the engine crate. Re-exported so all
+// existing `use crate::game::actions::Direction` sites continue to
+// compile unchanged.
+pub use roguelike_engine::geometry::Direction;
 
 /// Returns rarity weights `[Common, Uncommon, Rare, Legendary]` scaled by floor depth.
+/// Bands follow the T1-T6 tier structure from `docs/design/ENEMIES.md`. Legendary
+/// chance climbs from 1% in the Shallows to 15% in the Amulet tier.
 pub fn rarity_weights_for_floor(floor: i32) -> [u32; 4] {
     match floor {
-        1..=3   => [70, 24,  5, 1],
-        4..=6   => [55, 32, 11, 2],
-        7..=9   => [40, 38, 18, 4],
-        _       => [25, 40, 27, 8],
+        1..=4   => [70, 24,  5,  1], // T1 Shallows
+        5..=9   => [55, 32, 11,  2], // T2 Caves
+        10..=14 => [40, 38, 18,  4], // T3 Depths
+        15..=19 => [30, 40, 24,  6], // T4 Tombs
+        20..=24 => [20, 40, 30, 10], // T5 Deep Keep
+        _       => [12, 38, 35, 15], // T6 Amulet (f25-26 and beyond)
     }
 }
 
@@ -1112,40 +1050,42 @@ pub fn handle_open_chest(
 mod tests {
     use super::*;
 
+    // Rarity curve spans 26 floors in six tiers (T1 Shallows through T6 Amulet).
+    // Each test locks the weight table for one floor in each tier.
+
     #[test]
-    fn floor_1_weights() {
-        let w = rarity_weights_for_floor(1);
-        assert_eq!(w, [70, 24, 5, 1]);
+    fn t1_weights_floor_1() {
+        assert_eq!(rarity_weights_for_floor(1), [70, 24, 5, 1]);
     }
 
     #[test]
-    fn floor_3_weights() {
-        let w = rarity_weights_for_floor(3);
-        assert_eq!(w, [70, 24, 5, 1]);
+    fn t1_weights_floor_4() {
+        assert_eq!(rarity_weights_for_floor(4), [70, 24, 5, 1]);
     }
 
     #[test]
-    fn floor_6_weights() {
-        let w = rarity_weights_for_floor(6);
-        assert_eq!(w, [55, 32, 11, 2]);
+    fn t2_weights_floor_9() {
+        assert_eq!(rarity_weights_for_floor(9), [55, 32, 11, 2]);
     }
 
     #[test]
-    fn floor_9_weights() {
-        let w = rarity_weights_for_floor(9);
-        assert_eq!(w, [40, 38, 18, 4]);
+    fn t3_weights_floor_10() {
+        assert_eq!(rarity_weights_for_floor(10), [40, 38, 18, 4]);
     }
 
     #[test]
-    fn floor_10_weights() {
-        let w = rarity_weights_for_floor(10);
-        assert_eq!(w, [25, 40, 27, 8]);
+    fn t4_weights_floor_15() {
+        assert_eq!(rarity_weights_for_floor(15), [30, 40, 24, 6]);
     }
 
     #[test]
-    fn floor_beyond_10_uses_deepest_tier() {
-        let w = rarity_weights_for_floor(15);
-        assert_eq!(w, [25, 40, 27, 8]);
+    fn t5_weights_floor_20() {
+        assert_eq!(rarity_weights_for_floor(20), [20, 40, 30, 10]);
+    }
+
+    #[test]
+    fn t6_weights_floor_26() {
+        assert_eq!(rarity_weights_for_floor(26), [12, 38, 35, 15]);
     }
 
     // --- SpeedStats tests ---

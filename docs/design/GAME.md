@@ -2,7 +2,7 @@
 
 ## Vision
 
-A Brogue-inspired roguelike where a lone hero descends a 10-floor dungeon to
+A Brogue-inspired roguelike where a lone hero descends a 26-floor dungeon to
 retrieve the **Amulet of Ascension** and escape through a portal. Death is
 permanent. Every run is procedurally generated. Victory is hard-earned.
 
@@ -26,7 +26,7 @@ and rewards careful play.
 ## Core Gameplay Loop
 
 ```
-Enter floor
+Enter floor 1 (Escape Portal present but inert)
   -> Explore map (FOV-based, procedurally generated)
   -> Fight enemies (turn-based, d20 combat)
   -> Loot chests (all items come from chests)
@@ -34,22 +34,31 @@ Enter floor
   -> Discover machines & encounters
   -> Find the down-stairs
 Descend to next floor
-  -> Repeat through floor 9
-Floor 10: The Amulet
-  -> Find the Amulet of Ascension
-  -> Reach the escape portal
-  -> Leave the dungeon
+  -> Repeat through floor 25
+Floor 26: The Amulet
+  -> Find the Amulet of Ascension (no down-stairs here)
+  -> Ascend back up through floors 25 → 1
+  -> Floors ascended are restored from cache (same layout,
+     surviving monsters, fallen chasm victims, etc.)
+  -> Reach the Escape Portal on floor 1
 Victory
 ```
 
 ## Win Condition
 
-On **floor 10**, the player must find the **Amulet of Ascension** and reach the
-**Escape Portal**. Floor 10 is a full dungeon floor with normal encounters,
-monsters, and machines — not a boss arena. The amulet and portal are placed far
-apart, forcing the player to navigate the entire floor.
+The player must retrieve the **Amulet of Ascension** from **floor 26** and
+carry it back to the **Escape Portal** on **floor 1**. Floor 26 is a full
+dungeon floor with normal encounters, monsters, and machines — not a boss
+arena — and has no down-stairs. The only way out is back up.
 
-Reaching the portal while carrying the amulet ends the run with a victory screen.
+The Escape Portal stands at the player's starting tile on floor 1. Stepping
+on it without the amulet prints a flavor message and does nothing. Stepping
+on it while carrying the amulet ends the run with a victory screen.
+
+Ascending is not free: every floor the player revisits has been snapshotted,
+so surviving monsters are still present, fire/gas/water state persists, and
+any enemies that fell through chasms on the way down are waiting on the
+floor below. The climb back is a second gauntlet, not a victory lap.
 
 ## Lose Condition
 
@@ -205,9 +214,11 @@ On death, show:
 
 ## Floor Structure
 
-10 floors with escalating difficulty:
+26 floors with escalating difficulty:
 
 - Machines and encounters appear on **all floors**
 - Floor difficulty scales via monster spawns, monster complexity, and liquid hazards
-- Floor 10 contains the Amulet of Ascension and the Escape Portal
+- **Floor 1** contains the Escape Portal (at the player's start tile). Inert without the Amulet.
+- **Floor 26** contains the Amulet of Ascension. No down-stairs — the only exit is the climb back up.
+- Visited floors are cached and restored on ascent: same layout, same surviving monsters, same liquid/fire/gas state
 - All floors are explorable — no linear corridors to the exit

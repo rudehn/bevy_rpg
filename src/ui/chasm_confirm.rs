@@ -5,7 +5,7 @@ use bevy::prelude::*;
 
 use crate::game::{AppState, InGameState};
 use crate::game::actions::PendingChasmFall;
-use crate::game::combat::Health;
+use crate::game::combat::{DamageEvent, DamageSource, DamageType};
 use crate::map::dungeon::MapTransitionMessage;
 use crate::player::Player;
 use crate::ui::game_log::GameLogMessage;
@@ -72,9 +72,10 @@ fn chasm_confirm_input_system(
     keys: Res<ButtonInput<KeyCode>>,
     mut next_state: ResMut<NextState<InGameState>>,
     mut pending_fall: ResMut<PendingChasmFall>,
-    mut player_query: Query<&mut Health, With<Player>>,
+    player_query: Query<Entity, With<Player>>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut transition_writer: MessageWriter<MapTransitionMessage>,
+    mut damage_writer: MessageWriter<DamageEvent>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         pending_fall.0 = None;
@@ -92,19 +93,19 @@ fn chasm_confirm_input_system(
             damage
         )));
 
-        // Apply damage directly (environmental — bypasses armor)
-        if let Ok(mut health) = player_query.single_mut() {
-            health.current -= damage;
-
-            if health.current <= 0 {
-                // Let the death system handle it — just transition to Running
-                // so the normal game loop picks up the dead player.
-                next_state.set(InGameState::Running);
-                return;
-            }
+        // Emit damage through the combat pipeline (environmental — bypasses armor)
+        if let Ok(player_entity) = player_query.single() {
+            damage_writer.write(DamageEvent {
+                attacker: None,
+                target: player_entity,
+                amount: damage,
+                damage_type: DamageType::Physical,
+                source: DamageSource::Environment,
+                armor: 0,
+            });
         }
 
-        // Player survived — trigger floor descent
+        // Trigger floor descent — the damage system handles death if HP <= 0.
         transition_writer.write(MapTransitionMessage);
         next_state.set(InGameState::Running);
     }

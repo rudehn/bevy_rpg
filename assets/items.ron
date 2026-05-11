@@ -5,7 +5,6 @@
         // ===========================
         "Dagger": (
             name: "Dagger",
-            sprite: "sprites/items/weapons/dagger_6.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Weapon,
@@ -16,21 +15,20 @@
             ascii_char: "/",
             ascii_fg: "#A0A0A0",
         ),
+        // The standard balance baseline. No active ability — the sword is
+        // the reference weapon every other weapon is tuned against.
         "Sword": (
             name: "Sword",
-            sprite: "sprites/items/weapons/long_sword_1_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Weapon,
             damage: Some("1d6"),
-            weapon_ability: Some("Riposte"),
             rarity: Common,
             ascii_char: "/",
             ascii_fg: "#A0A0A0",
         ),
         "Bow": (
             name: "Bow",
-            sprite: "sprites/items/weapons/shortbow_1.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Weapon,
@@ -40,13 +38,27 @@
             ascii_char: "}",
             ascii_fg: "#A0A0A0",
         ),
+        // Cleave: lower base damage than the Sword, but the swing hits
+        // every adjacent tile around the wielder — a circular AoE that
+        // shines against grouped foes and risks friendly-overlap.
+        "Axe": (
+            name: "Axe",
+            tile_size: (32, 32),
+            grid_size: (8, 8),
+            item_kind: Weapon,
+            damage: Some("1d4"),
+            attack_speed: 1.2,
+            weapon_ability: Some("Cleave"),
+            rarity: Uncommon,
+            ascii_char: "/",
+            ascii_fg: "#B49664",
+        ),
 
         // ===========================
         // ARMOR — Light (dodge-focused)
         // ===========================
         "Leather Cap": (
             name: "Leather Cap",
-            sprite: "sprites/items/armor/head/helmet_1.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Armor,
@@ -59,7 +71,6 @@
         ),
         "Robe": (
             name: "Robe",
-            sprite: "sprites/items/armor/torso/leather_armor_1.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Armor,
@@ -72,7 +83,6 @@
         ),
         "Leather Gloves": (
             name: "Leather Gloves",
-            sprite: "sprites/items/armor/hands/glove_5.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Armor,
@@ -85,7 +95,6 @@
         ),
         "Soft Boots": (
             name: "Soft Boots",
-            sprite: "sprites/items/armor/feet/boots_1_brown_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Armor,
@@ -102,7 +111,6 @@
         // ===========================
         "Iron Helm": (
             name: "Iron Helm",
-            sprite: "sprites/items/armor/head/helmet_1.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Armor,
@@ -114,7 +122,6 @@
         ),
         "Chainmail": (
             name: "Chainmail",
-            sprite: "sprites/items/armor/torso/leather_armor_1.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Armor,
@@ -126,7 +133,6 @@
         ),
         "Splint Gloves": (
             name: "Splint Gloves",
-            sprite: "sprites/items/armor/hands/glove_5.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Armor,
@@ -139,7 +145,6 @@
         ),
         "Iron Boots": (
             name: "Iron Boots",
-            sprite: "sprites/items/armor/feet/boots_1_brown_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Armor,
@@ -155,7 +160,6 @@
         // ===========================
         "Full Helm": (
             name: "Full Helm",
-            sprite: "sprites/items/armor/head/helmet_1.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Armor,
@@ -167,7 +171,6 @@
         ),
         "Plate Armor": (
             name: "Plate Armor",
-            sprite: "sprites/items/armor/torso/leather_armor_1.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Armor,
@@ -179,7 +182,6 @@
         ),
         "Gauntlets": (
             name: "Gauntlets",
-            sprite: "sprites/items/armor/hands/glove_5.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Armor,
@@ -191,7 +193,6 @@
         ),
         "Heavy Boots": (
             name: "Heavy Boots",
-            sprite: "sprites/items/armor/feet/boots_1_brown_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Armor,
@@ -207,7 +208,6 @@
         // ===========================
         "Wooden Shield": (
             name: "Wooden Shield",
-            sprite: "sprites/items/armor/shield/buckler_1_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Armor,
@@ -219,7 +219,6 @@
         ),
         "Iron Shield": (
             name: "Iron Shield",
-            sprite: "sprites/items/armor/shield/buckler_1_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Armor,
@@ -231,13 +230,13 @@
         ),
         "Tower Shield": (
             name: "Tower Shield",
-            sprite: "sprites/items/armor/shield/buckler_1_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Armor,
             armor_slot: Some(OffHand),
             defense: 5,
-            // TODO: Tower Shield should also apply delay_modifier: 0.1 for a speed penalty
+            // Speed penalty: +10% delay on every action while equipped.
+            delay_modifier: 0.1,
             rarity: Rare,
             ascii_char: ")",
             ascii_fg: "#C8C8C8",
@@ -248,7 +247,6 @@
         // ===========================
         "Healing Potion": (
             name: "Healing Potion",
-            sprite: "sprites/items/potions/ruby_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Consumable,
@@ -260,7 +258,6 @@
         ),
         "Greater Healing Potion": (
             name: "Greater Healing Potion",
-            sprite: "sprites/items/potions/sky_blue.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Consumable,
@@ -273,7 +270,6 @@
         // Mana Potions removed — mana system replaced by staves/cooldowns.
         "Swiftness Potion": (
             name: "Swiftness Potion",
-            sprite: "sprites/items/potions/golden.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Consumable,
@@ -285,7 +281,6 @@
         ),
         "Fire Resistance Potion": (
             name: "Fire Resistance Potion",
-            sprite: "sprites/items/potions/brilliant_blue_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Consumable,
@@ -297,7 +292,6 @@
         ),
         "Antidote": (
             name: "Antidote",
-            sprite: "sprites/items/potions/bubbly.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Consumable,
@@ -309,7 +303,6 @@
         ),
         "Scroll of Enchanting": (
             name: "Scroll of Enchanting",
-            sprite: "sprites/items/books/parchment_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Consumable,
@@ -325,7 +318,6 @@
         // ===========================
         "Staff of Lightning": (
             name: "Staff of Lightning",
-            sprite: "sprites/items/weapons/quarterstaff_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Staff,
@@ -337,7 +329,6 @@
         ),
         "Staff of Poison": (
             name: "Staff of Poison",
-            sprite: "sprites/items/weapons/quarterstaff_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Staff,
@@ -349,7 +340,6 @@
         ),
         "Staff of Blinking": (
             name: "Staff of Blinking",
-            sprite: "sprites/items/weapons/quarterstaff_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Staff,
@@ -361,7 +351,6 @@
         ),
         "Staff of Fire": (
             name: "Staff of Fire",
-            sprite: "sprites/items/weapons/quarterstaff_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Staff,
@@ -373,7 +362,6 @@
         ),
         "Staff of Healing": (
             name: "Staff of Healing",
-            sprite: "sprites/items/weapons/quarterstaff_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Staff,
@@ -385,7 +373,6 @@
         ),
         "Staff of Force": (
             name: "Staff of Force",
-            sprite: "sprites/items/weapons/quarterstaff_new.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Staff,
@@ -401,17 +388,17 @@
         // ===========================
         "Ring of Perception": (
             name: "Ring of Perception",
-            sprite: "sprites/items/rings/gold.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Ring,
+            hit_bonus: 2,
+            vision_bonus: 4,
             rarity: Uncommon,
             ascii_char: "=",
             ascii_fg: "#50C850",
         ),
         "Ring of Protection": (
             name: "Ring of Protection",
-            sprite: "sprites/items/rings/gold.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Ring,
@@ -422,7 +409,6 @@
         ),
         "Ring of Might": (
             name: "Ring of Might",
-            sprite: "sprites/items/rings/gold.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Ring,
@@ -433,7 +419,6 @@
         ),
         "Ring of Precision": (
             name: "Ring of Precision",
-            sprite: "sprites/items/rings/gold.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Ring,
@@ -444,7 +429,6 @@
         ),
         "Ring of Evasion": (
             name: "Ring of Evasion",
-            sprite: "sprites/items/rings/gold.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Ring,
@@ -455,7 +439,6 @@
         ),
         "Ring of Regeneration": (
             name: "Ring of Regeneration",
-            sprite: "sprites/items/rings/gold.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Ring,
@@ -466,7 +449,6 @@
         ),
         "Ring of Speed": (
             name: "Ring of Speed",
-            sprite: "sprites/items/rings/gold.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Ring,
@@ -477,7 +459,6 @@
         ),
         "Ring of Vitality": (
             name: "Ring of Vitality",
-            sprite: "sprites/items/rings/gold.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Ring,
@@ -492,7 +473,6 @@
         // ===========================
         "Amulet of Life": (
             name: "Amulet of Life",
-            sprite: "sprites/items/rings/gold.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Amulet,
@@ -503,19 +483,17 @@
         ),
         "Amulet of Warding": (
             name: "Amulet of Warding",
-            sprite: "sprites/items/rings/gold.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Amulet,
-            // TODO: Add resistance modifier when resistance system is implemented
             defense: 1,
+            resistances: {"physical": 25},
             rarity: Rare,
             ascii_char: "\"",
             ascii_fg: "#5096FF",
         ),
         "Amulet of Swiftness": (
             name: "Amulet of Swiftness",
-            sprite: "sprites/items/rings/gold.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Amulet,
@@ -526,33 +504,30 @@
         ),
         "Amulet of the Inferno": (
             name: "Amulet of the Inferno",
-            sprite: "sprites/items/rings/gold.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Amulet,
-            // TODO: Add fire resistance when resistance system is implemented
+            resistances: {"fire": 50},
             rarity: Rare,
             ascii_char: "\"",
             ascii_fg: "#FF6430",
         ),
         "Amulet of Grounding": (
             name: "Amulet of Grounding",
-            sprite: "sprites/items/rings/gold.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Amulet,
-            // TODO: Add lightning resistance when resistance system is implemented
+            resistances: {"lightning": 50},
             rarity: Rare,
             ascii_char: "\"",
             ascii_fg: "#5096FF",
         ),
         "Amulet of Antivenom": (
             name: "Amulet of Antivenom",
-            sprite: "sprites/items/rings/gold.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Amulet,
-            // TODO: Add poison resistance when resistance system is implemented
+            resistances: {"poison": 50},
             rarity: Rare,
             ascii_char: "\"",
             ascii_fg: "#30C830",
@@ -563,7 +538,6 @@
         // ===========================
         "Arrow": (
             name: "Arrow",
-            sprite: "sprites/items/weapons/arrow.png",
             tile_size: (32, 32),
             grid_size: (1, 1),
             item_kind: Consumable,
@@ -581,7 +555,6 @@
         // ===========================
         "Amulet of Yendor": (
             name: "Amulet of Yendor",
-            sprite: "sprites/items/rings/gold.png",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Amulet,

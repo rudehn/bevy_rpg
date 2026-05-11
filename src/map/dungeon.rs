@@ -50,6 +50,15 @@ pub struct CachedFloor {
 #[derive(Resource, Default)]
 pub struct FloorCache(pub HashMap<u32, CachedFloor>);
 
+/// Entities that fell through chasms (e.g. collapsing CrackedFloor tiles)
+/// and should appear on the target floor when it is next materialized.
+/// Keyed by destination floor depth.
+#[derive(Resource, Default)]
+pub struct FallenEntities {
+    pub monsters: HashMap<u32, Vec<crate::save::SavedMonster>>,
+    pub items: HashMap<u32, Vec<crate::save::SavedItem>>,
+}
+
 /// Set by the stair systems before triggering SpawnDungeonMessage so that
 /// spawn_dungeon can restore rather than regenerate.
 #[derive(Resource, Default)]
@@ -119,6 +128,7 @@ impl Plugin for DungeonPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Floor>()
             .init_resource::<FloorCache>()
+            .init_resource::<FallenEntities>()
             .init_resource::<PendingFloorRestore>()
             .init_resource::<PendingGameLoad>()
             .init_resource::<PendingPlayerLoad>()
@@ -422,6 +432,7 @@ pub(crate) struct SpawnDungeonExtras<'w> {
     fire_tiles: ResMut<'w, crate::game::fire::FireTiles>,
     gas_tiles: ResMut<'w, crate::game::gas::GasTiles>,
     water_tiles: ResMut<'w, crate::game::water::WaterTiles>,
+    fallen_entities: ResMut<'w, FallenEntities>,
 }
 
 pub fn spawn_dungeon(
@@ -447,7 +458,7 @@ pub fn spawn_dungeon(
     // ---------------------------------------------------------------
     // Determine floor source + handle resource-level side effects
     // ---------------------------------------------------------------
-    let source = if let Some(save_data) = pending_game_load.0.take() {
+    let source = if let Some(mut save_data) = pending_game_load.0.take() {
         // Load path: extract resource-level state before materialization
         use crate::save::SavedFloorCache;
 
@@ -456,6 +467,15 @@ pub fn spawn_dungeon(
         let saved_floor_cache: std::collections::HashMap<u32, crate::save::CachedFloorSave> =
             save_data.floor_cache.clone();
         commands.insert_resource(SavedFloorCache(saved_floor_cache));
+
+        // Rebuild the fallen-entities queue that `auto_save` captured. Taking
+        // the maps out (instead of cloning) avoids a second large allocation.
+        let fallen_monsters = std::mem::take(&mut save_data.fallen_monsters);
+        let fallen_items = std::mem::take(&mut save_data.fallen_items);
+        commands.insert_resource(FallenEntities {
+            monsters: fallen_monsters,
+            items: fallen_items,
+        });
 
         extras.needs_explored_init.0 = true;
 
@@ -534,6 +554,102 @@ pub fn spawn_dungeon(
 
     *map = result.map;
 
+    // Spawn any entities that fell from the floor above via chasm collapse.
+    //
+    // `occupied` scatters fallen entities so groups don't pile onto a single
+    // tile when their drop point lands in a wall or chasm. It seeds with the
+    // player's spawn tile (so nothing overlaps them) and grows as each fallen
+    // monster is placed. Items share the set with monsters — two fallers
+    // from the same tile above land on adjacent tiles instead of stacking.
+    let mut occupied: std::collections::HashSet<(i32, i32)> =
+        std::collections::HashSet::new();
+    occupied.insert((result.player_spawn.x, result.player_spawn.y));
+
+    if let Some(fallen_monsters) = extras.fallen_entities.monsters.remove(&floor.0) {
+        use crate::map::floor_materializer::nearest_walkable_avoiding;
+        for m in &fallen_monsters {
+            let target =
+                nearest_walkable_avoiding(&map, Point::new(m.x, m.y), &occupied);
+            if let Some(entity) = crate::game::spawn_monster_by_name(
+                &mut commands,
+                &m.name,
+                &target,
+                &mut turn_manager,
+                &assets.monster_manifests,
+                &assets.monster_manifest_handle,
+                &assets.monster_sprite_assets,
+                ascii_font.as_deref(),
+            ) {
+                occupied.insert((target.x, target.y));
+                if let Some(hp) = if m.hp_current > 0 { Some(m.hp_current) } else { None } {
+                    commands.entity(entity).insert(crate::save::SavedHp(hp));
+                }
+                if let (Some(squad_id), Some(squad_config)) = (m.squad_id, m.squad_config.clone()) {
+                    commands
+                        .entity(entity)
+                        .insert((crate::game::squad::SquadId(squad_id), squad_config));
+                    if m.is_leader {
+                        commands.entity(entity).insert((
+                            crate::game::squad::SquadLeader,
+                            crate::game::squad::SquadBlackboard::default(),
+                        ));
+                    }
+                }
+                if let Some(patrol_route) = m.patrol_route.clone() {
+                    commands.entity(entity).insert(patrol_route);
+                }
+            } else {
+                warn!("Failed to spawn fallen monster '{}'", m.name);
+            }
+        }
+        info!("Spawned {} fallen monsters on floor {}", fallen_monsters.len(), floor.0);
+    }
+
+    // Fallen items — scattered on top of the monster occupancy set so
+    // items and monsters don't stack and items from the same drop tile
+    // aren't piled together.
+    if let Some(fallen_items) = extras.fallen_entities.items.remove(&floor.0) {
+        use crate::map::floor_materializer::nearest_walkable_avoiding;
+        let item_manifest = assets
+            .item_manifests
+            .get(&assets.item_manifest_handle.0);
+        for i in &fallen_items {
+            let target =
+                nearest_walkable_avoiding(&map, Point::new(i.x, i.y), &occupied);
+            if let Some(entity) = crate::game::spawner::spawn_item(
+                &mut commands,
+                &i.name,
+                &target,
+                &assets.item_manifests,
+                &assets.item_manifest_handle,
+                &assets.item_sprite_assets,
+                ascii_font.as_deref(),
+                // Items keep their saved enchantment state below;
+                // skip random enchant rolling by passing None.
+                None,
+            ) {
+                occupied.insert((target.x, target.y));
+                if i.count > 1 {
+                    let max_stack = item_manifest
+                        .and_then(|m| m.items.get(i.name.as_str()))
+                        .map(|a| a.max_stack)
+                        .unwrap_or(1);
+                    commands.entity(entity).insert(crate::game::items::ItemStack {
+                        count: i.count,
+                        max_stack,
+                    });
+                }
+                crate::save::restore_item_mutable_state(&mut commands, entity, &i.state);
+                if i.drifting {
+                    commands.entity(entity).insert(crate::components::Drifting);
+                }
+            } else {
+                warn!("Failed to spawn fallen item '{}'", i.name);
+            }
+        }
+        info!("Spawned {} fallen items on floor {}", fallen_items.len(), floor.0);
+    }
+
     // Clear stale non-entity light sources (fire, fungal) from the previous floor.
     // Entity-based wall lights (candles) are re-synced automatically.
     extras.light_sources.remove_floor_sources();
@@ -605,12 +721,8 @@ pub fn spawn_dungeon(
 
     info!(
         "spawn_dungeon: turn_queue has {} entities, current_time={}",
-        turn_manager.turn_queue.len(), turn_manager.current_time
+        turn_manager.len(), turn_manager.current_time
     );
-    // Log the first few entries to see their scheduled times
-    for (i, (entity, time)) in turn_manager.turn_queue.iter().enumerate().take(5) {
-        info!("  queue[{}]: entity={:?}, time={}", i, entity, time);
-    }
 
     log_writer.write(GameLogMessage(format!("Welcome to floor {}!", floor.0)));
 
@@ -626,5 +738,68 @@ pub fn spawn_dungeon(
     // (Skipped during load since apply_player_load_system hasn't run yet;
     //  auto_save_system checks for the player entity so it will self-correct.)
     extras.auto_save_pending.0 = true;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::save::{SavedItem, SavedMonster};
+
+    #[test]
+    fn fallen_entities_default_has_empty_monsters_and_items() {
+        // Regression guard: the resource split into two maps — both must
+        // default-initialize to empty HashMaps, not just `monsters`.
+        let fallen = FallenEntities::default();
+        assert!(fallen.monsters.is_empty());
+        assert!(fallen.items.is_empty());
+    }
+
+    #[test]
+    fn fallen_items_queue_keyed_by_destination_floor() {
+        // `apply_liquid_mutations` pushes saved items onto
+        // `fallen.items[dest_floor]`; `spawn_dungeon` pops the entry. Exercise
+        // that round-trip shape so regressions in either side stand out.
+        let mut fallen = FallenEntities::default();
+
+        let item = SavedItem {
+            x: 5, y: 7,
+            name: "Healing Potion".to_string(),
+            count: 3,
+            state: Default::default(),
+            drifting: false,
+        };
+        fallen.items.entry(4).or_default().push(item.clone());
+
+        // Pop at the consuming site (mirrors spawn_dungeon's `.remove(&floor)`).
+        let popped = fallen.items.remove(&4).expect("queue for floor 4");
+        assert_eq!(popped.len(), 1);
+        assert_eq!(popped[0].name, "Healing Potion");
+        assert_eq!(popped[0].count, 3);
+        assert_eq!((popped[0].x, popped[0].y), (5, 7));
+        // A second pop of the same floor should now be empty (not re-fallen).
+        assert!(fallen.items.get(&4).is_none());
+    }
+
+    #[test]
+    fn fallen_monsters_and_items_are_independent() {
+        // Items falling must not disturb pending monster queues on the same
+        // destination floor, and vice versa.
+        let mut fallen = FallenEntities::default();
+        fallen.monsters.entry(3).or_default().push(SavedMonster {
+            x: 0, y: 0, name: "Kobold Hoarder".to_string(), hp_current: 5,
+            squad_id: None, is_leader: false, squad_config: None,
+            patrol_route: None, submerged: false,
+        });
+        fallen.items.entry(3).or_default().push(SavedItem {
+            x: 0, y: 0, name: "Healing Potion".to_string(),
+            count: 1, state: Default::default(), drifting: false,
+        });
+
+        let monsters = fallen.monsters.remove(&3).unwrap();
+        // Removing monsters must leave items intact.
+        assert_eq!(monsters.len(), 1);
+        assert!(fallen.items.get(&3).is_some());
+        assert_eq!(fallen.items.get(&3).unwrap().len(), 1);
+    }
 }
 

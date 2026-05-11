@@ -92,16 +92,9 @@ pub fn spawn_monster(
     monster_sprite_assets: &Res<MonsterSpriteAssets>,
     ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
 ) -> Option<Entity> {
-    let Some((texture_handle, layout_handle, index, scale_x, scale_y)) = resolve_sprite(
-        &monster_asset.sprite,
-        UVec2::new(32, 32),
-        monster_asset.tile_size,
-        &monster_sprite_assets.handles,
-        &monster_sprite_assets.layouts,
-    ) else {
-        error!("Missing monster sprite for '{}'", monster_asset.name);
-        return None;
-    };
+    let tile_size = monster_asset.tile_size.unwrap_or(UVec2::new(32, 32));
+    let scale_x = GRID_SIZE.x / tile_size.x as f32;
+    let scale_y = GRID_SIZE.y / tile_size.y as f32;
 
     let new_pos = Transform {
         translation: Vec3::new(
@@ -147,6 +140,7 @@ pub fn spawn_monster(
             new_pos,
             Viewshed::new(monster_asset.vision.max(2)),
             Faction(FactionKind(monster_asset.faction.clone())),
+            monster_asset.species,
             StatusEffects::default(),
             Inventory { items: vec![], capacity: 20 },
             crate::game::squad::Morale::new(base_morale),
@@ -277,6 +271,20 @@ pub fn spawn_monster(
                     threshold_percent: *threshold_percent,
                 });
             }
+            AbilityDef::ExplodeOnHit { radius, effect } => {
+                use crate::assets::ExplodeEffectDef;
+                use crate::game::abilities::ExplodeEffect;
+                let effect = match effect {
+                    ExplodeEffectDef::CrackFloor => ExplodeEffect::CrackFloor,
+                    ExplodeEffectDef::GasCloud { volume } => {
+                        ExplodeEffect::GasCloud { volume: *volume }
+                    }
+                };
+                commands.entity(monster_entity).insert(ExplodeOnHit {
+                    radius: *radius,
+                    effect,
+                });
+            }
             AbilityDef::ExplodeOnDeath { damage, radius, damage_type } => {
                 commands.entity(monster_entity).insert(ExplodeOnDeath {
                     damage: *damage,
@@ -288,6 +296,12 @@ pub fn spawn_monster(
                 commands.entity(monster_entity).insert(SummonOnDeath {
                     monster_name: monster.clone(),
                     count: *count,
+                });
+            }
+            AbilityDef::GasOnDeath { radius, volume } => {
+                commands.entity(monster_entity).insert(GasOnDeath {
+                    radius: *radius,
+                    volume: *volume,
                 });
             }
             AbilityDef::PackTactics => {
@@ -405,16 +419,9 @@ pub fn spawn_item(
         return None;
     };
 
-    let Some((texture_handle, layout_handle, index, scale_x, scale_y)) = resolve_sprite(
-        &asset.sprite,
-        UVec2::new(32, 32),
-        asset.tile_size,
-        &item_sprite_assets.handles,
-        &item_sprite_assets.layouts,
-    ) else {
-        error!("Missing item sprite for '{}'", asset.name);
-        return None;
-    };
+    let item_tile_size = asset.tile_size.unwrap_or(UVec2::new(32, 32));
+    let scale_x = GRID_SIZE.x / item_tile_size.x as f32;
+    let scale_y = GRID_SIZE.y / item_tile_size.y as f32;
 
     let mut entity = commands.spawn((
         Item,
@@ -442,6 +449,15 @@ pub fn spawn_item(
         asset.effect.clone()
     };
 
+    // Convert the manifest's string-keyed resistance map to typed
+    // DamageType keys once, at spawn — handlers can iterate without
+    // re-parsing strings on every equip/unequip.
+    let resistances = asset
+        .resistances
+        .iter()
+        .map(|(k, v)| (DamageType::from_str(k), *v))
+        .collect();
+
     entity.insert(ItemProperties {
         kind: asset.item_kind.clone(),
         armor_slot: asset.armor_slot.clone(),
@@ -459,13 +475,15 @@ pub fn spawn_item(
         regen_bonus: asset.regen_bonus,
         max_hp_bonus: asset.max_hp_bonus,
         delay_modifier: asset.delay_modifier,
+        vision_bonus: asset.vision_bonus,
+        resistances,
         weapon_ability: asset.weapon_ability.clone(),
     });
 
     entity.insert(ItemStack { count: 1, max_stack: asset.max_stack });
 
     // Consumable items (potions, scrolls) are destroyed on use.
-    if matches!(asset.item_kind, crate::game::items::ItemKind::Consumable | crate::game::items::ItemKind::Spellbook) {
+    if matches!(asset.item_kind, crate::game::items::ItemKind::Consumable) {
         entity.insert(crate::components::Consumable);
     }
 
@@ -525,13 +543,9 @@ pub fn spawn_prop(
         None
     })?;
 
-    let (texture_handle, layout_handle, index, scale_x, scale_y) = resolve_sprite(
-        &asset.sprite,
-        UVec2::new(16, 16),
-        asset.tile_size,
-        &prop_sprite_assets.handles,
-        &prop_sprite_assets.layouts,
-    )?;
+    let prop_tile_size = asset.tile_size.unwrap_or(UVec2::new(16, 16));
+    let scale_x = GRID_SIZE.x / prop_tile_size.x as f32;
+    let scale_y = GRID_SIZE.y / prop_tile_size.y as f32;
 
     let mut entity = commands.spawn((
         Prop,

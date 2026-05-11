@@ -1,6 +1,6 @@
 # bevy_rpg — The Veiled Tyrant
 
-A Brogue-inspired roguelike built with Bevy 0.17 and Rust. Descend 10 floors,
+A Brogue-inspired roguelike built with Bevy 0.17 and Rust. Descend 26 floors,
 find the Amulet of Ascension, escape through the portal. Permadeath.
 
 ## Build & Run
@@ -14,21 +14,45 @@ cargo clippy       # Lint
 
 ## Design Documentation
 
-Design docs live in `docs/design/`. Read these before making gameplay changes:
+Design docs live in `docs/design/`. Read these before making gameplay changes.
+**Every game system has a corresponding design doc here** — see
+`.claude/rules/design-docs-required.md` for the rule that enforces this.
+
+### High-level overviews
 
 | Doc | Covers |
 |-----|--------|
 | [GAME.md](docs/design/GAME.md) | Vision, core loop, win/lose, combat system, damage types, player stats, progression |
-| [DUNGEON.md](docs/design/DUNGEON.md) | Map generation pipeline, terrain/liquid layers, water mechanics, decorations, lighting, floor structure |
+| [PLAYER.md](docs/design/PLAYER.md) | Player stats, starting kit, equipment slots |
+| [DUNGEON.md](docs/design/DUNGEON.md) | Map generation pipeline, terrain/liquid layers, decorations, lighting, floor structure |
 | [ENCOUNTERS.md](docs/design/ENCOUNTERS.md) | Machine system (hordes → spawn table → machines), blueprints, trapped chests, lock & key |
-| [ENEMIES.md](docs/design/ENEMIES.md) | Monster roster, cooldown-based abilities, factions, squad system, morale, out-of-depth |
+| [ENEMIES.md](docs/design/ENEMIES.md) | Monster roster, factions, species, tier structure, per-monster identities |
 | [ITEMS.md](docs/design/ITEMS.md) | Weapons (active abilities), staves (charges), armor, rings/amulets, potions, enchanting, runics |
+
+### Per-system docs
+
+| Doc | Covers |
+|-----|--------|
+| [TURNS.md](docs/design/TURNS.md) | Turn queue, TurnState FSM, SpeedStats delay model, ActionFinishedEvent contract, processing phases |
+| [ABILITIES.md](docs/design/ABILITIES.md) | Monster ability triggers (on-hit/on-being-hit/on-death/passive), cooldown family, ExplodeEffect variants |
+| [STATUS_EFFECTS.md](docs/design/STATUS_EFFECTS.md) | Burning, Poisoned, Slowed, Stunned, Hasted, Enraged, Entangled, Custom IDs, tick model, refresh policy |
+| [FACTIONS.md](docs/design/FACTIONS.md) | Faction component, FactionMatrix, hostility lookup, cross-faction combat, default-Hostile gotcha |
+| [RANGED.md](docs/design/RANGED.md) | Ranged attack pipeline, F-key targeting, weapon range, ammo, LOS gating |
+| [SQUAD_AI.md](docs/design/SQUAD_AI.md) | Squad system, shared alerting, leader mechanics, morale-based fleeing |
+| [FIRE.md](docs/design/FIRE.md) | Fire entities, spread, ignition chance, burn duration, water/gas interactions |
+| [GAS.md](docs/design/GAS.md) | Gas types (Poison, Steam), volume, diffusion, decay, FOV blocking, ignition |
+| [WATER.md](docs/design/WATER.md) | Shallow/deep water, movement cost, Submerged state, item drift, fire-water steam |
+| [CHASMS.md](docs/design/CHASMS.md) | Chasm tile mechanics, fall damage, fallen-entity propagation across floors |
+| [TILE_PROMOTION.md](docs/design/TILE_PROMOTION.md) | Cracked floor → chasm, grass regrowth, embers → ash, promotion cooldown |
+| [LIGHT.md](docs/design/LIGHT.md) | Per-tile light intensity + color, Bresenham LOS, resource vs. entity-driven sources, dirty propagation |
+| [ASCII_RENDERER.md](docs/design/ASCII_RENDERER.md) | Per-tile glyph variation, animated effects, lighting, color palettes |
 
 **Key design constraints:**
 - No spells/mana — player uses staves (Brogue-style charges), monsters use cooldown abilities
 - All loot comes from chests — no floor drops
 - 4 damage types: Physical, Poison, Fire, Lightning
-- Win condition: Find amulet on floor 10, reach escape portal
+- Win condition: Find Amulet of Yendor on floor 26, climb back up to the Escape Portal on floor 1
+- No XP, no levels, no classes, no attributes (STR/DEX/etc.) — symmetric flat-stat combat
 
 ## Project Structure
 
@@ -50,6 +74,7 @@ src/
     effects.rs           # Effect application (item use, on-hit effects)
     enchantment.rs       # Enchant scroll system (+1 to any item)
     factions.rs          # Faction definitions and hostility matrix
+    gas.rs               # Gas layer system (poison clouds, spread, decay, FOV blocking)
     goap.rs              # Goal-Oriented Action Planning AI
     items.rs             # Item components, equip/unequip/drop handlers
     machines.rs          # Machine encounter runtime logic
@@ -67,8 +92,8 @@ src/
   map/
     mod.rs               # MapPlugin re-exports
     map.rs               # Map resource, tile visibility systems, GRID_SIZE (16x16), MAP_SIZE (80x60)
-    tile.rs              # Tile struct (terrain + liquid layers), TerrainType, LiquidType
-    light.rs             # Lighting via bevy_light_2d
+    tile.rs              # Tile re-exports + TileVisibility/TileExplored components + sprite spawning + chasm_fall_reaction_system
+    light.rs             # Game adapter for engine's lighting (re-exports + candle sprite animation + LightPlugin scheduling)
     dungeon.rs           # DungeonPlugin, Floor resource, floor cache
     floor_materializer.rs # Converts BuilderMap data into ECS entities
     builders/
@@ -79,7 +104,7 @@ src/
       lake_builder.rs    # Organic lake generation using blob algorithm
       machine_builder.rs # Machine encounter placement in builder pipeline
       prefab_placer.rs   # Hand-designed room layout stamping
-      decoration_propagator.rs # Brogue-style BFS decoration spreading
+      decoration_propagator.rs # Game adapter — DecorationPropagator lives in engine
       diagonal_culler.rs # Removes diagonally-unreachable wall tiles
       unseen_culler.rs   # Culls tiles unreachable from player start
       isolated_area_culler.rs # Removes disconnected map regions
@@ -138,9 +163,19 @@ src/
 - `BuilderChain` composes one `InitialMapBuilder` + N `MetaMapBuilder`s; call `build_map()` to run the pipeline
 - Current pipeline: `BrogueLikeBuilder → StartPointBuilder → LakeBuilder → DiagonalCuller → PillarCuller → FinishDoors → PrefabPlacer → MachineBuilder → IsolatedAreaCuller → CandleSpawner → MonsterSpawner → DecorationPropagator → DistantExit`
 
+### Tile Mutation Pipeline (engine-owned)
+- Mutation messages (`TileMutationMessage`, `DecorationMutationMessage`, `LiquidMutationMessage`) and their apply systems live in `roguelike_engine::map::mutation`. The engine plugin `MapMutationPlugin` registers them; game configures `MapMutationSet` ordering inside `ProcessingPhase::Cleanup`.
+- The engine apply systems do **universal data sync only**: write `Map`, sync the tile entity's terrain/liquid component, mark `Viewshed.dirty` + `LightSources.dirty`, toggle `Collider`, insert into `PromotionCooldown`, and apply universal physics (`Decoration::CrackedFloor` → `TerrainType::Floor`, `Decoration::Fungus` ↔ `fungal_light` add/remove).
+- **Game-specific reactions** to a mutation belong in a system that reads the same message and runs `.after(MapMutationSet)`. Current reaction: `chasm_fall_reaction_system` in [src/map/tile.rs](src/map/tile.rs) (player/monster fall, lava-kill, forced floor transition on player fall).
+- `TilePromotionPlugin` (engine, in `roguelike_engine::map::promotion`) ships the per-turn promotion tick. Game configures `TilePromotionSet` to run inside `ProcessingPhase::Cleanup` before `MapMutationSet`. See `docs/design/TILE_PROMOTION.md`.
+
+### Lighting (engine-owned)
+- `LightMap`, `LightSources`, `LightSource` component, Bresenham accumulation, and `LightingPlugin` live in `roguelike_engine::lighting`. The game's [src/map/light.rs](src/map/light.rs) is a thin adapter that re-exports + adds candle sprite animation + configures `LightingSet` ordering relative to `SpawnDungeonSet` and `AppState::InGame`.
+- Engine apply-systems write `LightSources.dirty = true` on opacity-flipping terrain mutations, so light recomputes automatically when doors open/close, walls collapse, etc.
+
 ### Tile Layers
-- **Terrain**: Wall, Floor, DownStairs, UpStairs, Empty, Door, OpenDoor, LockedDoor
-- **Liquid**: None, ShallowWater, DeepWater, Lava
+- **Terrain**: Wall, Floor, DownStairs, UpStairs, Empty, Door, OpenDoor, LockedDoor, Portal
+- **Liquid**: None, ShallowWater, Water (deep), Lava, Chasm
 - `is_walkable()` requires both layers to be walkable
 - `is_passable()` is used for connectivity (doors count, liquids are ignored)
 - `is_opaque()` blocks FOV (walls, closed doors)
@@ -154,7 +189,7 @@ src/
 
 ### Item System
 - All items found in chests (placed by builder pipeline)
-- Weapons have unique active abilities per type (sword=Riposte, dagger=Backstab)
+- Weapons differentiate via active abilities: Sword is the no-ability balance baseline; Dagger has Backstab (3× damage vs unaware); Axe has Cleave (lower damage but splashes the rolled damage to all 8 tiles around the attacker); Bow uses ranged targeting via `F`
 - Staves use Brogue-style charges (enchanting adds charges + power)
 - Armor provides either dodge bonus or flat armor (light vs heavy)
 - Enchant scrolls: +1 to any item (the core strategic decision)
@@ -170,11 +205,17 @@ src/
 ## Dependencies
 - `bevy 0.17` — game engine
 - `bracket-lib` (forked) — FOV, pathfinding, geometry, RNG
-- `bevy_light_2d 0.8` — 2D lighting
+- `roguelike_engine` (path: `../roguelike_engine`) — shared roguelike infrastructure (turns, combat, status, abilities, AI, factions, squad, FOV, save, **map builders incl. decoration propagator**, **lighting**, **tile mutation messages + apply systems**, **tile promotion**)
 - `petgraph 0.8` — graph analysis for choke map
 - `rand 0.9` — random generation in map builders
 - `bevy_common_assets 0.14` + `serde` — RON asset loading
 - `bevy_save 0.17` — save/load support
+
+## UI Architecture
+- Game world is suspended while any UI screen is open — `handle_player_input` (movement) is gated on `InGameState::Running`
+- Inventory and Character Info screens must never let keystrokes bleed through to the game world
+- Every new UI substate must be added to this gate
+- Inventory can only be opened when it is the player's turn (`TurnState::PlayerInput`)
 
 ## Conventions
 - Snake_case for files, modules, functions, variables; PascalCase for types

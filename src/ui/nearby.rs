@@ -144,7 +144,7 @@ fn update_nearby_panel(
         health_pct: f32,
         ai_state: &'static str,
         ai_color: Color,
-        status_effects: Vec<(String, Color, u32, u32)>,
+        status_effects: Vec<(String, Color, u32, u32, String)>,
     }
 
     fn ai_state_color(state: &str) -> Color {
@@ -382,8 +382,8 @@ fn update_nearby_panel(
                                 padding: UiRect::left(Val::Px(18.0)),
                                 ..default()
                             }).with_children(|row| {
-                                for (label, color, turns_remaining, initial_duration) in &monster.status_effects {
-                                    spawn_status_badge(row, &font, label, *color, *turns_remaining, *initial_duration);
+                                for (label, color, turns_remaining, initial_duration, desc) in &monster.status_effects {
+                                    spawn_status_badge(row, &font, label, *color, *turns_remaining, *initial_duration, desc);
                                 }
                             });
                         }

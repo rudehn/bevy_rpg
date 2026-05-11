@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 
-use crate::components::{GameEntityMarker, Monster, Name, Position};
+use crate::components::{GameEntityMarker, Monster, Name, Position, Species};
 use crate::constants::TILE_SIZE_X;
 use crate::game::abilities::{
-    BurningStrike, ExplodeOnDeath, Knockback, LifeDrain, PackTactics, Rally, RoughBody,
-    SlowStrike, StunningBlow, SummonOnDeath, Terrify, WarCry,
+    BurningStrike, ExplodeOnDeath, ExplodeOnHit, Knockback, LifeDrain, PackTactics, Rally,
+    RoughBody, SlowStrike, StunningBlow, SummonOnDeath, Terrify, WarCry,
 };
 use crate::game::actions::SpeedStats;
 use crate::game::camera::{MainCamera, UiCamera};
@@ -50,7 +50,7 @@ fn spawn_monster_info_panel(mut commands: Commands, q_ui_camera: Query<Entity, W
                 max_width: Val::Px(260.0),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.90)),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, crate::ui::modal::MODAL_OVERLAY_OPACITY)),
             BorderColor::all(Color::WHITE),
             ZIndex(100),
             Visibility::Hidden,
@@ -98,13 +98,15 @@ fn update_monster_info_panel(
     >,
     // Query 2: monster abilities (looked up by entity after focus is determined)
     q_abilities: Query<Option<&MonsterAbilities>>,
+    // Query 2b: species tag (looked up by entity after focus is determined)
+    q_species: Query<Option<&Species>>,
     // Query 3: active status effects (looked up by entity after focus is determined)
     q_statuses: Query<Option<&StatusEffects>>,
     // Query 4: ability traits
     q_traits: Query<(
         Has<BurningStrike>, Has<StunningBlow>, Has<LifeDrain>, Has<Knockback>,
-        Has<SlowStrike>, Has<RoughBody>, Has<ExplodeOnDeath>, Has<SummonOnDeath>,
-        Has<PackTactics>, Has<Rally>, Has<Terrify>, Has<WarCry>,
+        Has<SlowStrike>, Has<RoughBody>, Has<ExplodeOnDeath>, Has<ExplodeOnHit>,
+        Has<SummonOnDeath>, Has<PackTactics>, Has<Rally>, Has<Terrify>, Has<WarCry>,
     )>,
     // Query 5: player stats for battle sim
     q_player_combat: Query<(&Health, &Damage, &Armor, &DamageBonus), With<Player>>,
@@ -262,6 +264,13 @@ fn update_monster_info_panel(
     let speed_attack_delay = speed_stats.map(|s| s.attack_delay);
     let armor_val = armor.map(|a| a.0).unwrap_or(0);
 
+    // Species tag (biological category — Beast, Humanoid, Insect, ...)
+    let species = q_species
+        .get(entity)
+        .ok()
+        .and_then(|s| s.copied())
+        .filter(|s| !matches!(s, Species::Unknown));
+
     // Collect monster abilities
     let mut ability_entries: Vec<String> = Vec::new();
 
@@ -281,14 +290,15 @@ fn update_monster_info_panel(
 
     // Collect ability traits
     let mut traits: Vec<&str> = Vec::new();
-    if let Ok((burn, stun, drain, kb, slow, rough, explode, summon, pack, rally, terrify, warcry)) = q_traits.get(entity) {
+    if let Ok((burn, stun, drain, kb, slow, rough, explode_death, explode_hit, summon, pack, rally, terrify, warcry)) = q_traits.get(entity) {
         if burn { traits.push("Burning Strike"); }
         if stun { traits.push("Stunning Blow"); }
         if drain { traits.push("Life Drain"); }
         if kb { traits.push("Knockback"); }
         if slow { traits.push("Slowing Strike"); }
         if rough { traits.push("Rough Body"); }
-        if explode { traits.push("Explodes on Death"); }
+        if explode_death { traits.push("Explodes on Death"); }
+        if explode_hit { traits.push("Explodes on Hit"); }
         if summon { traits.push("Summons on Death"); }
         if pack { traits.push("Pack Tactics"); }
         if rally { traits.push("Rally Aura"); }
@@ -319,6 +329,19 @@ fn update_monster_info_panel(
             },
             TextColor(Color::WHITE),
         ));
+
+        // Species (Beast / Humanoid / Insect / ... — hidden for Unknown/Player)
+        if let Some(species) = species {
+            parent.spawn((
+                Text::new(format!("Species: {}", species)),
+                TextFont {
+                    font: font.clone(),
+                    font_size: 11.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.65, 0.65, 0.55)),
+            ));
+        }
 
         // Health
         let mut health_str = format!("HP: {}/{}", health_current, health_max);

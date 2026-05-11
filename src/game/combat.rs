@@ -1,9 +1,9 @@
 use bevy::prelude::*;
-use bracket_lib::random::{RandomNumberGenerator, parse_dice_string};
+use bracket_lib::random::RandomNumberGenerator;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 use crate::components::{FloorEntityMarker, InInventory, Inventory, Monster, Name, GodMode, Position};
+use crate::game::magic::GameStatusEffectsExt;
 use crate::game::stats::{Armor, DamageBonus, Dodge, HitBonus};
 use crate::game::turns::TurnEndEvent;
 use crate::game::{AppState, RunSummary, TurnManager};
@@ -11,96 +11,35 @@ use crate::map::dungeon::Floor;
 use crate::player::Player;
 use crate::ui::game_log::GameLogMessage;
 
-// --- Damage Types & Resistances ---
+// --- Damage Types, Resistances, and Health components ---
+//
+// These types now live in `roguelike_engine::combat` and are re-exported
+// here so every existing call site (91 occurrences across 18 files) can
+// continue to use `crate::game::combat::{DamageType, DamageSource, ...}`
+// unchanged.
+pub use roguelike_engine::combat::{
+    DamageSource, DamageType, DamageTypeTag, Health, HealthRegen, RegenSuppression, Resistances,
+};
 
-/// The elemental/physical type of damage dealt.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Reflect)]
-pub enum DamageType {
-    #[default]
-    Physical,
-    Fire,
-    Lightning,
-    Poison,
-}
-
-impl DamageType {
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "fire" => DamageType::Fire,
-            "lightning" => DamageType::Lightning,
-            "poison" => DamageType::Poison,
-            _ => DamageType::Physical,
-        }
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            DamageType::Physical => "physical",
-            DamageType::Fire => "fire",
-            DamageType::Lightning => "lightning",
-            DamageType::Poison => "poison",
-        }
-    }
-}
-
-/// Per-entity resistance map. Values are percentages.
-/// 0 = normal, 50 = 50% reduction, 100 = immune, >100 = heals.
-/// Negative = vulnerability (takes extra damage).
-#[derive(Component, Clone, Debug, Default, Serialize, Deserialize)]
-pub struct Resistances(pub HashMap<DamageType, i32>);
-
-impl Resistances {
-    pub fn get(&self, damage_type: &DamageType) -> i32 {
-        self.0.get(damage_type).copied().unwrap_or(0)
-    }
-}
-
-/// Tags an entity's melee damage with a specific type.
-#[derive(Component, Debug, Clone)]
-pub struct DamageTypeTag(pub DamageType);
-
-/// Where the damage originated from (melee, spell, poison tick, etc.).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DamageSource {
-    Melee,
-    Ranged,
-    Spell,
-    Environment,
-}
+// --- Engine combat events ---
+//
+// The engine's `CombatPlugin` registers `DamageEvent`, `DeathEvent`, and
+// `HealEvent` message types plus `damage_application_system` (armor +
+// resistance + HP mutation) and `heal_application_system`.  The game
+// re-exports the event types here so call sites can use
+// `crate::game::combat::{DamageEvent, DeathEvent, HealEvent, CombatEventSet}`.
+pub use roguelike_engine::combat::events::{
+    CombatEventSet, DamageEvent, DeathEvent, HealEvent,
+};
 
 // --- Components ---
-
-/// Component for an entity's current and maximum health.
-#[derive(Component, Debug, Reflect, Default)]
-#[reflect(Component)]
-pub struct Health {
-    pub current: i32,
-    pub max: i32,
-}
-
-/// Component for health regeneration.
-/// regen_rate: points gained per turn (e.g., 20 for 1 health per 5 turns)
-/// regen_accumulator: accumulated points
-#[derive(Component, Debug, Reflect, Default)]
-#[reflect(Component)]
-pub struct HealthRegen {
-    pub regen_rate: i32,
-    pub regen_accumulator: i32,
-}
-
-/// Suppresses HP regen for N turns after taking damage.
-#[derive(Component, Clone, Debug, Serialize, Deserialize, Reflect, Default)]
-#[reflect(Component)]
-pub struct RegenSuppression(pub u32);
+//
+// `Health`, `HealthRegen`, and `RegenSuppression` are re-exported from
+// `roguelike_engine::combat` above.
 
 /// Component for an entity's damage, using dice notation (e.g., "1d6").
 #[derive(Component, Debug)]
 pub struct Damage(pub String);
-
-/// Marker on the player entity: next melee attack costs 0 time (riposte after dodge).
-#[derive(Component, Debug, Clone)]
-pub struct RiposteReady;
-
 
 // --- Messages ---
 
@@ -123,33 +62,9 @@ pub struct DamageRollMessage {
     pub is_crit: bool,
 }
 
-/// Message sent after damage is rolled to apply armor reduction.
-#[derive(Message, Debug)]
-pub struct DamageReductionMessage {
-    pub attacker: Entity,
-    pub target: Entity,
-    pub raw_damage: i32,
-    pub damage_type: DamageType,
-    pub source: DamageSource,
-}
-
-/// Message sent after armor reduction to finally apply damage to health.
-#[allow(dead_code)]
-#[derive(Message, Debug)]
-pub struct ApplyDamageMessage {
-    pub attacker: Entity,
-    pub target: Entity,
-    pub final_damage: i32,
-    pub damage_type: DamageType,
-    pub source: DamageSource,
-}
-
-/// Message sent to heal an entity.
-#[derive(Message, Debug)]
-pub struct HealMessage {
-    pub entity: Entity,
-    pub amount: i32,
-}
+// DamageReductionMessage, ApplyDamageMessage, HealMessage, and DeathEvent
+// are replaced by engine types: DamageEvent, HealEvent, DeathEvent
+// (re-exported above from roguelike_engine::combat::events).
 
 /// Message sent when an attack misses its target.
 #[allow(dead_code)]
@@ -165,11 +80,8 @@ pub struct ToggleGodModeMessage {
     pub entity: Entity,
 }
 
-#[derive(Message, Debug, Clone, Copy)]
-pub struct DeathEvent {
-    pub attacker: Entity,
-    pub target: Entity,
-}
+// DeathEvent is now re-exported from roguelike_engine::combat::events above.
+// Engine fields: { entity: Entity, killer: Option<Entity> }
 
 // --- Resources ---
 
@@ -180,43 +92,21 @@ pub struct GameRng(pub RandomNumberGenerator);
 // --- Utility Functions ---
 
 /// Rolls dice based on a dice notation string (e.g., "1d6").
-fn roll_dice(dice_string: &str, rng: &mut RandomNumberGenerator) -> i32 {
-    match parse_dice_string(dice_string) {
-        Ok(dice_type) => rng.roll_dice(dice_type.n_dice, dice_type.die_type) + dice_type.bonus,
-        Err(e) => {
-            error!("Failed to parse dice string '{}': {}", dice_string, e);
-            1 // Default to 1 damage on parse error
-        }
-    }
-}
+///
+/// Re-export of the engine's [`roguelike_engine::dice::roll_dice_string`].
+/// Parse errors fall back to a damage roll of 1 (the engine default),
+/// which shows up as a consistently-weak attack if a dice string is
+/// malformed — an observable dev-time symptom.
+use roguelike_engine::dice::roll_dice_string as roll_dice;
 
-// --- Pure computation helpers (testable without ECS) ---
-
-/// Apply armor reduction to raw damage. Armor can fully negate damage.
-pub fn compute_after_armor(raw_damage: i32, armor: i32) -> i32 {
-    (raw_damage - armor).max(0)
-}
-
-/// Apply a resistance percentage to damage.
-/// Returns the final damage (negative = heal via Absorb, 0 = immune).
-pub fn apply_resistance(damage: i32, resist_percent: i32) -> i32 {
-    let multiplier = 1.0 - (resist_percent as f32 / 100.0);
-    (damage as f32 * multiplier).round() as i32
-}
-
-/// Apply status multipliers to base damage.
-/// `is_enraged`: +50%. `is_terrified`: -25%.
-/// Crits are handled upstream by doubling the damage dice, not here.
-pub fn apply_damage_multipliers(base: i32, is_enraged: bool, is_terrified: bool) -> i32 {
-    let mut damage = base;
-    if is_enraged {
-        damage = damage * 3 / 2;
-    }
-    if is_terrified {
-        damage = damage * 3 / 4;
-    }
-    damage.max(1)
-}
+// --- Pure computation helpers ---
+//
+// These functions now live in `roguelike_engine::combat` and are re-exported
+// here so existing game code (attack pipeline, tests) can keep referencing
+// them via `crate::game::combat::{compute_after_armor, ...}`.
+pub use roguelike_engine::combat::{
+    apply_damage_multipliers, apply_resistance, compute_after_armor,
+};
 
 // --- Systems ---
 
@@ -248,21 +138,18 @@ fn regen_system(
 
 /// 1. Hit Chance: d20 + hit_bonus >= 4 + dodge_bonus (natural 20 always hits)
 fn hit_check_system(
-    mut commands: Commands,
     mut intents: MessageReader<AttackIntentMessage>,
     mut roll_writer: MessageWriter<DamageRollMessage>,
     mut miss_writer: MessageWriter<MissMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut game_rng: ResMut<GameRng>,
     query: Query<(&Name, Option<&Dodge>, Option<&HitBonus>, Has<Player>)>,
-    player_equipment_query: Query<&crate::game::items::Equipment, With<Player>>,
-    weapon_props_query: Query<&crate::game::items::ItemProperties>,
 ) {
     for intent in intents.read() {
         let Ok((attacker_name, _, attacker_hit_bonus, is_player)) = query.get(intent.attacker) else {
             continue;
         };
-        let Ok((target_name, target_dodge, _, target_is_player)) = query.get(intent.target) else {
+        let Ok((target_name, target_dodge, _, _)) = query.get(intent.target) else {
             continue;
         };
 
@@ -291,51 +178,42 @@ fn hit_check_system(
                 attacker: intent.attacker,
                 target: intent.target,
             });
-
-            // Riposte: when the player dodges an attack and has a Riposte weapon,
-            // grant a free melee attack on their next turn.
-            if target_is_player && intent.source == DamageSource::Melee {
-                if let Ok(equipment) = player_equipment_query.get(intent.target) {
-                    if let Some(weapon_entity) = equipment.weapon {
-                        if let Ok(props) = weapon_props_query.get(weapon_entity) {
-                            if props.weapon_ability.as_deref() == Some("Riposte") {
-                                commands.entity(intent.target).insert(RiposteReady);
-                                log_writer.write(GameLogMessage("You prepare a riposte!".to_string()));
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }
 
 /// 2. Damage Calculation: Roll attacker damage dice. Crits (nat 20) double the dice.
+///
+/// Emits [`DamageEvent`] with the raw damage and the target's armor value.
+/// The engine's `damage_application_system` handles armor reduction,
+/// resistance, HP mutation, and death detection.
 fn damage_roll_system(
-    mut commands: Commands,
     mut roll_messages: MessageReader<DamageRollMessage>,
-    mut reduction_writer: MessageWriter<DamageReductionMessage>,
+    mut damage_writer: MessageWriter<DamageEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut game_rng: ResMut<GameRng>,
-    query: Query<(
+    attacker_query: Query<(
         &Damage,
         Option<&crate::game::magic::StatusEffects>,
         Has<crate::game::abilities::Terrified>,
         Option<&DamageBonus>,
         Has<Player>,
     )>,
+    target_query: Query<(Option<&Armor>, Option<&crate::game::abilities::RallyBuff>)>,
     player_equipment_query: Query<&crate::game::items::Equipment, With<Player>>,
     weapon_props_query: Query<&crate::game::items::ItemProperties>,
     target_ai_query: Query<&crate::game::MonsterAI>,
+    monster_position_query: Query<(Entity, &Position), With<Monster>>,
+    position_query: Query<&Position>,
 ) {
     for message in roll_messages.read() {
-        let Ok((damage_dice, status_effects, is_terrified, damage_bonus, attacker_is_player)) = query.get(message.attacker) else {
+        let Ok((damage_dice, status_effects, is_terrified, damage_bonus, attacker_is_player)) = attacker_query.get(message.attacker) else {
             continue;
         };
 
-        let base_roll = roll_dice(&damage_dice.0, &mut game_rng.0);
+        let base_roll = roll_dice(&mut game_rng.0, &damage_dice.0);
         let rolled_damage = if message.is_crit {
-            base_roll + roll_dice(&damage_dice.0, &mut game_rng.0)
+            base_roll + roll_dice(&mut game_rng.0, &damage_dice.0)
         } else {
             base_roll
         };
@@ -363,180 +241,230 @@ fn damage_roll_system(
             }
         }
 
-        reduction_writer.write(DamageReductionMessage {
-            attacker: message.attacker,
+        // Query target armor for the engine's damage pipeline
+        let armor_val = if message.damage_type == DamageType::Physical {
+            target_query
+                .get(message.target)
+                .map(|(armor, rally)| {
+                    armor.map(|a| a.0).unwrap_or(0)
+                        + rally.map(|r| r.armor_bonus).unwrap_or(0)
+                })
+                .unwrap_or(0)
+        } else {
+            0 // Non-physical damage bypasses armor
+        };
+
+        damage_writer.write(DamageEvent {
             target: message.target,
-            raw_damage,
+            amount: raw_damage,
             damage_type: message.damage_type,
             source: message.source,
+            attacker: Some(message.attacker),
+            armor: armor_val,
         });
+
+        // Cleave: after the primary melee hit, the Axe's swing damages
+        // every monster in the 8 tiles surrounding the *attacker*. The
+        // primary target is excluded (they already took the main hit).
+        // Splash damage equals the rolled damage — the Axe trades a
+        // smaller damage die for area coverage. `DamageSource::Environment`
+        // is used so the splash never recursively re-triggers Cleave or
+        // on-hit procs.
+        if attacker_is_player && message.source == DamageSource::Melee {
+            let has_cleave = player_equipment_query
+                .get(message.attacker)
+                .ok()
+                .and_then(|eq| eq.weapon)
+                .and_then(|w| weapon_props_query.get(w).ok())
+                .map(|p| p.weapon_ability.as_deref() == Some("Cleave"))
+                .unwrap_or(false);
+
+            if has_cleave {
+                let attacker_pos = position_query
+                    .get(message.attacker)
+                    .ok()
+                    .map(|p| (p.x, p.y));
+                if let Some((ax, ay)) = attacker_pos {
+                    let mut hit = 0;
+                    for (other_entity, other_pos) in monster_position_query.iter() {
+                        if other_entity == message.target { continue; }
+                        let dx = (other_pos.x - ax).abs();
+                        let dy = (other_pos.y - ay).abs();
+                        // Chebyshev <= 1 = the 8 surrounding tiles; (dx+dy) > 0
+                        // excludes the attacker's own tile (a Cleave-wielding
+                        // monster wouldn't damage itself).
+                        if dx <= 1 && dy <= 1 && (dx + dy) > 0 {
+                            damage_writer.write(DamageEvent {
+                                target: other_entity,
+                                amount: raw_damage,
+                                damage_type: DamageType::Physical,
+                                source: DamageSource::Environment,
+                                attacker: Some(message.attacker),
+                                armor: 0,
+                            });
+                            hit += 1;
+                        }
+                    }
+                    if hit > 0 {
+                        let suffix = if hit == 1 { "y" } else { "ies" };
+                        log_writer.write(GameLogMessage(format!(
+                            "Cleave! Your axe sweeps through {} more enem{}.",
+                            hit, suffix
+                        )));
+                    }
+                }
+            }
+        }
     }
 }
 
-/// 3. Armor Reduction + Resistance: Subtract armor, then apply resistance multiplier.
-fn armor_reduction_system(
-    mut reduction_messages: MessageReader<DamageReductionMessage>,
-    mut apply_writer: MessageWriter<ApplyDamageMessage>,
-    mut log_writer: MessageWriter<GameLogMessage>,
-    query: Query<(Option<&Armor>, Option<&crate::game::abilities::RallyBuff>, Option<&Resistances>, &Name)>,
+// armor_reduction_system and damage_application_system are removed.
+// The engine's CombatPlugin handles armor, resistance, HP mutation, regen
+// suppression, and DeathEvent emission via damage_application_system.
+// Game-specific reactions (on-hit triggers, combat log, GodMode,
+// last-attacker tracking) are handled by the systems below.
+
+/// Reads [`DamageEvent`] messages and emits on-hit / on-being-hit trigger
+/// messages so ability and enchantment handlers can react.
+///
+/// Runs after [`CombatEventSet`] so that HP has already been mutated.
+pub fn combat_trigger_system(
+    mut damage_events: MessageReader<DamageEvent>,
+    mut on_hit_writer: MessageWriter<crate::game::abilities::OnHitTriggerMessage>,
+    mut on_being_hit_writer: MessageWriter<crate::game::abilities::OnBeingHitTriggerMessage>,
 ) {
-    for message in reduction_messages.read() {
-        let Ok((armor, rally_buff, resistances, target_name)) = query.get(message.target) else {
+    for event in damage_events.read() {
+        if let Some(attacker) = event.attacker {
+            if event.source == DamageSource::Melee || event.source == DamageSource::Ranged {
+                on_hit_writer.write(crate::game::abilities::OnHitTriggerMessage {
+                    attacker,
+                    defender: event.target,
+                    final_damage: event.amount,
+                    source: event.source,
+                });
+                on_being_hit_writer.write(crate::game::abilities::OnBeingHitTriggerMessage {
+                    attacker,
+                    defender: event.target,
+                    final_damage: event.amount,
+                    source: event.source,
+                    damage_type: event.damage_type,
+                });
+            }
+        }
+    }
+}
+
+/// Logs combat hits, resistance effects, and damage amounts.
+///
+/// Recomputes the final damage locally (same engine math) for display.
+pub fn combat_log_system(
+    mut damage_events: MessageReader<DamageEvent>,
+    target_query: Query<(Option<&Resistances>, &Name)>,
+    name_query: Query<(&Name, Has<Player>)>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+) {
+    for event in damage_events.read() {
+        let Ok((resistances, target_name)) = target_query.get(event.target) else {
             continue;
         };
 
-        // Armor reduction: only Physical damage applies armor
-        let after_armor = if message.damage_type == DamageType::Physical {
-            let armor_val = armor.map(|a| a.0).unwrap_or(0)
-                + rally_buff.map(|r| r.armor_bonus).unwrap_or(0);
-            compute_after_armor(message.raw_damage, armor_val)
-        } else {
-            message.raw_damage // Non-physical skips armor
-        };
-
-        // Resistance percentage
+        // Recompute final damage for display (mirrors engine math)
+        let after_armor = compute_after_armor(event.amount, event.armor);
         let resist_percent = resistances
-            .map(|r| r.get(&message.damage_type))
+            .map(|r| r.get(&event.damage_type))
             .unwrap_or(0);
         let final_damage = apply_resistance(after_armor, resist_percent);
 
         // Log resistance effects
         if resist_percent >= 100 {
             log_writer.write(GameLogMessage(format!(
-                "{} is immune to {} damage!", target_name.0, message.damage_type.name()
+                "{} is immune to {} damage!",
+                target_name.0,
+                event.damage_type.name()
             )));
         } else if resist_percent > 0 {
             log_writer.write(GameLogMessage(format!(
-                "{} resists the {} damage.", target_name.0, message.damage_type.name()
+                "{} resists the {} damage.",
+                target_name.0,
+                event.damage_type.name()
             )));
         } else if resist_percent < 0 {
             log_writer.write(GameLogMessage(format!(
-                "{} is weak to {}!", target_name.0, message.damage_type.name()
+                "{} is weak to {}!",
+                target_name.0,
+                event.damage_type.name()
             )));
         }
 
-        apply_writer.write(ApplyDamageMessage {
-            attacker: message.attacker,
-            target: message.target,
-            final_damage,
-            damage_type: message.damage_type,
-            source: message.source,
-        });
-    }
-}
-
-/// 4. Damage Application: Update health and log the result.
-///    Absorb resistance: negative final_damage means heal instead.
-fn damage_application_system(
-    mut commands: Commands,
-    mut apply_messages: MessageReader<ApplyDamageMessage>,
-    mut death_writer: MessageWriter<DeathEvent>,
-    mut on_hit_writer: MessageWriter<crate::game::abilities::OnHitTriggerMessage>,
-    mut on_being_hit_writer: MessageWriter<crate::game::abilities::OnBeingHitTriggerMessage>,
-    mut log_writer: MessageWriter<GameLogMessage>,
-    mut query_health: Query<(
-        &mut Health,
-        &Name,
-        Has<GodMode>,
-        Has<Player>,
-    )>,
-    query_names: Query<(&Name, Has<Player>)>,
-    mut run_stats: ResMut<crate::game::RunStats>,
-) {
-    for message in apply_messages.read() {
-        let Ok((mut target_health, target_name, has_god_mode, target_is_player)) =
-            query_health.get_mut(message.target)
-        else {
+        if final_damage <= 0 {
             continue;
+        }
+
+        let (attacker_label, is_player) = if let Some(attacker_entity) = event.attacker {
+            if let Ok((name, is_pl)) = name_query.get(attacker_entity) {
+                (name.0.clone(), is_pl)
+            } else {
+                ("the environment".to_string(), false)
+            }
+        } else {
+            ("the environment".to_string(), false)
         };
-
-        // Absorb resistance: heal instead of damage
-        if message.final_damage < 0 {
-            let heal = (-message.final_damage).min(target_health.max - target_health.current);
-            target_health.current += heal;
-            continue;
-        }
-
-        // Immune: 0 damage = skip entirely
-        if message.final_damage == 0 {
-            continue;
-        }
-
-        if has_god_mode {
-            info!("{} is in GodMode, ignoring damage!", target_name.0);
-            continue;
-        }
-
-        let Ok((attacker_name, is_player)) = query_names.get(message.attacker) else {
-            continue;
-        };
-
-        // Track last attacker for the death screen cause-of-death line.
-        if target_is_player {
-            run_stats.last_hit_by = attacker_name.0.clone();
-        }
-
-        if message.final_damage > 0 {
-            target_health.current -= message.final_damage;
-            // Suppress HP regen for 5 turns after taking damage
-            commands.entity(message.target).insert(RegenSuppression(5));
-        }
-
-        // Emit ability trigger messages for on-hit and on-being-hit handlers.
-        // Only for direct attacks (melee/ranged), not environment/spell DoTs.
-        if message.source == DamageSource::Melee || message.source == DamageSource::Ranged {
-            on_hit_writer.write(crate::game::abilities::OnHitTriggerMessage {
-                attacker: message.attacker,
-                defender: message.target,
-                final_damage: message.final_damage,
-                source: message.source,
-            });
-            on_being_hit_writer.write(crate::game::abilities::OnBeingHitTriggerMessage {
-                attacker: message.attacker,
-                defender: message.target,
-                final_damage: message.final_damage,
-                source: message.source,
-                damage_type: message.damage_type,
-            });
-        }
 
         let verb = if is_player { "hit" } else { "hits" };
         log_writer.write(GameLogMessage(format!(
             "{} {} {} for {} damage.",
-            attacker_name.0, verb, target_name.0, message.final_damage
+            attacker_label, verb, target_name.0, final_damage
         )));
-
-        if target_health.current <= 0 {
-            death_writer.write(DeathEvent {
-                attacker: message.attacker,
-                target: message.target,
-            });
-        }
-
-        info!(
-            "Entity {:?} hit Entity {:?} for {} damage. Target health: {}/{}",
-            message.attacker,
-            message.target,
-            message.final_damage,
-            target_health.current,
-            target_health.max
-        );
     }
 }
 
-/// System that handles healing for entities.
-pub fn handle_heal_system(
-    mut messages: MessageReader<HealMessage>,
-    mut query: Query<(&mut Health, &Name)>,
+/// Tracks the last attacker (for death screen) and undoes engine damage
+/// for GodMode entities.
+pub fn combat_bookkeeping_system(
+    mut damage_events: MessageReader<DamageEvent>,
+    name_query: Query<&Name>,
+    mut godmode_query: Query<&mut Health, With<GodMode>>,
+    player_query: Query<Entity, With<Player>>,
+    mut run_stats: ResMut<crate::game::RunStats>,
+) {
+    let player_entity = player_query.single().ok();
+    for event in damage_events.read() {
+        // Track last attacker for death screen
+        if player_entity == Some(event.target) {
+            if let Some(attacker) = event.attacker {
+                run_stats.last_hit_by = name_query
+                    .get(attacker)
+                    .map(|n| n.0.clone())
+                    .unwrap_or_else(|_| "the environment".to_string());
+            } else {
+                run_stats.last_hit_by = "the environment".to_string();
+            }
+        }
+
+        // GodMode: undo any damage the engine applied
+        if let Ok(mut health) = godmode_query.get_mut(event.target) {
+            health.current = health.max;
+        }
+    }
+}
+
+/// Logs heal events. The engine's `heal_application_system` handles the
+/// actual HP restoration; this system just writes the combat log message.
+pub fn heal_log_system(
+    mut events: MessageReader<HealEvent>,
+    query: Query<(&Health, &Name)>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
-    for msg in messages.read() {
-        if let Ok((mut health, name)) = query.get_mut(msg.entity) {
-            let old_health = health.current;
-            health.current = (health.current + msg.amount).min(health.max);
-            let healed_amount = health.current - old_health;
-            if healed_amount > 0 {
-                log_writer.write(GameLogMessage(format!("{} is healed for {} HP.", name.0, healed_amount)));
+    for event in events.read() {
+        if let Ok((health, name)) = query.get(event.target) {
+            // The engine already applied the heal, so we compute how much
+            // was actually healed (clamped to max) for display.
+            let healed = event.amount.min(health.max - (health.current - event.amount));
+            if healed > 0 {
+                log_writer.write(GameLogMessage(format!(
+                    "{} is healed for {} HP.",
+                    name.0, healed
+                )));
             }
         }
     }
@@ -637,7 +565,7 @@ pub fn death_system(
                 log_writer.write(GameLogMessage(format!("{} dies.", name.0)));
                 commands.entity(entity).despawn();
                 // Remove from turn queue if present
-                turn_manager.turn_queue.retain(|&(e, _)| e != entity);
+                turn_manager.remove_entity(entity);
             } else if is_destructible {
                 // Destructible prop destroyed (e.g., barricade)
                 log_writer.write(GameLogMessage(format!("The {} crumbles!", name.0.to_lowercase())));
@@ -655,38 +583,45 @@ pub fn death_system(
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CombatDamageSet;
 
-pub struct CombatPlugin;
+pub struct GameCombatPlugin;
 
-impl Plugin for CombatPlugin {
+impl Plugin for GameCombatPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(GameRng(RandomNumberGenerator::new())) // Initialize wrapped RNG
+        app.insert_resource(GameRng(RandomNumberGenerator::new()))
             .add_message::<AttackIntentMessage>()
             .add_message::<DamageRollMessage>()
-            .add_message::<DamageReductionMessage>()
-            .add_message::<ApplyDamageMessage>()
-            .add_message::<HealMessage>()
             .add_message::<MissMessage>()
             .add_message::<ToggleGodModeMessage>()
-            .add_message::<DeathEvent>()
             .register_type::<Health>()
             .register_type::<HealthRegen>()
             .register_type::<RegenSuppression>()
             .register_type::<GodMode>()
             .configure_sets(Update, CombatDamageSet.run_if(in_state(AppState::InGame)))
+            // Engine's CombatEventSet must run after our hit→roll pipeline
+            // so its damage_application_system sees the DamageEvent messages.
+            .configure_sets(
+                Update,
+                CombatEventSet
+                    .after(CombatDamageSet)
+                    .run_if(in_state(AppState::InGame)),
+            )
             .add_systems(
                 Update,
                 (
-                    (
-                        hit_check_system,
-                        damage_roll_system,
-                        armor_reduction_system,
-                        damage_application_system,
-                    )
+                    // Game's hit check → damage roll pipeline (emits DamageEvent)
+                    (hit_check_system, damage_roll_system)
                         .chain()
                         .in_set(CombatDamageSet),
+                    // Reaction systems run after the engine processes damage
+                    (
+                        combat_trigger_system,
+                        combat_log_system,
+                        combat_bookkeeping_system,
+                        heal_log_system,
+                    )
+                        .after(CombatEventSet),
                     regen_system,
                     tick_regen_suppression,
-                    handle_heal_system,
                     handle_toggle_god_mode_system,
                 )
                     .run_if(in_state(AppState::InGame)),
@@ -698,96 +633,17 @@ impl Plugin for CombatPlugin {
 mod tests {
     use super::*;
 
-    // --- compute_after_armor ---
-
-    #[test]
-    fn armor_reduces_damage() {
-        assert_eq!(compute_after_armor(10, 3), 7);
-    }
-
-    #[test]
-    fn armor_can_reduce_to_zero() {
-        assert_eq!(compute_after_armor(5, 100), 0);
-    }
-
-    #[test]
-    fn zero_armor_passes_through() {
-        assert_eq!(compute_after_armor(8, 0), 8);
-    }
-
-    // --- apply_resistance ---
-
-    #[test]
-    fn resistance_zero_is_normal() {
-        assert_eq!(apply_resistance(10, 0), 10);
-    }
-
-    #[test]
-    fn resistance_50_halves_damage() {
-        assert_eq!(apply_resistance(10, 50), 5);
-    }
-
-    #[test]
-    fn resistance_100_is_immune() {
-        assert_eq!(apply_resistance(10, 100), 0);
-    }
-
-    #[test]
-    fn resistance_150_heals() {
-        assert_eq!(apply_resistance(10, 150), -5);
-    }
-
-    #[test]
-    fn resistance_negative_50_is_vulnerable() {
-        assert_eq!(apply_resistance(10, -50), 15);
-    }
-
-    // --- apply_damage_multipliers ---
-
-    #[test]
-    fn no_multipliers_passes_through() {
-        assert_eq!(apply_damage_multipliers(10, false, false), 10);
-    }
-
-    #[test]
-    fn enraged_adds_50_percent() {
-        assert_eq!(apply_damage_multipliers(10, true, false), 15);
-    }
-
-    #[test]
-    fn terrified_reduces_25_percent() {
-        assert_eq!(apply_damage_multipliers(10, false, true), 7);
-    }
-
-    #[test]
-    fn enraged_and_terrified_stack_multiplicatively() {
-        // 10 * 1.5 (enrage) = 15, then 15 * 0.75 (terrified) = 11
-        assert_eq!(apply_damage_multipliers(10, true, true), 11);
-    }
-
-    #[test]
-    fn minimum_damage_is_one() {
-        assert_eq!(apply_damage_multipliers(1, false, true), 1);
-    }
+    // Pure arithmetic tests (compute_after_armor, apply_resistance,
+    // apply_damage_multipliers, and the armor+resistance pipeline tests)
+    // now live in `roguelike_engine::combat::tests`. Only combat tests that
+    // exercise game-side types (Resistances component, DamageType parsing,
+    // RegenSuppression) remain here.
 
     // --- Resistance component ---
 
-    #[test]
-    fn resistances_default_to_zero() {
-        let r = Resistances::default();
-        assert_eq!(r.get(&DamageType::Fire), 0);
-    }
-
-    #[test]
-    fn resistances_lookup() {
-        let mut map = HashMap::new();
-        map.insert(DamageType::Fire, 100);
-        map.insert(DamageType::Lightning, -50);
-        let r = Resistances(map);
-        assert_eq!(r.get(&DamageType::Fire), 100);
-        assert_eq!(r.get(&DamageType::Lightning), -50);
-        assert_eq!(r.get(&DamageType::Physical), 0);
-    }
+    // DamageType parsing, Resistances lookup, and the name tests now
+    // live in `roguelike_engine::combat::tests`. Only game-side tests
+    // (RegenSuppression, game-specific pipeline integrations) stay here.
 
     // --- DamageBonus ---
 
@@ -809,39 +665,4 @@ mod tests {
         }
         assert_eq!(turns, 1);
     }
-
-    // --- DamageType parsing ---
-
-    #[test]
-    fn damage_type_from_str() {
-        assert_eq!(DamageType::from_str("fire"), DamageType::Fire);
-        assert_eq!(DamageType::from_str("LIGHTNING"), DamageType::Lightning);
-        assert_eq!(DamageType::from_str("poison"), DamageType::Poison);
-        assert_eq!(DamageType::from_str("unknown"), DamageType::Physical);
-        assert_eq!(DamageType::from_str(""), DamageType::Physical);
-    }
-
-    // --- Full pipeline integration: armor + resistance ---
-
-    #[test]
-    fn armor_then_resistance_vulnerable() {
-        let after_armor = compute_after_armor(20, 5); // 15
-        let final_damage = apply_resistance(after_armor, -50); // 15 * 1.5 = 22.5 -> 23
-        assert_eq!(final_damage, 23);
-    }
-
-    #[test]
-    fn armor_then_resistance_immune() {
-        let after_armor = compute_after_armor(20, 5); // 15
-        let final_damage = apply_resistance(after_armor, 100); // 0
-        assert_eq!(final_damage, 0);
-    }
-
-    #[test]
-    fn armor_then_resistance_absorb() {
-        let after_armor = compute_after_armor(20, 5); // 15
-        let final_damage = apply_resistance(after_armor, 150); // 15 * -0.5 = -7.5 -> -8
-        assert_eq!(final_damage, -8);
-    }
-
 }

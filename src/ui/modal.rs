@@ -2,6 +2,13 @@ use bevy::prelude::*;
 
 use crate::game::InGameState;
 
+/// Standard opacity for modal overlay backgrounds.
+pub const MODAL_OVERLAY_OPACITY: f32 = 0.85;
+/// Gold color used for modal titles and section headers.
+pub const GOLD: Color = Color::srgb(1.0, 0.84, 0.0);
+/// Dim gray for disabled/empty UI elements.
+pub const DIM_GRAY: Color = Color::srgb(0.3, 0.3, 0.3);
+
 // ---------------------------------------------------------------------------
 // Toggle input helper
 // ---------------------------------------------------------------------------
@@ -52,11 +59,11 @@ impl Default for ModalConfig {
     fn default() -> Self {
         Self {
             title: "",
-            title_color: Color::srgb(1.0, 0.84, 0.0),
+            title_color: GOLD,
             footer: "",
             width: 700.0,
             height: 520.0,
-            opacity: 0.85,
+            opacity: MODAL_OVERLAY_OPACITY,
         }
     }
 }

@@ -11,12 +11,12 @@ use crate::{
     ui::game_log::GameLogMessage,
     game::{
         camera::{move_camera, toggle_main_camera_visibility},
-        combat::{CombatDamageSet, CombatPlugin, DeathEvent, GameRng, death_system},
+        combat::{CombatDamageSet, GameCombatPlugin, DeathEvent, GameRng, death_system},
         items::{ItemsPlugin, LootTable},
         magic::MagicPlugin,
         particles::ParticlesPlugin,
         stats::StatsPlugin,
-        systems::{fov_update_system, sync_entity_transforms, update_monster_visibility, update_item_visibility, update_prop_visibility},
+        systems::{fov_update_system, mark_moved_viewsheds_dirty, sync_entity_transforms, update_monster_visibility, update_item_visibility, update_prop_visibility},
         turns::TurnOrderPlugin,
     },
     map::{
@@ -115,7 +115,12 @@ impl Plugin for GamePlugin {
                 PlayerPlugin,
                 DungeonPlugin,
                 TurnOrderPlugin,
-                CombatPlugin,
+                // Engine's CombatPlugin: registers DamageEvent/DeathEvent/HealEvent
+                // message types + damage_application_system + heal_application_system
+                roguelike_engine::combat::events::CombatPlugin,
+                // Engine's FovPlugin: registers fov_update_system in FovSet
+                roguelike_engine::components::FovPlugin,
+                GameCombatPlugin,
                 StatsPlugin,
                 ItemsPlugin,
                 MagicPlugin,
@@ -131,6 +136,7 @@ impl Plugin for GamePlugin {
                 EnchantmentPlugin,
                 crate::game::staves::StavesPlugin,
                 crate::game::machines::MachinesPlugin,
+                crate::game::goap::GoapPlugin,
                 water::WaterPlugin,
                 ascii_mode::AsciiModePlugin,
             ))
@@ -140,28 +146,48 @@ impl Plugin for GamePlugin {
             .add_systems(
                 Update,
                 (
-                    sync_entity_transforms,
+                    sync_entity_transforms
+                        .after(CombatDamageSet),
                     move_camera
                         .after(sync_entity_transforms)
                         .after(player_spawn_or_move_system),
                 )
                     .run_if(in_state(AppState::InGame)),
             )
+            // Configure engine's FovSet to run after transforms sync and
+            // before visibility systems + squad alerting.
+            .configure_sets(
+                Update,
+                roguelike_engine::components::FovSet
+                    .after(sync_entity_transforms)
+                    .run_if(in_state(AppState::InGame)),
+            )
+            // Mark any moved entity's viewshed dirty so the engine's FOV
+            // system recomputes visibility on the same frame the move
+            // resolves. Without this, FOV only updates when an unrelated
+            // system happens to flip viewshed.dirty (door opens, tile
+            // mutations, vision-bonus equip), producing the "FOV updates
+            // randomly after several turns" symptom.
+            .add_systems(
+                Update,
+                mark_moved_viewsheds_dirty
+                    .before(roguelike_engine::components::FovSet)
+                    .run_if(in_state(AppState::InGame)),
+            )
             .add_systems(
                 Update,
                 (
-                    fov_update_system.after(sync_entity_transforms),
                     update_monster_visibility
                         .run_if(|query: Query<(), Changed<Position>>| !query.is_empty())
-                        .after(fov_update_system),
+                        .after(roguelike_engine::components::FovSet),
                     update_item_visibility
                         .run_if(|vs_query: Query<(), Changed<Viewshed>>, item_query: Query<(), (Changed<Visibility>, With<crate::components::Item>)>| {
                             !vs_query.is_empty() || !item_query.is_empty()
                         })
-                        .after(fov_update_system),
+                        .after(roguelike_engine::components::FovSet),
                     update_prop_visibility
                         .run_if(|query: Query<(), Changed<Viewshed>>| !query.is_empty())
-                        .after(fov_update_system),
+                        .after(roguelike_engine::components::FovSet),
                     loot_drop_system.after(CombatDamageSet),
                     crate::game::combat::drop_inventory_on_death.after(CombatDamageSet),
                     death_system.after(loot_drop_system).after(crate::game::combat::drop_inventory_on_death),
@@ -197,7 +223,7 @@ fn loot_drop_system(
 ) {
     use bracket_lib::prelude::Point;
     for event in death_events.read() {
-        let Ok((position, loot_table, name)) = loot_query.get(event.target) else {
+        let Ok((position, loot_table, name)) = loot_query.get(event.entity) else {
             continue;
         };
         let spawn_point = Point::new(position.x, position.y);

@@ -375,7 +375,7 @@ spawner — all loot is deliberately placed as part of encounters.
 | Alarm | Wakes all sleeping monsters within 15 tiles | 1-10 |
 | Explosion | 2d6 fire damage in 3x3 area | 4-10 |
 
-Trap chance scales with floor depth: 10% on floor 1, up to 40% on floor 10.
+Trap chance scales with floor depth: 10% on floor 1, up to 40% on floor 26.
 
 Only chests placed by the Trapped Chest machine blueprint are trapped. Chests
 in other machines and prefabs are always safe.

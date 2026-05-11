@@ -1,9 +1,31 @@
+//! Asset manifest types and the game's `LoadingPlugin`.
+//!
+//! # Engine/game boundary
+//!
+//! This module is **game-specific** (The Veiled Tyrant) and is NOT part of
+//! the reusable engine. The engine crate has no `LoadingPlugin`. Specifically:
+//!
+//! - The `LoadingPlugin` registers `RonAssetPlugin::<MonsterManifest>::new(&["monsters.ron"])`
+//!   and similar by-exact-filename registrations. The filenames `monsters.ron`,
+//!   `items.ron`, `tiles.ron`, etc. are game-specific concerns.
+//! - All asset types here (`MonsterManifest`, `ItemManifest`, `PrefabManifest`,
+//!   `DecorationCatalog`, `TileManifest`, …) are game content schemas.
+//! - Engine-side modules (`game/turns.rs`, `game/combat.rs`, `game/actions.rs`,
+//!   `map/map.rs`, `map/light.rs`, `game/fire.rs`, `game/gas.rs`,
+//!   `game/tile_promotion.rs`, builder-chain framework) MUST NOT import from
+//!   `crate::assets`. They must only depend on generic abstractions.
+//!
+//! Any engine-side code that needs to look up display or behavioral data
+//! keyed by a name should accept a trait (e.g., `TileDisplayProvider`) that
+//! this module implements, not the concrete `*Manifest` type. See the
+//! workspace-extraction plan for more context.
+
 use bevy::prelude::*;
 use bevy_common_assets::ron::RonAssetPlugin;
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use crate::components::MovementMode;
+use crate::components::{MovementMode, Species};
 use crate::game::effects::Effect;
 use crate::game::items::{ArmorSlot, ItemKind, Rarity};
 use crate::game::staves::MonsterAbilityDef;
@@ -73,6 +95,8 @@ impl Plugin for AssetsPlugin {
             .init_resource::<PropManifestHandle>()
             .init_resource::<PrefabManifestHandle>()
             .init_resource::<DecorationCatalogHandle>()
+            .init_resource::<crate::character::RaceManifestHandle>()
+            .init_resource::<crate::character::ClassManifestHandle>()
             .add_systems(
                 OnEnter(AppState::Loading),
                 (
@@ -87,18 +111,13 @@ impl Plugin for AssetsPlugin {
                     load_prefab_manifest,
                     load_decoration_catalog,
                     load_faction_matrix,
+                    load_race_manifest,
+                    load_class_manifest,
                 ),
             )
             .add_systems(
                 Update,
-                (
-                    load_monster_sprites,
-                    load_tile_sprites,
-                    load_item_sprites,
-                    load_prop_sprites,
-                    check_assets_loaded,
-                )
-                    .run_if(in_state(AppState::Loading)),
+                check_assets_loaded.run_if(in_state(AppState::Loading)),
             );
     }
 }
@@ -119,6 +138,8 @@ impl Plugin for LoadingPlugin {
             RonAssetPlugin::<PrefabManifest>::new(&["prefabs.ron"]),
             RonAssetPlugin::<DecorationCatalog>::new(&["decorations.ron"]),
             RonAssetPlugin::<crate::game::factions::FactionMatrixAsset>::new(&["factions.ron"]),
+            RonAssetPlugin::<crate::character::RaceManifest>::new(&["races.ron"]),
+            RonAssetPlugin::<crate::character::ClassManifest>::new(&["classes.ron"]),
         ))
         .add_systems(Startup, (camera::setup_camera, set_clear_color))
         .init_resource::<MonsterSpriteAssets>()
@@ -156,6 +177,7 @@ pub struct PropSpriteAssets {
 #[derive(Deserialize, Debug, Clone)]
 pub struct PropAsset {
     pub name: String,
+    #[serde(default)]
     pub sprite: String,
     #[serde(default)]
     pub is_blocking: bool,
@@ -263,37 +285,10 @@ pub struct PrefabManifest {
 #[derive(Resource, Default)]
 pub struct PrefabManifestHandle(pub Handle<PrefabManifest>);
 
-#[derive(Deserialize, Debug, Clone)]
-pub struct DecorationChain {
-    pub decoration: crate::map::tile::Decoration,
-    pub chance: f32,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct DecorationRule {
-    #[allow(dead_code)]
-    pub name: String,
-    pub min_floor: i32,
-    pub max_floor: i32,
-    pub min_seeds: i32,
-    pub max_seeds: i32,
-    pub decoration: crate::map::tile::Decoration,
-    pub requires_terrain: Vec<crate::map::tile::TerrainType>,
-    #[serde(default)]
-    pub propagation_chance: f32,
-    #[serde(default)]
-    pub propagation_decay: f32,
-    #[serde(default)]
-    pub max_propagation_depth: i32,
-    #[serde(default)]
-    pub wall_adjacent_only: bool,
-    #[serde(default)]
-    pub corner_only: bool,
-    #[serde(default)]
-    pub requires_nearby_liquid: bool,
-    #[serde(default)]
-    pub chain: Option<DecorationChain>,
-}
+// `DecorationRule` and `DecorationChain` live in the engine crate
+// (`roguelike_engine::map::decoration_rule`). Re-exported here so existing
+// `crate::assets::DecorationRule` import sites compile unchanged.
+pub use roguelike_engine::map::decoration_rule::{DecorationChain, DecorationRule};
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
 pub struct DecorationCatalog {
@@ -313,6 +308,7 @@ pub struct StartingItemDef {
 #[derive(Asset, TypePath, Deserialize, Resource, Debug, Clone)]
 pub struct PlayerAsset {
     pub name: String,
+    #[serde(default)]
     pub sprite: String,
     pub damage: String,
     #[serde(default = "default_player_hp")]
@@ -352,6 +348,7 @@ pub struct MonsterLootEntry {
 pub struct MonsterAsset {
     pub name: String,
     pub vision: i32,
+    #[serde(default)]
     pub sprite: String,
     #[serde(
         default,
@@ -388,6 +385,11 @@ pub struct MonsterAsset {
     /// ECS faction for hostility checks. Defaults to "Monster".
     #[serde(default = "default_faction")]
     pub faction: String,
+
+    /// Biological category (Beast, Humanoid, Insect, etc.). Defaults to `Unknown`
+    /// and logs a warning if unset; see `docs/design/ENEMIES.md` for the canonical list.
+    #[serde(default)]
+    pub species: Species,
 
     /// Monster abilities — passive, on-hit, on-death, and aura effects.
     #[serde(default)]
@@ -444,6 +446,17 @@ pub fn infer_role(asset: &MonsterAsset) -> &'static str {
     "melee_guard"
 }
 
+/// Detonation effect for `ExplodeOnHit`, deserialized from RON.
+#[derive(Debug, Clone, Deserialize)]
+pub enum ExplodeEffectDef {
+    CrackFloor,
+    GasCloud { volume: u16 },
+}
+
+impl Default for ExplodeEffectDef {
+    fn default() -> Self { Self::CrackFloor }
+}
+
 /// Ability definition for RON deserialization.
 /// Variant name encodes the trigger type (on-hit, on-being-hit, on-death, passive).
 #[derive(Debug, Clone, Deserialize)]
@@ -460,9 +473,13 @@ pub enum AbilityDef {
     RoughBody { damage: i32 },
     Enrage { threshold_percent: u32 },
 
+    // On-hit: self-destruct with a configurable area effect (chasms, gas, etc.).
+    ExplodeOnHit { radius: i32, #[serde(default)] effect: ExplodeEffectDef },
+
     // On-death (trigger when this monster dies)
     ExplodeOnDeath { damage: i32, radius: i32, #[serde(default)] damage_type: Option<String> },
     SummonOnDeath { monster: String, count: u32 },
+    GasOnDeath { radius: i32, volume: u16 },
 
     // On-being-hit (split)
     SplitOnHit { min_hp: i32 },
@@ -634,6 +651,7 @@ pub struct ItemSpawnTable {
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
 pub struct TileAsset {
+    #[serde(default)]
     pub sprite: String,
     #[serde(
         default,
@@ -661,6 +679,7 @@ pub struct TileManifest {
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
 pub struct ItemAsset {
     pub name: String,
+    #[serde(default)]
     pub sprite: String,
     #[serde(
         default,
@@ -721,7 +740,15 @@ pub struct ItemAsset {
     /// Speed delay modifier when equipped (negative = faster, positive = slower).
     #[serde(default)]
     pub delay_modifier: f32,
-    /// Active weapon ability name (e.g. "Backstab", "Riposte").
+    /// Vision range bonus when equipped (Ring of Perception).
+    #[serde(default)]
+    pub vision_bonus: i32,
+    /// Per-damage-type resistance percentages granted while equipped.
+    /// Keys are damage-type names ("fire", "lightning", "poison", "physical").
+    #[serde(default)]
+    pub resistances: HashMap<String, i32>,
+    /// Active weapon ability name (e.g. "Backstab", "Cleave"). The Sword
+    /// has none — it's the no-ability balance baseline.
     #[serde(default)]
     pub weapon_ability: Option<String>,
     /// Whether this item is a quest item required to win the game.
@@ -816,142 +843,18 @@ fn load_faction_matrix(
     handle.0 = asset_server.load("factions.ron");
 }
 
-/// Collects sprite entries that need loading: `(texture_path, tile_size, grid_size)`.
-/// Used to build a deduped list before inserting into the sprite asset maps.
-struct SpriteEntry {
-    key: String,
-    tile_size: UVec2,
-    grid_size: UVec2,
-}
-
-/// Shared sprite loading logic. For each manifest entry, loads the image texture
-/// and creates a `TextureAtlasLayout` if not already present in `existing_keys`.
-fn load_sprite_entries(
-    entries: impl Iterator<Item = (String, UVec2, UVec2)>,
-    existing_keys: &HashMap<String, Handle<Image>>,
-) -> Vec<SpriteEntry> {
-    let mut result = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for (sprite_path, tile_size, grid_size) in entries {
-        let (texture_path, _) = parse_sprite_path(&sprite_path);
-        let key = texture_path.to_string();
-        if !existing_keys.contains_key(&key) && seen.insert(key.clone()) {
-            result.push(SpriteEntry { key, tile_size, grid_size });
-        }
-    }
-    result
-}
-
-fn apply_sprite_entries(
-    entries: Vec<SpriteEntry>,
-    handles: &mut HashMap<String, Handle<Image>>,
-    layouts: &mut HashMap<String, Handle<TextureAtlasLayout>>,
-    asset_server: &AssetServer,
-    atlas_layouts: &mut Assets<TextureAtlasLayout>,
-) {
-    for entry in entries {
-        handles.insert(entry.key.clone(), asset_server.load::<Image>(entry.key.clone()));
-        layouts.insert(
-            entry.key,
-            atlas_layouts.add(TextureAtlasLayout::from_grid(
-                entry.tile_size,
-                entry.grid_size.x,
-                entry.grid_size.y,
-                None,
-                None,
-            )),
-        );
-    }
-}
-
-fn load_monster_sprites(
+fn load_race_manifest(
     asset_server: Res<AssetServer>,
-    manifest_handle: Res<MonsterManifestHandle>,
-    manifests: Res<Assets<MonsterManifest>>,
-    mut sprites: ResMut<MonsterSpriteAssets>,
-    mut layouts: ResMut<Assets<TextureAtlasLayout>>,
+    mut handle: ResMut<crate::character::RaceManifestHandle>,
 ) {
-    if let Some(manifest) = manifests.get(&manifest_handle.0) {
-        let new = load_sprite_entries(
-            manifest.monsters.values().map(|a| (
-                a.sprite.clone(),
-                a.tile_size.unwrap_or(UVec2::new(32, 32)),
-                a.grid_size.unwrap_or(UVec2::new(1, 1)),
-            )),
-            &sprites.handles,
-        );
-        let s = &mut *sprites;
-        apply_sprite_entries(new, &mut s.handles, &mut s.layouts, &asset_server, &mut layouts);
-    }
+    handle.0 = asset_server.load("races.ron");
 }
 
-fn load_tile_sprites(
+fn load_class_manifest(
     asset_server: Res<AssetServer>,
-    tile_manifest_handle: Res<TileManifestHandle>,
-    tile_manifests: Res<Assets<TileManifest>>,
-    player_asset_handle: Res<PlayerAssetHandle>,
-    player_assets: Res<Assets<PlayerAsset>>,
-    mut sprites: ResMut<TileSpriteAssets>,
-    mut layouts: ResMut<Assets<TextureAtlasLayout>>,
+    mut handle: ResMut<crate::character::ClassManifestHandle>,
 ) {
-    // Collect all entries from both tile manifest and player asset before mutating.
-    let mut all_entries: Vec<(String, UVec2, UVec2)> = Vec::new();
-    if let Some(manifest) = tile_manifests.get(&tile_manifest_handle.0) {
-        all_entries.extend(manifest.tiles.values().map(|a| (
-            a.sprite.clone(),
-            a.tile_size.unwrap_or(UVec2::new(16, 16)),
-            a.grid_size.unwrap_or(UVec2::new(1, 1)),
-        )));
-    }
-    // Player sprite loaded into tile assets (player.ron may load after tile manifest).
-    if let Some(player_asset) = player_assets.get(&player_asset_handle.0) {
-        all_entries.push((player_asset.sprite.clone(), UVec2::new(32, 32), UVec2::new(1, 1)));
-    }
-    let new = load_sprite_entries(all_entries.into_iter(), &sprites.handles);
-    let s = &mut *sprites;
-    apply_sprite_entries(new, &mut s.handles, &mut s.layouts, &asset_server, &mut layouts);
-}
-
-fn load_item_sprites(
-    asset_server: Res<AssetServer>,
-    manifest_handle: Res<ItemManifestHandle>,
-    manifests: Res<Assets<ItemManifest>>,
-    mut sprites: ResMut<ItemSpriteAssets>,
-    mut layouts: ResMut<Assets<TextureAtlasLayout>>,
-) {
-    if let Some(manifest) = manifests.get(&manifest_handle.0) {
-        let new = load_sprite_entries(
-            manifest.items.values().map(|a| (
-                a.sprite.clone(),
-                a.tile_size.unwrap_or(UVec2::new(32, 32)),
-                a.grid_size.unwrap_or(UVec2::new(1, 1)),
-            )),
-            &sprites.handles,
-        );
-        let s = &mut *sprites;
-        apply_sprite_entries(new, &mut s.handles, &mut s.layouts, &asset_server, &mut layouts);
-    }
-}
-
-fn load_prop_sprites(
-    asset_server: Res<AssetServer>,
-    manifest_handle: Res<PropManifestHandle>,
-    manifests: Res<Assets<PropManifest>>,
-    mut sprites: ResMut<PropSpriteAssets>,
-    mut layouts: ResMut<Assets<TextureAtlasLayout>>,
-) {
-    if let Some(manifest) = manifests.get(&manifest_handle.0) {
-        let new = load_sprite_entries(
-            manifest.props.values().map(|a| (
-                a.sprite.clone(),
-                a.tile_size.unwrap_or(UVec2::new(16, 16)),
-                a.grid_size.unwrap_or(UVec2::new(4, 1)),
-            )),
-            &sprites.handles,
-        );
-        let s = &mut *sprites;
-        apply_sprite_entries(new, &mut s.handles, &mut s.layouts, &asset_server, &mut layouts);
-    }
+    handle.0 = asset_server.load("classes.ron");
 }
 
 // Groups the overflow resources so check_assets_loaded stays within Bevy's
@@ -964,29 +867,28 @@ struct ExtraLoadingParams<'w> {
     player_assets: Res<'w, Assets<PlayerAsset>>,
     prop_manifest_handle: Res<'w, PropManifestHandle>,
     prop_manifests: Res<'w, Assets<PropManifest>>,
-    prop_sprite_assets: Res<'w, PropSpriteAssets>,
     prefab_manifest_handle: Res<'w, PrefabManifestHandle>,
     prefab_manifests: Res<'w, Assets<PrefabManifest>>,
     decoration_catalog_handle: Res<'w, DecorationCatalogHandle>,
     decoration_catalogs: Res<'w, Assets<DecorationCatalog>>,
     faction_matrix_handle: Res<'w, crate::game::factions::FactionMatrixHandle>,
     faction_matrix_assets: Res<'w, Assets<crate::game::factions::FactionMatrixAsset>>,
+    race_manifest_handle: Res<'w, crate::character::RaceManifestHandle>,
+    race_manifests: Res<'w, Assets<crate::character::RaceManifest>>,
+    class_manifest_handle: Res<'w, crate::character::ClassManifestHandle>,
+    class_manifests: Res<'w, Assets<crate::character::ClassManifest>>,
     next_state: ResMut<'w, NextState<AppState>>,
 }
 
 fn check_assets_loaded(
-    asset_server: Res<AssetServer>,
     monster_manifest_handle: Res<MonsterManifestHandle>,
     monster_manifests: Res<Assets<MonsterManifest>>,
     monster_spawn_table_handle: Res<MonsterSpawnTableHandle>,
     monster_spawn_tables: Res<Assets<MonsterSpawnTable>>,
-    monster_sprite_assets: Res<MonsterSpriteAssets>,
     tile_manifest_handle: Res<TileManifestHandle>,
     tile_manifests: Res<Assets<TileManifest>>,
-    tile_sprite_assets: Res<TileSpriteAssets>,
     item_manifest_handle: Res<ItemManifestHandle>,
     item_manifests: Res<Assets<ItemManifest>>,
-    item_sprite_assets: Res<ItemSpriteAssets>,
     mut extra: ExtraLoadingParams,
 ) {
     if monster_manifests.get(&monster_manifest_handle.0).is_none() {
@@ -1056,34 +958,31 @@ fn check_assets_loaded(
         return;
     }
 
-    if monster_sprite_assets.handles.is_empty()
-        || tile_sprite_assets.handles.is_empty()
-        || item_sprite_assets.handles.is_empty()
+    if extra
+        .race_manifests
+        .get(&extra.race_manifest_handle.0)
+        .is_none()
     {
         return;
     }
 
-    for handle in monster_sprite_assets.handles.values() {
-        if !asset_server.is_loaded_with_dependencies(handle) {
-            return;
-        }
+    if extra
+        .class_manifests
+        .get(&extra.class_manifest_handle.0)
+        .is_none()
+    {
+        return;
     }
 
-    for handle in tile_sprite_assets.handles.values() {
-        if !asset_server.is_loaded_with_dependencies(handle) {
-            return;
-        }
-    }
-
-    for handle in item_sprite_assets.handles.values() {
-        if !asset_server.is_loaded_with_dependencies(handle) {
-            return;
-        }
-    }
-
-    for handle in extra.prop_sprite_assets.handles.values() {
-        if !asset_server.is_loaded_with_dependencies(handle) {
-            return;
+    if let Some(manifest) = monster_manifests.get(&monster_manifest_handle.0) {
+        for (name, asset) in &manifest.monsters {
+            if asset.species == Species::Unknown {
+                warn!(
+                    "Monster '{}' has no species set in monsters.ron (defaulted to Unknown). \
+                     Add a `species:` field (Beast, Humanoid, Insect, etc.).",
+                    name
+                );
+            }
         }
     }
 
@@ -1092,4 +991,166 @@ fn check_assets_loaded(
 
 fn set_clear_color(mut clear_color: ResMut<ClearColor>) {
     clear_color.0 = Color::srgb_u8(37, 19, 26);
+}
+
+#[cfg(test)]
+mod species_tests {
+    use super::*;
+    use crate::components::Species;
+
+    /// Every Species variant deserializes from its unit-variant name.
+    #[test]
+    fn species_deserializes_unit_variants() {
+        let cases = [
+            ("Beast", Species::Beast),
+            ("Humanoid", Species::Humanoid),
+            ("Undead", Species::Undead),
+            ("Insect", Species::Insect),
+            ("Fungal", Species::Fungal),
+            ("Ooze", Species::Ooze),
+            ("Dragon", Species::Dragon),
+            ("Construct", Species::Construct),
+            ("Aberration", Species::Aberration),
+            ("Unknown", Species::Unknown),
+        ];
+        for (input, expected) in cases {
+            let parsed: Species = ron::from_str(input)
+                .unwrap_or_else(|e| panic!("failed to parse {input}: {e}"));
+            assert_eq!(parsed, expected, "variant {input} did not round-trip");
+        }
+    }
+
+    /// `#[serde(default)]` on the species field yields `Species::Unknown`
+    /// when a monster entry omits it — this is the guard the warning pass relies on.
+    #[test]
+    fn missing_species_field_defaults_to_unknown() {
+        // Minimal subset of MonsterAsset fields — relies on serde(default) for the rest.
+        let ron = r#"(
+            name: "Test",
+            vision: 8,
+            damage: "1d4",
+            base_hp: 5,
+        )"#;
+        let asset: MonsterAsset = ron::from_str(ron).expect("parse minimal monster");
+        assert_eq!(asset.species, Species::Unknown);
+    }
+
+    /// Every monster shipped in `assets/monsters.ron` must declare a species.
+    /// If this test fails, the newly added monster forgot the `species:` field.
+    #[test]
+    fn all_shipped_monsters_declare_species() {
+        let manifest_src = include_str!("../../assets/monsters.ron");
+        let manifest: MonsterManifest =
+            ron::from_str(manifest_src).expect("assets/monsters.ron must parse");
+
+        let missing: Vec<&String> = manifest
+            .monsters
+            .iter()
+            .filter(|(_, asset)| asset.species == Species::Unknown)
+            .map(|(name, _)| name)
+            .collect();
+
+        assert!(
+            missing.is_empty(),
+            "monsters missing a `species:` field in monsters.ron: {:?}",
+            missing
+        );
+    }
+
+    /// Every floor 1..=26 has at least 3 eligible spawn entries so floors are never empty.
+    #[test]
+    fn every_floor_has_a_spawn_entry() {
+        let spawns_src = include_str!("../../assets/monster_spawns.ron");
+        let table: MonsterSpawnTable =
+            ron::from_str(spawns_src).expect("assets/monster_spawns.ron must parse");
+
+        for floor in 1..=26 {
+            let count = table
+                .spawns
+                .iter()
+                .filter(|s| floor >= s.min_floor && floor <= s.max_floor)
+                .count();
+            assert!(
+                count >= 3,
+                "floor {} has only {} eligible spawn entries (need \u{2265} 3)",
+                floor,
+                count
+            );
+        }
+    }
+
+    /// No faction should be present on every single floor — phasing principle
+    /// from the 26-floor distribution plan (factions rise, peak, fade).
+    /// Walks each monster's species->faction mapping via the monster manifest.
+    #[test]
+    fn no_faction_is_present_on_every_floor() {
+        let manifest_src = include_str!("../../assets/monsters.ron");
+        let manifest: MonsterManifest = ron::from_str(manifest_src).expect("parse monsters");
+        let spawns_src = include_str!("../../assets/monster_spawns.ron");
+        let table: MonsterSpawnTable = ron::from_str(spawns_src).expect("parse spawns");
+
+        // For each faction, collect the set of floors it appears on.
+        use std::collections::{HashMap as Map, HashSet};
+        let mut faction_floors: Map<String, HashSet<i32>> = Map::new();
+
+        for entry in &table.spawns {
+            // Collect monster names this entry references (solo or group).
+            let names: Vec<&str> = if entry.group.is_empty() {
+                if entry.monster.is_empty() {
+                    continue;
+                }
+                vec![entry.monster.as_str()]
+            } else {
+                entry.group.iter().map(|g| g.monster.as_str()).collect()
+            };
+            for name in names {
+                if let Some(asset) = manifest.monsters.get(name) {
+                    let f = faction_floors.entry(asset.faction.clone()).or_default();
+                    for floor in entry.min_floor..=entry.max_floor {
+                        f.insert(floor);
+                    }
+                }
+            }
+        }
+
+        for (faction, floors) in &faction_floors {
+            // "Monster" is the default-faction catch-all for factionless solo
+            // threats (Jelly, Mimic, Wolf, Shade, etc.) — per ENEMIES.md these
+            // are intentionally scattered across all depths, so exempt from
+            // the phasing rule.
+            if faction == "Monster" {
+                continue;
+            }
+            assert!(
+                floors.len() < 26,
+                "faction {:?} is present on all 26 floors ({} floors); factions must rise and fade",
+                faction,
+                floors.len()
+            );
+        }
+    }
+
+    /// The species declared in a monster asset survives the round trip from RON
+    /// into an ECS component on a spawned entity. Uses Bevy `World` directly
+    /// rather than the full spawner pipeline (which needs sprite assets,
+    /// turn manager, etc.) — the spawner simply inserts `monster_asset.species`.
+    #[test]
+    fn species_travels_from_asset_to_ecs_component() {
+        let ron = r#"(
+            name: "Test Spider",
+            vision: 8,
+            damage: "1d4",
+            base_hp: 5,
+            species: Insect,
+        )"#;
+        let asset: MonsterAsset = ron::from_str(ron).expect("parse");
+        assert_eq!(asset.species, Species::Insect);
+
+        let mut world = bevy::ecs::world::World::new();
+        let entity = world.spawn(asset.species).id();
+        let read = world
+            .get::<Species>(entity)
+            .expect("Species component should be on entity");
+        assert_eq!(*read, Species::Insect);
+    }
 }

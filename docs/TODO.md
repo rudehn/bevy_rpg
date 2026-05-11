@@ -77,3 +77,14 @@ Want me to brainstorm and plan any of these features? I can use the game mechani
 
 
 ♈︎ for tall grass symbol
+
+Create a new rust roguelike tooling (like bracketlib) project
+
+
+ExplodeOnHit ability should have an effect, not always create a chasm.
+
+Should the spawn on_leader_death functionality be deleted?
+
+
+Falling down a chasm puts you right next to the stairs
+bloat should kill itself when it hits an attack

@@ -736,6 +736,12 @@ fn build_comparison_lines(
         }
     }
 
+    // Vision range
+    let delta_vision = selected.vision_bonus - equipped.vision_bonus;
+    if delta_vision != 0 {
+        lines.push(format!("  Vision: {}", fmt_delta(delta_vision)));
+    }
+
     // Damage dice (just show both strings if they differ)
     if selected.damage != equipped.damage {
         let sel_dmg = selected

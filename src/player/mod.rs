@@ -10,13 +10,13 @@ use crate::{
     },
     components::{
         Collider, Faction, FactionKind, FloorEntityMarker, GameEntityMarker, InInventory, Inventory, Name, Position,
-        Viewshed,
+        VeiledTyrantFactions, Viewshed,
     },
     constants::Z_PLAYER,
     game::{
         TurnManager,
         actions::SpeedStats,
-        combat::{Damage, Health, HealthRegen},
+        combat::{Damage, Health, HealthRegen, Resistances},
         items::Equipment,
         magic::StatusEffects,
         spawn_item,
@@ -114,6 +114,7 @@ pub fn player_spawn_or_move_system(
                 Collider,
                 new_grid_pos,
                 Viewshed::new(viewshed_range),
+                roguelike_engine::components::FovRevealsMap,
                 Inventory {
                     items: starting_items,
                     capacity: 20,
@@ -138,7 +139,8 @@ pub fn player_spawn_or_move_system(
             ))
             .insert((
                 StatusEffects::default(),
-                Faction(FactionKind::player()),
+                Faction(VeiledTyrantFactions::player()),
+                Resistances::default(),
             ))
             .insert((
                 Transform {
@@ -149,6 +151,11 @@ pub fn player_spawn_or_move_system(
                 RenderLayers::layer(1),
             ))
             .id();
+
+        commands.entity(player_entity).insert(crate::game::ascii_mode::AsciiDisplay {
+            ch: if player_asset.ascii_char.is_empty() { "@".to_string() } else { player_asset.ascii_char.clone() },
+            color: player_asset.ascii_fg,
+        });
 
         if let Some(ref font) = ascii_font {
             crate::game::spawner::attach_ascii_glyph(
@@ -189,7 +196,8 @@ fn spawn_starting_items(
                 .entity(entity)
                 .insert(InInventory)
                 .insert(Visibility::Hidden)
-                .remove::<FloorEntityMarker>();
+                .remove::<FloorEntityMarker>()
+                .remove::<Position>();
             if def.count > 1 {
                 let max_stack = item_manifests
                     .get(&item_manifest_handle.0)

@@ -8,7 +8,8 @@ pub struct MenuPlugin;
 
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(AppState::Menu), menu_setup)
+        app.init_resource::<MenuSelection>()
+            .add_systems(OnEnter(AppState::Menu), menu_setup)
             .add_systems(Update, menu_action.run_if(in_state(AppState::Menu)))
             .add_systems(OnExit(AppState::Menu), despawn_screen::<OnMainMenuScreen>)
             .add_systems(OnEnter(AppState::GameOver), game_over_setup)
@@ -49,6 +50,14 @@ const BTN_PRESSED: Color = Color::srgb(0.05, 0.05, 0.05);
 const GOLD: Color = Color::srgb(1.0, 0.84, 0.0);
 const DIM: Color = Color::srgb(0.35, 0.35, 0.35);
 
+/// Tracks which menu button is highlighted by keyboard navigation.
+#[derive(Resource, Default)]
+struct MenuSelection(usize);
+
+/// Index tag on menu buttons for keyboard selection matching.
+#[derive(Component)]
+struct MenuButtonIndex(usize);
+
 fn button_style(width: f32) -> Node {
     Node {
         width: Val::Px(width),
@@ -67,6 +76,7 @@ fn spawn_button(
     label: &str,
     tag: MenuButton,
     enabled: bool,
+    index: usize,
 ) {
     let text_color = if enabled { Color::WHITE } else { DIM };
     let border_color = if enabled { Color::srgb(0.4, 0.4, 0.4) } else { DIM };
@@ -78,6 +88,7 @@ fn spawn_button(
             BackgroundColor(BTN_NORMAL),
             BorderColor::all(border_color),
             tag,
+            MenuButtonIndex(index),
         ))
         .with_children(|btn| {
             btn.spawn((
@@ -131,13 +142,13 @@ fn menu_setup(
             root.spawn(Node { height: Val::Px(48.0), ..default() });
 
             // Buttons
-            spawn_button(root, font.clone(), "New Game", MenuButton::NewGame, true);
-            spawn_button(root, font.clone(), "Continue", MenuButton::Continue, has_save);
-            spawn_button(root, font.clone(), "Quit", MenuButton::Quit, true);
+            spawn_button(root, font.clone(), "New Game", MenuButton::NewGame, true, 0);
+            spawn_button(root, font.clone(), "Continue", MenuButton::Continue, has_save, 1);
+            spawn_button(root, font.clone(), "Quit", MenuButton::Quit, true, 2);
 
             // Version hint
             root.spawn((
-                Text::new("[ Enter ] New Game"),
+                Text::new("↑/↓ Navigate  |  Enter - Select"),
                 TextFont { font: font.clone(), font_size: 13.0, ..default() },
                 TextColor(Color::srgb(0.3, 0.3, 0.3)),
                 Node { margin: UiRect::top(Val::Px(40.0)), ..default() },
@@ -146,51 +157,86 @@ fn menu_setup(
 }
 
 fn menu_action(
-    mut interaction_query: Query<
-        (&Interaction, &MenuButton, &mut BackgroundColor),
-        (Changed<Interaction>, With<Button>),
+    mut button_query: Query<
+        (&Interaction, &MenuButton, &MenuButtonIndex, &mut BackgroundColor),
+        With<Button>,
     >,
     mut next_state: ResMut<NextState<AppState>>,
     mut pending_game_load: ResMut<PendingGameLoad>,
     save_exists: Res<SaveExists>,
     keyboard: Res<ButtonInput<KeyCode>>,
     mut app_exit: MessageWriter<AppExit>,
+    mut selection: ResMut<MenuSelection>,
 ) {
-    // Keyboard shortcut: Enter → new game
-    if keyboard.just_pressed(KeyCode::Enter) {
-        next_state.set(AppState::InGame);
+    let button_count = 3;
+
+    // Keyboard navigation
+    if keyboard.just_pressed(KeyCode::ArrowUp) || keyboard.just_pressed(KeyCode::KeyK) {
+        if selection.0 > 0 {
+            selection.0 -= 1;
+        }
+    }
+    if keyboard.just_pressed(KeyCode::ArrowDown) || keyboard.just_pressed(KeyCode::KeyJ) {
+        if selection.0 + 1 < button_count {
+            selection.0 += 1;
+        }
+    }
+
+    // Enter activates the selected button
+    if keyboard.just_pressed(KeyCode::Enter) || keyboard.just_pressed(KeyCode::NumpadEnter) {
+        match selection.0 {
+            0 => {
+                pending_game_load.0 = None;
+                next_state.set(AppState::InGame);
+            }
+            1 => {
+                if save_exists.0 {
+                    match load_save_file() {
+                        Some(data) => {
+                            pending_game_load.0 = Some(Box::new(data));
+                            next_state.set(AppState::InGame);
+                        }
+                        None => { warn!("Save file found but failed to load."); }
+                    }
+                }
+            }
+            2 => { app_exit.write(AppExit::Success); }
+            _ => {}
+        }
         return;
     }
 
-    for (interaction, button, mut bg) in &mut interaction_query {
+    // Update button colors: keyboard selection OR mouse hover
+    for (interaction, _button, idx, mut bg) in &mut button_query {
+        let is_selected = idx.0 == selection.0;
         match *interaction {
-            Interaction::Hovered => *bg = BackgroundColor(BTN_HOVER),
-            Interaction::None => *bg = BackgroundColor(BTN_NORMAL),
+            Interaction::Hovered => {
+                *bg = BackgroundColor(BTN_HOVER);
+                // Sync keyboard selection to mouse hover
+                selection.0 = idx.0;
+            }
             Interaction::Pressed => {
                 *bg = BackgroundColor(BTN_PRESSED);
-                match button {
-                    MenuButton::NewGame => {
+                // Activate on click
+                match idx.0 {
+                    0 => {
                         pending_game_load.0 = None;
                         next_state.set(AppState::InGame);
                     }
-                    MenuButton::Continue => {
+                    1 => {
                         if save_exists.0 {
-                            match load_save_file() {
-                                Some(data) => {
-                                    pending_game_load.0 = Some(Box::new(data));
-                                    next_state.set(AppState::InGame);
-                                }
-                                None => {
-                                    warn!("Save file found but failed to load.");
-                                }
+                            if let Some(data) = load_save_file() {
+                                pending_game_load.0 = Some(Box::new(data));
+                                next_state.set(AppState::InGame);
                             }
                         }
                     }
-                    MenuButton::Quit => {
-                        app_exit.write(AppExit::Success);
-                    }
+                    2 => { app_exit.write(AppExit::Success); }
                     _ => {}
                 }
+            }
+            Interaction::None => {
+                *bg = BackgroundColor(if is_selected { BTN_HOVER } else { BTN_NORMAL });
             }
         }
     }
@@ -224,7 +270,7 @@ fn game_over_setup(
                 justify_content: JustifyContent::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.92)),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, crate::ui::modal::MODAL_OVERLAY_OPACITY)),
             OnGameOverScreen,
         ))
         .with_children(|root| {
@@ -335,7 +381,7 @@ fn victory_setup(
                 justify_content: JustifyContent::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.92)),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, crate::ui::modal::MODAL_OVERLAY_OPACITY)),
             OnVictoryScreen,
         ))
         .with_children(|root| {

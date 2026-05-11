@@ -5,15 +5,17 @@
 //! react to combat events (trigger messages) to apply the effects.
 
 use bevy::prelude::*;
+use bracket_lib::prelude::Algorithm2D;
 use serde::{Deserialize, Serialize};
 
 use crate::components::{Name, Position};
 use crate::game::combat::{
-    ApplyDamageMessage, DamageSource, DamageType, DeathEvent, GameRng,
-    HealMessage,
+    DamageEvent, DamageSource, DamageType, DeathEvent, GameRng,
+    HealEvent,
 };
 use crate::game::factions::FactionMatrix;
-use crate::game::magic::{StatusEffectKind, StatusEffects};
+use crate::game::magic::{GameStatusEffectsExt, StatusEffectKind, StatusEffects, STATUS_ENRAGED, STATUS_ENTANGLED};
+use crate::game::gas::{self, GasTiles, GasType};
 use crate::map::map::Map;
 use crate::map::tile::is_walkable;
 use crate::ui::game_log::GameLogMessage;
@@ -114,6 +116,34 @@ fn default_fire_damage_type() -> DamageType {
     DamageType::Fire
 }
 
+/// On death: spawn a poison gas cloud in a Manhattan radius.
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
+pub struct GasOnDeath {
+    pub radius: i32,
+    pub volume: u16,
+}
+
+/// What happens when an `ExplodeOnHit` monster detonates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ExplodeEffect {
+    /// Crack nearby floor tiles; they collapse into chasms after a few turns.
+    CrackFloor,
+    /// Spawn a poison gas cloud in the radius.
+    GasCloud { volume: u16 },
+}
+
+impl Default for ExplodeEffect {
+    fn default() -> Self { Self::CrackFloor }
+}
+
+/// On melee hit: trigger an area effect (chasms, gas, etc.) and kill self.
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
+pub struct ExplodeOnHit {
+    pub radius: i32,
+    #[serde(default)]
+    pub effect: ExplodeEffect,
+}
+
 /// On death: spawn N monsters at adjacent tiles.
 #[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct SummonOnDeath {
@@ -188,7 +218,7 @@ pub fn handle_burning_strike(
         let roll = game_rng.0.roll_dice(1, 100);
         if roll <= burning_strike.chance as i32 {
             if let Ok(mut effects) = status_query.get_mut(msg.defender) {
-                effects.add(StatusEffectKind::Burning { damage_per_turn: burning_strike.damage_per_turn }, burning_strike.duration);
+                effects.add_effect_with_magnitude(StatusEffectKind::Burning, burning_strike.duration, burning_strike.damage_per_turn, None);
             }
             log_writer.write(GameLogMessage(format!(
                 "{}'s attack sets {} ablaze!",
@@ -215,7 +245,7 @@ pub fn handle_poison_strike(
         let roll = game_rng.0.roll_dice(1, 100);
         if roll <= poison_strike.chance as i32 {
             if let Ok(mut effects) = status_query.get_mut(msg.defender) {
-                effects.add(StatusEffectKind::Poisoned { damage_per_turn: poison_strike.damage_per_turn }, poison_strike.duration);
+                effects.add_effect_with_magnitude(StatusEffectKind::Poisoned, poison_strike.duration, poison_strike.damage_per_turn, None);
             }
             log_writer.write(GameLogMessage(format!(
                 "{}'s attack poisons {}!",
@@ -242,7 +272,7 @@ pub fn handle_stunning_blow(
         let roll = game_rng.0.roll_dice(1, 100);
         if roll <= stun.chance as i32 {
             if let Ok(mut effects) = status_query.get_mut(msg.defender) {
-                effects.add(StatusEffectKind::Stunned, stun.duration);
+                effects.add_effect(StatusEffectKind::Stunned, stun.duration);
             }
             log_writer.write(GameLogMessage(format!(
                 "{}'s blow stuns {}!",
@@ -257,7 +287,7 @@ pub fn handle_life_drain(
     mut messages: MessageReader<OnHitTriggerMessage>,
     attacker_query: Query<(&Name, &LifeDrain)>,
     defender_query: Query<&Name>,
-    mut heal_writer: MessageWriter<HealMessage>,
+    mut heal_writer: MessageWriter<HealEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     for msg in messages.read() {
@@ -265,9 +295,10 @@ pub fn handle_life_drain(
         let Ok(defender_name) = defender_query.get(msg.defender) else { continue; };
 
         let heal_amount = (msg.final_damage * drain.percent / 100).max(1);
-        heal_writer.write(HealMessage {
-            entity: msg.attacker,
+        heal_writer.write(HealEvent {
+            target: msg.attacker,
             amount: heal_amount,
+            source: None,
         });
         log_writer.write(GameLogMessage(format!(
             "{} drains life from {}! (+{} HP)",
@@ -344,7 +375,7 @@ pub fn handle_slow_strike(
         let roll = game_rng.0.roll_dice(1, 100);
         if roll <= slow.chance as i32 {
             if let Ok(mut effects) = status_query.get_mut(msg.defender) {
-                effects.add(StatusEffectKind::Slowed, slow.duration);
+                effects.add_effect(StatusEffectKind::Slowed, slow.duration);
             }
             log_writer.write(GameLogMessage(format!(
                 "{}'s attack slows {}!",
@@ -354,12 +385,72 @@ pub fn handle_slow_strike(
     }
 }
 
+/// Explode on Hit: when this monster lands a melee hit, detonate its configured
+/// effect (floor-cracking, poison gas, etc.) and kill self.
+pub fn handle_explode_on_hit(
+    mut messages: MessageReader<OnHitTriggerMessage>,
+    mut commands: Commands,
+    query: Query<(&Position, &Name, &ExplodeOnHit)>,
+    mut decoration_writer: MessageWriter<crate::map::tile::DecorationMutationMessage>,
+    mut damage_writer: MessageWriter<DamageEvent>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+    mut gas_tiles: ResMut<GasTiles>,
+    map: Res<Map>,
+) {
+    for msg in messages.read() {
+        if msg.source != DamageSource::Melee { continue; }
+        let Ok((pos, name, explode)) = query.get(msg.attacker) else { continue; };
+
+        match &explode.effect {
+            ExplodeEffect::CrackFloor => {
+                log_writer.write(GameLogMessage(format!(
+                    "{} explodes! The floor begins to crack!",
+                    name.0
+                )));
+                let r = explode.radius;
+                for dy in -r..=r {
+                    for dx in -r..=r {
+                        if dx.abs() + dy.abs() > r { continue; }
+                        let pt = bracket_lib::prelude::Point::new(pos.x + dx, pos.y + dy);
+                        if !map.in_bounds(pt) { continue; }
+                        decoration_writer.write(crate::map::tile::DecorationMutationMessage {
+                            position: pt,
+                            new_decoration: crate::map::tile::Decoration::CrackedFloor,
+                        });
+                    }
+                }
+            }
+            ExplodeEffect::GasCloud { volume } => {
+                log_writer.write(GameLogMessage(format!(
+                    "{} bursts, releasing a cloud of poisonous gas!",
+                    name.0
+                )));
+                for (x, y) in gas_positions_in_radius(pos.x, pos.y, explode.radius, &map) {
+                    gas::spawn_gas(&mut commands, x, y, GasType::Poison, *volume, &mut gas_tiles);
+                }
+                // Prevent double-fire: if this entity also has GasOnDeath, strip it
+                // so the imminent self-death doesn't spawn gas a second time.
+                commands.entity(msg.attacker).remove::<GasOnDeath>();
+            }
+        }
+
+        damage_writer.write(DamageEvent {
+            attacker: None,
+            target: msg.attacker,
+            amount: 9999,
+            damage_type: DamageType::Physical,
+            source: DamageSource::Environment,
+            armor: 0,
+        });
+    }
+}
+
 /// Rough Body: when hit by melee, reflect flat damage back.
 pub fn handle_rough_body(
     mut messages: MessageReader<OnBeingHitTriggerMessage>,
     defender_query: Query<(&Name, &RoughBody)>,
     attacker_query: Query<&Name>,
-    mut damage_writer: MessageWriter<ApplyDamageMessage>,
+    mut damage_writer: MessageWriter<DamageEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     for msg in messages.read() {
@@ -367,12 +458,13 @@ pub fn handle_rough_body(
         let Ok((defender_name, rough)) = defender_query.get(msg.defender) else { continue; };
         let Ok(attacker_name) = attacker_query.get(msg.attacker) else { continue; };
 
-        damage_writer.write(ApplyDamageMessage {
-            attacker: msg.defender,
+        damage_writer.write(DamageEvent {
+            attacker: Some(msg.defender),
             target: msg.attacker,
-            final_damage: rough.damage,
+            amount: rough.damage,
             damage_type: DamageType::Physical,
             source: DamageSource::Environment,
+            armor: 0,
         });
         log_writer.write(GameLogMessage(format!(
             "{}'s rough body deals {} damage to {}!",
@@ -398,7 +490,7 @@ pub fn handle_enrage(
         let threshold_hp = health.max * enrage.threshold_percent as i32 / 100;
         if health.current <= threshold_hp && health.current > 0 {
             if let Ok(mut effects) = status_query.get_mut(msg.defender) {
-                effects.add(StatusEffectKind::Enraged, 99);
+                effects.add_effect(StatusEffectKind::Custom { id: STATUS_ENRAGED }, 99);
             }
             log_writer.write(GameLogMessage(format!(
                 "{} flies into a rage!",
@@ -413,26 +505,76 @@ pub fn handle_explode_on_death(
     mut death_events: MessageReader<DeathEvent>,
     query: Query<(&Position, &Name, &ExplodeOnDeath)>,
     targets: Query<(Entity, &Position), With<crate::game::combat::Health>>,
-    mut damage_writer: MessageWriter<ApplyDamageMessage>,
+    mut damage_writer: MessageWriter<DamageEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     for event in death_events.read() {
-        let Ok((pos, name, explode)) = query.get(event.target) else { continue; };
+        let Ok((pos, name, explode)) = query.get(event.entity) else { continue; };
 
         log_writer.write(GameLogMessage(format!("{} explodes!", name.0)));
 
         for (target_entity, target_pos) in targets.iter() {
-            if target_entity == event.target { continue; }
+            if target_entity == event.entity { continue; }
             let dist = (target_pos.x - pos.x).abs() + (target_pos.y - pos.y).abs();
             if dist <= explode.radius {
-                damage_writer.write(ApplyDamageMessage {
-                    attacker: event.target,
+                damage_writer.write(DamageEvent {
+                    attacker: Some(event.entity),
                     target: target_entity,
-                    final_damage: explode.damage,
+                    amount: explode.damage,
                     damage_type: explode.damage_type,
                     source: DamageSource::Environment,
+                    armor: 0,
                 });
             }
+        }
+    }
+}
+
+/// Returns all tile positions within Manhattan `radius` of `(cx, cy)` where gas can exist.
+pub fn gas_positions_in_radius(cx: i32, cy: i32, radius: i32, map: &Map) -> Vec<(i32, i32)> {
+    let mut positions = Vec::new();
+    for dx in -radius..=radius {
+        let remaining = radius - dx.abs();
+        for dy in -remaining..=remaining {
+            let (nx, ny) = (cx + dx, cy + dy);
+            if !map.in_bounds(bracket_lib::prelude::Point::new(nx, ny)) {
+                continue;
+            }
+            let idx = map.xy_idx(nx, ny);
+            if gas::can_gas_occupy(map.tiles[idx]) {
+                positions.push((nx, ny));
+            }
+        }
+    }
+    positions
+}
+
+/// Gas on Death: spawn poison gas cloud when entity dies.
+pub fn handle_gas_on_death(
+    mut death_events: MessageReader<DeathEvent>,
+    mut commands: Commands,
+    query: Query<(&Position, &Name, &GasOnDeath)>,
+    map: Res<Map>,
+    mut gas_tiles: ResMut<GasTiles>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+) {
+    for event in death_events.read() {
+        let Ok((pos, name, gas_death)) = query.get(event.entity) else { continue; };
+
+        log_writer.write(GameLogMessage(format!(
+            "{} bursts, releasing a cloud of poisonous gas!",
+            name.0
+        )));
+
+        for (x, y) in gas_positions_in_radius(pos.x, pos.y, gas_death.radius, &map) {
+            gas::spawn_gas(
+                &mut commands,
+                x,
+                y,
+                GasType::Poison,
+                gas_death.volume,
+                &mut gas_tiles,
+            );
         }
     }
 }
@@ -451,7 +593,7 @@ pub fn handle_summon_on_death(
     collider_query: Query<&Position, With<crate::components::Collider>>,
 ) {
     for event in death_events.read() {
-        let Ok((pos, name, summon)) = query.get(event.target) else { continue; };
+        let Ok((pos, name, summon)) = query.get(event.entity) else { continue; };
 
         let occupied: std::collections::HashSet<(i32, i32)> = collider_query
             .iter()
@@ -495,6 +637,38 @@ pub fn handle_summon_on_death(
     }
 }
 
+/// Kill all summons when their summoner dies.
+/// When a summoner (e.g. Goblin Conjurer) is killed, all entities with
+/// `SummonedBy` pointing to it are despawned. Generic — works for any summoner.
+pub fn handle_summoner_death(
+    mut death_events: MessageReader<DeathEvent>,
+    summons: Query<(Entity, &crate::components::SummonedBy, &Name)>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+    mut commands: Commands,
+    mut turn_manager: ResMut<crate::game::TurnManager>,
+) {
+    for event in death_events.read() {
+        let to_kill = collect_summons_to_kill(event.entity, &summons);
+        for (summon_entity, name) in to_kill {
+            log_writer.write(GameLogMessage(format!("{} dissipates!", name)));
+            commands.entity(summon_entity).despawn();
+            turn_manager.remove_entity(summon_entity);
+        }
+    }
+}
+
+/// Pure helper: collect summon entities that should die when `dead_summoner` dies.
+fn collect_summons_to_kill(
+    dead_summoner: Entity,
+    summons: &Query<(Entity, &crate::components::SummonedBy, &Name)>,
+) -> Vec<(Entity, String)> {
+    summons
+        .iter()
+        .filter(|(_, sb, _)| sb.summoner == dead_summoner)
+        .map(|(e, _, name)| (e, name.0.clone()))
+        .collect()
+}
+
 /// War Cry: when a monster with WarCry first enters combat, buff nearby allies.
 /// "Enters combat" = the monster's AI has a target (checked by AI bridge, not here).
 /// For simplicity, we activate on first OnHitTrigger where the monster is the attacker.
@@ -522,7 +696,7 @@ pub fn handle_war_cry(
             let dist = (ally_pos.x - pos.x).abs() + (ally_pos.y - pos.y).abs();
             if dist <= war_cry.radius
                 && let Ok(mut effects) = status_query.get_mut(ally_entity) {
-                    effects.add(StatusEffectKind::Enraged, war_cry.duration);
+                    effects.add_effect(StatusEffectKind::Custom { id: STATUS_ENRAGED }, war_cry.duration);
                 }
         }
     }
@@ -535,7 +709,7 @@ pub fn handle_pack_tactics(
     attacker_query: Query<(&Name, &crate::components::Faction), With<PackTactics>>,
     defender_query: Query<(&Name, &Position)>,
     ally_query: Query<(&Position, &crate::components::Faction), With<crate::components::Monster>>,
-    mut damage_writer: MessageWriter<ApplyDamageMessage>,
+    mut damage_writer: MessageWriter<DamageEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
     faction_matrix: Res<FactionMatrix>,
 ) {
@@ -554,12 +728,13 @@ pub fn handle_pack_tactics(
         if has_flanking_ally {
             // Deal 50% bonus damage
             let bonus = (msg.final_damage / 2).max(1);
-            damage_writer.write(ApplyDamageMessage {
-                attacker: msg.attacker,
+            damage_writer.write(DamageEvent {
+                attacker: Some(msg.attacker),
                 target: msg.defender,
-                final_damage: bonus,
+                amount: bonus,
                 damage_type: DamageType::Physical,
                 source: DamageSource::Environment,
+                armor: 0,
             });
             log_writer.write(GameLogMessage(format!(
                 "{} exploits pack tactics against {}! (+{} damage)",
@@ -734,6 +909,168 @@ mod tests {
         assert_eq!(ps.duration, 5);
         assert_eq!(ps.chance, 75);
     }
+
+    #[test]
+    fn collect_summons_finds_matching_summoner() {
+        let mut world = World::new();
+        let summoner = world.spawn_empty().id();
+        let blade1 = world
+            .spawn((
+                crate::components::SummonedBy { summoner },
+                Name("Spectral Blade".to_string()),
+            ))
+            .id();
+        let blade2 = world
+            .spawn((
+                crate::components::SummonedBy { summoner },
+                Name("Spectral Blade".to_string()),
+            ))
+            .id();
+
+        let mut query_state =
+            world.query::<(Entity, &crate::components::SummonedBy, &Name)>();
+        let results: Vec<(Entity, String)> = query_state
+            .iter(&world)
+            .filter(|(_, sb, _)| sb.summoner == summoner)
+            .map(|(e, _, name)| (e, name.0.clone()))
+            .collect();
+
+        assert_eq!(results.len(), 2);
+        let entities: Vec<Entity> = results.iter().map(|(e, _)| *e).collect();
+        assert!(entities.contains(&blade1));
+        assert!(entities.contains(&blade2));
+    }
+
+    #[test]
+    fn collect_summons_ignores_other_summoner() {
+        let mut world = World::new();
+        let summoner_a = world.spawn_empty().id();
+        let summoner_b = world.spawn_empty().id();
+        let _blade_a = world
+            .spawn((
+                crate::components::SummonedBy { summoner: summoner_a },
+                Name("Blade A".to_string()),
+            ))
+            .id();
+        let blade_b = world
+            .spawn((
+                crate::components::SummonedBy { summoner: summoner_b },
+                Name("Blade B".to_string()),
+            ))
+            .id();
+
+        // Kill summoner A — only blade A should be collected
+        let mut query_state =
+            world.query::<(Entity, &crate::components::SummonedBy, &Name)>();
+        let results: Vec<(Entity, String)> = query_state
+            .iter(&world)
+            .filter(|(_, sb, _)| sb.summoner == summoner_a)
+            .map(|(e, _, name)| (e, name.0.clone()))
+            .collect();
+
+        assert_eq!(results.len(), 1);
+        assert_ne!(results[0].0, blade_b);
+    }
+
+    #[test]
+    fn collect_summons_empty_when_no_summons() {
+        let mut world = World::new();
+        let entity = world.spawn_empty().id();
+
+        let mut query_state =
+            world.query::<(Entity, &crate::components::SummonedBy, &Name)>();
+        let results: Vec<(Entity, String)> = query_state
+            .iter(&world)
+            .filter(|(_, sb, _)| sb.summoner == entity)
+            .map(|(e, _, name)| (e, name.0.clone()))
+            .collect();
+
+        assert!(results.is_empty());
+    }
+
+    // --- gas_positions_in_radius ---
+
+    fn make_open_map(width: i32, height: i32) -> crate::map::map::Map {
+        use crate::map::tile::{Tile, TerrainType, LiquidType, Decoration};
+        let mut map = crate::map::map::Map::new(1, width, height, "test");
+        // Set all tiles to Floor so gas can occupy them
+        for tile in map.tiles.iter_mut() {
+            *tile = Tile { terrain: TerrainType::Floor, liquid: LiquidType::None, decoration: Decoration::None };
+        }
+        map
+    }
+
+    #[test]
+    fn gas_positions_radius_0_returns_center_only() {
+        let map = make_open_map(10, 10);
+        let positions = gas_positions_in_radius(5, 5, 0, &map);
+        assert_eq!(positions.len(), 1);
+        assert!(positions.contains(&(5, 5)));
+    }
+
+    #[test]
+    fn gas_positions_radius_1_returns_5_tiles() {
+        let map = make_open_map(10, 10);
+        let positions = gas_positions_in_radius(5, 5, 1, &map);
+        assert_eq!(positions.len(), 5);
+        assert!(positions.contains(&(5, 5)));
+        assert!(positions.contains(&(4, 5)));
+        assert!(positions.contains(&(6, 5)));
+        assert!(positions.contains(&(5, 4)));
+        assert!(positions.contains(&(5, 6)));
+    }
+
+    #[test]
+    fn gas_positions_radius_2_returns_13_tiles() {
+        let map = make_open_map(10, 10);
+        let positions = gas_positions_in_radius(5, 5, 2, &map);
+        assert_eq!(positions.len(), 13);
+    }
+
+    #[test]
+    fn gas_positions_skips_walls() {
+        use crate::map::tile::{Tile, TerrainType, LiquidType, Decoration};
+        let mut map = make_open_map(10, 10);
+        // Place a wall at (6, 5)
+        let idx = map.xy_idx(6, 5);
+        map.tiles[idx] = Tile { terrain: TerrainType::Wall, liquid: LiquidType::None, decoration: Decoration::None };
+        let positions = gas_positions_in_radius(5, 5, 1, &map);
+        assert_eq!(positions.len(), 4);
+        assert!(!positions.contains(&(6, 5)));
+    }
+
+    #[test]
+    fn gas_positions_clamps_to_map_bounds() {
+        let map = make_open_map(10, 10);
+        // Place at corner (0, 0) with radius 1 — only 3 valid positions
+        let positions = gas_positions_in_radius(0, 0, 1, &map);
+        assert_eq!(positions.len(), 3);
+        assert!(positions.contains(&(0, 0)));
+        assert!(positions.contains(&(1, 0)));
+        assert!(positions.contains(&(0, 1)));
+    }
+
+    // --- ExplodeOnHit ---
+
+    #[test]
+    fn explode_effect_defaults_to_crack_floor() {
+        // Backward-compat: RON entries that specify ExplodeOnHit without an
+        // effect field (pre-refactor Pit Bloat) deserialize as CrackFloor.
+        assert!(matches!(ExplodeEffect::default(), ExplodeEffect::CrackFloor));
+    }
+
+    #[test]
+    fn explode_on_hit_holds_gas_cloud_effect() {
+        let comp = ExplodeOnHit {
+            radius: 2,
+            effect: ExplodeEffect::GasCloud { volume: 500 },
+        };
+        match comp.effect {
+            ExplodeEffect::GasCloud { volume } => assert_eq!(volume, 500),
+            _ => panic!("expected GasCloud effect"),
+        }
+        assert_eq!(comp.radius, 2);
+    }
 }
 
 // =====================================================================
@@ -744,9 +1081,44 @@ pub struct AbilitiesPlugin;
 
 impl Plugin for AbilitiesPlugin {
     fn build(&self, app: &mut App) {
+        use crate::game::turns::CombatReactionSet;
         app.add_message::<OnHitTriggerMessage>()
-            .add_message::<OnBeingHitTriggerMessage>();
-        // All ability handlers (on-hit, on-being-hit, on-death, aura, mimic)
-        // registered in TurnOrderPlugin (turns.rs)
+            .add_message::<OnBeingHitTriggerMessage>()
+            // On-hit / on-being-hit / on-death triggers + aura systems.
+            // Run in CombatReactionSet → `.after(CombatDamageSet)` in-game only.
+            .add_systems(
+                Update,
+                (
+                    (
+                        // On-hit ability triggers
+                        handle_burning_strike,
+                        handle_poison_strike,
+                        handle_stunning_blow,
+                        handle_life_drain,
+                        handle_knockback,
+                        handle_slow_strike,
+                        handle_pack_tactics,
+                        handle_war_cry,
+                        handle_explode_on_hit,
+                    ),
+                    (
+                        // On-being-hit ability triggers
+                        handle_rough_body,
+                        handle_enrage,
+                        handle_split_on_hit,
+                        // On-death triggers
+                        handle_explode_on_death,
+                        handle_summon_on_death,
+                        handle_gas_on_death,
+                        handle_summoner_death,
+                        // Aura systems (run on turn end)
+                        rally_aura_system,
+                        terrify_aura_system,
+                        // Mimic reveal (run on turn end)
+                        mimic_reveal_system,
+                    ),
+                )
+                    .in_set(CombatReactionSet),
+            );
     }
 }

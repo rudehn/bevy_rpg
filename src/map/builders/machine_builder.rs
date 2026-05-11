@@ -118,104 +118,221 @@ struct HordeSpawnEntry {
 }
 
 fn all_horde_defs() -> Vec<HordeDef> {
+    // Monster names must match `assets/monsters.ron` keys exactly (PascalCase
+    // with spaces) — `spawn_monster_by_name` does not normalize.
     vec![
         HordeDef {
             name: "rat_pack",
             tag: HordeTag::Swarm,
-            monsters: vec![("giant_rat", 2, 4)],
+            monsters: vec![("Giant Rat", 2, 4)],
         },
         HordeDef {
             name: "goblin_patrol",
             tag: HordeTag::Patrol,
-            monsters: vec![("goblin", 2, 3)],
+            monsters: vec![("Goblin", 2, 3)],
         },
         HordeDef {
             name: "goblin_squad",
             tag: HordeTag::Guard,
-            monsters: vec![("goblin", 2, 3), ("goblin_brute", 1, 1)],
+            monsters: vec![("Goblin", 2, 3), ("Goblin Brute", 1, 1)],
         },
         HordeDef {
+            // Kept the original `goblin_archers` horde name for stability,
+            // but "Goblin Archer" never existed in the manifest — replaced
+            // by the Goblin Conjurer (see `assets/monsters.ron`).
             name: "goblin_archers",
             tag: HordeTag::Ranged,
-            monsters: vec![("goblin_archer", 1, 2)],
+            monsters: vec![("Goblin Conjurer", 1, 2)],
         },
         HordeDef {
             name: "goblin_casters",
             tag: HordeTag::Support,
-            monsters: vec![("goblin_shaman", 1, 1)],
+            monsters: vec![("Goblin Shaman", 1, 1)],
         },
         HordeDef {
             name: "goblin_war_party",
             tag: HordeTag::Elite,
             monsters: vec![
-                ("goblin_warchief", 1, 1),
-                ("goblin_brute", 1, 2),
+                ("Goblin Warchief", 1, 1),
+                ("Goblin Brute", 1, 2),
             ],
         },
         HordeDef {
             name: "spider_nest",
             tag: HordeTag::Ambush,
-            monsters: vec![("giant_spider", 1, 2)],
+            monsters: vec![("Giant Spider", 1, 2)],
         },
         HordeDef {
             name: "wolf_pack",
             tag: HordeTag::Patrol,
-            monsters: vec![("wolf", 2, 3)],
+            monsters: vec![("Wolf", 2, 3)],
         },
         HordeDef {
             name: "bat_colony",
             tag: HordeTag::Swarm,
-            monsters: vec![("giant_bat", 2, 4)],
+            monsters: vec![("Giant Bat", 2, 4)],
         },
         HordeDef {
             name: "salamander_pair",
             tag: HordeTag::Threat,
-            monsters: vec![("fire_salamander", 1, 2)],
+            monsters: vec![("Fire Salamander", 1, 2)],
         },
         HordeDef {
             name: "jelly_blob",
             tag: HordeTag::Threat,
-            monsters: vec![("jelly", 1, 1)],
+            monsters: vec![("Jelly", 1, 1)],
         },
         HordeDef {
             name: "bloat_cluster",
             tag: HordeTag::Hazard,
-            monsters: vec![("bloat", 1, 2)],
+            monsters: vec![("Bloat", 1, 2)],
         },
         HordeDef {
             name: "troll_den",
             tag: HordeTag::Brute,
-            monsters: vec![("cave_troll", 1, 1)],
+            monsters: vec![("Cave Troll", 1, 1)],
         },
         HordeDef {
             name: "sentinel_post",
             tag: HordeTag::Guardian,
-            monsters: vec![("stone_sentinel", 1, 1)],
+            monsters: vec![("Stone Sentinel", 1, 1)],
         },
         HordeDef {
             name: "dragon_guard",
             tag: HordeTag::Elite,
-            monsters: vec![("dragon_whelp", 1, 1)],
+            monsters: vec![("Dragon Whelp", 1, 1)],
         },
         HordeDef {
             name: "young_dragon_lair",
             tag: HordeTag::Apex,
-            monsters: vec![("young_dragon", 1, 1)],
+            monsters: vec![("Young Dragon", 1, 1)],
         },
         HordeDef {
             name: "skeleton_patrol",
             tag: HordeTag::Guard,
-            monsters: vec![("skeleton", 1, 3)],
+            monsters: vec![("Skeleton", 1, 3)],
         },
         HordeDef {
             name: "bone_crypt_defenders",
             tag: HordeTag::Ranged,
-            monsters: vec![("bone_archer", 1, 2)],
+            monsters: vec![("Bone Archer", 1, 2)],
         },
         HordeDef {
             name: "fungal_cluster",
             tag: HordeTag::Hazard,
-            monsters: vec![("fungal_spore", 1, 3)],
+            monsters: vec![("Fungal Spore", 1, 3)],
+        },
+
+        // ==================== T3-T6 hordes (f10-26) ====================
+        // Use PascalCase names that match `assets/monsters.ron` keys directly.
+        HordeDef {
+            name: "goblin_fortress",
+            tag: HordeTag::Elite,
+            monsters: vec![
+                ("Goblin Warchief", 1, 1),
+                ("Goblin", 2, 3),
+                ("Goblin Firebomber", 0, 1),
+            ],
+        },
+        HordeDef {
+            name: "orc_raid",
+            tag: HordeTag::Guard,
+            monsters: vec![
+                ("Orc Warrior", 1, 2),
+                ("Orc Archer", 1, 1),
+            ],
+        },
+        HordeDef {
+            name: "fungal_infestation",
+            tag: HordeTag::Hazard,
+            monsters: vec![
+                ("Spore Crawler", 1, 1),
+                ("Fungal Spore", 2, 3),
+            ],
+        },
+        HordeDef {
+            name: "crypt_vanguard",
+            tag: HordeTag::Guard,
+            monsters: vec![
+                ("Skeleton", 2, 3),
+                ("Bone Archer", 1, 1),
+            ],
+        },
+        HordeDef {
+            name: "wraith_hall",
+            tag: HordeTag::Elite,
+            monsters: vec![
+                ("Wraith", 1, 1),
+                ("Zombie", 1, 2),
+            ],
+        },
+        HordeDef {
+            name: "necromancer_lair",
+            tag: HordeTag::Apex,
+            monsters: vec![
+                ("Necromancer", 1, 1),
+                ("Skeleton", 1, 2),
+                ("Zombie", 0, 1),
+            ],
+        },
+        HordeDef {
+            name: "giant_lair",
+            tag: HordeTag::Brute,
+            monsters: vec![
+                ("Ogre", 1, 1),
+                ("Troll", 0, 1),
+            ],
+        },
+        HordeDef {
+            name: "dragon_roost",
+            tag: HordeTag::Apex,
+            monsters: vec![("Dragon Whelp", 1, 2)],
+        },
+        HordeDef {
+            name: "construct_vault",
+            tag: HordeTag::Guardian,
+            monsters: vec![("Stone Sentinel", 1, 2)],
+        },
+        HordeDef {
+            name: "dragon_lair",
+            tag: HordeTag::Apex,
+            monsters: vec![
+                ("Young Dragon", 1, 1),
+                ("Drake", 0, 1),
+            ],
+        },
+        HordeDef {
+            name: "giant_keep",
+            tag: HordeTag::Brute,
+            monsters: vec![
+                ("Hill Giant", 1, 1),
+                ("Ogre Mage", 0, 1),
+            ],
+        },
+        HordeDef {
+            name: "undead_citadel",
+            tag: HordeTag::Apex,
+            monsters: vec![
+                ("Bone Colossus", 1, 1),
+                ("Wraith", 1, 2),
+            ],
+        },
+        HordeDef {
+            name: "dragon_flight",
+            tag: HordeTag::Apex,
+            monsters: vec![
+                ("Elder Drake", 1, 1),
+                ("Drake", 0, 1),
+                ("Wyrm", 0, 1),
+            ],
+        },
+        HordeDef {
+            name: "amulet_chamber",
+            tag: HordeTag::Apex,
+            monsters: vec![
+                ("Amulet Guardian", 1, 1),
+                ("Stone Sentinel", 1, 2),
+            ],
         },
     ]
 }
@@ -234,13 +351,29 @@ fn all_horde_spawn_entries() -> Vec<HordeSpawnEntry> {
         HordeSpawnEntry { horde_name: "jelly_blob",        min_floor: 2, max_floor: 7  },
         HordeSpawnEntry { horde_name: "goblin_casters",    min_floor: 4, max_floor: 9  },
         HordeSpawnEntry { horde_name: "troll_den",         min_floor: 4, max_floor: 8  },
-        HordeSpawnEntry { horde_name: "sentinel_post",     min_floor: 2, max_floor: 10 },
+        HordeSpawnEntry { horde_name: "sentinel_post",     min_floor: 2, max_floor: 26 },
         HordeSpawnEntry { horde_name: "dragon_guard",      min_floor: 5, max_floor: 9  },
         HordeSpawnEntry { horde_name: "goblin_war_party",  min_floor: 7, max_floor: 9  },
         HordeSpawnEntry { horde_name: "young_dragon_lair", min_floor: 8, max_floor: 9  },
         HordeSpawnEntry { horde_name: "skeleton_patrol",   min_floor: 4, max_floor: 8  },
         HordeSpawnEntry { horde_name: "bone_crypt_defenders", min_floor: 5, max_floor: 9 },
         HordeSpawnEntry { horde_name: "fungal_cluster",    min_floor: 3, max_floor: 8  },
+
+        // T3-T6 (f10-26)
+        HordeSpawnEntry { horde_name: "goblin_fortress",    min_floor: 10, max_floor: 14 },
+        HordeSpawnEntry { horde_name: "orc_raid",           min_floor: 10, max_floor: 17 },
+        HordeSpawnEntry { horde_name: "fungal_infestation", min_floor: 10, max_floor: 16 },
+        HordeSpawnEntry { horde_name: "crypt_vanguard",     min_floor: 12, max_floor: 17 },
+        HordeSpawnEntry { horde_name: "wraith_hall",        min_floor: 15, max_floor: 20 },
+        HordeSpawnEntry { horde_name: "necromancer_lair",   min_floor: 17, max_floor: 22 },
+        HordeSpawnEntry { horde_name: "giant_lair",         min_floor: 15, max_floor: 22 },
+        HordeSpawnEntry { horde_name: "dragon_roost",       min_floor: 16, max_floor: 22 },
+        HordeSpawnEntry { horde_name: "construct_vault",    min_floor: 20, max_floor: 26 },
+        HordeSpawnEntry { horde_name: "dragon_lair",        min_floor: 20, max_floor: 25 },
+        HordeSpawnEntry { horde_name: "giant_keep",         min_floor: 21, max_floor: 25 },
+        HordeSpawnEntry { horde_name: "undead_citadel",     min_floor: 21, max_floor: 25 },
+        HordeSpawnEntry { horde_name: "dragon_flight",      min_floor: 23, max_floor: 26 },
+        HordeSpawnEntry { horde_name: "amulet_chamber",     min_floor: 26, max_floor: 26 },
     ]
 }
 
@@ -617,7 +750,7 @@ fn all_v2_blueprints() -> Vec<MachineBlueprintV2> {
         MachineBlueprintV2 {
             name: "Treasure Vault",
             min_floor: 2,
-            max_floor: 10,
+            max_floor: 26,
             min_interior: 8,
             max_interior: 40,
             gate: GateType::Open, // Simplified from Locked for POC
@@ -642,7 +775,7 @@ fn all_v2_blueprints() -> Vec<MachineBlueprintV2> {
         MachineBlueprintV2 {
             name: "Guardian Corridor",
             min_floor: 3,
-            max_floor: 10,
+            max_floor: 26,
             min_interior: 5,
             max_interior: 15,
             gate: GateType::Open,
@@ -694,7 +827,7 @@ fn all_v2_blueprints() -> Vec<MachineBlueprintV2> {
         MachineBlueprintV2 {
             name: "Bone Crypt",
             min_floor: 4,
-            max_floor: 10,
+            max_floor: 26,
             min_interior: 10,
             max_interior: 40,
             gate: GateType::Open, // Simplified from Locked for POC
@@ -713,7 +846,7 @@ fn all_v2_blueprints() -> Vec<MachineBlueprintV2> {
         MachineBlueprintV2 {
             name: "Lava Vault",
             min_floor: 5,
-            max_floor: 10,
+            max_floor: 26,
             min_interior: 10,
             max_interior: 40,
             gate: GateType::Open, // Simplified from Locked for POC
@@ -792,7 +925,7 @@ fn all_v2_blueprints() -> Vec<MachineBlueprintV2> {
         MachineBlueprintV2 {
             name: "Trapped Chest",
             min_floor: 2,
-            max_floor: 10,
+            max_floor: 26,
             min_interior: 6,
             max_interior: 30,
             gate: GateType::Open,
@@ -809,7 +942,7 @@ fn all_v2_blueprints() -> Vec<MachineBlueprintV2> {
         MachineBlueprintV2 {
             name: "Lone Chest",
             min_floor: 1,
-            max_floor: 10,
+            max_floor: 26,
             min_interior: 4,
             max_interior: 999,
             gate: GateType::Open,
@@ -844,7 +977,7 @@ fn all_v2_blueprints() -> Vec<MachineBlueprintV2> {
         MachineBlueprintV2 {
             name: "Bone Pile",
             min_floor: 4,
-            max_floor: 10,
+            max_floor: 26,
             min_interior: 4,
             max_interior: 20,
             gate: GateType::Open,
@@ -898,7 +1031,7 @@ fn all_v2_blueprints() -> Vec<MachineBlueprintV2> {
         MachineBlueprintV2 {
             name: "Arrow Trap Corridor",
             min_floor: 3,
-            max_floor: 10,
+            max_floor: 26,
             min_interior: 5,
             max_interior: 20,
             gate: GateType::Open,
@@ -917,7 +1050,7 @@ fn all_v2_blueprints() -> Vec<MachineBlueprintV2> {
         MachineBlueprintV2 {
             name: "Guarded Shrine",
             min_floor: 2,
-            max_floor: 10,
+            max_floor: 26,
             min_interior: 6,
             max_interior: 25,
             gate: GateType::Open,
@@ -1026,7 +1159,7 @@ fn all_v2_blueprints() -> Vec<MachineBlueprintV2> {
         MachineBlueprintV2 {
             name: "Dragon's Hoard",
             min_floor: 7,
-            max_floor: 10,
+            max_floor: 26,
             min_interior: 25,
             max_interior: 60,
             gate: GateType::Open,
@@ -1055,7 +1188,7 @@ fn all_v2_blueprints() -> Vec<MachineBlueprintV2> {
         MachineBlueprintV2 {
             name: "Mimic Treasury",
             min_floor: 4,
-            max_floor: 10,
+            max_floor: 26,
             min_interior: 12,
             max_interior: 30,
             gate: GateType::Open,
@@ -1095,7 +1228,7 @@ fn all_v2_blueprints() -> Vec<MachineBlueprintV2> {
         MachineBlueprintV2 {
             name: "The Gauntlet",
             min_floor: 3,
-            max_floor: 10,
+            max_floor: 26,
             min_interior: 15,
             max_interior: 40,
             gate: GateType::Open,

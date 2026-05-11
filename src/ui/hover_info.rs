@@ -60,6 +60,7 @@ fn update_hover_description(
         Option<&ItemArmorRunic>,
         Option<&RunicIdentified>,
     )>,
+    gas_tiles: Res<crate::game::gas::GasTiles>,
 ) {
     let mut description: Option<String> = None;
 
@@ -175,6 +176,7 @@ fn update_hover_description(
             TerrainType::HiddenDoor => "wall", // looks like wall until discovered
             TerrainType::LockedDoor => "a locked door",
             TerrainType::Portal => "a shimmering portal",
+            _ => "terrain",
         };
 
         let liquid_desc = match tile.liquid {
@@ -183,6 +185,7 @@ fn update_hover_description(
             LiquidType::ShallowWater => "shallow water",
             LiquidType::Lava => "lava",
             LiquidType::Chasm => "a chasm",
+            _ => "liquid",
         };
 
         let decoration_desc = match tile.decoration {
@@ -197,12 +200,23 @@ fn update_hover_description(
             Decoration::Bloodstain => "bloodstains",
             Decoration::TrampledGrass => "trampled grass",
             Decoration::TrampledFungus => "trampled fungus",
+            Decoration::Embers => "embers",
+            Decoration::Ash => "ash",
+            Decoration::CrackedFloor => "cracked floor",
+            _ => "decoration",
         };
+
+        // Gas overlay description
+        let gas_desc = gas_tiles.0.get(&(gx, gy))
+            .map(|data| data.gas_type.description(data.concentration))
+            .unwrap_or("");
 
         // Build description: entity on terrain/liquid
         if !found_entity {
             // No entity — describe the tile itself
-            if !liquid_desc.is_empty() {
+            if !gas_desc.is_empty() {
+                parts.push(gas_desc.to_string());
+            } else if !liquid_desc.is_empty() {
                 parts.push(liquid_desc.to_string());
             } else if !decoration_desc.is_empty() {
                 parts.push(format!("{} on {}", decoration_desc, terrain_desc));
@@ -211,7 +225,9 @@ fn update_hover_description(
             }
         } else {
             // Entity found — add terrain context
-            if !liquid_desc.is_empty() {
+            if !gas_desc.is_empty() {
+                parts.push(format!("in {}", gas_desc));
+            } else if !liquid_desc.is_empty() {
                 parts.push(format!("in {}", liquid_desc));
             } else if !terrain_desc.is_empty() && terrain_desc != "floor" {
                 parts.push(format!("on {}", terrain_desc));

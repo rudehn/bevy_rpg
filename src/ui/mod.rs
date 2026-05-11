@@ -5,7 +5,7 @@ use crate::game::camera::UiCamera;
 use crate::game::{
     AppState,
     combat::{Health, HealthRegen},
-    magic::StatusEffects,
+    magic::{GameStatusEffectsExt, StatusEffects},
 };
 use crate::map::dungeon::Floor;
 use crate::player::Player;

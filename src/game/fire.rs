@@ -11,7 +11,7 @@ use bracket_lib::prelude::{Algorithm2D, Point};
 use bracket_lib::random::RandomNumberGenerator;
 
 use crate::components::{FloorEntityMarker, GameEntityMarker, Position};
-use crate::game::magic::{StatusEffectKind, StatusEffects};
+use crate::game::magic::{GameStatusEffectsExt, StatusEffectKind, StatusEffects};
 use crate::game::turns::TurnEndEvent;
 use crate::map::light::{LightSourceData, LightSources};
 use crate::map::map::Map;
@@ -106,28 +106,12 @@ pub fn fire_tick_system(
         }
     }
 
-    // Spawn steam where fire met water — large billowing cloud.
-    // Steam appears on the water tile itself plus its cardinal water neighbors.
-    let mut all_steam: Vec<(i32, i32, u8)> = Vec::new();
+    // Spawn steam where fire met water — high volume, redistribution spreads it.
     for &(x, y) in &steam_spawns {
-        all_steam.push((x, y, crate::game::gas::MAX_CONCENTRATION));
-        // Spread to cardinal neighbors that are walkable
-        for &(dx, dy) in &[(0, 1), (0, -1), (1, 0), (-1, 0)] {
-            let (nx, ny) = (x + dx, y + dy);
-            if !map.in_bounds(Point::new(nx, ny)) {
-                continue;
-            }
-            let nidx = map.xy_idx(nx, ny);
-            if crate::map::tile::is_passable(map.tiles[nidx]) {
-                all_steam.push((nx, ny, crate::game::gas::MAX_CONCENTRATION - 1));
-            }
-        }
-    }
-    for (x, y, conc) in &all_steam {
         crate::game::gas::spawn_gas(
-            &mut commands, *x, *y,
+            &mut commands, x, y,
             crate::game::gas::GasType::Steam,
-            *conc,
+            500,
             &mut gas_tiles,
         );
     }
@@ -168,11 +152,11 @@ pub fn fire_tick_system(
     // Pass 4: burn creatures standing in fire
     for (pos, mut effects, name) in creature_query.iter_mut() {
         if fire_tiles.0.contains(&(pos.x, pos.y)) && !effects.is_burning() {
-            effects.add(
-                StatusEffectKind::Burning {
-                    damage_per_turn: BURN_DAMAGE,
-                },
+            effects.add_effect_with_magnitude(
+                StatusEffectKind::Burning,
                 BURN_DURATION,
+                BURN_DAMAGE,
+                None,
             );
             log_writer.write(GameLogMessage(format!("{} catches fire!", name.0)));
         }
@@ -248,7 +232,7 @@ pub fn ignite_tile_at(
         crate::game::gas::spawn_gas(
             commands, x, y,
             crate::game::gas::GasType::Steam,
-            crate::game::gas::MAX_CONCENTRATION,
+            500,
             gas_tiles,
         );
         return false;

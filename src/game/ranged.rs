@@ -1,12 +1,11 @@
 use bevy::prelude::*;
 use bracket_lib::prelude::{DistanceAlg, Point};
 
-use crate::game::turns::ProcessingPhase;
-
 pub struct RangedPlugin;
 
 impl Plugin for RangedPlugin {
     fn build(&self, app: &mut App) {
+        use crate::game::turns::ProcessingPhase;
         app.add_message::<RangedAttackIntent>()
             .add_systems(
                 Update,

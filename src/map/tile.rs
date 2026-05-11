@@ -3,243 +3,49 @@ use std::collections::HashMap;
 use bevy::camera::visibility::RenderLayers;
 use bevy::ecs::component::Component;
 use bevy::prelude::{
-    Commands, Entity, InheritedVisibility, Message, MessageReader, MessageWriter,
+    Commands, Entity, Has, InheritedVisibility, Message, MessageReader, MessageWriter,
     Query, Res, ResMut, Resource, Sprite, Text2d, TextColor, TextFont, Transform, Vec3,
-    ViewVisibility, Visibility, default, warn,
+    ViewVisibility, Visibility, With, Without, default, warn,
 };
 use bracket_lib::prelude::Point;
-use serde::{Deserialize, Serialize};
 
 use crate::assets::{TileManifest, TileManifestHandle};
-use crate::components::{Collider, MovementMode, Viewshed};
+use crate::components::{Collider, Name, Viewshed};
 use crate::map::Map;
 use crate::map::map::GRID_SIZE;
 
-/// Spatial index mapping grid `(x, y)` → tile `Entity`.
-/// Built once per floor load by `spawn_tiles_into_ecs`; never modified at runtime.
-#[derive(Resource, Default)]
-pub struct TileEntityIndex(pub HashMap<(i32, i32), Entity>);
+// Tile data types and helpers now live in the engine crate. Re-exported
+// here so the 100+ `use crate::map::tile::*` sites compile unchanged.
+pub use roguelike_engine::map::tile::{
+    Decoration, LiquidType, PromotionRule, PromotionTarget, TerrainType, Tile,
+    can_entity_enter_tile, is_opaque, is_passable, is_pathing_blocker, is_walkable,
+};
+
+// Mutation messages, apply systems, and the TileEntityIndex spatial
+// resource live in the engine. Re-exported so existing
+// `crate::map::tile::*` import sites compile unchanged. See
+// `roguelike_engine::map::mutation` for the apply pipeline. Game-side
+// reactions to LiquidMutationMessage (chasm fall, lava kill) live in
+// `crate::game::chasm_fall`.
+pub use roguelike_engine::map::mutation::{
+    apply_decoration_mutations, apply_liquid_mutations, apply_tile_mutations,
+    DecorationMutationMessage, LiquidMutationMessage, MapMutationPlugin, MapMutationSet,
+    TileMutationMessage,
+};
+pub use roguelike_engine::map::tile_entity_index::TileEntityIndex;
 
 #[derive(Component)]
 pub struct TileMarker;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Component, Serialize, Deserialize)]
-pub enum TerrainType {
-    #[default]
-    Wall,
-    Floor,
-    DownStairs,
-    UpStairs,
-    Empty,
-    Door,
-    OpenDoor,
-    /// Renders as Wall until discovered, then converts to Door.
-    HiddenDoor,
-    /// Requires a matching key item to open. Renders as a locked door.
-    LockedDoor,
-    /// Escape portal on the final floor. Walkable, non-opaque.
-    Portal,
-}
+// `TerrainType` and `LiquidType` are re-exported from the engine above.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Component, Serialize, Deserialize)]
-pub enum LiquidType {
-    #[default]
-    None,
-    Water,
-    ShallowWater,
-    Lava,
-    /// Impassable void — no wreath, blocks everything.
-    Chasm,
-}
+// `Decoration`, `Tile`, `PromotionTarget`, `PromotionRule` and all
+// enum impls are re-exported from the engine above.
 
-/// Purely visual decoration overlay on a tile. Does not affect walkability or opacity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum Decoration {
-    #[default]
-    None,
-    Grass,
-    TallGrass,
-    /// Naturally placed dead vegetation. Does NOT regrow.
-    DeadGrass,
-    Rubble,
-    Moss,
-    Fungus,
-    Cobweb,
-    Bloodstain,
-    /// TallGrass that was trampled. Regrows into TallGrass over time.
-    TrampledGrass,
-    /// Fungus that was trampled. Regrows into Fungus over time.
-    TrampledFungus,
-    /// Sputtering remains of a fire. Decays to Ash.
-    Embers,
-    /// Burned-out remains. Purely visual.
-    Ash,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct Tile {
-    pub terrain: TerrainType,
-    pub liquid: LiquidType,
-    pub decoration: Decoration,
-}
-
-// ---------------------------------------------------------------------------
-// Tile Promotion System (Brogue-aligned)
-// ---------------------------------------------------------------------------
-
-/// What a tile promotes into. Can target either the decoration or terrain layer.
-#[derive(Debug, Clone, Copy)]
-pub enum PromotionTarget {
-    Decoration(Decoration),
-    Terrain(TerrainType),
-}
-
-/// A timed promotion rule: what a tile becomes and at what rate.
-#[derive(Debug, Clone, Copy)]
-pub struct PromotionRule {
-    pub target: PromotionTarget,
-    /// Chance per turn out of 10000 (Brogue scale). 10000 = 100%, 100 = 1%.
-    pub chance_per_turn: u16,
-}
-
-impl TerrainType {
-    pub fn name(&self) -> &'static str {
-        match self {
-            TerrainType::Wall => "Wall",
-            TerrainType::Floor => "Floor",
-            TerrainType::DownStairs => "DownStairs",
-            TerrainType::UpStairs => "UpStairs",
-            TerrainType::Empty => "Empty",
-            TerrainType::Door => "Door",
-            TerrainType::OpenDoor => "OpenDoor",
-            TerrainType::HiddenDoor => "HiddenDoor",
-            TerrainType::LockedDoor => "LockedDoor",
-            TerrainType::Portal => "Portal",
-        }
-    }
-
-    /// Chance (0-100) of igniting when exposed to adjacent fire.
-    pub fn flammability(&self) -> u8 {
-        match self {
-            TerrainType::Door | TerrainType::OpenDoor => 20,
-            _ => 0,
-        }
-    }
-
-    /// What this terrain becomes when stepped on. None = no step promotion.
-    pub fn on_step_promotion(&self) -> Option<PromotionTarget> {
-        None
-    }
-
-    /// Timed promotion rule. None = no passive change.
-    pub fn timed_promotion(&self) -> Option<PromotionRule> {
-        match self {
-            // Open doors close automatically next turn (Brogue: 10000/10000 = 100%).
-            // PromotionCooldown prevents closing on the same turn the door was opened.
-            TerrainType::OpenDoor => Some(PromotionRule {
-                target: PromotionTarget::Terrain(TerrainType::Door),
-                chance_per_turn: 10000,
-            }),
-            _ => None,
-        }
-    }
-}
-
-impl LiquidType {
-    pub fn name(&self) -> &'static str {
-        match self {
-            LiquidType::None => "None",
-            LiquidType::Water => "Water",
-            LiquidType::ShallowWater => "ShallowWater",
-            LiquidType::Lava => "Lava",
-            LiquidType::Chasm => "Chasm",
-        }
-    }
-}
-
-impl Decoration {
-    pub fn name(&self) -> &'static str {
-        match self {
-            Decoration::None => "None",
-            Decoration::Grass => "Grass",
-            Decoration::TallGrass => "TallGrass",
-            Decoration::DeadGrass => "DeadGrass",
-            Decoration::Rubble => "Rubble",
-            Decoration::Moss => "Moss",
-            Decoration::Fungus => "Fungus",
-            Decoration::Cobweb => "Cobweb",
-            Decoration::Bloodstain => "Bloodstain",
-            Decoration::TrampledGrass => "TrumpledGrass",
-            Decoration::TrampledFungus => "TrumpledFungus",
-            Decoration::Embers => "Embers",
-            Decoration::Ash => "Ash",
-        }
-    }
-
-    /// Chance (0-100) of igniting when exposed to adjacent fire.
-    pub fn flammability(&self) -> u8 {
-        match self {
-            Decoration::TallGrass => 75,
-            Decoration::Grass => 50,
-            Decoration::DeadGrass => 60,
-            Decoration::Fungus => 40,
-            Decoration::Cobweb => 100,
-            Decoration::Moss => 30,
-            Decoration::TrampledGrass => 40,
-            Decoration::TrampledFungus => 30,
-            _ => 0,
-        }
-    }
-
-    /// Movement cost multiplier. Applied to both player movement and AI pathing.
-    /// Values > 1.0 slow movement through this decoration.
-    pub fn movement_cost(&self) -> f32 {
-        match self {
-            _ => 1.0,
-        }
-    }
-
-    /// Whether this decoration blocks line of sight.
-    pub fn blocks_fov(&self) -> bool {
-        matches!(self, Decoration::TallGrass | Decoration::Fungus)
-    }
-
-    /// What this decoration becomes when stepped on. None = no step promotion.
-    /// Cobwebs are handled separately via the entangle mechanic (not a promotion).
-    pub fn on_step_promotion(&self) -> Option<PromotionTarget> {
-        match self {
-            Decoration::TallGrass => Some(PromotionTarget::Decoration(Decoration::TrampledGrass)),
-            Decoration::Fungus => Some(PromotionTarget::Decoration(Decoration::TrampledFungus)),
-            _ => None,
-        }
-    }
-
-    /// Timed promotion rule. None = no passive change.
-    /// Uses Brogue's 0-10000 scale (100 = ~1% per turn).
-    pub fn timed_promotion(&self) -> Option<PromotionRule> {
-        match self {
-            Decoration::TrampledGrass => Some(PromotionRule {
-                target: PromotionTarget::Decoration(Decoration::TallGrass),
-                chance_per_turn: 100,
-            }),
-            Decoration::TrampledFungus => Some(PromotionRule {
-                target: PromotionTarget::Decoration(Decoration::Fungus),
-                chance_per_turn: 100,
-            }),
-            // Embers cool to ash (~10%/turn, Brogue: 300/10000 ≈ 3%)
-            Decoration::Embers => Some(PromotionRule {
-                target: PromotionTarget::Decoration(Decoration::Ash),
-                chance_per_turn: 1000,
-            }),
-            _ => None,
-        }
-    }
-
-    /// Whether stepping on this decoration entangles the creature.
-    pub fn entangles(&self) -> bool {
-        matches!(self, Decoration::Cobweb)
-    }
-}
+// Engine re-exports cover: PromotionTarget, PromotionRule, and all
+// inherent methods on TerrainType / LiquidType / Decoration (name,
+// flammability, timed_promotion, on_step_promotion, movement_cost,
+// blocks_fov, entangles).
 
 #[derive(Component, Default, Copy, Clone, Eq, PartialEq, Debug)]
 pub enum TileVisibility {
@@ -255,75 +61,8 @@ pub enum TileExplored {
     Explored,
 }
 
-pub fn is_walkable(tile: Tile) -> bool {
-    // Both terrain and liquid must be walkable
-    let terrain_walkable = match tile.terrain {
-        TerrainType::Wall => false,
-        TerrainType::Floor => true,
-        TerrainType::DownStairs => true,
-        TerrainType::UpStairs => true,
-        TerrainType::Empty => false,
-        TerrainType::Door => false,
-        TerrainType::OpenDoor => true,
-        TerrainType::HiddenDoor => false, // Not walkable until discovered → Door
-        TerrainType::LockedDoor => false, // Not walkable until unlocked → Door
-        TerrainType::Portal => true,
-    };
-
-    let liquid_walkable = match tile.liquid {
-        LiquidType::None => true,
-        LiquidType::Water => true,
-        LiquidType::ShallowWater => true,
-        LiquidType::Lava => false,
-        LiquidType::Chasm => false,
-    };
-
-    terrain_walkable && liquid_walkable
-}
-
-/// Mode-aware walkability check. Accounts for the entity's MovementMode when
-/// deciding whether it can enter a tile.
-pub fn can_entity_enter_tile(tile: Tile, mode: MovementMode) -> bool {
-    match mode {
-        MovementMode::Land | MovementMode::ImmuneToWater => is_walkable(tile),
-        MovementMode::RestrictedToLiquid => {
-            // Must have liquid AND terrain must be walkable
-            tile.liquid != LiquidType::None && is_walkable(tile)
-        }
-    }
-}
-
-pub fn is_passable(tile: Tile) -> bool {
-    // Topologically passable: anywhere an entity *could* go, or doors.
-    // Used for connectivity checks (ChokeMap, flood-fill). HiddenDoor and
-    // LockedDoor are passable so connectivity checkers don't reject maps
-    // where these are the only connection between regions.
-    match tile.terrain {
-        TerrainType::Wall => false,
-        TerrainType::Empty => false,
-        _ => true, // Doors, floors, stairs, HiddenDoor, LockedDoor all passable
-    }
-}
-
-/// Brogue's T_LAKE_PATHING_BLOCKER / T_PATHING_BLOCKER concept.
-/// These tiles are physically walkable but AI and level design should avoid them.
-/// Deep water, lava, and chasm are pathing blockers.
-pub fn is_pathing_blocker(tile: Tile) -> bool {
-    match tile.liquid {
-        LiquidType::Water => true, // deep water — Brogue's T_IS_DEEP_WATER
-        LiquidType::Lava => true,  // instant death
-        LiquidType::Chasm => true, // impassable void
-        _ => false,
-    }
-}
-
-pub fn is_opaque(tile: Tile) -> bool {
-    let terrain_opaque = matches!(
-        tile.terrain,
-        TerrainType::Wall | TerrainType::Door | TerrainType::HiddenDoor | TerrainType::LockedDoor
-    );
-    terrain_opaque || tile.decoration.blocks_fov()
-}
+// is_walkable, can_entity_enter_tile, is_passable, is_pathing_blocker,
+// is_opaque — all re-exported from the engine above.
 
 pub fn spawn_tile_entity(
     commands: &mut Commands,
@@ -487,6 +226,7 @@ pub fn spawn_tile_entity(
 pub struct TileMutationWriters<'w> {
     pub terrain: MessageWriter<'w, TileMutationMessage>,
     pub decoration: MessageWriter<'w, DecorationMutationMessage>,
+    pub liquid: MessageWriter<'w, LiquidMutationMessage>,
     pub fire_tiles: ResMut<'w, crate::game::fire::FireTiles>,
     pub gas_tiles: ResMut<'w, crate::game::gas::GasTiles>,
     pub light_sources: ResMut<'w, crate::map::light::LightSources>,
@@ -504,7 +244,7 @@ pub fn resolve_tile_display(tile: Tile, manifest: &TileManifest) -> (String, bev
     let terrain_has_priority = matches!(
         tile.terrain,
         TerrainType::DownStairs | TerrainType::UpStairs | TerrainType::Door
-        | TerrainType::OpenDoor | TerrainType::LockedDoor
+        | TerrainType::OpenDoor | TerrainType::LockedDoor | TerrainType::Portal
     );
 
     if terrain_has_priority {
@@ -541,345 +281,249 @@ pub fn resolve_tile_bg(tile: Tile, manifest: &TileManifest) -> bevy::prelude::Co
     terrain_bg
 }
 
-/// Request to change a tile's terrain at runtime. Handled by `apply_tile_mutations`,
-/// which updates both the `Map` resource and the ECS tile entity (sprite, collider,
-/// ASCII glyph, viewshed dirty flags).
-#[derive(Message)]
-pub struct TileMutationMessage {
-    pub position: Point,
-    pub new_terrain: TerrainType,
-}
+// `TileMutationMessage`, `DecorationMutationMessage`,
+// `LiquidMutationMessage`, and the `apply_*_mutations` systems now live
+// in `roguelike_engine::map::mutation`. They are re-exported above.
 
-/// Applies queued tile mutations, keeping Map resource and ECS tile entities in sync.
-pub fn apply_tile_mutations(
+/// Game-side reaction to [`LiquidMutationMessage`]: handles chasm fall
+/// (player/monsters/items dropping to the next floor with damage),
+/// lava-kill (entities consumed by impassable non-chasm liquids), and
+/// the forced floor transition when the player falls.
+///
+/// Runs `.after(MapMutationSet)` so it sees the post-mutation Map state.
+pub fn chasm_fall_reaction_system(
     mut commands: Commands,
-    mut messages: MessageReader<TileMutationMessage>,
-    mut map: ResMut<Map>,
-    tile_index: Res<TileEntityIndex>,
-    mut tile_query: Query<&mut TerrainType>,
-    mut viewshed_query: Query<&mut Viewshed>,
-    mut promotion_cooldown: ResMut<crate::game::tile_promotion::PromotionCooldown>,
-    mut light_sources: ResMut<crate::map::light::LightSources>,
+    mut messages: MessageReader<LiquidMutationMessage>,
+    map: Res<Map>,
+    // Monster snapshot query (mirrors snapshot_floor)
+    monster_query: Query<
+        (Entity, &crate::components::Position, &Name, &crate::game::combat::Health,
+         Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>,
+         Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>,
+         Has<crate::components::Submerged>),
+        With<crate::components::Monster>,
+    >,
+    // Floor item snapshot query (mirrors snapshot_floor)
+    item_query: Query<
+        (Entity, &crate::components::Position, &Name,
+         Option<&crate::game::items::ItemStack>,
+         Option<&crate::game::enchantment::Enchantment>,
+         Option<&crate::game::enchantment::ItemWeaponRunic>,
+         Option<&crate::game::enchantment::ItemArmorRunic>,
+         Option<&crate::game::enchantment::RunicIdentified>,
+         Option<&crate::game::staves::StaffData>,
+         Option<&crate::game::staves::Rechargeable>,
+         Has<crate::components::Drifting>),
+        (With<crate::components::Item>, Without<crate::components::InInventory>),
+    >,
+    // Player detection
+    player_query: Query<(Entity, &crate::components::Position), With<crate::player::Player>>,
+    floor: Res<crate::map::dungeon::Floor>,
+    mut fallen: ResMut<crate::map::dungeon::FallenEntities>,
+    mut turn_manager: ResMut<crate::game::TurnManager>,
+    mut transition_writer: MessageWriter<crate::map::dungeon::MapTransitionMessage>,
+    mut damage_writer: MessageWriter<crate::game::combat::DamageEvent>,
+    mut log_writer: MessageWriter<crate::ui::game_log::GameLogMessage>,
 ) {
-    let mut any = false;
+    let mut player_falls = false;
 
     for msg in messages.read() {
-        // 1. Update Map resource (source of truth for game logic).
         let idx = map.xy_idx(msg.position.x, msg.position.y);
-        let old_opaque = is_opaque(map.tiles[idx]);
-        map.tiles[idx].terrain = msg.new_terrain;
-        // If opacity changed (door opened/closed), rebuild the light map.
-        if old_opaque != is_opaque(map.tiles[idx]) {
-            light_sources.dirty = true;
-        }
-
-        // Mark this tile on cooldown so the promotion tick doesn't revert it same-turn.
-        promotion_cooldown
-            .0
-            .insert((msg.position.x, msg.position.y));
-
-        // 2. Look up the ECS tile entity via spatial index.
-        let Some(&tile_entity) = tile_index.0.get(&(msg.position.x, msg.position.y)) else {
-            warn!(
-                "TileMutationMessage at ({}, {}) — no tile entity in index",
-                msg.position.x, msg.position.y
-            );
-            continue;
-        };
-
-        let Ok(mut terrain_type) = tile_query.get_mut(tile_entity) else {
-            warn!(
-                "TileMutationMessage at ({}, {}) — tile entity {:?} missing components",
-                msg.position.x, msg.position.y, tile_entity
-            );
-            continue;
-        };
-
-        // 3. Update ECS terrain component.
-        *terrain_type = msg.new_terrain;
-
-        // 4. Add or remove Collider based on walkability of the full tile.
         let full_tile = map.tiles[idx];
-        if is_walkable(full_tile) {
-            commands.entity(tile_entity).remove::<Collider>();
-        } else {
-            commands.entity(tile_entity).insert(Collider);
-        }
 
-        any = true;
+        // Handle entities on chasm tiles — they fall to the floor below.
+        if msg.new_liquid == LiquidType::Chasm {
+            let dest_floor = floor.0 + 1;
+            let can_fall = dest_floor <= crate::constants::MAX_FLOOR as u32;
+
+            if can_fall {
+                // Check for player
+                if let Ok((player_entity, player_pos)) = player_query.single() {
+                    if player_pos.x == msg.position.x && player_pos.y == msg.position.y {
+                        player_falls = true;
+                        // 2d6 fall damage (same as voluntary chasm fall)
+                        let mut rng = bracket_lib::random::RandomNumberGenerator::new();
+                        let fall_damage = rng.range(1, 7) + rng.range(1, 7);
+                        log_writer.write(crate::ui::game_log::GameLogMessage(
+                            format!("The floor collapses beneath you! You take {} damage!", fall_damage),
+                        ));
+                        damage_writer.write(crate::game::combat::DamageEvent {
+                            attacker: None,
+                            target: player_entity,
+                            amount: fall_damage,
+                            damage_type: crate::game::combat::DamageType::Physical,
+                            source: crate::game::combat::DamageSource::Environment,
+                            armor: 0,
+                        });
+                    }
+                }
+
+                // Snapshot and despawn monsters — they appear on the floor below.
+                for (entity, pos, name, health, squad_id, squad_config, is_leader, patrol_route, is_submerged) in monster_query.iter() {
+                    if pos.x == msg.position.x && pos.y == msg.position.y {
+                        log_writer.write(crate::ui::game_log::GameLogMessage(
+                            format!("{} falls through the chasm!", name.0),
+                        ));
+
+                        // 2d6 fall damage applied to saved HP.
+                        let mut rng = bracket_lib::random::RandomNumberGenerator::new();
+                        let fall_damage = rng.range(1, 7) + rng.range(1, 7);
+                        let hp_after_fall = health.current - fall_damage;
+                        if hp_after_fall <= 0 {
+                            log_writer.write(crate::ui::game_log::GameLogMessage(
+                                format!("{} doesn't survive the fall!", name.0),
+                            ));
+                            turn_manager.remove_entity(entity);
+                            commands.entity(entity).despawn();
+                            continue;
+                        }
+
+                        let saved = crate::save::SavedMonster {
+                            x: pos.x,
+                            y: pos.y,
+                            name: name.0.clone(),
+                            hp_current: hp_after_fall,
+                            squad_id: squad_id.map(|s| s.0),
+                            is_leader,
+                            squad_config: squad_config.cloned(),
+                            patrol_route: patrol_route.cloned(),
+                            submerged: is_submerged,
+                        };
+                        fallen.monsters.entry(dest_floor).or_default().push(saved);
+
+                        turn_manager.remove_entity(entity);
+                        commands.entity(entity).despawn();
+                    }
+                }
+
+                // Snapshot and despawn floor items — they land on the floor below.
+                // Items don't "take damage" so there's no HP check; they simply
+                // reappear at the same grid coordinates on the destination floor.
+                for (entity, pos, name, stack, enchant, weapon_runic, armor_runic, runic_id, staff_data, rechargeable, is_drifting) in item_query.iter() {
+                    if pos.x == msg.position.x && pos.y == msg.position.y {
+                        log_writer.write(crate::ui::game_log::GameLogMessage(
+                            format!("The {} tumbles into the chasm!", name.0),
+                        ));
+                        let saved = crate::save::SavedItem {
+                            x: pos.x,
+                            y: pos.y,
+                            name: name.0.clone(),
+                            count: stack.map(|s| s.count).unwrap_or(1),
+                            state: crate::save::build_item_state(
+                                enchant, weapon_runic, armor_runic, runic_id, staff_data, rechargeable,
+                            ),
+                            drifting: is_drifting,
+                        };
+                        fallen.items.entry(dest_floor).or_default().push(saved);
+                        commands.entity(entity).despawn();
+                    }
+                }
+            } else {
+                // Deepest floor — nowhere to fall, entities are lost to the void.
+                for (entity, pos, name, ..) in monster_query.iter() {
+                    if pos.x == msg.position.x && pos.y == msg.position.y {
+                        log_writer.write(crate::ui::game_log::GameLogMessage(
+                            format!("{} falls into the endless void!", name.0),
+                        ));
+                        turn_manager.remove_entity(entity);
+                        commands.entity(entity).despawn();
+                    }
+                }
+                for (entity, pos, name, ..) in item_query.iter() {
+                    if pos.x == msg.position.x && pos.y == msg.position.y {
+                        log_writer.write(crate::ui::game_log::GameLogMessage(
+                            format!("The {} is lost to the void.", name.0),
+                        ));
+                        commands.entity(entity).despawn();
+                    }
+                }
+            }
+        } else if !is_walkable(full_tile) {
+            // Non-chasm impassable (e.g. lava) — kill entities.
+            for (entity, pos, name, ..) in monster_query.iter() {
+                if pos.x == msg.position.x && pos.y == msg.position.y {
+                    log_writer.write(crate::ui::game_log::GameLogMessage(
+                        format!("{} is consumed!", name.0),
+                    ));
+                    turn_manager.remove_entity(entity);
+                    commands.entity(entity).despawn();
+                }
+            }
+        }
     }
 
-    // 5. Mark all viewsheds dirty so FOV is recalculated.
-    if any {
-        for mut viewshed in viewshed_query.iter_mut() {
-            viewshed.dirty = true;
-        }
+    // If player fell through a collapsing tile, trigger forced floor transition.
+    if player_falls {
+        transition_writer.write(crate::map::dungeon::MapTransitionMessage);
     }
 }
 
-/// Request to change a tile's decoration at runtime. Handled by
-/// `apply_decoration_mutations`, which updates the Map resource and the ECS
-/// tile entity's ASCII glyph and color.
-#[derive(Message)]
-pub struct DecorationMutationMessage {
-    pub position: Point,
-    pub new_decoration: Decoration,
-}
-
-/// Applies queued decoration mutations, keeping Map resource and ECS tile entities in sync.
-pub fn apply_decoration_mutations(
-    mut messages: MessageReader<DecorationMutationMessage>,
-    mut map: ResMut<Map>,
-    mut light_sources: ResMut<crate::map::light::LightSources>,
-    mut viewshed_query: Query<&mut Viewshed>,
-) {
-    let mut fov_changed = false;
-
-    for msg in messages.read() {
-        let idx = map.xy_idx(msg.position.x, msg.position.y);
-        let old_decoration = map.tiles[idx].decoration;
-        map.tiles[idx].decoration = msg.new_decoration;
-
-        // Update fungal glow lights on decoration transitions.
-        let was_fungus = old_decoration == Decoration::Fungus;
-        let is_fungus = msg.new_decoration == Decoration::Fungus;
-        if was_fungus && !is_fungus {
-            light_sources.remove_at(msg.position.x, msg.position.y);
-        }
-        if !was_fungus && is_fungus {
-            light_sources.add(crate::map::light::fungal_light(msg.position.x, msg.position.y));
-        }
-
-        if old_decoration.blocks_fov() != msg.new_decoration.blocks_fov() {
-            fov_changed = true;
-        }
-    }
-
-    if fov_changed {
-        for mut viewshed in viewshed_query.iter_mut() {
-            viewshed.dirty = true;
-        }
-    }
-}
+// Tile walkability/passability/opacity tests moved to
+// `roguelike_engine::map::tile::tests`.
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::MovementMode;
+    use crate::assets::{TileAsset, TileManifest};
+    use bevy::prelude::Color;
 
-    fn tile(terrain: TerrainType, liquid: LiquidType) -> Tile {
-        Tile {
-            terrain,
-            liquid,
-            decoration: Decoration::None,
+    fn tile_asset(ascii_char: &str) -> TileAsset {
+        TileAsset {
+            sprite: String::new(),
+            grid_size: None,
+            tile_size: None,
+            ascii_char: ascii_char.to_string(),
+            ascii_fg: Color::WHITE,
+            ascii_bg: Color::BLACK,
         }
     }
 
-    // ---- is_walkable ----
-
-    #[test]
-    fn floor_no_liquid_is_walkable() {
-        assert!(is_walkable(tile(TerrainType::Floor, LiquidType::None)));
+    fn manifest_with(entries: &[(&str, &str)]) -> TileManifest {
+        let mut tiles = HashMap::new();
+        for (name, glyph) in entries {
+            tiles.insert((*name).to_string(), tile_asset(glyph));
+        }
+        TileManifest { tiles }
     }
 
     #[test]
-    fn wall_is_not_walkable() {
-        assert!(!is_walkable(tile(TerrainType::Wall, LiquidType::None)));
+    fn portal_glyph_beats_decoration() {
+        // Regression guard: a Portal tile with a grass decoration must render
+        // the portal glyph, not the grass. Before the fix, decoration won.
+        let manifest = manifest_with(&[("Portal", "Ω"), ("Grass", "\"")]);
+        let tile = Tile {
+            terrain: TerrainType::Portal,
+            liquid: LiquidType::None,
+            decoration: Decoration::Grass,
+        };
+        let (glyph, _, _) = resolve_tile_display(tile, &manifest);
+        assert_eq!(glyph, "Ω");
     }
 
     #[test]
-    fn floor_with_deep_water_is_walkable() {
-        assert!(is_walkable(tile(TerrainType::Floor, LiquidType::Water)));
+    fn stairs_glyph_beats_decoration() {
+        // Parity check: the same priority the portal now shares with stairs.
+        let manifest = manifest_with(&[("DownStairs", ">"), ("Grass", "\"")]);
+        let tile = Tile {
+            terrain: TerrainType::DownStairs,
+            liquid: LiquidType::None,
+            decoration: Decoration::Grass,
+        };
+        let (glyph, _, _) = resolve_tile_display(tile, &manifest);
+        assert_eq!(glyph, ">");
     }
 
     #[test]
-    fn floor_with_shallow_water_is_walkable() {
-        assert!(is_walkable(tile(
-            TerrainType::Floor,
-            LiquidType::ShallowWater
-        )));
-    }
-
-    #[test]
-    fn floor_with_lava_is_not_walkable() {
-        assert!(!is_walkable(tile(TerrainType::Floor, LiquidType::Lava)));
-    }
-
-    #[test]
-    fn floor_with_chasm_is_not_walkable() {
-        assert!(!is_walkable(tile(TerrainType::Floor, LiquidType::Chasm)));
-    }
-
-    #[test]
-    fn door_is_not_walkable() {
-        assert!(!is_walkable(tile(TerrainType::Door, LiquidType::None)));
-    }
-
-    #[test]
-    fn open_door_is_walkable() {
-        assert!(is_walkable(tile(TerrainType::OpenDoor, LiquidType::None)));
-    }
-
-    #[test]
-    fn stairs_are_walkable() {
-        assert!(is_walkable(tile(TerrainType::DownStairs, LiquidType::None)));
-        assert!(is_walkable(tile(TerrainType::UpStairs, LiquidType::None)));
-    }
-
-    // ---- can_entity_enter_tile ----
-
-    #[test]
-    fn land_mode_enters_floor() {
-        assert!(can_entity_enter_tile(
-            tile(TerrainType::Floor, LiquidType::None),
-            MovementMode::Land,
-        ));
-    }
-
-    #[test]
-    fn land_mode_enters_deep_water() {
-        // Land entities CAN enter deep water (they just get penalized)
-        assert!(can_entity_enter_tile(
-            tile(TerrainType::Floor, LiquidType::Water),
-            MovementMode::Land,
-        ));
-    }
-
-    #[test]
-    fn land_mode_blocked_by_wall() {
-        assert!(!can_entity_enter_tile(
-            tile(TerrainType::Wall, LiquidType::None),
-            MovementMode::Land,
-        ));
-    }
-
-    #[test]
-    fn land_mode_blocked_by_lava() {
-        assert!(!can_entity_enter_tile(
-            tile(TerrainType::Floor, LiquidType::Lava),
-            MovementMode::Land,
-        ));
-    }
-
-    #[test]
-    fn immune_to_water_enters_deep_water() {
-        assert!(can_entity_enter_tile(
-            tile(TerrainType::Floor, LiquidType::Water),
-            MovementMode::ImmuneToWater,
-        ));
-    }
-
-    #[test]
-    fn immune_to_water_enters_floor() {
-        assert!(can_entity_enter_tile(
-            tile(TerrainType::Floor, LiquidType::None),
-            MovementMode::ImmuneToWater,
-        ));
-    }
-
-    #[test]
-    fn restricted_to_liquid_enters_deep_water() {
-        assert!(can_entity_enter_tile(
-            tile(TerrainType::Floor, LiquidType::Water),
-            MovementMode::RestrictedToLiquid,
-        ));
-    }
-
-    #[test]
-    fn restricted_to_liquid_enters_shallow_water() {
-        assert!(can_entity_enter_tile(
-            tile(TerrainType::Floor, LiquidType::ShallowWater),
-            MovementMode::RestrictedToLiquid,
-        ));
-    }
-
-    #[test]
-    fn restricted_to_liquid_blocked_by_dry_floor() {
-        assert!(!can_entity_enter_tile(
-            tile(TerrainType::Floor, LiquidType::None),
-            MovementMode::RestrictedToLiquid,
-        ));
-    }
-
-    #[test]
-    fn restricted_to_liquid_blocked_by_wall_with_water() {
-        // Wall + Water: terrain not walkable even though liquid is present
-        assert!(!can_entity_enter_tile(
-            tile(TerrainType::Wall, LiquidType::Water),
-            MovementMode::RestrictedToLiquid,
-        ));
-    }
-
-    #[test]
-    fn restricted_to_liquid_blocked_by_lava() {
-        // Lava has liquid but is_walkable returns false for lava
-        assert!(!can_entity_enter_tile(
-            tile(TerrainType::Floor, LiquidType::Lava),
-            MovementMode::RestrictedToLiquid,
-        ));
-    }
-
-    // ---- is_pathing_blocker ----
-
-    #[test]
-    fn deep_water_is_pathing_blocker() {
-        assert!(is_pathing_blocker(tile(
-            TerrainType::Floor,
-            LiquidType::Water
-        )));
-    }
-
-    #[test]
-    fn lava_is_pathing_blocker() {
-        assert!(is_pathing_blocker(tile(
-            TerrainType::Floor,
-            LiquidType::Lava
-        )));
-    }
-
-    #[test]
-    fn chasm_is_pathing_blocker() {
-        assert!(is_pathing_blocker(tile(
-            TerrainType::Floor,
-            LiquidType::Chasm
-        )));
-    }
-
-    #[test]
-    fn shallow_water_is_not_pathing_blocker() {
-        assert!(!is_pathing_blocker(tile(
-            TerrainType::Floor,
-            LiquidType::ShallowWater
-        )));
-    }
-
-    #[test]
-    fn dry_floor_is_not_pathing_blocker() {
-        assert!(!is_pathing_blocker(tile(
-            TerrainType::Floor,
-            LiquidType::None
-        )));
-    }
-
-    // ---- is_opaque ----
-
-    #[test]
-    fn wall_is_opaque() {
-        assert!(is_opaque(tile(TerrainType::Wall, LiquidType::None)));
-    }
-
-    #[test]
-    fn floor_is_not_opaque() {
-        assert!(!is_opaque(tile(TerrainType::Floor, LiquidType::None)));
-    }
-
-    #[test]
-    fn deep_water_is_not_opaque() {
-        assert!(!is_opaque(tile(TerrainType::Floor, LiquidType::Water)));
-    }
-
-    #[test]
-    fn closed_door_is_opaque() {
-        assert!(is_opaque(tile(TerrainType::Door, LiquidType::None)));
+    fn decoration_still_beats_plain_floor() {
+        // Decorations should still override ordinary floor — we didn't
+        // break the normal case by adding Portal to the priority list.
+        let manifest = manifest_with(&[("Floor", "."), ("Grass", "\"")]);
+        let tile = Tile {
+            terrain: TerrainType::Floor,
+            liquid: LiquidType::None,
+            decoration: Decoration::Grass,
+        };
+        let (glyph, _, _) = resolve_tile_display(tile, &manifest);
+        assert_eq!(glyph, "\"");
     }
 }

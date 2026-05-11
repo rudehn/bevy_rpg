@@ -47,7 +47,7 @@ impl Default for TargetingMode {
 pub struct TargetingContext {
     pub mode: TargetingMode,
     pub cursor: Position,
-    /// Staff entity being zapped (set by StaffSelect, consumed by targeting confirm).
+    /// Staff entity being zapped (set by handle_use_item, consumed by targeting confirm).
     pub staff_entity: Option<Entity>,
 }
 
@@ -62,6 +62,24 @@ impl Default for TargetingContext {
 }
 
 // Spell targeting decision removed — spell system replaced by monster abilities.
+
+// --- Pure Helpers ---
+//
+// Pure geometry helpers now live in `roguelike_engine::geometry` and are
+// re-exported here so game code can continue to import them from their
+// original module path.
+pub use roguelike_engine::geometry::{
+    chebyshev_distance, clamp_cursor, is_adjacent, manhattan_distance, tiles_in_aoe,
+};
+
+/// Returns true when `target` is within `max_distance` (Manhattan) of `origin`.
+/// A `max_distance` of 0 means self-only (only the origin tile itself).
+///
+/// This wrapper takes the game's `Position` type; the underlying distance
+/// calculation is the engine's [`manhattan_distance`].
+pub fn is_in_range(origin: &Position, target: &Position, max_distance: i32) -> bool {
+    manhattan_distance(origin.x, origin.y, target.x, target.y) <= max_distance
+}
 
 // --- Components ---
 
@@ -239,20 +257,26 @@ fn handle_targeting_input(
                 // Spell ally targeting removed — spell system replaced by monster abilities.
                 log_writer.write(GameLogMessage("Spell targeting is no longer available.".to_string()));
             }
-            TargetingMode::Tile { slot, range, .. } => {
-                // Tile targeting: validate walkable tile within range.
+            TargetingMode::Tile { slot, range, radius } => {
+                // Tile targeting: validate tile within range.
                 let player_pos = player_query.single().ok().map(|(_, p, _)| *p);
-                let in_range = player_pos.map(|pp| {
-                    (target_pos.x - pp.x).abs() + (target_pos.y - pp.y).abs() <= *range
-                }).unwrap_or(false);
+                let in_range = player_pos
+                    .map(|pp| is_in_range(&pp, &target_pos, *range))
+                    .unwrap_or(false);
 
                 let idx = map.xy_idx(target_pos.x, target_pos.y);
-                let walkable = is_walkable(map.tiles[idx]);
+                let is_aoe = *radius > 0;
 
-                // Check no entity is standing on the tile (for blink).
-                let occupied = faction_entities.iter().any(|(_, pos, _)| {
-                    pos.x == target_pos.x && pos.y == target_pos.y
-                }) || player_pos.map(|pp| pp.x == target_pos.x && pp.y == target_pos.y).unwrap_or(false);
+                // AoE staves (fire) can target any in-bounds tile.
+                // Blink (radius=0) requires walkable + unoccupied.
+                let walkable = is_aoe || is_walkable(map.tiles[idx]);
+                let occupied = if is_aoe {
+                    false // AoE doesn't care about occupancy
+                } else {
+                    faction_entities.iter().any(|(_, pos, _)| {
+                        pos.x == target_pos.x && pos.y == target_pos.y
+                    }) || player_pos.map(|pp| pp.x == target_pos.x && pp.y == target_pos.y).unwrap_or(false)
+                };
 
                 if in_range && walkable && !occupied {
                     let player_entity = player_query.single().ok().map(|(e, _, _)| e);
@@ -342,4 +366,92 @@ impl Plugin for TargetingPlugin {
     }
 }
 
-// Spell targeting tests removed — spell system replaced by monster abilities.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- helpers ---
+
+    fn pos(x: i32, y: i32) -> Position {
+        Position { x, y }
+    }
+
+    // Pure distance/adjacency/clamp/AoE tests now live in
+    // `roguelike_engine::geometry::tests`. Only game-side wrappers
+    // (is_in_range takes &Position) and stateful targeting tests
+    // remain in this module.
+
+    // ========================
+    // Range validation
+    // ========================
+
+    #[test]
+    fn in_range_within() {
+        let origin = pos(10, 10);
+        let target = pos(12, 11); // Manhattan = 3
+        assert!(is_in_range(&origin, &target, 5));
+    }
+
+    #[test]
+    fn in_range_beyond() {
+        let origin = pos(10, 10);
+        let target = pos(20, 10); // Manhattan = 10
+        assert!(!is_in_range(&origin, &target, 5));
+    }
+
+    #[test]
+    fn in_range_exact_boundary() {
+        let origin = pos(0, 0);
+        let target = pos(3, 5); // Manhattan = 8
+        assert!(is_in_range(&origin, &target, 8));
+        assert!(!is_in_range(&origin, &target, 7));
+    }
+
+    #[test]
+    fn in_range_same_tile() {
+        let p = pos(5, 5);
+        assert!(is_in_range(&p, &p, 0));
+    }
+
+    #[test]
+    fn in_range_zero_distance_rejects_neighbour() {
+        let origin = pos(5, 5);
+        let target = pos(5, 6); // Manhattan = 1
+        assert!(!is_in_range(&origin, &target, 0));
+    }
+
+    // ========================
+    // Self-targeting (range 0)
+    // ========================
+
+    #[test]
+    fn self_target_only_accepts_self() {
+        let p = pos(40, 30);
+        // Self-targeting staves (like Healing) have range 0.
+        assert!(is_in_range(&p, &p, 0));
+        // Any neighbour is out of range.
+        assert!(!is_in_range(&p, &pos(40, 31), 0));
+        assert!(!is_in_range(&p, &pos(41, 30), 0));
+        assert!(!is_in_range(&p, &pos(41, 31), 0));
+    }
+
+    // Adjacency tests also live in `roguelike_engine::geometry::tests`;
+    // the `is_adjacent` import here is the re-export, so the coverage
+    // is already owned by the engine crate.
+
+    // ========================
+    // TargetingContext defaults
+    // ========================
+
+    #[test]
+    fn targeting_context_default_cursor_at_origin() {
+        let ctx = TargetingContext::default();
+        assert_eq!(ctx.cursor, pos(0, 0));
+        assert!(ctx.staff_entity.is_none());
+    }
+
+    #[test]
+    fn targeting_mode_default_is_spell_slot_zero() {
+        assert_eq!(TargetingMode::default(), TargetingMode::Spell { slot: 0 });
+    }
+}

@@ -1,297 +1,352 @@
 use bevy::prelude::*;
-use serde::{Deserialize, Serialize};
 
 use crate::{
     components::{Name, Position},
-    game::{
-        combat::{ApplyDamageMessage, DamageSource, DamageType, GameRng},
-        turns::TurnEndEvent,
-        AppState,
-    },
+    game::AppState,
     map::Map,
     ui::game_log::GameLogMessage,
 };
 
 // =====================================================================
-// Unified Status Effects
+// Engine re-exports
+// =====================================================================
+//
+// Status effect types now live in the engine. We re-export them so the
+// rest of the game crate can keep using `crate::game::magic::{...}`.
+pub use roguelike_engine::status::{
+    compute_damage_modifier, compute_speed_modifier, status_effect_tick_system,
+    StatusAppliedEvent, StatusEffectInstance, StatusEffectKind, StatusEffectPlugin,
+    StatusEffectSet, StatusEffects, StatusExpiredEvent,
+};
+
+// =====================================================================
+// Game-specific custom status IDs
+// =====================================================================
+//
+// The engine ships a blessed set (Burning, Poisoned, Stunned, Hasted,
+// Slowed, Strengthened, Weakened). Everything else the game needs is
+// modelled as `StatusEffectKind::Custom { id }`.
+//
+// These IDs must remain stable for save-file compatibility.
+pub const STATUS_ENTANGLED: u32 = 1;
+pub const STATUS_ENRAGED: u32 = 2;
+pub const STATUS_FIRE_RESISTANCE: u32 = 3;
+pub const STATUS_POISON_RESISTANCE: u32 = 4;
+
+// =====================================================================
+// Game-side status metadata (display / UI)
 // =====================================================================
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Reflect)]
-pub enum StatusEffectKind {
-    Hasted,
-    Slowed,
-    Stunned,
-    Entangled,
-    Burning { damage_per_turn: i32 },
-    Poisoned { damage_per_turn: i32 },
-    Enraged,
-    FireResistance,
-    PoisonResistance,
+/// Registry for user-facing metadata on `StatusEffectKind::Custom` values.
+/// Games insert this as a resource and populate it at startup.
+#[derive(Resource, Default, Clone)]
+pub struct StatusEffectRegistry {
+    entries: std::collections::HashMap<u32, CustomStatusEntry>,
 }
 
-impl StatusEffectKind {
-    pub fn name(&self) -> &str {
-        match self {
-            Self::Hasted => "Hasted",
-            Self::Slowed => "Slowed",
-            Self::Stunned => "Stunned",
-            Self::Entangled => "Entangled",
-            Self::Burning { .. } => "Burning",
-            Self::Poisoned { .. } => "Poisoned",
-            Self::Enraged => "Enraged",
-            Self::FireResistance => "Fire Resistance",
-            Self::PoisonResistance => "Poison Resistance",
-        }
+#[derive(Clone)]
+pub struct CustomStatusEntry {
+    pub name: &'static str,
+    pub color: Color,
+    pub describe: fn(turns_remaining: u32) -> String,
+}
+
+impl StatusEffectRegistry {
+    pub fn register(&mut self, id: u32, entry: CustomStatusEntry) {
+        self.entries.insert(id, entry);
     }
 
-    pub fn color(&self) -> Color {
-        match self {
-            Self::Hasted => Color::srgb(1.0, 1.0, 0.3),
-            Self::Slowed => Color::srgb(0.5, 0.5, 0.9),
-            Self::Stunned => Color::srgb(1.0, 1.0, 0.0),
-            Self::Entangled => Color::srgb(0.8, 0.8, 0.8),
-            Self::Burning { .. } => Color::srgb(1.0, 0.5, 0.1),
-            Self::Poisoned { .. } => Color::srgb(0.3, 0.9, 0.3),
-            Self::Enraged => Color::srgb(0.9, 0.2, 0.2),
-            Self::FireResistance => Color::srgb(1.0, 0.6, 0.2),
-            Self::PoisonResistance => Color::srgb(0.4, 1.0, 0.4),
-        }
-    }
-
-    /// Human-readable description with damage/effect details.
-    pub fn description(&self, turns_remaining: u32) -> String {
-        match self {
-            Self::Burning { damage_per_turn } => format!("{} fire dmg/turn, {} turns", damage_per_turn, turns_remaining),
-            Self::Poisoned { damage_per_turn } => format!("{} poison dmg/turn, {} turns", damage_per_turn, turns_remaining),
-            Self::Hasted => format!("Move faster, {} turns", turns_remaining),
-            Self::Slowed => format!("Move slower, {} turns", turns_remaining),
-            Self::Stunned => format!("Cannot act, {} turns", turns_remaining),
-            Self::Entangled => format!("Cannot move, {} turns", turns_remaining),
-            Self::Enraged => format!("+50% damage, {} turns", turns_remaining),
-            Self::FireResistance => format!("Immune to fire, {} turns", turns_remaining),
-            Self::PoisonResistance => format!("Immune to poison, {} turns", turns_remaining),
-        }
-    }
-
-    fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
+    pub fn get(&self, id: u32) -> Option<&CustomStatusEntry> {
+        self.entries.get(&id)
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Reflect)]
-pub struct ActiveStatusEffect {
-    pub kind: StatusEffectKind,
-    pub turns_remaining: u32,
-    /// The original duration when the effect was first applied. Used for progress bar UI.
-    #[serde(default = "default_initial_duration")]
-    pub initial_duration: u32,
+/// Human-readable name for a status kind (includes game-specific custom kinds).
+pub fn kind_name(kind: &StatusEffectKind) -> &'static str {
+    match kind {
+        StatusEffectKind::Burning => "Burning",
+        StatusEffectKind::Poisoned => "Poisoned",
+        StatusEffectKind::Stunned => "Stunned",
+        StatusEffectKind::Hasted => "Hasted",
+        StatusEffectKind::Slowed => "Slowed",
+        StatusEffectKind::Strengthened => "Strengthened",
+        StatusEffectKind::Weakened => "Weakened",
+        StatusEffectKind::Custom { id: STATUS_ENTANGLED } => "Entangled",
+        StatusEffectKind::Custom { id: STATUS_ENRAGED } => "Enraged",
+        StatusEffectKind::Custom { id: STATUS_FIRE_RESISTANCE } => "Fire Resistance",
+        StatusEffectKind::Custom { id: STATUS_POISON_RESISTANCE } => "Poison Resistance",
+        _ => "Custom",
+    }
 }
 
-fn default_initial_duration() -> u32 { 1 }
+/// UI color for a status kind.
+pub fn kind_color(kind: &StatusEffectKind) -> Color {
+    match kind {
+        StatusEffectKind::Burning => Color::srgb(1.0, 0.5, 0.1),
+        StatusEffectKind::Poisoned => Color::srgb(0.3, 0.9, 0.3),
+        StatusEffectKind::Stunned => Color::srgb(1.0, 1.0, 0.0),
+        StatusEffectKind::Hasted => Color::srgb(1.0, 1.0, 0.3),
+        StatusEffectKind::Slowed => Color::srgb(0.5, 0.5, 0.9),
+        StatusEffectKind::Strengthened => Color::srgb(1.0, 0.7, 0.7),
+        StatusEffectKind::Weakened => Color::srgb(0.7, 0.7, 0.7),
+        StatusEffectKind::Custom { id: STATUS_ENTANGLED } => Color::srgb(0.8, 0.8, 0.8),
+        StatusEffectKind::Custom { id: STATUS_ENRAGED } => Color::srgb(0.9, 0.2, 0.2),
+        StatusEffectKind::Custom { id: STATUS_FIRE_RESISTANCE } => Color::srgb(1.0, 0.6, 0.2),
+        StatusEffectKind::Custom { id: STATUS_POISON_RESISTANCE } => Color::srgb(0.4, 1.0, 0.4),
+        _ => Color::srgb(0.8, 0.8, 0.8),
+    }
+}
 
-/// Unified container for all status effects on an entity.
-#[derive(Component, Debug, Clone, Default, Serialize, Deserialize, Reflect)]
-#[reflect(Component)]
-pub struct StatusEffects(pub Vec<ActiveStatusEffect>);
+/// Human-readable description for a status kind, using its magnitude / duration.
+pub fn kind_description(kind: &StatusEffectKind, turns_remaining: u32, magnitude: i32) -> String {
+    match kind {
+        StatusEffectKind::Burning => format!("{} fire dmg/turn, {} turns", magnitude, turns_remaining),
+        StatusEffectKind::Poisoned => format!("{} poison dmg/turn, {} turns", magnitude, turns_remaining),
+        StatusEffectKind::Hasted => format!("Move faster, {} turns", turns_remaining),
+        StatusEffectKind::Slowed => format!("Move slower, {} turns", turns_remaining),
+        StatusEffectKind::Stunned => format!("Cannot act, {} turns", turns_remaining),
+        StatusEffectKind::Strengthened => format!("+50% damage, {} turns", turns_remaining),
+        StatusEffectKind::Weakened => format!("-25% damage, {} turns", turns_remaining),
+        StatusEffectKind::Custom { id: STATUS_ENTANGLED } => format!("Cannot move, {} turns", turns_remaining),
+        StatusEffectKind::Custom { id: STATUS_ENRAGED } => format!("+50% damage, {} turns", turns_remaining),
+        StatusEffectKind::Custom { id: STATUS_FIRE_RESISTANCE } => format!("Immune to fire, {} turns", turns_remaining),
+        StatusEffectKind::Custom { id: STATUS_POISON_RESISTANCE } => format!("Immune to poison, {} turns", turns_remaining),
+        _ => format!("{} turns", turns_remaining),
+    }
+}
 
-impl StatusEffects {
-    /// Add or refresh a status effect. If the same kind already exists, takes the longer duration.
-    pub fn add(&mut self, kind: StatusEffectKind, turns: u32) {
-        if let Some(existing) = self.0.iter_mut().find(|e| e.kind.same_kind(&kind)) {
-            if turns > existing.turns_remaining {
-                existing.turns_remaining = turns;
-                existing.initial_duration = turns;
+/// Metadata lookup that respects the [`StatusEffectRegistry`] for unknown `Custom` kinds.
+pub fn kind_metadata_with(
+    kind: &StatusEffectKind,
+    turns_remaining: u32,
+    magnitude: i32,
+    registry: Option<&StatusEffectRegistry>,
+) -> (&'static str, Color, String) {
+    if let (StatusEffectKind::Custom { id }, Some(reg)) = (kind, registry) {
+        // Only consult registry for game-unknown ids; our blessed custom ids
+        // still use the built-in metadata above.
+        if !matches!(
+            *id,
+            STATUS_ENTANGLED | STATUS_ENRAGED | STATUS_FIRE_RESISTANCE | STATUS_POISON_RESISTANCE
+        ) {
+            if let Some(entry) = reg.get(*id) {
+                return (entry.name, entry.color, (entry.describe)(turns_remaining));
             }
-            // For DoT effects, take the higher damage_per_turn
-            match (&mut existing.kind, &kind) {
-                (StatusEffectKind::Burning { damage_per_turn: old }, StatusEffectKind::Burning { damage_per_turn: new }) => {
-                    *old = (*old).max(*new);
-                }
-                (StatusEffectKind::Poisoned { damage_per_turn: old }, StatusEffectKind::Poisoned { damage_per_turn: new }) => {
-                    *old = (*old).max(*new);
-                }
-                _ => {}
-            }
-        } else {
-            self.0.push(ActiveStatusEffect { kind, turns_remaining: turns, initial_duration: turns });
         }
     }
+    (
+        kind_name(kind),
+        kind_color(kind),
+        kind_description(kind, turns_remaining, magnitude),
+    )
+}
 
-    pub fn remove_kind(&mut self, matcher: impl Fn(&StatusEffectKind) -> bool) {
-        self.0.retain(|e| !matcher(&e.kind));
-    }
+// =====================================================================
+// GameStatusEffectsExt — convenience layer
+// =====================================================================
+//
+// The engine's `StatusEffects` API is `add(StatusEffectInstance)` /
+// `has(kind)` / `magnitude_of(kind)`. Game code historically called
+// `effects.add(kind, turns)`, `effects.is_stunned()`, etc. This trait
+// preserves that vocabulary so the hundreds of call sites don't churn.
 
-    pub fn is_stunned(&self) -> bool {
-        self.0.iter().any(|e| matches!(e.kind, StatusEffectKind::Stunned))
-    }
+pub trait GameStatusEffectsExt {
+    fn add_effect(&mut self, kind: StatusEffectKind, turns: u32);
+    fn add_effect_with_magnitude(
+        &mut self,
+        kind: StatusEffectKind,
+        turns: u32,
+        magnitude: i32,
+        source: Option<Entity>,
+    );
+    fn remove_kind(&mut self, matcher: impl Fn(&StatusEffectKind) -> bool);
 
-    pub fn is_entangled(&self) -> bool {
-        self.0.iter().any(|e| matches!(e.kind, StatusEffectKind::Entangled))
-    }
+    fn is_stunned(&self) -> bool;
+    fn is_entangled(&self) -> bool;
+    fn is_hasted(&self) -> bool;
+    fn is_slowed(&self) -> bool;
+    fn is_enraged(&self) -> bool;
+    fn is_poisoned(&self) -> bool;
+    fn is_burning(&self) -> bool;
+    fn is_poison_resistant(&self) -> bool;
+    fn is_fire_resistant(&self) -> bool;
 
-    pub fn is_hasted(&self) -> bool {
-        self.0.iter().any(|e| matches!(e.kind, StatusEffectKind::Hasted))
-    }
+    fn burning_damage(&self) -> Option<i32>;
+    fn poison_damage(&self) -> Option<i32>;
+    fn speed_delay_multiplier(&self) -> f32;
 
-    pub fn is_slowed(&self) -> bool {
-        self.0.iter().any(|e| matches!(e.kind, StatusEffectKind::Slowed))
-    }
+    fn display_entries(&self) -> Vec<(&'static str, Color)>;
+    fn display_entries_with_duration(&self) -> Vec<(&'static str, Color, u32, u32, String)>;
+}
 
-    pub fn is_enraged(&self) -> bool {
-        self.0.iter().any(|e| matches!(e.kind, StatusEffectKind::Enraged))
-    }
-
-    pub fn is_poisoned(&self) -> bool {
-        self.0.iter().any(|e| matches!(e.kind, StatusEffectKind::Poisoned { .. }))
-    }
-
-    pub fn is_burning(&self) -> bool {
-        self.0.iter().any(|e| matches!(e.kind, StatusEffectKind::Burning { .. }))
-    }
-
-    pub fn is_poison_resistant(&self) -> bool {
-        self.0.iter().any(|e| matches!(e.kind, StatusEffectKind::PoisonResistance))
-    }
-
-    pub fn is_fire_resistant(&self) -> bool {
-        self.0.iter().any(|e| matches!(e.kind, StatusEffectKind::FireResistance))
-    }
-
-    pub fn burning_damage(&self) -> Option<i32> {
-        self.0.iter().find_map(|e| match e.kind {
-            StatusEffectKind::Burning { damage_per_turn } => Some(damage_per_turn),
-            _ => None,
-        })
-    }
-
-    pub fn poison_damage(&self) -> Option<i32> {
-        self.0.iter().find_map(|e| match e.kind {
-            StatusEffectKind::Poisoned { damage_per_turn } => Some(damage_per_turn),
-            _ => None,
-        })
-    }
-
-    pub fn speed_delay_multiplier(&self) -> f32 {
-        let mut delay = 1.0f32;
-        if self.is_hasted() { delay *= 0.5; }
-        if self.is_slowed() { delay *= 1.5; }
-        delay.clamp(0.5, 2.0)
-    }
-
-    /// Tick all effects, decrementing turns_remaining. Returns expired effects.
-    pub fn tick_all(&mut self) -> Vec<StatusEffectKind> {
-        let mut expired = Vec::new();
-        self.0.retain_mut(|effect| {
-            effect.turns_remaining = effect.turns_remaining.saturating_sub(1);
-            if effect.turns_remaining == 0 {
-                expired.push(effect.kind);
-                false
-            } else {
-                true
-            }
+impl GameStatusEffectsExt for StatusEffects {
+    fn add_effect(&mut self, kind: StatusEffectKind, turns: u32) {
+        self.add(StatusEffectInstance {
+            kind,
+            remaining_turns: turns,
+            magnitude: 0,
+            source: None,
         });
-        expired
     }
 
-    /// Returns display entries for UI rendering: (name, color) pairs.
-    pub fn display_entries(&self) -> Vec<(&str, Color)> {
-        self.0.iter().map(|e| (e.kind.name(), e.kind.color())).collect()
+    fn add_effect_with_magnitude(
+        &mut self,
+        kind: StatusEffectKind,
+        turns: u32,
+        magnitude: i32,
+        source: Option<Entity>,
+    ) {
+        self.add(StatusEffectInstance {
+            kind,
+            remaining_turns: turns,
+            magnitude,
+            source,
+        });
     }
 
-    /// Returns display entries with duration info: (name, color, turns_remaining, initial_duration, description).
-    pub fn display_entries_with_duration(&self) -> Vec<(&str, Color, u32, u32, String)> {
-        self.0.iter().map(|e| {
-            (e.kind.name(), e.kind.color(), e.turns_remaining, e.initial_duration, e.kind.description(e.turns_remaining))
-        }).collect()
+    fn remove_kind(&mut self, matcher: impl Fn(&StatusEffectKind) -> bool) {
+        self.effects.retain(|e| !matcher(&e.kind));
+    }
+
+    fn is_stunned(&self) -> bool {
+        self.has(StatusEffectKind::Stunned)
+    }
+
+    fn is_entangled(&self) -> bool {
+        self.has(StatusEffectKind::Custom { id: STATUS_ENTANGLED })
+    }
+
+    fn is_hasted(&self) -> bool {
+        self.has(StatusEffectKind::Hasted)
+    }
+
+    fn is_slowed(&self) -> bool {
+        self.has(StatusEffectKind::Slowed)
+    }
+
+    fn is_enraged(&self) -> bool {
+        self.has(StatusEffectKind::Custom { id: STATUS_ENRAGED })
+    }
+
+    fn is_poisoned(&self) -> bool {
+        self.has(StatusEffectKind::Poisoned)
+    }
+
+    fn is_burning(&self) -> bool {
+        self.has(StatusEffectKind::Burning)
+    }
+
+    fn is_poison_resistant(&self) -> bool {
+        self.has(StatusEffectKind::Custom { id: STATUS_POISON_RESISTANCE })
+    }
+
+    fn is_fire_resistant(&self) -> bool {
+        self.has(StatusEffectKind::Custom { id: STATUS_FIRE_RESISTANCE })
+    }
+
+    fn burning_damage(&self) -> Option<i32> {
+        let m = self.magnitude_of(StatusEffectKind::Burning);
+        if m > 0 { Some(m) } else { None }
+    }
+
+    fn poison_damage(&self) -> Option<i32> {
+        let m = self.magnitude_of(StatusEffectKind::Poisoned);
+        if m > 0 { Some(m) } else { None }
+    }
+
+    fn speed_delay_multiplier(&self) -> f32 {
+        compute_speed_modifier(self).clamp(0.5, 2.0)
+    }
+
+    fn display_entries(&self) -> Vec<(&'static str, Color)> {
+        self.effects
+            .iter()
+            .map(|e| (kind_name(&e.kind), kind_color(&e.kind)))
+            .collect()
+    }
+
+    fn display_entries_with_duration(&self) -> Vec<(&'static str, Color, u32, u32, String)> {
+        self.effects
+            .iter()
+            .map(|e| {
+                let initial = e.remaining_turns.max(1);
+                (
+                    kind_name(&e.kind),
+                    kind_color(&e.kind),
+                    e.remaining_turns,
+                    initial,
+                    kind_description(&e.kind, e.remaining_turns, e.magnitude),
+                )
+            })
+            .collect()
     }
 }
 
 // =====================================================================
-// Tick Systems (run on TurnEndEvent)
+// Game-side reaction systems
 // =====================================================================
 
-/// Apply burning and poison damage-over-time each turn.
-pub fn apply_dot_damage_system(
-    mut turn_end: MessageReader<TurnEndEvent>,
-    query: Query<(Entity, &StatusEffects, &Name)>,
-    mut damage_writer: MessageWriter<ApplyDamageMessage>,
+/// Logs status expiration messages and cleans up the cobweb decoration
+/// when an Entangled effect expires.
+///
+/// Replaces the per-expiry logic that used to live in the game's
+/// `tick_status_durations_system`. The engine's tick system now does the
+/// actual bookkeeping and emits `StatusExpiredEvent`.
+pub fn status_expiry_log_system(
+    mut events: MessageReader<StatusExpiredEvent>,
+    query: Query<(&Name, &Position)>,
     mut log_writer: MessageWriter<GameLogMessage>,
-) {
-    if turn_end.read().count() == 0 { return; }
-
-    for (entity, effects, name) in query.iter() {
-        if let Some(dmg) = effects.burning_damage() {
-            log_writer.write(GameLogMessage(format!(
-                "{} takes {} fire damage from burning!", name.0, dmg
-            )));
-            damage_writer.write(ApplyDamageMessage {
-                attacker: entity, target: entity,
-                final_damage: dmg, damage_type: DamageType::Fire,
-                source: DamageSource::Environment,
-            });
-        }
-        if let Some(dmg) = effects.poison_damage() {
-            log_writer.write(GameLogMessage(format!(
-                "{} takes {} poison damage!", name.0, dmg
-            )));
-            damage_writer.write(ApplyDamageMessage {
-                attacker: entity, target: entity,
-                final_damage: dmg, damage_type: DamageType::Poison,
-                source: DamageSource::Environment,
-            });
-        }
-    }
-}
-
-/// Decrement all status effect durations and handle expirations.
-pub fn tick_status_durations_system(
-    mut turn_end: MessageReader<TurnEndEvent>,
-    mut query: Query<(&mut StatusEffects, &Name, &crate::components::Position)>,
     mut decoration_writer: MessageWriter<crate::map::tile::DecorationMutationMessage>,
-    mut log_writer: MessageWriter<GameLogMessage>,
 ) {
-    if turn_end.read().count() == 0 { return; }
-
-    for (mut effects, name, pos) in query.iter_mut() {
-        let expired = effects.tick_all();
-        for kind in expired {
-            match kind {
-                StatusEffectKind::Stunned => {
-                    log_writer.write(GameLogMessage(format!("{} is no longer stunned.", name.0)));
-                }
-                StatusEffectKind::Entangled => {
-                    log_writer.write(GameLogMessage(format!("{} breaks free of the cobwebs!", name.0)));
-                    decoration_writer.write(crate::map::tile::DecorationMutationMessage {
-                        position: bracket_lib::prelude::Point::new(pos.x, pos.y),
-                        new_decoration: crate::map::tile::Decoration::None,
-                    });
-                }
-                StatusEffectKind::Burning { .. } => {
-                    log_writer.write(GameLogMessage(format!("{} is no longer burning.", name.0)));
-                }
-                StatusEffectKind::Poisoned { .. } => {
-                    log_writer.write(GameLogMessage(format!("{} is no longer poisoned.", name.0)));
-                }
-                StatusEffectKind::FireResistance => {
-                    log_writer.write(GameLogMessage(format!("{}'s fire resistance fades.", name.0)));
-                }
-                StatusEffectKind::PoisonResistance => {
-                    log_writer.write(GameLogMessage(format!("{}'s poison resistance fades.", name.0)));
-                }
-                _ => {}
+    for event in events.read() {
+        let Ok((name, pos)) = query.get(event.entity) else {
+            continue;
+        };
+        match event.kind {
+            StatusEffectKind::Stunned => {
+                log_writer.write(GameLogMessage(format!("{} is no longer stunned.", name.0)));
             }
+            StatusEffectKind::Burning => {
+                log_writer.write(GameLogMessage(format!("{} is no longer burning.", name.0)));
+            }
+            StatusEffectKind::Poisoned => {
+                log_writer.write(GameLogMessage(format!("{} is no longer poisoned.", name.0)));
+            }
+            StatusEffectKind::Custom { id: STATUS_ENTANGLED } => {
+                log_writer.write(GameLogMessage(format!(
+                    "{} breaks free of the cobwebs!",
+                    name.0
+                )));
+                decoration_writer.write(crate::map::tile::DecorationMutationMessage {
+                    position: bracket_lib::prelude::Point::new(pos.x, pos.y),
+                    new_decoration: crate::map::tile::Decoration::None,
+                });
+            }
+            StatusEffectKind::Custom { id: STATUS_FIRE_RESISTANCE } => {
+                log_writer.write(GameLogMessage(format!(
+                    "{}'s fire resistance fades.",
+                    name.0
+                )));
+            }
+            StatusEffectKind::Custom { id: STATUS_POISON_RESISTANCE } => {
+                log_writer.write(GameLogMessage(format!(
+                    "{}'s poison resistance fades.",
+                    name.0
+                )));
+            }
+            _ => {}
         }
     }
 }
 
-/// Apply speed multipliers from unified StatusEffects.
-/// Recomputes both movement and attack delays each frame so that the monster's innate
-/// speed is preserved while temporary buffs/debuffs layer on top.
+/// Apply speed multipliers from `StatusEffects`. Recomputes both movement
+/// and attack delays each frame so the base innate speed is preserved
+/// while temporary buffs/debuffs layer on top.
 pub fn apply_speed_effects_system(
     mut query: Query<(&mut crate::game::actions::SpeedStats, &StatusEffects)>,
 ) {
     for (mut speed, effects) in query.iter_mut() {
-        let multiplier = effects.speed_delay_multiplier();
+        let multiplier = compute_speed_modifier(effects).clamp(0.5, 2.0);
         speed.movement_delay = speed.base_movement_delay * multiplier;
         speed.attack_delay = speed.base_attack_delay * multiplier;
     }
@@ -304,7 +359,8 @@ pub fn apply_speed_effects_system(
 /// Count alive entities summoned by a specific summoner.
 pub fn count_active_summons(summoner: Entity, world: &mut World) -> u32 {
     let mut query = world.query::<&crate::components::SummonedBy>();
-    query.iter(world)
+    query
+        .iter(world)
         .filter(|sb| sb.summoner == summoner)
         .count() as u32
 }
@@ -353,7 +409,7 @@ pub fn process_pending_summon(
     mut log_writer: MessageWriter<GameLogMessage>,
     positions: Query<&Position>,
 ) {
-    let Some(summon) = pending else { return; };
+    let Some(summon) = pending else { return };
 
     let occupied: std::collections::HashSet<(i32, i32)> = positions
         .iter()
@@ -392,7 +448,9 @@ pub fn process_pending_summon(
             );
             if let Some(spawned_ent) = spawned_entity {
                 if let Some(caster) = summon.caster_entity {
-                    commands.entity(spawned_ent).insert(crate::components::SummonedBy { summoner: caster });
+                    commands
+                        .entity(spawned_ent)
+                        .insert(crate::components::SummonedBy { summoner: caster });
                 }
                 if let Some(sid) = summon.squad_id {
                     commands.entity(spawned_ent).insert((
@@ -419,9 +477,8 @@ pub fn process_pending_summon(
 // Post-spawn wiring
 // =====================================================================
 
-/// After floor materialization, attach `SummonedBy` to escort members of summoner squads.
-/// This ensures escort rats (or other minions) spawned from the spawn table count toward
-/// the summoner's cap and prevent the Broodmother from over-summoning on the first turn.
+/// After floor materialization, attach `SummonedBy` to escort members of
+/// summoner squads.
 pub fn wire_summoner_escorts(
     leader_query: Query<
         (Entity, &crate::game::squad::SquadId, &crate::game::staves::MonsterAbilities),
@@ -449,7 +506,6 @@ pub fn wire_summoner_escorts(
             if member_squad.0 != leader_squad.0 {
                 continue;
             }
-            // Don't double-attach if already has SummonedBy
             if existing_summons.get(member_entity).is_ok() {
                 continue;
             }
@@ -470,105 +526,118 @@ pub struct MagicPlugin;
 
 impl Plugin for MagicPlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<StatusEffects>()
-            .register_type::<StatusEffectKind>()
-            .register_type::<ActiveStatusEffect>()
+        app.add_plugins(StatusEffectPlugin)
+            .init_resource::<StatusEffectRegistry>()
             .add_systems(
                 Update,
-                (
-                    // tick_status_effects_system is registered in ProcessingPhase::Cleanup
-                    // (turns.rs) so its mutations get processed in the same chain.
-                    apply_speed_effects_system,
-                    process_pending_summon,
-                )
+                (apply_speed_effects_system, process_pending_summon)
                     .run_if(in_state(AppState::InGame)),
             );
     }
 }
 
+// =====================================================================
+// Tests
+// =====================================================================
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn burning(dmg: i32, turns: u32) -> StatusEffectInstance {
+        StatusEffectInstance {
+            kind: StatusEffectKind::Burning,
+            remaining_turns: turns,
+            magnitude: dmg,
+            source: None,
+        }
+    }
+
+    fn poisoned(dmg: i32, turns: u32) -> StatusEffectInstance {
+        StatusEffectInstance {
+            kind: StatusEffectKind::Poisoned,
+            remaining_turns: turns,
+            magnitude: dmg,
+            source: None,
+        }
+    }
+
     #[test]
     fn add_burning_effect() {
         let mut effects = StatusEffects::default();
-        effects.add(StatusEffectKind::Burning { damage_per_turn: 3 }, 5);
-        assert!(effects.burning_damage().is_some());
-        assert_eq!(effects.burning_damage().unwrap(), 3);
+        effects.add(burning(3, 5));
+        assert_eq!(effects.burning_damage(), Some(3));
     }
 
     #[test]
     fn remove_burning_via_remove_kind() {
         let mut effects = StatusEffects::default();
-        effects.add(StatusEffectKind::Burning { damage_per_turn: 3 }, 5);
-        effects.add(StatusEffectKind::Poisoned { damage_per_turn: 2 }, 3);
+        effects.add(burning(3, 5));
+        effects.add(poisoned(2, 3));
         assert!(effects.burning_damage().is_some());
         assert!(effects.poison_damage().is_some());
 
-        // Remove burning (same pattern used by water_extinguish_system)
-        effects.remove_kind(|k| matches!(k, StatusEffectKind::Burning { .. }));
+        effects.remove_kind(|k| matches!(k, StatusEffectKind::Burning));
 
         assert!(effects.burning_damage().is_none());
-        // Poison should still be present
         assert!(effects.poison_damage().is_some());
     }
 
     #[test]
     fn remove_burning_when_none_is_noop() {
         let mut effects = StatusEffects::default();
-        effects.add(StatusEffectKind::Poisoned { damage_per_turn: 2 }, 3);
-        // Removing burning when none exists should not panic or affect other effects
-        effects.remove_kind(|k| matches!(k, StatusEffectKind::Burning { .. }));
+        effects.add(poisoned(2, 3));
+        effects.remove_kind(|k| matches!(k, StatusEffectKind::Burning));
         assert!(effects.poison_damage().is_some());
-    }
-
-    #[test]
-    fn tick_decrements_and_expires() {
-        let mut effects = StatusEffects::default();
-        effects.add(StatusEffectKind::Burning { damage_per_turn: 3 }, 2);
-        assert!(effects.burning_damage().is_some());
-
-        let expired = effects.tick_all();
-        assert!(expired.is_empty()); // 1 turn left
-        assert!(effects.burning_damage().is_some());
-
-        let expired = effects.tick_all();
-        assert_eq!(expired.len(), 1); // Expired
-        assert!(effects.burning_damage().is_none());
     }
 
     #[test]
     fn refresh_takes_longer_duration() {
         let mut effects = StatusEffects::default();
-        effects.add(StatusEffectKind::Burning { damage_per_turn: 3 }, 2);
-        effects.add(StatusEffectKind::Burning { damage_per_turn: 5 }, 10);
-        // Duration should be max(2, 10) = 10, damage should be max(3, 5) = 5
-        assert_eq!(effects.burning_damage().unwrap(), 5);
-        assert_eq!(effects.0.len(), 1);
+        effects.add(burning(3, 2));
+        effects.add(burning(5, 10));
+        // Engine's add() takes max(duration) and max(magnitude).
+        assert_eq!(effects.burning_damage(), Some(5));
+        assert_eq!(effects.effects.len(), 1);
     }
 
     #[test]
     fn speed_delay_hasted() {
         let mut effects = StatusEffects::default();
-        effects.add(StatusEffectKind::Hasted, 5);
+        effects.add_effect(StatusEffectKind::Hasted, 5);
         assert_eq!(effects.speed_delay_multiplier(), 0.5);
     }
 
     #[test]
     fn speed_delay_slowed() {
         let mut effects = StatusEffects::default();
-        effects.add(StatusEffectKind::Slowed, 5);
+        effects.add_effect(StatusEffectKind::Slowed, 5);
         assert_eq!(effects.speed_delay_multiplier(), 1.5);
     }
 
     #[test]
-    fn speed_delay_hasted_and_slowed_cancel() {
+    fn speed_delay_hasted_and_slowed_stack() {
         let mut effects = StatusEffects::default();
-        effects.add(StatusEffectKind::Hasted, 5);
-        effects.add(StatusEffectKind::Slowed, 5);
-        // 1.0 * 0.5 * 1.5 = 0.75
+        effects.add_effect(StatusEffectKind::Hasted, 5);
+        effects.add_effect(StatusEffectKind::Slowed, 5);
+        // compute_speed_modifier: 1.0 * 0.5 * 1.5 = 0.75
         assert_eq!(effects.speed_delay_multiplier(), 0.75);
+    }
+
+    #[test]
+    fn entangled_via_custom_id() {
+        let mut effects = StatusEffects::default();
+        effects.add_effect(StatusEffectKind::Custom { id: STATUS_ENTANGLED }, 3);
+        assert!(effects.is_entangled());
+        assert!(!effects.is_stunned());
+    }
+
+    #[test]
+    fn fire_resistance_via_custom_id() {
+        let mut effects = StatusEffects::default();
+        effects.add_effect(StatusEffectKind::Custom { id: STATUS_FIRE_RESISTANCE }, 3);
+        assert!(effects.is_fire_resistant());
+        assert!(!effects.is_poison_resistant());
     }
 
     #[test]
@@ -616,5 +685,50 @@ mod tests {
         let weights = vec![("Plague Rat".to_string(), 30u32)];
         let mut rng = bracket_lib::random::RandomNumberGenerator::new();
         assert_eq!(pick_weighted_monster(&weights, &mut rng), "Plague Rat");
+    }
+
+    #[test]
+    fn custom_status_distinct_ids_stack_separately() {
+        let mut effects = StatusEffects::default();
+        effects.add_effect(StatusEffectKind::Custom { id: 11 }, 3);
+        effects.add_effect(StatusEffectKind::Custom { id: 12 }, 5);
+        assert_eq!(effects.effects.len(), 2);
+    }
+
+    #[test]
+    fn custom_status_same_id_refreshes() {
+        let mut effects = StatusEffects::default();
+        effects.add_effect(StatusEffectKind::Custom { id: 7 }, 3);
+        effects.add_effect(StatusEffectKind::Custom { id: 7 }, 10);
+        assert_eq!(effects.effects.len(), 1);
+        assert_eq!(effects.effects[0].remaining_turns, 10);
+    }
+
+    #[test]
+    fn custom_status_registry_provides_metadata() {
+        fn describe_frozen(turns: u32) -> String {
+            format!("Frozen solid, {} turns", turns)
+        }
+        let mut registry = StatusEffectRegistry::default();
+        registry.register(
+            100,
+            CustomStatusEntry {
+                name: "Frozen",
+                color: Color::srgb(0.3, 0.5, 1.0),
+                describe: describe_frozen,
+            },
+        );
+
+        let kind = StatusEffectKind::Custom { id: 100 };
+        let (name, _color, desc) = kind_metadata_with(&kind, 4, 0, Some(&registry));
+        assert_eq!(name, "Frozen");
+        assert_eq!(desc, "Frozen solid, 4 turns");
+    }
+
+    #[test]
+    fn custom_status_metadata_falls_back_without_registry() {
+        let kind = StatusEffectKind::Custom { id: 99 };
+        let (name, _color, _desc) = kind_metadata_with(&kind, 3, 0, None);
+        assert_eq!(name, "Custom");
     }
 }
