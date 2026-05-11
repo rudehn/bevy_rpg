@@ -6,10 +6,9 @@
 //!   → `AppState::InGame` (with `CharacterChoice` resource overwritten).
 //!
 //! Keyboard model:
-//!   - Tab / Shift+Tab cycle focus between: Race / Class / STR / DEX / CON /
-//!     INT / Begin
+//!   - ↑/↓ cycle focus between: Race / Class / STR / DEX / CON / INT / Begin
 //!   - ←/→ on Race or Class: change the selected option
-//!   - ↑/↓ on an attribute: increment / decrement (respects cap + remaining
+//!   - ←/→ on an attribute: decrement / increment (respects cap + remaining
 //!     points + Human Versatile +1 cap exception)
 //!   - Enter on Begin: confirm and transition
 //!   - Esc: return to main menu
@@ -414,7 +413,7 @@ fn spawn_screen(
             // Help footer
             root.spawn((
                 Text::new(
-                    "Tab: next field   |   \u{2190}/\u{2192}: change race/class   |   \u{2191}/\u{2193}: \
+                    "\u{2191}/\u{2193}: next field   |   \u{2190}/\u{2192}: change selection / \
                     adjust attribute   |   Enter (on Begin): start   |   Esc: cancel",
                 ),
                 TextFont { font: font.clone(), font_size: 14.0, ..default() },
@@ -460,16 +459,18 @@ fn handle_input(
         return;
     }
 
-    if keys.just_pressed(KeyCode::Tab) {
-        let backward = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
-        draft.cycle_focus(backward);
+    // ↑/↓ cycle focus between sections. Down advances, up retreats.
+    if keys.just_pressed(KeyCode::ArrowDown) {
+        draft.cycle_focus(false);
+        return;
+    }
+    if keys.just_pressed(KeyCode::ArrowUp) {
+        draft.cycle_focus(true);
         return;
     }
 
     let left = keys.just_pressed(KeyCode::ArrowLeft);
     let right = keys.just_pressed(KeyCode::ArrowRight);
-    let up = keys.just_pressed(KeyCode::ArrowUp);
-    let down = keys.just_pressed(KeyCode::ArrowDown);
 
     match draft.focus {
         Focus::Race => {
@@ -487,10 +488,10 @@ fn handle_input(
             }
         }
         Focus::Attr(attr) => {
-            if up {
-                draft.inc(attr);
-            } else if down {
+            if left {
                 draft.dec(attr);
+            } else if right {
+                draft.inc(attr);
             }
         }
         Focus::Begin => {
