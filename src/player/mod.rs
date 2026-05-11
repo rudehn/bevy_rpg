@@ -100,15 +100,6 @@ pub fn player_spawn_or_move_system(
         let scale_x = GRID_SIZE.x / tile_size.x as f32;
         let scale_y = GRID_SIZE.y / tile_size.y as f32;
 
-        // Spawn starting items from player.ron manifest.
-        let starting_items = spawn_starting_items(
-            &mut commands,
-            &player_asset.starting_items,
-            &item_manifests,
-            &item_manifest_handle,
-            &item_sprite_assets,
-        );
-
         // Resolve race + class assets from the player's character-creation
         // choice. The manifests are guaranteed loaded by the time we get here
         // because check_assets_loaded gates the Menu→InGame transition on them.
@@ -128,6 +119,18 @@ pub fn player_spawn_or_move_system(
             .classes
             .get(&class_id)
             .unwrap_or_else(|| panic!("classes.ron missing entry for {class_id}"));
+
+        // Spawn starting items from the chosen class's kit. The legacy
+        // `player.ron` `starting_items` field is now unused by the live
+        // character-creation flow — kept around only so player.ron stays
+        // parseable; the runtime kit is class-driven.
+        let starting_items = spawn_starting_items(
+            &mut commands,
+            &class_asset.starting_kit,
+            &item_manifests,
+            &item_manifest_handle,
+            &item_sprite_assets,
+        );
 
         let attributes =
             compose_attributes(race_asset, class_asset, character_choice.free_points);

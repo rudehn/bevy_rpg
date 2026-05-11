@@ -38,6 +38,59 @@
             ascii_char: "}",
             ascii_fg: "#A0A0A0",
         ),
+        // ---- Weak starter weapons (referenced by classes.ron starting_kit) ----
+        // Warrior's starter: Sword without the d6 baseline. Same dice but
+        // tinted rusty so it reads as "salvaged scrap, not legendary steel."
+        "Rusted Shortsword": (
+            name: "Rusted Shortsword",
+            tile_size: (32, 32),
+            grid_size: (8, 8),
+            item_kind: Weapon,
+            damage: Some("1d6"),
+            rarity: Common,
+            ascii_char: "/",
+            ascii_fg: "#7A5A3A",
+        ),
+        // Rogue's emergency throwable. Short range, light damage, one in
+        // the starting kit — find more in the dungeon.
+        "Throwing Knife": (
+            name: "Throwing Knife",
+            tile_size: (32, 32),
+            grid_size: (8, 8),
+            item_kind: Weapon,
+            damage: Some("1d4"),
+            weapon_range: 4,
+            rarity: Common,
+            ascii_char: "{",
+            ascii_fg: "#A0A0A0",
+        ),
+        // Ranger's starter bow. Shorter range than the standard Bow (6 vs 8),
+        // matching CHARACTER.md §Classes spec.
+        "Shortbow": (
+            name: "Shortbow",
+            tile_size: (32, 32),
+            grid_size: (8, 8),
+            item_kind: Weapon,
+            damage: Some("1d6"),
+            weapon_range: 6,
+            rarity: Common,
+            ascii_char: "}",
+            ascii_fg: "#7A5A3A",
+        ),
+        // Mage's starter staff. Lightning effect with a deliberately long
+        // recharge (500 vs the standard 250) so the Mage has a single
+        // meaningful zap early and must conserve until they find better.
+        "Apprentice Staff": (
+            name: "Apprentice Staff",
+            tile_size: (32, 32),
+            grid_size: (8, 8),
+            item_kind: Staff,
+            staff_effect: Some(Lightning),
+            base_recharge: 500,
+            rarity: Common,
+            ascii_char: "/",
+            ascii_fg: "#8888AA",
+        ),
         // Cleave: lower base damage than the Sword, but the swing hits
         // every adjacent tile around the wielder — a circular AoE that
         // shines against grouped foes and risks friendly-overlap.
@@ -80,6 +133,32 @@
             rarity: Common,
             ascii_char: "[",
             ascii_fg: "#6464C8",
+        ),
+        // Warrior / Ranger starter armor. 1 flat armor, no dodge — the
+        // bottom rung of the armor curve.
+        "Padded Armor": (
+            name: "Padded Armor",
+            tile_size: (32, 32),
+            grid_size: (8, 8),
+            item_kind: Armor,
+            armor_slot: Some(Chest),
+            defense: 1,
+            rarity: Common,
+            ascii_char: "[",
+            ascii_fg: "#7A5A3A",
+        ),
+        // Rogue starter armor. No flat armor; +1 dodge instead.
+        "Cloth Wraps": (
+            name: "Cloth Wraps",
+            tile_size: (32, 32),
+            grid_size: (8, 8),
+            item_kind: Armor,
+            armor_slot: Some(Chest),
+            defense: 0,
+            dodge_bonus: 1,
+            rarity: Common,
+            ascii_char: "[",
+            ascii_fg: "#C0B090",
         ),
         "Leather Gloves": (
             name: "Leather Gloves",

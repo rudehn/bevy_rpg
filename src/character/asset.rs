@@ -218,6 +218,32 @@ mod tests {
         }
     }
 
+    /// Every starting-kit item referenced by `classes.ron` must exist in
+    /// `assets/items.ron`. Catches the failure mode where the player picks
+    /// a class but their starting kit is silently empty because a referenced
+    /// item never got authored.
+    #[test]
+    fn every_class_starting_kit_item_exists_in_items_ron() {
+        use crate::assets::ItemManifest;
+
+        let classes_src = include_str!("../../assets/classes.ron");
+        let classes: ClassManifest = ron::from_str(classes_src).expect("parse classes");
+        let items_src = include_str!("../../assets/items.ron");
+        let items: ItemManifest = ron::from_str(items_src).expect("parse items");
+
+        for (class_id, class_asset) in &classes.classes {
+            for entry in &class_asset.starting_kit {
+                assert!(
+                    items.items.contains_key(&entry.name),
+                    "class '{}' starting_kit references item '{}' that does not \
+                     exist in items.ron. Either add the item or fix the class entry.",
+                    class_id,
+                    entry.name
+                );
+            }
+        }
+    }
+
     /// Spec values from `docs/design/CHARACTER.md` §Classes. Bases drifting here
     /// breaks every HP-derivation downstream.
     #[test]
