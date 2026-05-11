@@ -155,7 +155,7 @@ struct AttrRowMarker(Attribute);
 struct BeginButtonMarker;
 
 /// All live-updated text fields on the screen, dispatched in `refresh_text`.
-/// Collapses what would otherwise be 9 separate marker components into one
+/// Collapses what would otherwise be many separate marker components into one
 /// query, keeping the refresh systems under Bevy's 16-param limit.
 #[derive(Component, Debug, Clone, Copy)]
 enum CharCreationText {
@@ -163,9 +163,12 @@ enum CharCreationText {
     AttrMod(Attribute),
     RemainingPoints,
     Hp,
-    Hit,
-    Damage,
     Dodge,
+    HitMelee,
+    DamageMelee,
+    HitRanged,
+    DamageRanged,
+    SpellDamage,
     RaceDesc,
     ClassDesc,
 }
@@ -213,8 +216,8 @@ fn spawn_screen(
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::FlexStart,
-                padding: UiRect::all(Val::Px(40.0)),
-                row_gap: Val::Px(18.0),
+                padding: UiRect::all(Val::Px(16.0)),
+                row_gap: Val::Px(6.0),
                 ..default()
             },
             BackgroundColor(BG),
@@ -224,17 +227,17 @@ fn spawn_screen(
             // Title
             root.spawn((
                 Text::new("CHARACTER CREATION"),
-                TextFont { font: font.clone(), font_size: 44.0, ..default() },
+                TextFont { font: font.clone(), font_size: 32.0, ..default() },
                 TextColor(GOLD),
             ));
 
             // RACE row label
             root.spawn((
                 Text::new("Race"),
-                TextFont { font: font.clone(), font_size: 22.0, ..default() },
+                TextFont { font: font.clone(), font_size: 18.0, ..default() },
                 TextColor(DIM),
                 Node {
-                    margin: UiRect::top(Val::Px(8.0)),
+                    margin: UiRect::top(Val::Px(4.0)),
                     align_self: AlignSelf::FlexStart,
                     ..default()
                 },
@@ -255,7 +258,7 @@ fn spawn_screen(
             // Race trait description
             root.spawn((
                 Text::new(""),
-                TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                TextFont { font: font.clone(), font_size: 14.0, ..default() },
                 TextColor(TEXT),
                 CharCreationText::RaceDesc,
             ));
@@ -263,10 +266,10 @@ fn spawn_screen(
             // CLASS row
             root.spawn((
                 Text::new("Class"),
-                TextFont { font: font.clone(), font_size: 22.0, ..default() },
+                TextFont { font: font.clone(), font_size: 18.0, ..default() },
                 TextColor(DIM),
                 Node {
-                    margin: UiRect::top(Val::Px(8.0)),
+                    margin: UiRect::top(Val::Px(4.0)),
                     align_self: AlignSelf::FlexStart,
                     ..default()
                 },
@@ -286,7 +289,7 @@ fn spawn_screen(
             // Class description
             root.spawn((
                 Text::new(""),
-                TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                TextFont { font: font.clone(), font_size: 14.0, ..default() },
                 TextColor(TEXT),
                 CharCreationText::ClassDesc,
             ));
@@ -296,7 +299,7 @@ fn spawn_screen(
                 Node {
                     flex_direction: FlexDirection::Row,
                     column_gap: Val::Px(20.0),
-                    margin: UiRect::top(Val::Px(8.0)),
+                    margin: UiRect::top(Val::Px(4.0)),
                     align_self: AlignSelf::FlexStart,
                     ..default()
                 },
@@ -304,12 +307,12 @@ fn spawn_screen(
             .with_children(|row| {
                 row.spawn((
                     Text::new("Attributes"),
-                    TextFont { font: font.clone(), font_size: 22.0, ..default() },
+                    TextFont { font: font.clone(), font_size: 18.0, ..default() },
                     TextColor(DIM),
                 ));
                 row.spawn((
                     Text::new("Points remaining: 4"),
-                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                    TextFont { font: font.clone(), font_size: 14.0, ..default() },
                     TextColor(GOLD),
                     CharCreationText::RemainingPoints,
                 ));
@@ -320,7 +323,7 @@ fn spawn_screen(
                     Node {
                         flex_direction: FlexDirection::Row,
                         column_gap: Val::Px(12.0),
-                        padding: UiRect::all(Val::Px(6.0)),
+                        padding: UiRect::all(Val::Px(3.0)),
                         ..default()
                     },
                     BackgroundColor(PANEL_BG),
@@ -329,20 +332,20 @@ fn spawn_screen(
                 .with_children(|row| {
                     row.spawn((
                         Text::new(attr.name().to_string()),
-                        TextFont { font: font.clone(), font_size: 20.0, ..default() },
+                        TextFont { font: font.clone(), font_size: 18.0, ..default() },
                         TextColor(TEXT),
                         Node { width: Val::Px(50.0), ..default() },
                     ));
                     row.spawn((
                         Text::new("10"),
-                        TextFont { font: font.clone(), font_size: 20.0, ..default() },
+                        TextFont { font: font.clone(), font_size: 18.0, ..default() },
                         TextColor(GOLD),
                         CharCreationText::AttrScore(attr),
                         Node { width: Val::Px(50.0), ..default() },
                     ));
                     row.spawn((
                         Text::new("(+0)"),
-                        TextFont { font: font.clone(), font_size: 18.0, ..default() },
+                        TextFont { font: font.clone(), font_size: 16.0, ..default() },
                         TextColor(DIM),
                         CharCreationText::AttrMod(attr),
                     ));
@@ -352,51 +355,116 @@ fn spawn_screen(
             // Preview section
             root.spawn((
                 Text::new("Preview"),
-                TextFont { font: font.clone(), font_size: 22.0, ..default() },
+                TextFont { font: font.clone(), font_size: 18.0, ..default() },
                 TextColor(DIM),
                 Node {
-                    margin: UiRect::top(Val::Px(12.0)),
+                    margin: UiRect::top(Val::Px(6.0)),
                     align_self: AlignSelf::FlexStart,
                     ..default()
                 },
             ));
+            // Top preview row: HP + Dodge
             root.spawn(Node {
                 flex_direction: FlexDirection::Row,
                 column_gap: Val::Px(24.0),
+                align_self: AlignSelf::FlexStart,
                 ..default()
             })
             .with_children(|row| {
                 row.spawn((
                     Text::new("HP 12"),
-                    TextFont { font: font.clone(), font_size: 18.0, ..default() },
+                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
                     TextColor(TEXT),
                     CharCreationText::Hp,
                 ));
                 row.spawn((
-                    Text::new("Hit +0"),
-                    TextFont { font: font.clone(), font_size: 18.0, ..default() },
+                    Text::new("Dodge 0"),
+                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
                     TextColor(TEXT),
-                    CharCreationText::Hit,
+                    CharCreationText::Dodge,
+                ));
+            });
+            // Melee row
+            root.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(16.0),
+                align_self: AlignSelf::FlexStart,
+                ..default()
+            })
+            .with_children(|row| {
+                row.spawn((
+                    Text::new("Melee"),
+                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                    TextColor(DIM),
+                    Node { width: Val::Px(72.0), ..default() },
+                ));
+                row.spawn((
+                    Text::new("Hit +0"),
+                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                    TextColor(TEXT),
+                    CharCreationText::HitMelee,
                 ));
                 row.spawn((
                     Text::new("Damage +0"),
-                    TextFont { font: font.clone(), font_size: 18.0, ..default() },
+                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
                     TextColor(TEXT),
-                    CharCreationText::Damage,
+                    CharCreationText::DamageMelee,
+                ));
+            });
+            // Ranged row
+            root.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(16.0),
+                align_self: AlignSelf::FlexStart,
+                ..default()
+            })
+            .with_children(|row| {
+                row.spawn((
+                    Text::new("Ranged"),
+                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                    TextColor(DIM),
+                    Node { width: Val::Px(72.0), ..default() },
                 ));
                 row.spawn((
-                    Text::new("Dodge 0"),
-                    TextFont { font: font.clone(), font_size: 18.0, ..default() },
+                    Text::new("Hit +0"),
+                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
                     TextColor(TEXT),
-                    CharCreationText::Dodge,
+                    CharCreationText::HitRanged,
+                ));
+                row.spawn((
+                    Text::new("Damage +0"),
+                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                    TextColor(TEXT),
+                    CharCreationText::DamageRanged,
+                ));
+            });
+            // Spell (staff) row
+            root.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(16.0),
+                align_self: AlignSelf::FlexStart,
+                ..default()
+            })
+            .with_children(|row| {
+                row.spawn((
+                    Text::new("Spell"),
+                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                    TextColor(DIM),
+                    Node { width: Val::Px(72.0), ..default() },
+                ));
+                row.spawn((
+                    Text::new("Damage +0"),
+                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                    TextColor(TEXT),
+                    CharCreationText::SpellDamage,
                 ));
             });
 
             // Begin Descent
             root.spawn((
                 Node {
-                    margin: UiRect::top(Val::Px(20.0)),
-                    padding: UiRect::all(Val::Px(12.0)),
+                    margin: UiRect::top(Val::Px(8.0)),
+                    padding: UiRect::all(Val::Px(6.0)),
                     ..default()
                 },
                 BackgroundColor(PANEL_BG),
@@ -405,7 +473,7 @@ fn spawn_screen(
             .with_children(|btn| {
                 btn.spawn((
                     Text::new("Begin Descent"),
-                    TextFont { font: font.clone(), font_size: 24.0, ..default() },
+                    TextFont { font: font.clone(), font_size: 20.0, ..default() },
                     TextColor(GOLD),
                 ));
             });
@@ -416,10 +484,10 @@ fn spawn_screen(
                     "\u{2191}/\u{2193}: next field   |   \u{2190}/\u{2192}: change selection / \
                     adjust attribute   |   Enter (on Begin): start   |   Esc: cancel",
                 ),
-                TextFont { font: font.clone(), font_size: 14.0, ..default() },
+                TextFont { font: font.clone(), font_size: 12.0, ..default() },
                 TextColor(DIM),
                 Node {
-                    margin: UiRect::top(Val::Px(28.0)),
+                    margin: UiRect::top(Val::Px(8.0)),
                     ..default()
                 },
             ));
@@ -594,9 +662,15 @@ fn refresh_text(
                 format!("Points remaining: {}", draft.points_remaining())
             }
             CharCreationText::Hp => format!("HP {}", derived.max_hp),
-            CharCreationText::Hit => format!("Hit {:+}", derived.hit_bonus_melee),
-            CharCreationText::Damage => format!("Damage {:+}", derived.damage_bonus_melee),
             CharCreationText::Dodge => format!("Dodge {}", derived.dodge),
+            CharCreationText::HitMelee => format!("Hit {:+}", derived.hit_bonus_melee),
+            CharCreationText::DamageMelee => format!("Damage {:+}", derived.damage_bonus_melee),
+            CharCreationText::HitRanged => format!("Hit {:+}", derived.hit_bonus_ranged),
+            CharCreationText::DamageRanged => format!("Damage {:+}", derived.damage_bonus_ranged),
+            CharCreationText::SpellDamage => {
+                // Clamped at 0 to mirror the runtime clamp in `handle_zap_staff`.
+                format!("Damage {:+}", derived.damage_bonus_staff.max(0))
+            }
             CharCreationText::RaceDesc => race_asset
                 .map(|r| r.description.clone())
                 .unwrap_or_default(),
