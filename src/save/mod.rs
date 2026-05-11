@@ -34,7 +34,7 @@ use crate::{
         magic::StatusEffects,
         spawner::spawn_item,
         squad::{SquadConfig, SquadId, SquadIdCounter, SquadLeader},
-        stats::{Armor, Dodge},
+        stats::{Armor, DamageBonus, Dodge, HitBonus},
         staves::{Rechargeable, StaffData, StaffEffect},
     },
     map::{
@@ -67,7 +67,11 @@ const GAME_SAVE_KEY: &str = "ironveil_save";
 /// - **v2**: Status effects migrated to engine format (flat `Burning` /
 ///   `Poisoned` kinds with `magnitude` on the instance; game-specific
 ///   kinds like `Entangled` / `Enraged` moved to `Custom { id }`).
-pub const SAVE_SCHEMA_VERSION: u32 = 2;
+/// - **v3**: Phase 1 character system. `PlayerSaveData` gains `race`,
+///   `class`, `attributes`, `hit_bonus`, `damage_bonus` fields. Pre-v3
+///   saves load with defaults (Human Warrior, all 10 attributes, zero
+///   bonuses) via `#[serde(default)]` — the migration itself is a no-op.
+pub const SAVE_SCHEMA_VERSION: u32 = 3;
 
 // ---- Migration chain ----
 
@@ -167,8 +171,32 @@ fn skip_balanced_parens(s: &str) -> Option<usize> {
     None
 }
 
+/// v2 → v3: Phase 1 character system added Race/Class/Attributes/HitBonus/
+/// DamageBonus to `PlayerSaveData`. The migration is a no-op because
+/// `#[serde(default)]` on each new field handles missing values cleanly:
+/// pre-v3 saves load as Human Warrior with all-10 attributes and zero
+/// flat bonuses — a sane fallback that doesn't crash the game. Players
+/// can keep their hp/inventory/floor progress; only the new identity
+/// fields default.
+struct MigrateV2ToV3;
+impl SaveMigration for MigrateV2ToV3 {
+    fn from_version(&self) -> u32 {
+        2
+    }
+    fn to_version(&self) -> u32 {
+        3
+    }
+    fn migrate(&self, data: &str) -> Result<String, String> {
+        Ok(data.to_string())
+    }
+}
+
 fn migrations() -> Vec<Box<dyn SaveMigration>> {
-    vec![Box::new(MigrateV0ToV1), Box::new(MigrateV1ToV2)]
+    vec![
+        Box::new(MigrateV0ToV1),
+        Box::new(MigrateV1ToV2),
+        Box::new(MigrateV2ToV3),
+    ]
 }
 
 /// Write serialized save data under the game's save key, wrapped in the
@@ -407,7 +435,7 @@ pub struct MapSaveData {
     pub explored: Vec<bool>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct PlayerSaveData {
     pub x: i32,
     pub y: i32,
@@ -419,6 +447,37 @@ pub struct PlayerSaveData {
     #[serde(default)]
     pub status_effects: StatusEffects,
     pub inventory: Vec<InventoryItemSave>,
+    // ---- Phase 1 character system (save schema v3) ----
+    /// Player race; defaults to Human on pre-v3 saves.
+    #[serde(default)]
+    pub race: crate::character::Race,
+    /// Player class; defaults to Warrior on pre-v3 saves.
+    #[serde(default)]
+    pub class: crate::character::Class,
+    /// Final attribute scores. Defaults to all-10 on pre-v3 saves (the
+    /// pre-race-and-class baseline), so derived stats aren't broken.
+    #[serde(default = "default_attributes_baseline")]
+    pub attributes: crate::character::Attributes,
+    /// Saved `HitBonus.0` — the post-equipment, post-attribute sum. On
+    /// load this is restored directly so equipment doesn't need to be
+    /// re-applied via the equip handler.
+    #[serde(default)]
+    pub hit_bonus: i32,
+    /// Saved `DamageBonus.0`, same shape as `hit_bonus`.
+    #[serde(default)]
+    pub damage_bonus: i32,
+}
+
+/// Serde default for `PlayerSaveData::attributes` — all 10s, so the derived
+/// modifier is 0 for every stat and HP/hit math doesn't shift. Pre-v3 saves
+/// land here.
+fn default_attributes_baseline() -> crate::character::Attributes {
+    crate::character::Attributes {
+        strength: 10,
+        dexterity: 10,
+        constitution: 10,
+        intelligence: 10,
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -589,6 +648,16 @@ pub fn auto_save_system(
         With<Player>,
     >,
     player_status_query: Query<&StatusEffects, With<Player>>,
+    player_character_query: Query<
+        (
+            &crate::character::Race,
+            &crate::character::Class,
+            &crate::character::Attributes,
+            &HitBonus,
+            &DamageBonus,
+        ),
+        With<Player>,
+    >,
     inv_item_query: Query<
         (
             &Name,
@@ -772,6 +841,24 @@ pub fn auto_save_system(
         .map(|(k, v)| (*k, cached_floor_to_save(v)))
         .collect();
 
+    // Character-system fields. The player query for Race/Class/Attributes/
+    // HitBonus/DamageBonus is separate so we don't blow Bevy's max-tuple
+    // size on the main player query. Defaults applied if the player entity
+    // somehow lacks them (shouldn't happen post-spawn, but the save path
+    // must not crash mid-run).
+    let (race, class, attributes, hit_bonus, damage_bonus) = player_character_query
+        .single()
+        .map(|(r, c, a, h, d)| (*r, *c, *a, h.0, d.0))
+        .unwrap_or_else(|_| {
+            (
+                crate::character::Race::default(),
+                crate::character::Class::default(),
+                default_attributes_baseline(),
+                0,
+                0,
+            )
+        });
+
     let save_data = GameSaveData {
         floor: floor.0,
         game_log: game_log.entries.clone(),
@@ -786,6 +873,11 @@ pub fn auto_save_system(
             damage: damage.0.clone(),
             status_effects,
             inventory: inv_saves,
+            race,
+            class,
+            attributes,
+            hit_bonus,
+            damage_bonus,
         },
         monsters,
         floor_items,
@@ -823,6 +915,8 @@ pub fn apply_player_load_system(
             &mut Equipment,
             &mut Damage,
             &mut Viewshed,
+            &mut HitBonus,
+            &mut DamageBonus,
         ),
         With<Player>,
     >,
@@ -847,6 +941,8 @@ pub fn apply_player_load_system(
         mut equipment,
         mut damage,
         mut viewshed,
+        mut hit_bonus,
+        mut damage_bonus,
     )) = player_query.single_mut()
     else {
         warn!("apply_player_load_system: no player entity yet, requeueing.");
@@ -865,16 +961,27 @@ pub fn apply_player_load_system(
     armor.0 = player_data.armor;
     dodge.0 = player_data.dodge;
 
+    // --- HitBonus / DamageBonus (post-equipment, post-attribute totals) ---
+    hit_bonus.0 = player_data.hit_bonus;
+    damage_bonus.0 = player_data.damage_bonus;
+
     // --- Damage / Viewshed ---
     damage.0 = player_data.damage.clone();
     viewshed.range = player_data.viewshed_range;
     viewshed.dirty = true;
 
-    // --- Status effects ---
+    // --- Status effects + character system components ---
     if let Ok(player_entity) = player_entity_query.single() {
-        commands
-            .entity(player_entity)
-            .insert(player_data.status_effects.clone());
+        commands.entity(player_entity).insert((
+            player_data.status_effects.clone(),
+            // Race/Class/Attributes inserted via .insert() overwrite the
+            // spawn-time values (which were derived from the current
+            // `CharacterChoice` resource — which may not match the saved
+            // character).
+            player_data.race,
+            player_data.class,
+            player_data.attributes,
+        ));
     }
 
     // --- Inventory ---
@@ -1322,6 +1429,16 @@ mod tests {
                 key_inv_item(),
                 quest_inv_item(),
             ],
+            race: crate::character::Race::Dwarf,
+            class: crate::character::Class::Warrior,
+            attributes: crate::character::Attributes {
+                strength: 16,
+                dexterity: 10,
+                constitution: 14,
+                intelligence: 8,
+            },
+            hit_bonus: 5,
+            damage_bonus: 3,
         }
     }
 
@@ -1385,6 +1502,7 @@ mod tests {
                 damage: "1".into(),
                 status_effects: StatusEffects::default(),
                 inventory: vec![],
+                ..Default::default()
             },
             monsters: vec![],
             floor_items: vec![],
@@ -1988,6 +2106,7 @@ mod tests {
                     .collect(),
             },
             inventory: vec![],
+            ..Default::default()
         };
         let l: PlayerSaveData = from_ron(&to_ron(&p));
         assert_eq!(l.status_effects.effects.len(), 9);
@@ -2050,6 +2169,7 @@ mod tests {
                 damage: "1d6".into(),
                 status_effects: StatusEffects::default(),
                 inventory: vec![],
+                ..Default::default()
             },
             monsters: vec![],
             floor_items: vec![],
@@ -2249,6 +2369,7 @@ mod tests {
                 ],
             },
             inventory: vec![],
+            ..Default::default()
         };
         let l: PlayerSaveData = from_ron(&to_ron(&p));
         assert_eq!(l.status_effects.effects.len(), 6);
@@ -2305,8 +2426,8 @@ mod tests {
     // =====================================================================
 
     #[test]
-    fn schema_version_is_two() {
-        assert_eq!(SAVE_SCHEMA_VERSION, 2);
+    fn schema_version_is_three() {
+        assert_eq!(SAVE_SCHEMA_VERSION, 3);
     }
 
     #[test]
@@ -2363,10 +2484,93 @@ mod tests {
     #[test]
     fn migrations_chain_is_ordered() {
         let migs = migrations();
-        assert_eq!(migs.len(), 2);
+        assert_eq!(migs.len(), 3);
         assert_eq!(migs[0].from_version(), 0);
         assert_eq!(migs[0].to_version(), 1);
         assert_eq!(migs[1].from_version(), 1);
         assert_eq!(migs[1].to_version(), 2);
+        assert_eq!(migs[2].from_version(), 2);
+        assert_eq!(migs[2].to_version(), 3);
+    }
+
+    /// v2 → v3 migration is a no-op (serde defaults handle the new fields).
+    /// Pin the contract so a future "add real logic to MigrateV2ToV3" change
+    /// surfaces here rather than silently changing save semantics.
+    #[test]
+    fn migrate_v2_to_v3_is_identity() {
+        let payload = "PlayerSaveData(x: 0, y: 0, hp: 10)";
+        let result = MigrateV2ToV3.migrate(payload).unwrap();
+        assert_eq!(result, payload);
+    }
+
+    /// A pre-v3 save (no race/class/attributes/bonuses fields) must still
+    /// deserialize, with the new fields filled by their serde defaults.
+    #[test]
+    fn pre_v3_player_save_data_loads_with_defaults() {
+        // Hand-crafted RON in the v2 shape — no race/class/attributes fields.
+        let v2_ron = r#"(
+            x: 5,
+            y: 7,
+            hp: 22,
+            armor: 1,
+            dodge: 0,
+            viewshed_range: 8,
+            damage: "1d4",
+            status_effects: (effects: []),
+            inventory: []
+        )"#;
+        let loaded: PlayerSaveData =
+            ron::from_str(v2_ron).expect("v2-shape RON must still parse");
+        assert_eq!(loaded.x, 5);
+        assert_eq!(loaded.hp, 22);
+        // Race / Class defaults
+        assert_eq!(loaded.race, crate::character::Race::Human);
+        assert_eq!(loaded.class, crate::character::Class::Warrior);
+        // Attributes default to all-10 via `default_attributes_baseline`
+        assert_eq!(loaded.attributes.strength, 10);
+        assert_eq!(loaded.attributes.dexterity, 10);
+        assert_eq!(loaded.attributes.constitution, 10);
+        assert_eq!(loaded.attributes.intelligence, 10);
+        // Bonuses default to 0
+        assert_eq!(loaded.hit_bonus, 0);
+        assert_eq!(loaded.damage_bonus, 0);
+    }
+
+    /// Round-trip: a v3 save with Race/Class/Attributes/HitBonus/DamageBonus
+    /// populated must serialize and deserialize without losing any field.
+    #[test]
+    fn v3_player_save_data_round_trips() {
+        let original = PlayerSaveData {
+            x: 11,
+            y: 12,
+            hp: 30,
+            armor: 2,
+            dodge: 3,
+            viewshed_range: 10,
+            damage: "1d6+2".to_string(),
+            status_effects: StatusEffects::default(),
+            inventory: vec![],
+            race: crate::character::Race::Halfling,
+            class: crate::character::Class::Rogue,
+            attributes: crate::character::Attributes {
+                strength: 10,
+                dexterity: 17,
+                constitution: 12,
+                intelligence: 13,
+            },
+            hit_bonus: 4,
+            damage_bonus: 2,
+        };
+        let ron = ron::to_string(&original).expect("serialize");
+        let loaded: PlayerSaveData = ron::from_str(&ron).expect("deserialize");
+        assert_eq!(loaded.race, crate::character::Race::Halfling);
+        assert_eq!(loaded.class, crate::character::Class::Rogue);
+        assert_eq!(loaded.attributes.dexterity, 17);
+        assert_eq!(loaded.attributes.intelligence, 13);
+        assert_eq!(loaded.hit_bonus, 4);
+        assert_eq!(loaded.damage_bonus, 2);
+        // And the unchanged fields still survive.
+        assert_eq!(loaded.x, 11);
+        assert_eq!(loaded.hp, 30);
     }
 }

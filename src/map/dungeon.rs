@@ -433,6 +433,11 @@ pub(crate) struct SpawnDungeonExtras<'w> {
     gas_tiles: ResMut<'w, crate::game::gas::GasTiles>,
     water_tiles: ResMut<'w, crate::game::water::WaterTiles>,
     fallen_entities: ResMut<'w, FallenEntities>,
+    /// CharacterChoice is mutated on the save-load branch to sync the
+    /// loaded character's race/class into the resource the player spawner
+    /// reads — see the load arm of `spawn_dungeon`. Lives in `extras`
+    /// because the top-level signature is already at Bevy's 16-param cap.
+    character_choice: ResMut<'w, crate::character::CharacterChoice>,
 }
 
 pub fn spawn_dungeon(
@@ -461,6 +466,18 @@ pub fn spawn_dungeon(
     let source = if let Some(mut save_data) = pending_game_load.0.take() {
         // Load path: extract resource-level state before materialization
         use crate::save::SavedFloorCache;
+
+        // Sync CharacterChoice from save BEFORE the player spawn runs.
+        // The spawner reads CharacterChoice to bake race-specific spawn
+        // effects (Stoneblood resistance, Keen Senses vision); without
+        // this sync a loaded Dwarf could spawn as a Human with no
+        // poison resistance. `apply_player_load_system` runs later and
+        // also overwrites Race/Class/Attributes components on the entity,
+        // but the race-specific *spawn-time* effects only fire here.
+        extras.character_choice.race = save_data.player.race;
+        extras.character_choice.class = save_data.player.class;
+        // free_points is irrelevant on load — attribute scores are
+        // restored verbatim from `save_data.player.attributes`.
 
         commands.insert_resource(crate::game::squad::SquadIdCounter(save_data.squad_id_counter));
 
