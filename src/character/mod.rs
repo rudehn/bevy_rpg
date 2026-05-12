@@ -1,11 +1,10 @@
 //! Character system: race, class, and attribute data for the player.
 //!
 //! See [`docs/design/CHARACTER.md`](../../docs/design/CHARACTER.md) for the
-//! full design. This commit (Phase 1, step 1) introduces the data types and
-//! asset loaders only — runtime integration with combat math and the
-//! character creation UI come in subsequent commits. The module-level
-//! `dead_code` allow covers fields/methods that exist for future consumers;
-//! tests already exercise the deserialization paths.
+//! full design. Phase 2 introduces XP/levels, a race-driven HP formula,
+//! and the DCSS-style stat-gain schedule. The XP/level systems
+//! themselves live in [`crate::game::xp`]; this module owns the
+//! attribute, race, and class types and the pure compose/derive helpers.
 
 #![allow(dead_code, unused_imports)]
 
@@ -19,18 +18,17 @@ pub use asset::{
     ClassAsset, ClassManifest, ClassManifestHandle, RaceAsset, RaceManifest, RaceManifestHandle,
 };
 pub use attributes::{
-    ability_mod, attack_attribute_bonus, compose_attributes, derive_stats, Attributes,
-    CharacterChoice, DerivedStats,
+    ability_mod, attack_attribute_bonus, compose_attributes, derive_stats, max_hp_for_level,
+    AttributeDistribution, Attributes, CharacterChoice, DerivedStats,
 };
 pub use class::{Attribute, Class};
-pub use dice::{apply_lucky, roll_d20_with_race};
-pub use race::{Race, RaceTrait};
+pub use dice::{roll_d20_with_race};
+pub use race::{Race, RaceGainSchedule, RaceTrait};
 
 use bevy::prelude::*;
 
-/// Registers character-related component reflection. Asset loading itself is
-/// wired in `crate::assets::LoadingPlugin` so the loading-state transition
-/// keeps a single source of truth.
+/// Registers character-related component reflection and inserts the
+/// `CharacterChoice` resource.
 pub struct CharacterPlugin;
 
 impl Plugin for CharacterPlugin {

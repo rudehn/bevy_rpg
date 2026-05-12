@@ -1,67 +1,60 @@
 // Class manifest for character creation. See docs/design/CHARACTER.md §Classes.
 //
-// Keys are the lowercase form of `Class` enum variant names. Starting kit item
-// names reference entries in items.ron — the four explicitly weak starter
-// items (Rusted Shortsword, Padded Armor, Cloth Wraps, Apprentice Staff,
-// Throwing Knife, Shortbow) will be added to items.ron when the spawner
-// integration lands. Until then this file is data-only and unconsumed at
-// runtime; tests only assert parsing and baseline numbers.
+// Phase 2 schema:
+//   - attribute_distribution: 12 points across STR/DEX/INT. Negatives are
+//     allowed at the schema level (for future class designs) but no
+//     currently-shipping class uses negative entries. A maintenance test
+//     pins `total() == 12`.
+//   - No more primary_attr / secondary_attr / class_attack_bonus /
+//     class_dodge_bonus — class differentiation flows entirely through
+//     the attribute distribution and the starting kit.
+//
+// id      | STR | DEX | INT | total
+// --------|-----|-----|-----|------
+// warrior |  8  |  2  |  2  |  12
+// rogue   |  2  |  8  |  2  |  12
+// mage    |  1  |  3  |  8  |  12
+// ranger  |  3  |  8  |  1  |  12
 
 (
     classes: {
         "warrior": (
             name: "Warrior",
-            primary_attr: Str,
-            secondary_attr: Con,
-            base_hp: 12,
-            class_attack_bonus: 1,
-            class_dodge_bonus: 0,
+            attribute_distribution: (str: 8, dex: 2, int: 2),
             starting_kit: [
                 (name: "Rusted Shortsword"),
                 (name: "Padded Armor"),
             ],
-            description: "Steel and discipline. Trades finesse for HP and a steady +1 to attack rolls.",
+            description: "Steel and discipline. STR-heavy distribution carries melee hits and damage; trade-off is low DEX and INT.",
         ),
         "rogue": (
             name: "Rogue",
-            primary_attr: Dex,
-            secondary_attr: Int,
-            base_hp: 8,
-            class_attack_bonus: 0,
-            class_dodge_bonus: 1,
+            attribute_distribution: (str: 2, dex: 8, int: 2),
             starting_kit: [
                 (name: "Dagger"),
                 (name: "Cloth Wraps"),
                 (name: "Throwing Knife", count: 1),
             ],
-            description: "Light, slippery, and dangerous in the right opening. +1 dodge by default.",
+            description: "Light, slippery, and dangerous in the right opening. DEX-driven hit and dodge; INT modest enough to identify scrolls.",
         ),
         "mage": (
             name: "Mage",
-            primary_attr: Int,
-            secondary_attr: Con,
-            base_hp: 6,
-            class_attack_bonus: 0,
-            class_dodge_bonus: 0,
+            attribute_distribution: (str: 1, dex: 3, int: 8),
             starting_kit: [
                 (name: "Apprentice Staff"),
                 (name: "Robe"),
             ],
-            description: "Frail but charged with potential. INT modifies staff zap damage.",
+            description: "Frail but charged with potential. INT scales staff zap damage. Don't trade blows.",
         ),
         "ranger": (
             name: "Ranger",
-            primary_attr: Dex,
-            secondary_attr: Str,
-            base_hp: 8,
-            class_attack_bonus: 0,
-            class_dodge_bonus: 0,
+            attribute_distribution: (str: 3, dex: 8, int: 1),
             starting_kit: [
                 (name: "Shortbow"),
                 (name: "Padded Armor"),
                 (name: "Arrow", count: 6),
             ],
-            description: "Patient at range. Six arrows to start; find more in the dungeon.",
+            description: "Patient at range. DEX-driven ranged hit and damage; STR is the fallback if you draw a melee.",
         ),
     },
 )

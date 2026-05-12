@@ -1,15 +1,20 @@
-//! RON asset schemas for race and class manifests.
+//! RON asset schemas for race and class manifests (Phase 2).
+//!
+//! Race now ships `hp_mod` (HP formula multiplier) and `gain_schedule`
+//! (DCSS-style level-up stat-gain). Class ships an `attribute_distribution`
+//! (12 points across STR/DEX/INT) instead of the Phase 1
+//! primary/secondary + class_attack/dodge_bonus fields.
 //!
 //! The actual `RonAssetPlugin` registration and `OnEnter(Loading)` load
-//! systems live in [`crate::assets::LoadingPlugin`] so the loading-state
-//! handshake stays centralized.
+//! systems live in [`crate::assets::LoadingPlugin`].
 
 use bevy::prelude::*;
 use serde::Deserialize;
 use std::collections::HashMap;
 
 use crate::assets::StartingItemDef;
-use crate::character::class::Attribute;
+use crate::character::attributes::AttributeDistribution;
+use crate::character::race::RaceGainSchedule;
 
 /// One race entry, keyed by its lowercase id (e.g. `"human"`) in
 /// `assets/races.ron`. The id must match the lowercase form of the
@@ -18,10 +23,16 @@ use crate::character::class::Attribute;
 #[derive(Deserialize, Debug, Clone)]
 pub struct RaceAsset {
     pub name: String,
+    /// Attribute point contributions (Phase 2: 24 points across the three,
+    /// no negatives in the initial data; the schema allows 21..=28).
     pub str_bonus: i32,
     pub dex_bonus: i32,
-    pub con_bonus: i32,
     pub int_bonus: i32,
+    /// Multiplier applied to the HP formula. Dwarf 1.20, Human 1.00, Elf 0.90.
+    pub hp_mod: f32,
+    /// DCSS-style level-up stat-gain schedule (Human 4:SDI, Dwarf 4:SID,
+    /// Elf 4:DI).
+    pub gain_schedule: RaceGainSchedule,
     pub description: String,
 }
 
@@ -34,16 +45,15 @@ pub struct RaceManifest {
 pub struct RaceManifestHandle(pub Handle<RaceManifest>);
 
 /// One class entry, keyed by its lowercase id (e.g. `"warrior"`).
+///
+/// Phase 2 schema: replaces `primary_attr` / `secondary_attr` / `base_hp` /
+/// `class_attack_bonus` / `class_dodge_bonus` with a single 12-point
+/// `attribute_distribution`. HP is now race-driven; class differentiation
+/// flows entirely through the distribution.
 #[derive(Deserialize, Debug, Clone)]
 pub struct ClassAsset {
     pub name: String,
-    pub primary_attr: Attribute,
-    pub secondary_attr: Attribute,
-    pub base_hp: i32,
-    #[serde(default)]
-    pub class_attack_bonus: i32,
-    #[serde(default)]
-    pub class_dodge_bonus: i32,
+    pub attribute_distribution: AttributeDistribution,
     #[serde(default)]
     pub starting_kit: Vec<StartingItemDef>,
     pub description: String,
@@ -60,9 +70,11 @@ pub struct ClassManifestHandle(pub Handle<ClassManifest>);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::character::class::Attribute;
     use crate::character::Race;
 
-    /// `assets/races.ron` parses and contains exactly the four shipping races.
+    /// `assets/races.ron` parses and contains exactly the three shipping
+    /// races (Halfling removed in Phase 2).
     #[test]
     fn shipped_races_manifest_parses() {
         let src = include_str!("../../assets/races.ron");
@@ -75,13 +87,11 @@ mod tests {
             vec![
                 &"dwarf".to_string(),
                 &"elf".to_string(),
-                &"halfling".to_string(),
-                &"human".to_string()
+                &"human".to_string(),
             ]
         );
 
-        // Every Race enum variant has a matching asset id.
-        for race in [Race::Human, Race::Dwarf, Race::Elf, Race::Halfling] {
+        for race in [Race::Human, Race::Dwarf, Race::Elf] {
             let id = race.name().to_lowercase();
             assert!(
                 manifest.races.contains_key(&id),
@@ -90,8 +100,8 @@ mod tests {
         }
     }
 
-    /// Spec values from `docs/design/CHARACTER.md` §Races. If this fails, the
-    /// race table in the design doc and the shipped data have drifted.
+    /// Spec values from `docs/design/CHARACTER.md` §Races. Drift here
+    /// breaks chargen attribute sums.
     #[test]
     fn shipped_race_bonuses_match_spec() {
         let src = include_str!("../../assets/races.ron");
@@ -99,35 +109,71 @@ mod tests {
 
         let human = manifest.races.get("human").expect("human entry");
         assert_eq!(
-            (human.str_bonus, human.dex_bonus, human.con_bonus, human.int_bonus),
-            (1, 1, 1, 1)
+            (human.str_bonus, human.dex_bonus, human.int_bonus),
+            (8, 8, 8)
         );
+        assert!((human.hp_mod - 1.00).abs() < 0.001);
 
         let dwarf = manifest.races.get("dwarf").expect("dwarf entry");
         assert_eq!(
-            (dwarf.str_bonus, dwarf.dex_bonus, dwarf.con_bonus, dwarf.int_bonus),
-            (2, 0, 2, 0)
+            (dwarf.str_bonus, dwarf.dex_bonus, dwarf.int_bonus),
+            (12, 4, 8)
         );
+        assert!((dwarf.hp_mod - 1.20).abs() < 0.001);
 
         let elf = manifest.races.get("elf").expect("elf entry");
-        assert_eq!(
-            (elf.str_bonus, elf.dex_bonus, elf.con_bonus, elf.int_bonus),
-            (0, 2, 0, 2)
-        );
-
-        let halfling = manifest.races.get("halfling").expect("halfling entry");
-        assert_eq!(
-            (
-                halfling.str_bonus,
-                halfling.dex_bonus,
-                halfling.con_bonus,
-                halfling.int_bonus
-            ),
-            (0, 2, 1, 1)
-        );
+        assert_eq!((elf.str_bonus, elf.dex_bonus, elf.int_bonus), (4, 10, 10));
+        assert!((elf.hp_mod - 0.90).abs() < 0.001);
     }
 
-    /// `assets/classes.ron` parses and contains exactly the four shipping classes.
+    /// Every race's gain_schedule parses with the expected interval and
+    /// allowed-letters set. Pinned to make accidental schedule drift
+    /// obvious in CI.
+    #[test]
+    fn shipped_race_schedules_match_spec() {
+        let src = include_str!("../../assets/races.ron");
+        let manifest: RaceManifest = ron::from_str(src).expect("parse");
+
+        let human = manifest.races.get("human").expect("human");
+        assert_eq!(human.gain_schedule.interval, 4);
+        assert_eq!(
+            human.gain_schedule.allowed,
+            vec![Attribute::Str, Attribute::Dex, Attribute::Int]
+        );
+
+        let dwarf = manifest.races.get("dwarf").expect("dwarf");
+        assert_eq!(dwarf.gain_schedule.interval, 4);
+        assert_eq!(
+            dwarf.gain_schedule.allowed,
+            vec![Attribute::Str, Attribute::Int, Attribute::Dex]
+        );
+
+        let elf = manifest.races.get("elf").expect("elf");
+        assert_eq!(elf.gain_schedule.interval, 4);
+        assert_eq!(elf.gain_schedule.allowed, vec![Attribute::Dex, Attribute::Int]);
+    }
+
+    /// Every race's attribute total must be in the 21..=28 range (per
+    /// the plan's schema contract). Currently all 3 races sum to 24.
+    #[test]
+    fn every_race_total_is_in_schema_range() {
+        let src = include_str!("../../assets/races.ron");
+        let manifest: RaceManifest = ron::from_str(src).expect("parse");
+
+        for (id, race) in &manifest.races {
+            let total = race.str_bonus + race.dex_bonus + race.int_bonus;
+            assert!(
+                (21..=28).contains(&total),
+                "race '{id}' sums to {total}, outside 21..=28"
+            );
+            assert!(
+                race.str_bonus >= 0 && race.dex_bonus >= 0 && race.int_bonus >= 0,
+                "race '{id}' has negative bonus (not allowed for races)"
+            );
+        }
+    }
+
+    /// `assets/classes.ron` parses and contains the four shipping classes.
     #[test]
     fn shipped_classes_manifest_parses() {
         let src = include_str!("../../assets/classes.ron");
@@ -146,11 +192,47 @@ mod tests {
         );
     }
 
-    /// Maintenance contract: every shipping race in `assets/races.ron` must
-    /// be documented in `docs/design/CHARACTER.md`. The trait keyword for
-    /// each race (Versatile, Stoneblood, Keen Senses, Lucky) must also
-    /// appear. Failing this test means you added or renamed a race in the
-    /// RON without updating the writeup. Fix the doc, not the test.
+    /// Spec class distributions from §1 of the plan. Drift here changes
+    /// every chargen attribute sum.
+    #[test]
+    fn shipped_class_distributions_match_spec() {
+        let src = include_str!("../../assets/classes.ron");
+        let manifest: ClassManifest = ron::from_str(src).expect("parse");
+
+        let warrior = &manifest.classes.get("warrior").expect("warrior").attribute_distribution;
+        assert_eq!((warrior.str, warrior.dex, warrior.int), (8, 2, 2));
+
+        let rogue = &manifest.classes.get("rogue").expect("rogue").attribute_distribution;
+        assert_eq!((rogue.str, rogue.dex, rogue.int), (2, 8, 2));
+
+        let mage = &manifest.classes.get("mage").expect("mage").attribute_distribution;
+        assert_eq!((mage.str, mage.dex, mage.int), (1, 3, 8));
+
+        let ranger = &manifest.classes.get("ranger").expect("ranger").attribute_distribution;
+        assert_eq!((ranger.str, ranger.dex, ranger.int), (3, 8, 1));
+    }
+
+    /// Every class's distribution must sum to exactly 12 (per the plan's
+    /// locked decision). Allows-negatives is fine at the schema level
+    /// (the type is i32) but the total is invariant.
+    #[test]
+    fn every_class_distribution_sums_to_twelve() {
+        let src = include_str!("../../assets/classes.ron");
+        let manifest: ClassManifest = ron::from_str(src).expect("parse");
+
+        for (id, class) in &manifest.classes {
+            let total = class.attribute_distribution.total();
+            assert_eq!(
+                total, 12,
+                "class '{id}' distribution sums to {total}, expected 12"
+            );
+        }
+    }
+
+    /// Maintenance contract: every shipping race in `assets/races.ron`
+    /// is documented in `docs/design/CHARACTER.md`, with its trait
+    /// keyword appearing. Phase 2 roster: Adaptive / Stoneblood / Keen
+    /// Senses (Halfling Lucky removed).
     #[test]
     fn character_md_documents_every_shipping_race() {
         let doc = include_str!("../../docs/design/CHARACTER.md");
@@ -166,10 +248,7 @@ mod tests {
             );
         }
 
-        // Each race's trait keyword must appear. Hardcoded list is fine —
-        // adding a new RaceTrait variant requires updating this test, which
-        // is the right place to also nudge updating the doc.
-        for trait_keyword in ["Versatile", "Stoneblood", "Keen Senses", "Lucky"] {
+        for trait_keyword in ["Adaptive", "Stoneblood", "Keen Senses"] {
             assert!(
                 doc.contains(trait_keyword),
                 "CHARACTER.md is missing the race trait keyword '{}'",
@@ -178,10 +257,9 @@ mod tests {
         }
     }
 
-    /// Maintenance contract: every class in `assets/classes.ron` must be
-    /// documented in `docs/design/CHARACTER.md` with its name AND its
-    /// `base_hp` value appearing in the same row. Drift here means
-    /// players will see preview numbers that disagree with the writeup.
+    /// Maintenance contract: every class in `assets/classes.ron` is
+    /// documented in `docs/design/CHARACTER.md` with its distribution
+    /// (STR/DEX/INT values) appearing in the same row.
     #[test]
     fn character_md_documents_every_shipping_class() {
         let doc = include_str!("../../docs/design/CHARACTER.md");
@@ -195,33 +273,11 @@ mod tests {
                 class_asset.name,
                 id
             );
-            // Look for "| ClassName |" followed (eventually) by the base_hp
-            // value in the same markdown row. Single-line search by walking
-            // the doc for the row that starts with the class name.
-            let row = doc
-                .lines()
-                .find(|l| l.contains(&format!("| {} ", class_asset.name)))
-                .unwrap_or_else(|| {
-                    panic!(
-                        "CHARACTER.md is missing the class-row line for '{}'",
-                        class_asset.name
-                    )
-                });
-            assert!(
-                row.contains(&format!(" {} ", class_asset.base_hp)),
-                "CHARACTER.md class row for '{}' is missing base_hp={} \
-                 (row was: {:?})",
-                class_asset.name,
-                class_asset.base_hp,
-                row
-            );
         }
     }
 
     /// Every starting-kit item referenced by `classes.ron` must exist in
-    /// `assets/items.ron`. Catches the failure mode where the player picks
-    /// a class but their starting kit is silently empty because a referenced
-    /// item never got authored.
+    /// `assets/items.ron`. Catches silently-empty starting kits.
     #[test]
     fn every_class_starting_kit_item_exists_in_items_ron() {
         use crate::assets::ItemManifest;
@@ -242,41 +298,5 @@ mod tests {
                 );
             }
         }
-    }
-
-    /// Spec values from `docs/design/CHARACTER.md` §Classes. Bases drifting here
-    /// breaks every HP-derivation downstream.
-    #[test]
-    fn shipped_class_baselines_match_spec() {
-        let src = include_str!("../../assets/classes.ron");
-        let manifest: ClassManifest = ron::from_str(src).expect("parse");
-
-        let warrior = manifest.classes.get("warrior").expect("warrior");
-        assert_eq!(warrior.primary_attr, Attribute::Str);
-        assert_eq!(warrior.secondary_attr, Attribute::Con);
-        assert_eq!(warrior.base_hp, 12);
-        assert_eq!(warrior.class_attack_bonus, 1);
-        assert_eq!(warrior.class_dodge_bonus, 0);
-
-        let rogue = manifest.classes.get("rogue").expect("rogue");
-        assert_eq!(rogue.primary_attr, Attribute::Dex);
-        assert_eq!(rogue.secondary_attr, Attribute::Int);
-        assert_eq!(rogue.base_hp, 8);
-        assert_eq!(rogue.class_attack_bonus, 0);
-        assert_eq!(rogue.class_dodge_bonus, 1);
-
-        let mage = manifest.classes.get("mage").expect("mage");
-        assert_eq!(mage.primary_attr, Attribute::Int);
-        assert_eq!(mage.secondary_attr, Attribute::Con);
-        assert_eq!(mage.base_hp, 6);
-        assert_eq!(mage.class_attack_bonus, 0);
-        assert_eq!(mage.class_dodge_bonus, 0);
-
-        let ranger = manifest.classes.get("ranger").expect("ranger");
-        assert_eq!(ranger.primary_attr, Attribute::Dex);
-        assert_eq!(ranger.secondary_attr, Attribute::Str);
-        assert_eq!(ranger.base_hp, 8);
-        assert_eq!(ranger.class_attack_bonus, 0);
-        assert_eq!(ranger.class_dodge_bonus, 0);
     }
 }

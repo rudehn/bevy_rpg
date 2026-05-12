@@ -1,31 +1,24 @@
-//! Character creation screen: race + class + attribute allocation on one
-//! keyboard-driven panel. Mirrors the structure of `src/ui/menu.rs`.
+//! Character creation screen (Phase 2): two-section keyboard-driven
+//! panel. Race on top, Class below. No attribute allocation step — the
+//! attribute sum is fully derived from race + class.
 //!
 //! Flow:
 //!   Main Menu → "New Game" → `AppState::CharacterCreation` → "Begin Descent"
 //!   → `AppState::InGame` (with `CharacterChoice` resource overwritten).
 //!
 //! Keyboard model:
-//!   - ↑/↓ cycle focus between: Race / Class / STR / DEX / CON / INT / Begin
-//!   - ←/→ on Race or Class: change the selected option
-//!   - ←/→ on an attribute: decrement / increment (respects cap + remaining
-//!     points + Human Versatile +1 cap exception)
+//!   - ↑/↓ cycle focus: Race / Class / Begin
+//!   - ←/→ change the focused race or class
 //!   - Enter on Begin: confirm and transition
 //!   - Esc: return to main menu
 
 use bevy::prelude::*;
 
 use crate::character::{
-    ability_mod, compose_attributes, derive_stats, Attribute, Attributes, CharacterChoice,
-    Class, ClassAsset, ClassManifest, ClassManifestHandle, Race, RaceAsset, RaceManifest,
-    RaceManifestHandle,
+    compose_attributes, derive_stats, Attribute, Attributes, CharacterChoice, Class, ClassAsset,
+    ClassManifest, ClassManifestHandle, Race, RaceAsset, RaceManifest, RaceManifestHandle,
 };
 use crate::game::AppState;
-
-const FREE_POINTS: i32 = 4;
-const STAT_FLOOR: i32 = 8;
-const STAT_CAP_DEFAULT: i32 = 4; // baseline + 4
-const STAT_CAP_HUMAN_BONUS: i32 = 1; // Versatile: one stat may go +1 over
 
 const BG: Color = Color::srgb(0.04, 0.04, 0.04);
 const PANEL_BG: Color = Color::srgb(0.10, 0.10, 0.10);
@@ -36,35 +29,22 @@ const GOLD: Color = Color::srgb(1.0, 0.84, 0.0);
 const DIM: Color = Color::srgb(0.55, 0.55, 0.55);
 const TEXT: Color = Color::srgb(0.85, 0.85, 0.85);
 
-const RACES: [Race; 4] = [Race::Human, Race::Dwarf, Race::Elf, Race::Halfling];
+const RACES: [Race; 3] = [Race::Human, Race::Dwarf, Race::Elf];
 const CLASSES: [Class; 4] = [Class::Warrior, Class::Rogue, Class::Mage, Class::Ranger];
-const ATTRS: [Attribute; 4] = [Attribute::Str, Attribute::Dex, Attribute::Con, Attribute::Int];
 
-/// All possible focus targets, in tab order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Focus {
     Race,
     Class,
-    Attr(Attribute),
     Begin,
 }
 
-const TAB_ORDER: [Focus; 7] = [
-    Focus::Race,
-    Focus::Class,
-    Focus::Attr(Attribute::Str),
-    Focus::Attr(Attribute::Dex),
-    Focus::Attr(Attribute::Con),
-    Focus::Attr(Attribute::Int),
-    Focus::Begin,
-];
+const TAB_ORDER: [Focus; 3] = [Focus::Race, Focus::Class, Focus::Begin];
 
 #[derive(Resource, Debug, Clone)]
 struct CharCreationDraft {
     race_idx: usize,
     class_idx: usize,
-    /// Allocation in STR/DEX/CON/INT order (each 0..=available_max).
-    points: [i32; 4],
     focus: Focus,
 }
 
@@ -73,7 +53,6 @@ impl Default for CharCreationDraft {
         Self {
             race_idx: 0,
             class_idx: 0,
-            points: [0, 0, 0, 0],
             focus: Focus::Race,
         }
     }
@@ -86,45 +65,6 @@ impl CharCreationDraft {
     fn class(&self) -> Class {
         CLASSES[self.class_idx]
     }
-    fn points_spent(&self) -> i32 {
-        self.points.iter().sum()
-    }
-    fn points_remaining(&self) -> i32 {
-        FREE_POINTS - self.points_spent()
-    }
-    fn attr_idx(attr: Attribute) -> usize {
-        match attr {
-            Attribute::Str => 0,
-            Attribute::Dex => 1,
-            Attribute::Con => 2,
-            Attribute::Int => 3,
-        }
-    }
-    /// Per-stat cap on the *allocation* side: 4 normally, 5 for Human's
-    /// chosen Versatile stat. To keep the UX simple, Human gets +5 cap on
-    /// **all** stats but only one of them can actually exceed +4 (because
-    /// of the 4-point budget). Functionally equivalent to "one stat may
-    /// reach baseline + 5."
-    fn alloc_cap(&self, _attr: Attribute) -> i32 {
-        if self.race() == Race::Human {
-            STAT_CAP_DEFAULT + STAT_CAP_HUMAN_BONUS
-        } else {
-            STAT_CAP_DEFAULT
-        }
-    }
-    fn inc(&mut self, attr: Attribute) {
-        let i = Self::attr_idx(attr);
-        if self.points[i] < self.alloc_cap(attr) && self.points_remaining() > 0 {
-            self.points[i] += 1;
-        }
-    }
-    fn dec(&mut self, attr: Attribute) {
-        let i = Self::attr_idx(attr);
-        if self.points[i] > 0 {
-            self.points[i] -= 1;
-        }
-    }
-    /// Move focus forward (Tab) or backward (Shift+Tab).
     fn cycle_focus(&mut self, backward: bool) {
         let cur = TAB_ORDER
             .iter()
@@ -148,20 +88,15 @@ struct RaceBoxMarker(Race);
 #[derive(Component, Debug, Clone, Copy)]
 struct ClassBoxMarker(Class);
 
-#[derive(Component, Debug, Clone, Copy)]
-struct AttrRowMarker(Attribute);
-
 #[derive(Component)]
 struct BeginButtonMarker;
 
-/// All live-updated text fields on the screen, dispatched in `refresh_text`.
-/// Collapses what would otherwise be many separate marker components into one
-/// query, keeping the refresh systems under Bevy's 16-param limit.
+/// All live-updated text fields. Collapsed into one enum so a single
+/// query handles all updates and we stay under Bevy's 16-param cap.
 #[derive(Component, Debug, Clone, Copy)]
 enum CharCreationText {
     AttrScore(Attribute),
     AttrMod(Attribute),
-    RemainingPoints,
     Hp,
     Dodge,
     HitMelee,
@@ -203,9 +138,7 @@ fn spawn_screen(
     asset_server: Res<AssetServer>,
     mut draft: ResMut<CharCreationDraft>,
 ) {
-    // Fresh draft each time the screen opens.
     *draft = CharCreationDraft::default();
-
     let font = asset_server.load("fonts/Macondo-Regular.ttf");
 
     commands
@@ -243,7 +176,6 @@ fn spawn_screen(
                 },
             ));
 
-            // Race boxes (4 in a row)
             root.spawn(Node {
                 flex_direction: FlexDirection::Row,
                 column_gap: Val::Px(12.0),
@@ -255,7 +187,6 @@ fn spawn_screen(
                 }
             });
 
-            // Race trait description
             root.spawn((
                 Text::new(""),
                 TextFont { font: font.clone(), font_size: 14.0, ..default() },
@@ -286,7 +217,6 @@ fn spawn_screen(
                 }
             });
 
-            // Class description
             root.spawn((
                 Text::new(""),
                 TextFont { font: font.clone(), font_size: 14.0, ..default() },
@@ -294,41 +224,25 @@ fn spawn_screen(
                 CharCreationText::ClassDesc,
             ));
 
-            // Attributes section
+            // Attributes (read-only — no allocation in Phase 2)
             root.spawn((
+                Text::new("Attributes (race + class)"),
+                TextFont { font: font.clone(), font_size: 18.0, ..default() },
+                TextColor(DIM),
                 Node {
-                    flex_direction: FlexDirection::Row,
-                    column_gap: Val::Px(20.0),
                     margin: UiRect::top(Val::Px(4.0)),
                     align_self: AlignSelf::FlexStart,
                     ..default()
                 },
-            ))
-            .with_children(|row| {
-                row.spawn((
-                    Text::new("Attributes"),
-                    TextFont { font: font.clone(), font_size: 18.0, ..default() },
-                    TextColor(DIM),
-                ));
-                row.spawn((
-                    Text::new("Points remaining: 4"),
-                    TextFont { font: font.clone(), font_size: 14.0, ..default() },
-                    TextColor(GOLD),
-                    CharCreationText::RemainingPoints,
-                ));
-            });
+            ));
 
-            for attr in ATTRS {
-                root.spawn((
-                    Node {
-                        flex_direction: FlexDirection::Row,
-                        column_gap: Val::Px(12.0),
-                        padding: UiRect::all(Val::Px(3.0)),
-                        ..default()
-                    },
-                    BackgroundColor(PANEL_BG),
-                    AttrRowMarker(attr),
-                ))
+            for attr in [Attribute::Str, Attribute::Dex, Attribute::Int] {
+                root.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(12.0),
+                    padding: UiRect::all(Val::Px(3.0)),
+                    ..default()
+                })
                 .with_children(|row| {
                     row.spawn((
                         Text::new(attr.name().to_string()),
@@ -337,7 +251,7 @@ fn spawn_screen(
                         Node { width: Val::Px(50.0), ..default() },
                     ));
                     row.spawn((
-                        Text::new("10"),
+                        Text::new("0"),
                         TextFont { font: font.clone(), font_size: 18.0, ..default() },
                         TextColor(GOLD),
                         CharCreationText::AttrScore(attr),
@@ -352,9 +266,9 @@ fn spawn_screen(
                 });
             }
 
-            // Preview section
+            // Preview section (live, race × class)
             root.spawn((
-                Text::new("Preview"),
+                Text::new("Preview (level 1)"),
                 TextFont { font: font.clone(), font_size: 18.0, ..default() },
                 TextColor(DIM),
                 Node {
@@ -363,7 +277,6 @@ fn spawn_screen(
                     ..default()
                 },
             ));
-            // Top preview row: HP + Dodge
             root.spawn(Node {
                 flex_direction: FlexDirection::Row,
                 column_gap: Val::Px(24.0),
@@ -372,7 +285,7 @@ fn spawn_screen(
             })
             .with_children(|row| {
                 row.spawn((
-                    Text::new("HP 12"),
+                    Text::new("HP 13"),
                     TextFont { font: font.clone(), font_size: 16.0, ..default() },
                     TextColor(TEXT),
                     CharCreationText::Hp,
@@ -384,61 +297,8 @@ fn spawn_screen(
                     CharCreationText::Dodge,
                 ));
             });
-            // Melee row
-            root.spawn(Node {
-                flex_direction: FlexDirection::Row,
-                column_gap: Val::Px(16.0),
-                align_self: AlignSelf::FlexStart,
-                ..default()
-            })
-            .with_children(|row| {
-                row.spawn((
-                    Text::new("Melee"),
-                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
-                    TextColor(DIM),
-                    Node { width: Val::Px(72.0), ..default() },
-                ));
-                row.spawn((
-                    Text::new("Hit +0"),
-                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
-                    TextColor(TEXT),
-                    CharCreationText::HitMelee,
-                ));
-                row.spawn((
-                    Text::new("Damage +0"),
-                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
-                    TextColor(TEXT),
-                    CharCreationText::DamageMelee,
-                ));
-            });
-            // Ranged row
-            root.spawn(Node {
-                flex_direction: FlexDirection::Row,
-                column_gap: Val::Px(16.0),
-                align_self: AlignSelf::FlexStart,
-                ..default()
-            })
-            .with_children(|row| {
-                row.spawn((
-                    Text::new("Ranged"),
-                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
-                    TextColor(DIM),
-                    Node { width: Val::Px(72.0), ..default() },
-                ));
-                row.spawn((
-                    Text::new("Hit +0"),
-                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
-                    TextColor(TEXT),
-                    CharCreationText::HitRanged,
-                ));
-                row.spawn((
-                    Text::new("Damage +0"),
-                    TextFont { font: font.clone(), font_size: 16.0, ..default() },
-                    TextColor(TEXT),
-                    CharCreationText::DamageRanged,
-                ));
-            });
-            // Spell (staff) row
+            preview_row(root, &font, "Melee", CharCreationText::HitMelee, CharCreationText::DamageMelee);
+            preview_row(root, &font, "Ranged", CharCreationText::HitRanged, CharCreationText::DamageRanged);
             root.spawn(Node {
                 flex_direction: FlexDirection::Row,
                 column_gap: Val::Px(16.0),
@@ -481,8 +341,8 @@ fn spawn_screen(
             // Help footer
             root.spawn((
                 Text::new(
-                    "\u{2191}/\u{2193}: next field   |   \u{2190}/\u{2192}: change selection / \
-                    adjust attribute   |   Enter (on Begin): start   |   Esc: cancel",
+                    "\u{2191}/\u{2193}: next field   |   \u{2190}/\u{2192}: change race/class \
+                    |   Enter (on Begin): start   |   Esc: cancel",
                 ),
                 TextFont { font: font.clone(), font_size: 12.0, ..default() },
                 TextColor(DIM),
@@ -490,6 +350,42 @@ fn spawn_screen(
                     margin: UiRect::top(Val::Px(8.0)),
                     ..default()
                 },
+            ));
+        });
+}
+
+fn preview_row(
+    parent: &mut ChildSpawnerCommands,
+    font: &Handle<Font>,
+    label: &str,
+    hit_marker: CharCreationText,
+    dmg_marker: CharCreationText,
+) {
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            column_gap: Val::Px(16.0),
+            align_self: AlignSelf::FlexStart,
+            ..default()
+        })
+        .with_children(|row| {
+            row.spawn((
+                Text::new(label.to_string()),
+                TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                TextColor(DIM),
+                Node { width: Val::Px(72.0), ..default() },
+            ));
+            row.spawn((
+                Text::new("Hit +0"),
+                TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                TextColor(TEXT),
+                hit_marker,
+            ));
+            row.spawn((
+                Text::new("Damage +0"),
+                TextFont { font: font.clone(), font_size: 16.0, ..default() },
+                TextColor(TEXT),
+                dmg_marker,
             ));
         });
 }
@@ -527,7 +423,6 @@ fn handle_input(
         return;
     }
 
-    // ↑/↓ cycle focus between sections. Down advances, up retreats.
     if keys.just_pressed(KeyCode::ArrowDown) {
         draft.cycle_focus(false);
         return;
@@ -555,35 +450,31 @@ fn handle_input(
                 draft.class_idx += 1;
             }
         }
-        Focus::Attr(attr) => {
-            if left {
-                draft.dec(attr);
-            } else if right {
-                draft.inc(attr);
-            }
-        }
         Focus::Begin => {
             if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter) {
                 character_choice.race = draft.race();
                 character_choice.class = draft.class();
-                character_choice.free_points = draft.points;
                 next_state.set(AppState::InGame);
             }
         }
     }
 }
 
-/// Update panel background colors based on selection + focus.
+fn panel_color(selected: bool, focused: bool) -> Color {
+    match (selected, focused) {
+        (true, true) => PANEL_BG_FOCUSED_SELECTED,
+        (true, false) => PANEL_BG_SELECTED,
+        (false, true) => PANEL_BG_FOCUSED,
+        (false, false) => PANEL_BG,
+    }
+}
+
 fn refresh_panels(
     draft: Res<CharCreationDraft>,
     mut race_boxes: Query<(&RaceBoxMarker, &mut BackgroundColor), Without<ClassBoxMarker>>,
     mut class_boxes: Query<
         (&ClassBoxMarker, &mut BackgroundColor),
-        (Without<RaceBoxMarker>, Without<AttrRowMarker>, Without<BeginButtonMarker>),
-    >,
-    mut attr_rows: Query<
-        (&AttrRowMarker, &mut BackgroundColor),
-        (Without<RaceBoxMarker>, Without<ClassBoxMarker>, Without<BeginButtonMarker>),
+        (Without<RaceBoxMarker>, Without<BeginButtonMarker>),
     >,
     mut begin_btn: Query<
         &mut BackgroundColor,
@@ -591,7 +482,6 @@ fn refresh_panels(
             With<BeginButtonMarker>,
             Without<RaceBoxMarker>,
             Without<ClassBoxMarker>,
-            Without<AttrRowMarker>,
         ),
     >,
 ) {
@@ -607,14 +497,6 @@ fn refresh_panels(
             draft.focus == Focus::Class,
         ));
     }
-    for (marker, mut bg) in &mut attr_rows {
-        let focused = matches!(draft.focus, Focus::Attr(a) if a == marker.0);
-        *bg = BackgroundColor(if focused {
-            PANEL_BG_FOCUSED
-        } else {
-            PANEL_BG
-        });
-    }
     if let Ok(mut bg) = begin_btn.single_mut() {
         *bg = BackgroundColor(if draft.focus == Focus::Begin {
             PANEL_BG_FOCUSED_SELECTED
@@ -624,8 +506,6 @@ fn refresh_panels(
     }
 }
 
-/// Update every live-text field (attribute scores, mods, remaining points,
-/// preview stats, race/class descriptions) from the current draft.
 fn refresh_text(
     draft: Res<CharCreationDraft>,
     race_manifest_handle: Res<RaceManifestHandle>,
@@ -644,12 +524,12 @@ fn refresh_text(
         .get(&draft.class().name().to_lowercase());
 
     let attrs = if let (Some(r), Some(c)) = (race_asset, class_asset) {
-        compose_attributes(r, c, draft.points)
+        compose_attributes(r, c)
     } else {
         Attributes::default()
     };
-    let derived = if let Some(c) = class_asset {
-        derive_stats(c, &attrs)
+    let derived = if let Some(r) = race_asset {
+        derive_stats(r, &attrs, 1)
     } else {
         Default::default()
     };
@@ -658,9 +538,6 @@ fn refresh_text(
         let new = match *kind {
             CharCreationText::AttrScore(a) => attrs.get(a).to_string(),
             CharCreationText::AttrMod(a) => format!("({:+})", attrs.mod_of(a)),
-            CharCreationText::RemainingPoints => {
-                format!("Points remaining: {}", draft.points_remaining())
-            }
             CharCreationText::Hp => format!("HP {}", derived.max_hp),
             CharCreationText::Dodge => format!("Dodge {}", derived.dodge),
             CharCreationText::HitMelee => format!("Hit {:+}", derived.hit_bonus_melee),
@@ -668,7 +545,6 @@ fn refresh_text(
             CharCreationText::HitRanged => format!("Hit {:+}", derived.hit_bonus_ranged),
             CharCreationText::DamageRanged => format!("Damage {:+}", derived.damage_bonus_ranged),
             CharCreationText::SpellDamage => {
-                // Clamped at 0 to mirror the runtime clamp in `handle_zap_staff`.
                 format!("Damage {:+}", derived.damage_bonus_staff.max(0))
             }
             CharCreationText::RaceDesc => race_asset
@@ -680,16 +556,6 @@ fn refresh_text(
         };
         *t = Text::new(new);
     }
-    let _ = ability_mod; // exported helper, suppress unused-import warning
-}
-
-fn panel_color(selected: bool, focused: bool) -> Color {
-    match (selected, focused) {
-        (true, true) => PANEL_BG_FOCUSED_SELECTED,
-        (true, false) => PANEL_BG_SELECTED,
-        (false, true) => PANEL_BG_FOCUSED,
-        (false, false) => PANEL_BG,
-    }
 }
 
 #[cfg(test)]
@@ -697,58 +563,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn draft_inc_respects_cap_and_remaining_points() {
-        let mut d = CharCreationDraft::default();
-        // Non-Human race → cap +4. Start with 4 points to spend.
-        d.race_idx = 1; // Dwarf
-        d.inc(Attribute::Str);
-        d.inc(Attribute::Str);
-        d.inc(Attribute::Str);
-        d.inc(Attribute::Str);
-        assert_eq!(d.points[0], 4); // cap reached at +4
-        assert_eq!(d.points_remaining(), 0);
-        // Next inc is a no-op (no points left)
-        d.inc(Attribute::Dex);
-        assert_eq!(d.points[1], 0);
-    }
-
-    #[test]
-    fn draft_dec_floors_at_zero() {
-        let mut d = CharCreationDraft::default();
-        d.dec(Attribute::Str);
-        assert_eq!(d.points[0], 0);
-    }
-
-    #[test]
-    fn human_versatile_extends_cap_by_one() {
-        let mut d = CharCreationDraft::default();
-        d.race_idx = 0; // Human
-        // Spend 5 into STR — possible because Human cap is +5.
-        for _ in 0..5 {
-            d.inc(Attribute::Str);
-        }
-        // But only the budget of 4 points exists, so only 4 are spent.
-        assert_eq!(d.points[0], 4);
-        assert_eq!(d.points_remaining(), 0);
-        // (The +5 cap matters when other Human stats are at 0 — same
-        // total budget, but the headroom on one stat is +5.)
-    }
-
-    #[test]
     fn cycle_focus_walks_full_order_forward() {
         let mut d = CharCreationDraft::default();
-        let starts = vec![
-            Focus::Race,
-            Focus::Class,
-            Focus::Attr(Attribute::Str),
-            Focus::Attr(Attribute::Dex),
-            Focus::Attr(Attribute::Con),
-            Focus::Attr(Attribute::Int),
-            Focus::Begin,
-            Focus::Race,
-        ];
+        let starts = vec![Focus::Race, Focus::Class, Focus::Begin, Focus::Race];
         let mut seen = vec![d.focus];
-        for _ in 0..7 {
+        for _ in 0..3 {
             d.cycle_focus(false);
             seen.push(d.focus);
         }
@@ -760,7 +579,7 @@ mod tests {
         let mut d = CharCreationDraft::default();
         d.cycle_focus(true); // Race → Begin (wrap)
         assert_eq!(d.focus, Focus::Begin);
-        d.cycle_focus(true); // Begin → INT
-        assert_eq!(d.focus, Focus::Attr(Attribute::Int));
+        d.cycle_focus(true); // Begin → Class
+        assert_eq!(d.focus, Focus::Class);
     }
 }

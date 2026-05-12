@@ -6,35 +6,34 @@ The original Brogue-style design had no character creation — every run
 started as the same blank adventurer, with identity emerging from gear
 and enchant-scroll choices ([PLAYER.md](PLAYER.md)).
 
-The character system is a deliberate **piecemeal pivot** toward a
-D&D-flavored RPG layer on top of that foundation. The player picks a
-**race**, a **class**, and allocates a small number of free attribute
-points before the first floor. Those choices feed into combat math
-through four attributes — **STR, DEX, CON, INT** — without replacing
-the existing gear-driven progression.
+Phase 1 introduced races, classes, and four attributes (STR/DEX/CON/INT).
+**Phase 2 restructures the foundation while adding XP and levels:**
 
-**What's in scope for the character system today (Phase 1):**
-- Character creation screen (Race → Class → Attribute allocation)
-- 4 races × 4 classes (16 starting combos)
-- Attribute components and modifier helpers
-- HP derived from CON
-- Attribute modifiers contributing to derived combat stats
-- Intentionally **weak starting kits** so power still has to be earned
-  through gear discovery
+1. **CON is removed** as a player attribute. HP now scales with race
+   and level via a DCSS-inspired formula — there is no per-character
+   "toughness stat."
+2. **The modifier scale is anchored at 16** (not 10). A score of 16 is
+   the +0 reference; mods at chargen are deliberately modest, often
+   ranging -4 to +2. Players grow into positive mods over levels.
+3. **There is no chargen attribute-point allocation.** Final scores
+   are entirely the sum of `race + class` contributions.
+4. **Halfling is removed.** Three races remain: Human, Dwarf, Elf.
 
-**Explicitly deferred to later phases:**
-- **Saving throws** (player and monster). When added, monster saves
-  derive from monster tier + Species defaults with per-monster overrides.
-- **XP and levels.** Phase 1 freezes the player at level 1.
-- **Skills** (use-trained DCSS-style tiers on weapon families, defenses,
-  magic schools).
-- **Mana and spells.** Mages still use staves with charges until the
-  Mana phase ships.
-- **Racial attribute caps** (ADOM-style ceilings). Revisited alongside
-  ASIs / levels.
-- **Charm / fear / morale saves** (WIS/CHA are absent from the attribute
-  roster; deferred decisions about which save handles those effects live
-  in the Saves phase).
+**Phase 2 in scope today:**
+
+- 3 races × 4 classes character creation
+- HP derived from `race_hp_mod × (8 + 11 × XL / 2)`
+- Attribute mods anchored at 16
+- (Phase 2 second chunk, in progress) XP, levels, racial stat-gain
+  schedule, player-choice ASIs, character info screen
+
+**Deferred to later phases:**
+
+- Saving throws (player and monster)
+- Skills (DCSS use-trained Fighting/weapon/spell skills — the HP
+  formula's missing Fighting term lands here)
+- Mana / spells / spell schools
+- Monster combat-stat rebalancing for the Phase 2 power curve
 
 ## Data Model
 
@@ -42,296 +41,268 @@ the existing gear-driven progression.
 
 | Component | Fields | Notes |
 |---|---|---|
-| `Race` | enum: `Human`, `Dwarf`, `Elf`, `Halfling` | Marker + lookup key for race data |
+| `Race` | enum: `Human`, `Dwarf`, `Elf` | Marker + lookup key for race data |
 | `Class` | enum: `Warrior`, `Rogue`, `Mage`, `Ranger` | Marker + lookup key for class data |
-| `Attributes` | `{ str: i32, dex: i32, con: i32, int: i32 }` | Final attribute scores after race + class + free points |
+| `Attributes` | `{ strength: i32, dexterity: i32, intelligence: i32 }` | Three attributes (CON removed in Phase 2) |
 
-`Attributes::ability_mod(score) -> i32` returns the D&D 5e modifier:
-`(score - 10).div_euclid(2)` — floor division, so 8 → -1, 9 → -1,
-10 → 0, 11 → 0, 12 → +1, 18 → +4, 20 → +5.
+`ability_mod(score) -> i32` returns `(score - 16).div_euclid(2)`:
+- 16 → 0, 14 → -1, 12 → -2, 10 → -3, 8 → -4
+- 18 → +1, 20 → +2, 24 → +4, 28 → +6
 
 ### Assets
 
-`assets/races.ron` and `assets/classes.ron`, loaded via the existing
-`bevy_common_assets` RON pipeline ([src/assets/mod.rs](../../src/assets/mod.rs)).
+`assets/races.ron` and `assets/classes.ron`.
 
 **Race entry (RON):**
 ```ron
-Race(
-    id: "dwarf",
+"dwarf": (
     name: "Dwarf",
-    str_bonus: 2, dex_bonus: 0, con_bonus: 2, int_bonus: 0,
-    trait: Stoneblood,  // enum
-    description: "Hardy folk of the deep places.",
+    str_bonus: 12, dex_bonus: 4, int_bonus: 8,
+    hp_mod: 1.20,
+    gain_schedule: (
+        interval: 4,
+        allowed: [Str, Int, Dex],
+    ),
+    description: "Hardy folk of the deep places. ...",
 )
 ```
 
 **Class entry (RON):**
 ```ron
-Class(
-    id: "warrior",
+"warrior": (
     name: "Warrior",
-    primary_attr: Str,
-    secondary_attr: Con,
-    base_hp: 12,
-    class_attack_bonus: 1,
-    class_dodge_bonus: 0,
+    attribute_distribution: (str: 8, dex: 2, int: 2),
     starting_kit: [
-        ItemRef("rusted_shortsword"),
-        ItemRef("padded_armor"),
+        (name: "Rusted Shortsword"),
+        (name: "Padded Armor"),
     ],
-    description: "Steel and discipline.",
+    description: "Steel and discipline. ...",
 )
 ```
 
 ### Spawn payload
 
-Character creation hands off to the player spawner via
-`CharacterChoice { race: Race, class: Class, free_points: [i32; 4] }`.
-The spawner resolves baselines, applies free points, computes final
-`Attributes`, and inserts the appropriate `Race`/`Class`/`Attributes`
-components plus the starting kit.
+`CharacterChoice { race: Race, class: Class }` — the character creation
+screen writes this; the spawner reads it and builds the player entity.
+Phase 2 has no free-point step; the chargen UI just picks race + class.
 
 ## Races
 
-Race contributes baseline attribute bonuses on top of `[10, 10, 10, 10]`,
-plus one passive trait. Halfling's trait is deliberately strong so it
-competes with Dwarf's poison resistance — a 5% reroll on every d20 is
-quietly massive.
-
 > **Maintenance contract:** every shipping race in `assets/races.ron`
-> must appear in this table with its trait keyword, and every trait
-> keyword listed here must match the `RaceTrait` enum in
-> `src/character/race.rs`. The `character_md_documents_every_shipping_race`
-> test enforces this — changing a race without updating this section
-> will fail the build.
+> must appear in this section with its trait keyword. The
+> `character_md_documents_every_shipping_race` test enforces this.
+> Three races ship; Halfling was removed in Phase 2.
 
-| Race | STR | DEX | CON | INT | Passive Trait |
-|---|---|---|---|---|---|
-| Human | +1 | +1 | +1 | +1 | **Versatile** — one of your 4 free points can exceed the per-stat allocation cap by 1 |
-| Dwarf | +2 | 0 | +2 | 0 | **Stoneblood** — 50% poison resistance |
-| Elf | 0 | +2 | 0 | +2 | **Keen Senses** — vision range +2 tiles |
-| Halfling | 0 | +2 | +1 | +1 | **Lucky** — reroll any natural 1 on a d20 (no cooldown); must take the second result |
+Each race contributes a **24-point distribution** across STR/DEX/INT,
+an **HP multiplier** applied through the HP formula, a **stat-gain
+schedule** that fires every N XP levels, and one **passive trait**.
+
+| Race | STR | DEX | INT | HP × | Schedule | Trait |
+|---|---|---|---|---|---|---|
+| Human | 8 | 8 | 8 | 1.00 | 4:SDI (any) | **Adaptive** |
+| Dwarf | 12 | 4 | 8 | 1.20 | 4:SID (any) | **Stoneblood** — 50% poison resistance |
+| Elf | 4 | 10 | 10 | 0.90 | 4:DI (no STR) | **Keen Senses** — vision range +2 |
+
+**Schedule notation** (DCSS-style):  `N:LLL` = every N XP levels, the
+player gains +1 in one of the listed attribute letters (S/D/I). When
+the schedule's `allowed` set has more than one letter, the player is
+prompted via the ASI modal; a single-letter schedule (none currently)
+would auto-apply.
 
 **Playstyle at a glance:**
-- **Human** — best for indecisive builds. Even stat spread plus one
-  attribute that can climb to 19 with allocation. Pairs well with any
-  class but shines when you want a melee/caster hybrid (Warrior+staff
-  finds or Mage+armor finds).
-- **Dwarf** — the toughest opener. Poison resistance is a quiet life-saver
-  on deep floors (jellies, spider venom, poison gas). STR+CON spread
-  makes Warrior the natural match.
-- **Elf** — vision and brains. The +2 vision range catches ambushes
-  earlier; INT+DEX spread is what Mages and Rogues want. Don't pick if
-  you're going Warrior — you'll feel the missing CON.
-- **Halfling** — the safest run. Lucky removes worst-case hit and save
-  rolls forever — no cap, no cooldown. DEX+CON+INT spread plays Rogue
-  cleanly and lets a low-STR Ranger function.
 
-**Implementation notes:**
-- Stoneblood stacks **multiplicatively** with the existing poison
-  resistance pipeline ([damage_reduction_system](../../src/game/combat.rs)).
-  A Dwarf wearing a 50%-poison-resistance ring takes 25% damage from poison.
-- Keen Senses applies to the player's `VisionRange` at spawn; later
-  effects that modify vision (potions, items) stack on top.
-- Lucky is implemented via the `roll_d20_with_race` helper in
-  [src/character/dice.rs](../../src/character/dice.rs). Every player d20
-  call site must route through it.
-- Versatile changes only the allocation UI — it's not a runtime effect.
+- **Human** — adaptive in every way. Even +8 spread across all three
+  stats; can pick S/D/I freely at racial-schedule levels. Pairs well
+  with any class.
+- **Dwarf** — hardy and strong. The +12 STR distribution and 1.20 HP
+  multiplier make a Dwarf Warrior the most durable opener. Stoneblood
+  is a quiet life-saver on poison-heavy floors. Less DEX means a Dwarf
+  Mage or Rogue will feel slow at chargen until they level into it.
+- **Elf** — fragile and clever. Lowest HP multiplier (0.90), highest
+  DEX+INT spread, and a schedule that never bumps STR. Pairs naturally
+  with Mage or Rogue; Warrior Elf is intentionally awkward.
 
 ## Classes
 
-Class sets primary/secondary attribute focus, base HP, small flat
-attack/dodge bonuses, and a deliberately **weak** starting kit. The
-weak kit is intentional: the class teaches you the role without
-short-circuiting the gear discovery loop.
-
 > **Maintenance contract:** every class in `assets/classes.ron` must
-> appear in this table with its name and base HP. The
-> `character_md_documents_every_shipping_class` test enforces this —
-> changing a class's name or base HP without updating this section
-> fails the build.
+> appear in this section with its name and its 12-point distribution.
+> The `character_md_documents_every_shipping_class` and
+> `every_class_distribution_sums_to_twelve` tests enforce this.
 
-| Class | Primary / Secondary | Base HP | Attack Bonus | Dodge Bonus | Starting Kit |
-|---|---|---|---|---|---|
-| Warrior | STR / CON | 12 | +1 | 0 | Rusted Shortsword (1d6, no bonuses), Padded Armor (armor 1, no dodge) |
-| Rogue | DEX / INT | 8 | 0 | +1 | Dagger (1d4, +1 hit), Cloth Wraps (0 armor, +1 dodge), 1 throwing knife |
-| Mage | INT / CON | 6 | 0 | 0 | Apprentice Staff (1d3 lightning, 1 charge), Robe (0 armor, 0 dodge) |
-| Ranger | DEX / STR | 8 | 0 | 0 | Shortbow (1d6, 6-tile range), 6 arrows, Padded Armor (armor 1) |
+Each class allocates a **12-point distribution** across STR/DEX/INT
+(no negatives in shipping data; the schema allows them for future
+class designs). All class differentiation flows through the
+distribution — there is no `class_attack_bonus` or `class_dodge_bonus`
+fudge factor. A Warrior's hit advantage comes from their +8 STR
+yielding STR_mod on melee; a Rogue's dodge advantage comes from their
++8 DEX yielding DEX_mod on dodge.
 
-**Class baselines:** primary attribute gets +2, secondary +1, others 0.
-Stacked on top of race bonuses, then free points apply.
+| Class | STR | DEX | INT | Starting Kit |
+|---|---|---|---|---|
+| Warrior | 8 | 2 | 2 | Rusted Shortsword (1d6), Padded Armor (armor 1) |
+| Rogue | 2 | 8 | 2 | Dagger (1d4 +1 hit), Cloth Wraps (+1 dodge), 1 throwing knife |
+| Mage | 1 | 3 | 8 | Apprentice Staff (1d3 lightning, slow recharge), Robe |
+| Ranger | 3 | 8 | 1 | Shortbow (1d6, range 6), 6 arrows, Padded Armor |
 
 **Playstyle at a glance:**
-- **Warrior** — the highest base HP, +1 attack bonus on every melee
-  swing, heaviest starting armor. The forgiving entry-class; trades
-  finesse and magic for raw durability.
-- **Rogue** — fastest dodge ramp (+1 base + DEX scaling), Dagger gives
-  +1 hit, a single throwing knife for emergencies. Squishy at 8 HP —
-  positioning is everything. INT secondary opens scrolls/staves later.
-- **Mage** — the most fragile class at 6 HP, but INT scales the
-  damage of every staff zap they ever pick up (clamped at 0 — dump-INT
-  Mages can't make a staff weaker than baseline). Find or buy more
-  staves; until then your Apprentice Staff has one charge.
-- **Ranger** — DEX-primary like the Rogue but with STR secondary, so
-  bow-or-melee builds both feel okay. Six arrows to start; conserving
-  ammo is the early-floor puzzle. Hit and damage branch by weapon type
-  at runtime: bows consume DEX_mod, melee weapons consume STR_mod (see
-  [§Combat Math Integration](#combat-math-integration)).
 
-## Attribute Allocation
+- **Warrior** — STR-driven melee. +8 STR means at chargen a Dwarf
+  Warrior has STR 20 (mod +2), Human Warrior has STR 16 (mod 0). Hit
+  and damage scale with STR on every swing.
+- **Rogue** — DEX-driven, dodge-focused. +8 DEX scales hit/damage on
+  the Dagger and on every ranged attack; also feeds Dodge.
+  Intentionally fragile until you grow into INT for scroll use.
+- **Mage** — INT-driven. The +8 INT yields INT_mod ≥ +0 for an Elf
+  Mage at chargen; staff zap damage scales with INT_mod (clamped at 0).
+  Frailest class — Elf Mage has only 12 HP at L1.
+- **Ranger** — DEX-driven ranged. Bow attacks consume DEX_mod for both
+  hit and damage. Six arrows to start; conserving ammo is the early
+  puzzle.
 
-Three-step flow in the character creation screen:
-
-1. **Race selection** — applies race bonuses on top of `[10, 10, 10, 10]`.
-2. **Class selection** — applies class baseline (primary +2, secondary +1).
-3. **Allocate 4 free points** across STR/DEX/CON/INT.
-
-**Allocation rules:**
-- Per-stat cap: `baseline_after_race_and_class + 4`.
-- Per-stat floor: 8 (race + class never penalize below this, but the
-  floor exists for future-proofing).
-- **Human Versatile exception:** one stat may reach `baseline + 5` instead
-  of `baseline + 4`.
-
-After allocation, `Attributes` is finalized; modifiers are computed via
-`ability_mod`.
-
-### HP Formula (Phase 1, no levels)
+## HP Formula
 
 ```
-max_hp = class_base_hp + ability_mod(con)
+max_hp = floor(race_hp_mod × (8 + 11 × xp_level / 2))
 ```
 
-So a Warrior (`base 12`) with CON 14 (`mod +2`) starts at 14 HP. A Mage
-(`base 6`) with CON 8 (`mod -1`) starts at 5 HP.
+Adapted from DCSS's HP formula, minus the Fighting-skill term (which
+lands when the Skills phase ships). HP is recomputed from scratch on
+every level-up; equipment HP bonuses layer on top via the existing
+recalc.
 
-**Phase 2 will extend this** to
-`+ (level - 1) × (class_per_level + ability_mod(con))`.
+**Worked values:**
+
+| Race (HP ×) | L1 | L9 | L18 | L27 |
+|---|---|---|---|---|
+| Dwarf (1.20) | 16 | 69 | 128 | 187 |
+| Human (1.00) | 13 | 57 | 107 | 156 |
+| Elf (0.90) | 12 | 51 | 96 | 140 |
 
 ## Combat Math Integration
 
-`Attributes` doesn't replace the existing stat components in
-[src/game/stats.rs](../../src/game/stats.rs). Attacker-side scaling
-(hit / damage) is **dynamic** — `hit_check_system` and `damage_roll_system`
-read the attacker's `Attributes` and the `AttackIntentMessage.source` and
-add the right modifier per attack. Defender-side scaling (Dodge) and
-one-time values (MaxHp) are **baked** at spawn.
+HitBonus, DamageBonus, Dodge stay as flat-value components on the
+player entity. **Attribute mods for attacks are added dynamically**
+at hit-check / damage-roll time, branching on `AttackIntentMessage.source`:
 
-| Combat value | Phase 1 derivation | When applied |
+| Combat value | Phase 2 derivation | When applied |
 |---|---|---|
-| `HitBonus` component | `class_attack_bonus + equipment.hit_bonus` | baked at spawn / equip |
+| `HitBonus` component | `equipment.hit_bonus` only | baked at spawn / equip |
 | Hit-roll attribute bonus | STR_mod for melee, DEX_mod for ranged, 0 otherwise | dynamic in `hit_check_system` |
-| `DamageBonus` component | `equipment.damage_bonus` | baked at spawn / equip |
+| `DamageBonus` component | `equipment.damage_bonus` only | baked at spawn / equip |
 | Damage-roll attribute bonus | STR_mod for melee, DEX_mod for ranged, 0 otherwise | dynamic in `damage_roll_system` |
 | Staff zap damage adder | `ability_mod(int).max(0)` | dynamic in `handle_zap_staff` |
-| `Dodge` | `ability_mod(dex) + class_dodge_bonus + equipment.dodge_bonus` | baked at spawn / equip |
+| `Dodge` | `dex_mod + equipment.dodge_bonus` | baked at spawn / equip |
 | `Armor` | `equipment.armor` (attribute-independent) | baked at spawn / equip |
-| `MaxHp` | `class_base_hp + ability_mod(con)` | baked at spawn |
-
-**Why dynamic on the attack side?** A single `HitBonus` value can't
-correctly represent both "STR for melee" and "DEX for ranged" — a
-Ranger with high DEX would either get a wrong melee swing or a wrong
-bow shot. Reading the modifier at roll time using the attack's source
-gives every weapon class the right scaling without bookkeeping.
-
-**Why baked on the defender side?** Dodge is attack-type-agnostic
-(a nimble target dodges arrows and swords equally well) and MaxHp is
-a one-time spawn value. Recomputing them dynamically would just be
-work without behavior change.
+| `MaxHp` | `floor(race_hp_mod × (8 + 11 × XL / 2))` | recomputed on every level-up |
 
 The pure helper that drives the dynamic side is
 `attack_attribute_bonus(source, attrs)` in
 [src/character/attributes.rs](../../src/character/attributes.rs).
-Every attribute-aware combat site routes through it.
 
-**INT in Phase 1:** without saves and spells, INT would be inert.
-Letting `ability_mod(int)` scale Mage's staff zap damage gives the Mage
-class an immediate, tangible reason to pump INT, and makes "dump INT
-for HP" a legible trade-off.
+## Level Progression
 
-**Equipment is additive, not overriding.** A Warrior can wield a bow —
-the bow's hit bonus stacks with whatever ability mod fires (DEX for
-ranged). Phase 3 adds weapon-family skill tiers that further amplify
-the appropriate attribute.
+> **Phase 2 second chunk** — XP grant, level-up handling, racial
+> stat-gain modal, and player-choice ASIs are not yet implemented at
+> the time of this rewrite. The data shape and intended flow are
+> documented below so the second chunk has a clear target.
 
-**Critical hits unchanged:** natural 20 still doubles damage dice.
+**Level cap:** 27 (DCSS).
 
-### Halfling Lucky implementation
-
-All d20 rolls go through a single helper:
-
+**XP curve (slow-then-fast cubic-ish):**
 ```rust
-fn d20_roll(entity: Entity, race_query: &Query<&Race>, rng: &mut RandomNumberGenerator) -> u32 {
-    let roll = rng.range(1, 21);
-    if roll == 1 && race_query.get(entity).is_ok_and(|r| *r == Race::Halfling) {
-        rng.range(1, 21)
-    } else {
-        roll
-    }
-}
+xp_required_for_level(L) = 100·(L-1)² + 50·(L-1) + (10·(L-1)³)/8
 ```
+- L2: 151
+- L5: 1,925
+- L10: 19,151
+- L20: 60,000
+- L27: ≈ 150,000
 
-Existing direct `rng.range(1, 21)` call sites in
-[src/game/combat.rs](../../src/game/combat.rs) and other d20 consumers
-must be migrated to this helper as part of Phase 1.
+**Per-monster XP:** `MonsterAsset.tier` (explicit u32) → base XP
+roughly `20 + (tier-1)·25 + ((tier-1)²)/4`. Final reward is multiplied
+by an anti-farming function of `player_level - monster_tier`:
+
+| Diff (player − tier) | Multiplier |
+|---|---|
+| ≤ -3 | 1.5× (bonus for punching up) |
+| -2 to +2 | 1.0× (full) |
+| +3 | 0.75× |
+| +4 | 0.50× |
+| ≥ +5 | **0×** (no farming low-level mobs) |
+
+**Level-up effects:**
+- Recompute `max_hp` from the formula at the new XL; heal to full
+- Emit "LEVEL UP" particle on the player
+- Game log: "You reach level N!"
+- If the level is a multiple of `race.gain_schedule.interval`: open
+  ASI modal with 1 point and the race's allowed letters
+- If the level is in `{3, 9, 15, 21, 27}`: open ASI modal with 2 free
+  points and all three letters allowed
+
+**ASI modal UX** (DCSS-inspired): a small inline overlay shows
+`(S)trength · (D)exterity · (I)ntelligence` with the disallowed
+letters greyed out. Input is blocked until the player has spent all
+available points. Single keypress per point.
+
+**Total stat gains by L27** for a typical character:
+- 6 racial-schedule bumps (every 4 levels)
+- 10 player-choice points (5 events × 2 each)
+- 16 points added on top of the chargen sum (36 for any race+class)
+
+By L27, a focused stat can plausibly reach the mid-20s (mod +4 to +6).
 
 ## Character Creation Flow
 
-`AppState::Menu` → `MenuState::CharacterCreation` → three substeps
-(Race, Class, Attribute Allocation). UI in
-`src/menu/character_creation.rs`. Back button at each step. Default
-preselection (Human Warrior, all 4 points into STR) for one-click new-game.
+`AppState::Menu` → `AppState::CharacterCreation` → `AppState::InGame`.
 
-The screen live-previews: HP, hit bonus (melee + ranged), damage bonus
-(melee + ranged + staff), dodge.
+The character creation screen is a single keyboard-driven panel:
+
+1. **Race selection** — left/right to change selected race
+2. **Class selection** — left/right to change selected class
+3. **Live preview** — HP / Dodge / melee+ranged Hit & Damage / Spell
+   Damage, all computed from the current race+class via
+   `compose_attributes` + `derive_stats`
+4. **Begin Descent** — Enter to confirm, transitions to InGame
+
+↑/↓ cycles focus between Race / Class / Begin. Esc returns to main menu.
 
 ## Save / Load
 
-`Race`, `Class`, and `Attributes` components must persist. Save version
-is bumped to refuse pre-character-system saves on load (permadeath roguelike,
-save churn is acceptable). See
-[.claude/rules/save-load-checklist.md](../../.claude/rules/save-load-checklist.md).
+`Race`, `Class`, `Attributes`, `HitBonus`, `DamageBonus`, `Level`,
+`Experience` all persist in `PlayerSaveData`. Save schema v4 drops the
+Phase 1 `attributes.constitution` field and adds the level/XP fields.
 
 ## Cross-links
 
-- [PLAYER.md](PLAYER.md) — base player stats and equipment slots; the
-  "no attributes" wording is superseded by this doc.
-- [GAME.md](GAME.md) — combat formulas; the d20 hit check and damage
-  pipeline are unchanged, but `HitBonus`, `Dodge`, and `DamageBonus`
-  inputs now include attribute contributions.
-- [ITEMS.md](ITEMS.md) — starting kits reference items in items.ron;
-  the four weak starting items are added in this phase.
-- Save phase (future) — will add saving throws to the system.
-- XP & Levels phase (future) — will add `Level` component and extend
-  the HP formula.
+- [PLAYER.md](PLAYER.md) — base player stats and equipment slots
+- [GAME.md](GAME.md) — combat formulas; attribute mods feed the d20
+  hit check and damage roll dynamically
+- [ITEMS.md](ITEMS.md) — starting kits reference items.ron
 
 ## Resolved Decisions
 
-- **4 attributes, not 6.** STR, DEX, CON, INT only. No WIS, no CHA.
-  Charm/fear/morale saves will use INT/CON respectively when saves arrive.
-- **Hybrid attribute allocation.** Race + class set baselines, then 4
-  free points. Not pure point-buy, not pure rolled stats, not pure
-  fixed.
-- **HP uses CON modifier**, not raw CON. `(CON - 10) / 2`. Prevents the
-  numbers from exploding at higher CON.
-- **Asymmetric, but only for now.** Player has attributes; monsters do
-  not. Monster equivalents (save bonuses, etc.) will be added via the
-  existing [Species](../../src/components.rs) enum's defaults system in
-  the Saves phase.
-- **Weak starting kits.** A class is a role-shape, not a power lever.
-  Gear discovery still drives mid- and late-run identity.
-- **Halfling Lucky is unconditional.** No per-floor or per-fight cap.
-  The reliability is the point.
+- **3 attributes (STR/DEX/INT), no CON.** HP scales with race + level.
+- **Modifier anchor at 16.** Most chargen mods are negative; players
+  earn positive mods through level-ups.
+- **No chargen point allocation.** Race + class fully determine
+  starting attribute scores.
+- **3 races, not 4.** Halfling and its Lucky d20 reroll are gone.
+- **Class identity through stats, not fudge factors.** No
+  class_attack_bonus or class_dodge_bonus — distributions are the
+  differentiator.
+- **Two-source level-up stat gain.** Racial schedule (constrained
+  letters per race) + player-choice ASIs at levels 3/9/15/21/27.
+- **HP formula adapts DCSS.** No Fighting term yet; lands with Skills.
+- **Level cap 27**, matching DCSS.
+- **Anti-farming:** monsters 5+ levels below the player give 0 XP.
 
-## Open Questions (revisit in later phases)
+## Open Questions (Phase 2 second chunk + beyond)
 
-1. Should racial caps prevent a Halfling from reaching STR 18+? Decide
-   alongside ASIs.
-2. Existing shrines and runics bump `HitBonus`/`DamageBonus` directly.
-   They still work because `Attributes` contributes additively, not
-   authoritatively. Implementation must keep this invariant; double-check
-   when wiring `recalculate_stats`.
-3. Mage's `Apprentice Staff` is the weakest staff tier — exact stats and
-   sprite TBD during the asset phase. May reuse the weakest existing staff
-   rather than authoring a new one.
+1. Monster-side combat rebalancing against the new player power
+   curve — separate phase.
+2. Whether level-up heals to full or partial — currently planned
+   full-heal (DCSS standard).
+3. Whether the racial-schedule modal and the player-choice modal
+   queue if they ever land on the same level (none under current
+   schedules, but defensive code should handle it).
+4. Skill system and Fighting integration into the HP formula.

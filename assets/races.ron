@@ -1,50 +1,55 @@
 // Race manifest for character creation. See docs/design/CHARACTER.md §Races.
 //
-// Keys must be the lowercase form of `Race` enum variant names so they can be
-// resolved from a `Race` value at spawn. The passive trait associated with
-// each race is encoded in the `Race::racial_trait()` method, not in this file —
-// the asset stays pure data.
+// Phase 2 schema:
+//   - 24-point attribute distribution across STR/DEX/INT (no negatives)
+//   - hp_mod: HP-formula multiplier (Dwarf 1.20, Human 1.00, Elf 0.90)
+//   - gain_schedule: DCSS-style level-up stat-gain spec ({interval, allowed})
 //
-// id      | STR | DEX | CON | INT | trait        (in code)
-// --------|-----|-----|-----|-----|----------------
-// human   | +1  | +1  | +1  | +1  | Versatile
-// dwarf   | +2  |  0  | +2  |  0  | Stoneblood (50% poison resistance)
-// elf     |  0  | +2  |  0  | +2  | KeenSenses (+2 vision)
-// halfling|  0  | +2  | +1  | +1  | Lucky (reroll any natural 1 on d20)
+// Halfling was removed in Phase 2 (Lucky d20 reroll gone with it).
+//
+// id    | STR | DEX | INT | HP × | Schedule (DCSS notation)
+// ------|-----|-----|-----|------|-------------------------
+// human |  8  |  8  |  8  | 1.00 | 4:SDI  (any of STR/DEX/INT)
+// dwarf | 12  |  4  |  8  | 1.20 | 4:SID  (any of STR/INT/DEX — same options, different doc order)
+// elf   |  4  | 10  | 10  | 0.90 | 4:DI   (DEX or INT — no STR)
 
 (
     races: {
         "human": (
             name: "Human",
-            str_bonus: 1,
-            dex_bonus: 1,
-            con_bonus: 1,
-            int_bonus: 1,
-            description: "Versatile and adaptable. A bonus point ignores the per-stat allocation cap.",
+            str_bonus: 8,
+            dex_bonus: 8,
+            int_bonus: 8,
+            hp_mod: 1.00,
+            gain_schedule: (
+                interval: 4,
+                allowed: [Str, Dex, Int],
+            ),
+            description: "Adaptive and balanced. Gains any of STR/DEX/INT every 4 levels.",
         ),
         "dwarf": (
             name: "Dwarf",
-            str_bonus: 2,
-            dex_bonus: 0,
-            con_bonus: 2,
-            int_bonus: 0,
-            description: "Hardy folk of the deep places. Stoneblood grants 50% poison resistance.",
+            str_bonus: 12,
+            dex_bonus: 4,
+            int_bonus: 8,
+            hp_mod: 1.20,
+            gain_schedule: (
+                interval: 4,
+                allowed: [Str, Int, Dex],
+            ),
+            description: "Hardy folk of the deep places. Stoneblood grants 50% poison resistance and a stout HP frame.",
         ),
         "elf": (
             name: "Elf",
-            str_bonus: 0,
-            dex_bonus: 2,
-            con_bonus: 0,
-            int_bonus: 2,
-            description: "Long-sighted and quick. Keen senses extend your vision by 2 tiles.",
-        ),
-        "halfling": (
-            name: "Halfling",
-            str_bonus: 0,
-            dex_bonus: 2,
-            con_bonus: 1,
-            int_bonus: 1,
-            description: "Small, lucky, and impossible to corner. Any natural 1 on a d20 is rerolled.",
+            str_bonus: 4,
+            dex_bonus: 10,
+            int_bonus: 10,
+            hp_mod: 0.90,
+            gain_schedule: (
+                interval: 4,
+                allowed: [Dex, Int],
+            ),
+            description: "Long-sighted and quick. Keen senses extend your vision by 2 tiles; you grow into DEX or INT but never STR.",
         ),
     },
 )

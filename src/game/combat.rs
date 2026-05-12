@@ -155,8 +155,10 @@ fn hit_check_system(
             continue;
         };
 
-        // d20 with Halfling Lucky: if the attacker is a Halfling and rolls a
-        // natural 1, reroll once and take the second result.
+        // d20 routed through the canonical helper. In Phase 1 this handled
+        // Halfling Lucky; Halfling was removed in Phase 2, so the helper is
+        // currently a thin `roll_dice(1, 20)` wrapper. Future race / class /
+        // skill d20 effects plug in here.
         let attacker_race = race_query.get(intent.attacker).ok().copied();
         let hit_roll = crate::character::roll_d20_with_race(&mut game_rng.0, attacker_race);
 

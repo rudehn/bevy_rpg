@@ -132,13 +132,15 @@ pub fn player_spawn_or_move_system(
             &item_sprite_assets,
         );
 
-        let attributes =
-            compose_attributes(race_asset, class_asset, character_choice.free_points);
-        let derived = derive_stats(class_asset, &attributes);
+        let attributes = compose_attributes(race_asset, class_asset);
+        // Spawn always starts the player at level 1 — XP/level progression
+        // is owned by the XP system, not the spawner. The save-load path
+        // restores the saved level (and recomputes HP from the formula
+        // at that level) in `apply_player_load_system`.
+        let derived = derive_stats(race_asset, &attributes, 1);
 
         // Apply Elf's Keen Senses (+2 vision) at spawn. Other race effects
-        // (Stoneblood poison resist, Halfling Lucky) are applied below via
-        // their respective components / d20 helper.
+        // (Stoneblood poison resist) are applied below.
         let mut viewshed_range = if player_asset.viewshed_range > 0 {
             player_asset.viewshed_range
         } else {
@@ -182,12 +184,12 @@ pub fn player_spawn_or_move_system(
                 Damage(player_asset.damage.clone()),
                 Armor(player_asset.armor),
                 Dodge(player_asset.dodge + derived.dodge),
-                // Attribute mods are NOT baked into HitBonus / DamageBonus.
-                // The hit-check and damage-roll systems read the attacker's
-                // `Attributes` + the `AttackIntentMessage.source` and add
-                // STR_mod for Melee, DEX_mod for Ranged. Only the static
-                // `class_attack_bonus` lives in HitBonus at spawn.
-                HitBonus(class_asset.class_attack_bonus),
+                // HitBonus / DamageBonus start at 0. The hit-check and
+                // damage-roll systems add STR_mod (melee) or DEX_mod
+                // (ranged) dynamically based on AttackIntentMessage.source.
+                // Class attack/dodge fudge factors no longer exist —
+                // every per-class combat number derives from stats.
+                HitBonus(0),
                 DamageBonus(0),
                 SpeedStats::default(),
             ))

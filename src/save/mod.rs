@@ -68,10 +68,14 @@ const GAME_SAVE_KEY: &str = "ironveil_save";
 ///   `Poisoned` kinds with `magnitude` on the instance; game-specific
 ///   kinds like `Entangled` / `Enraged` moved to `Custom { id }`).
 /// - **v3**: Phase 1 character system. `PlayerSaveData` gains `race`,
-///   `class`, `attributes`, `hit_bonus`, `damage_bonus` fields. Pre-v3
-///   saves load with defaults (Human Warrior, all 10 attributes, zero
-///   bonuses) via `#[serde(default)]` — the migration itself is a no-op.
-pub const SAVE_SCHEMA_VERSION: u32 = 3;
+///   `class`, `attributes`, `hit_bonus`, `damage_bonus` fields.
+/// - **v4**: Phase 2 character system. CON removed from `Attributes`;
+///   Halfling removed from `Race`. **v3 saves containing CON values
+///   or Halfling race will fail to load** — they're unrecoverable as
+///   the player's attribute scores can't be safely renormalized from
+///   the Phase 1 base-10 scale to the Phase 2 base-16 scale. Acceptable
+///   in a permadeath dev cycle with no production save data.
+pub const SAVE_SCHEMA_VERSION: u32 = 4;
 
 // ---- Migration chain ----
 
@@ -191,11 +195,32 @@ impl SaveMigration for MigrateV2ToV3 {
     }
 }
 
+/// v3 → v4: Phase 2 dropped CON from `Attributes` and removed Halfling
+/// from `Race`. There is no safe automatic remapping (the modifier
+/// anchor moved from 10 to 16; old attribute scores would systematically
+/// over-mod under the new scale). This migration is intentionally a
+/// no-op — v3 saves with CON values or Halfling race will fail to
+/// deserialize against the new types and `read_save_data` will return
+/// `None`. Acceptable in active dev with no production save data.
+struct MigrateV3ToV4;
+impl SaveMigration for MigrateV3ToV4 {
+    fn from_version(&self) -> u32 {
+        3
+    }
+    fn to_version(&self) -> u32 {
+        4
+    }
+    fn migrate(&self, data: &str) -> Result<String, String> {
+        Ok(data.to_string())
+    }
+}
+
 fn migrations() -> Vec<Box<dyn SaveMigration>> {
     vec![
         Box::new(MigrateV0ToV1),
         Box::new(MigrateV1ToV2),
         Box::new(MigrateV2ToV3),
+        Box::new(MigrateV3ToV4),
     ]
 }
 
@@ -468,15 +493,14 @@ pub struct PlayerSaveData {
     pub damage_bonus: i32,
 }
 
-/// Serde default for `PlayerSaveData::attributes` — all 10s, so the derived
-/// modifier is 0 for every stat and HP/hit math doesn't shift. Pre-v3 saves
-/// land here.
+/// Serde default for `PlayerSaveData::attributes` — Phase 2 anchors the
+/// modifier at 16, so all-16 yields mod 0 across the board and a load
+/// with missing attributes doesn't shift combat math.
 fn default_attributes_baseline() -> crate::character::Attributes {
     crate::character::Attributes {
-        strength: 10,
-        dexterity: 10,
-        constitution: 10,
-        intelligence: 10,
+        strength: 16,
+        dexterity: 16,
+        intelligence: 16,
     }
 }
 
@@ -1432,9 +1456,8 @@ mod tests {
             race: crate::character::Race::Dwarf,
             class: crate::character::Class::Warrior,
             attributes: crate::character::Attributes {
-                strength: 16,
+                strength: 20,
                 dexterity: 10,
-                constitution: 14,
                 intelligence: 8,
             },
             hit_bonus: 5,
@@ -2426,8 +2449,8 @@ mod tests {
     // =====================================================================
 
     #[test]
-    fn schema_version_is_three() {
-        assert_eq!(SAVE_SCHEMA_VERSION, 3);
+    fn schema_version_is_four() {
+        assert_eq!(SAVE_SCHEMA_VERSION, 4);
     }
 
     #[test]
@@ -2484,22 +2507,31 @@ mod tests {
     #[test]
     fn migrations_chain_is_ordered() {
         let migs = migrations();
-        assert_eq!(migs.len(), 3);
+        assert_eq!(migs.len(), 4);
         assert_eq!(migs[0].from_version(), 0);
         assert_eq!(migs[0].to_version(), 1);
         assert_eq!(migs[1].from_version(), 1);
         assert_eq!(migs[1].to_version(), 2);
         assert_eq!(migs[2].from_version(), 2);
         assert_eq!(migs[2].to_version(), 3);
+        assert_eq!(migs[3].from_version(), 3);
+        assert_eq!(migs[3].to_version(), 4);
     }
 
     /// v2 → v3 migration is a no-op (serde defaults handle the new fields).
-    /// Pin the contract so a future "add real logic to MigrateV2ToV3" change
-    /// surfaces here rather than silently changing save semantics.
     #[test]
     fn migrate_v2_to_v3_is_identity() {
         let payload = "PlayerSaveData(x: 0, y: 0, hp: 10)";
         let result = MigrateV2ToV3.migrate(payload).unwrap();
+        assert_eq!(result, payload);
+    }
+
+    /// v3 → v4 migration is a no-op. Pre-Phase-2 saves containing CON or
+    /// Halfling will fail at deserialize (intentional — no safe remap).
+    #[test]
+    fn migrate_v3_to_v4_is_identity() {
+        let payload = "PlayerSaveData(x: 0, y: 0, hp: 10)";
+        let result = MigrateV3ToV4.migrate(payload).unwrap();
         assert_eq!(result, payload);
     }
 
@@ -2526,20 +2558,20 @@ mod tests {
         // Race / Class defaults
         assert_eq!(loaded.race, crate::character::Race::Human);
         assert_eq!(loaded.class, crate::character::Class::Warrior);
-        // Attributes default to all-10 via `default_attributes_baseline`
-        assert_eq!(loaded.attributes.strength, 10);
-        assert_eq!(loaded.attributes.dexterity, 10);
-        assert_eq!(loaded.attributes.constitution, 10);
-        assert_eq!(loaded.attributes.intelligence, 10);
+        // Attributes default to all-16 via `default_attributes_baseline`
+        // (mod 0 across the board in the Phase 2 anchored-at-16 scale).
+        assert_eq!(loaded.attributes.strength, 16);
+        assert_eq!(loaded.attributes.dexterity, 16);
+        assert_eq!(loaded.attributes.intelligence, 16);
         // Bonuses default to 0
         assert_eq!(loaded.hit_bonus, 0);
         assert_eq!(loaded.damage_bonus, 0);
     }
 
-    /// Round-trip: a v3 save with Race/Class/Attributes/HitBonus/DamageBonus
+    /// Round-trip: a save with Race/Class/Attributes/HitBonus/DamageBonus
     /// populated must serialize and deserialize without losing any field.
     #[test]
-    fn v3_player_save_data_round_trips() {
+    fn v4_player_save_data_round_trips() {
         let original = PlayerSaveData {
             x: 11,
             y: 12,
@@ -2550,12 +2582,11 @@ mod tests {
             damage: "1d6+2".to_string(),
             status_effects: StatusEffects::default(),
             inventory: vec![],
-            race: crate::character::Race::Halfling,
+            race: crate::character::Race::Elf,
             class: crate::character::Class::Rogue,
             attributes: crate::character::Attributes {
                 strength: 10,
                 dexterity: 17,
-                constitution: 12,
                 intelligence: 13,
             },
             hit_bonus: 4,
@@ -2563,13 +2594,12 @@ mod tests {
         };
         let ron = ron::to_string(&original).expect("serialize");
         let loaded: PlayerSaveData = ron::from_str(&ron).expect("deserialize");
-        assert_eq!(loaded.race, crate::character::Race::Halfling);
+        assert_eq!(loaded.race, crate::character::Race::Elf);
         assert_eq!(loaded.class, crate::character::Class::Rogue);
         assert_eq!(loaded.attributes.dexterity, 17);
         assert_eq!(loaded.attributes.intelligence, 13);
         assert_eq!(loaded.hit_bonus, 4);
         assert_eq!(loaded.damage_bonus, 2);
-        // And the unchanged fields still survive.
         assert_eq!(loaded.x, 11);
         assert_eq!(loaded.hp, 30);
     }
