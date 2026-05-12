@@ -25,6 +25,12 @@
                 (name: "Rusted Shortsword"),
                 (name: "Padded Armor"),
             ],
+            starting_skills: (
+                fighting: 3,
+                long_blades: 3,
+                axes: 2,
+                armor: 2,
+            ),
             description: "Steel and discipline. STR-heavy distribution carries melee hits and damage; trade-off is low DEX and INT.",
         ),
         "rogue": (
@@ -35,6 +41,13 @@
                 (name: "Cloth Wraps"),
                 (name: "Throwing Knife", count: 1),
             ],
+            starting_skills: (
+                fighting: 1,
+                short_blades: 4,
+                ranged_weapons: 1,
+                dodging: 3,
+                evocations: 1,
+            ),
             description: "Light, slippery, and dangerous in the right opening. DEX-driven hit and dodge; INT modest enough to identify scrolls.",
         ),
         "mage": (
@@ -44,6 +57,11 @@
                 (name: "Apprentice Staff"),
                 (name: "Robe"),
             ],
+            starting_skills: (
+                short_blades: 1,
+                dodging: 2,
+                evocations: 7,
+            ),
             description: "Frail but charged with potential. INT scales staff zap damage. Don't trade blows.",
         ),
         "ranger": (
@@ -54,6 +72,13 @@
                 (name: "Padded Armor"),
                 (name: "Arrow", count: 6),
             ],
+            starting_skills: (
+                fighting: 2,
+                long_blades: 1,
+                ranged_weapons: 4,
+                armor: 1,
+                dodging: 2,
+            ),
             description: "Patient at range. DEX-driven ranged hit and damage; STR is the fallback if you draw a melee.",
         ),
     },

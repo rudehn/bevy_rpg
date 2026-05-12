@@ -307,6 +307,7 @@ mod tests {
                 interval: 4,
                 allowed: vec![Attribute::Str, Attribute::Dex, Attribute::Int],
             },
+            aptitudes: Default::default(),
             description: String::new(),
         }
     }
@@ -316,6 +317,7 @@ mod tests {
             name: "Test Class".to_string(),
             attribute_distribution: AttributeDistribution { str, dex, int },
             starting_kit: Vec::new(),
+            starting_skills: Default::default(),
             description: String::new(),
         }
     }

@@ -15,6 +15,95 @@ use std::collections::HashMap;
 use crate::assets::StartingItemDef;
 use crate::character::attributes::AttributeDistribution;
 use crate::character::race::RaceGainSchedule;
+use crate::game::skills::Skill;
+
+/// Starting skill point distribution for a class (Phase 3). Negatives
+/// are allowed in the schema for future class designs; current data
+/// has no negatives. A maintenance test pins each class's total to 10.
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct SkillDistribution {
+    #[serde(default)]
+    pub fighting: i32,
+    #[serde(default)]
+    pub axes: i32,
+    #[serde(default)]
+    pub short_blades: i32,
+    #[serde(default)]
+    pub long_blades: i32,
+    #[serde(default)]
+    pub ranged_weapons: i32,
+    #[serde(default)]
+    pub armor: i32,
+    #[serde(default)]
+    pub dodging: i32,
+    #[serde(default)]
+    pub evocations: i32,
+}
+
+impl SkillDistribution {
+    pub fn total(&self) -> i32 {
+        self.fighting
+            + self.axes
+            + self.short_blades
+            + self.long_blades
+            + self.ranged_weapons
+            + self.armor
+            + self.dodging
+            + self.evocations
+    }
+
+    /// Iterate as `(Skill, i32)` pairs in `Skill::ALL` order.
+    pub fn iter(&self) -> impl Iterator<Item = (Skill, i32)> + '_ {
+        [
+            (Skill::Fighting, self.fighting),
+            (Skill::Axes, self.axes),
+            (Skill::ShortBlades, self.short_blades),
+            (Skill::LongBlades, self.long_blades),
+            (Skill::RangedWeapons, self.ranged_weapons),
+            (Skill::Armor, self.armor),
+            (Skill::Dodging, self.dodging),
+            (Skill::Evocations, self.evocations),
+        ]
+        .into_iter()
+    }
+}
+
+/// Per-skill XP-cost aptitude on a race (Phase 3, DCSS-style).
+/// Range: −5..=+5 in v1. Higher = faster training.
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct SkillAptitudes {
+    #[serde(default)]
+    pub fighting: i32,
+    #[serde(default)]
+    pub axes: i32,
+    #[serde(default)]
+    pub short_blades: i32,
+    #[serde(default)]
+    pub long_blades: i32,
+    #[serde(default)]
+    pub ranged_weapons: i32,
+    #[serde(default)]
+    pub armor: i32,
+    #[serde(default)]
+    pub dodging: i32,
+    #[serde(default)]
+    pub evocations: i32,
+}
+
+impl SkillAptitudes {
+    pub fn for_skill(&self, skill: Skill) -> i32 {
+        match skill {
+            Skill::Fighting => self.fighting,
+            Skill::Axes => self.axes,
+            Skill::ShortBlades => self.short_blades,
+            Skill::LongBlades => self.long_blades,
+            Skill::RangedWeapons => self.ranged_weapons,
+            Skill::Armor => self.armor,
+            Skill::Dodging => self.dodging,
+            Skill::Evocations => self.evocations,
+        }
+    }
+}
 
 /// One race entry, keyed by its lowercase id (e.g. `"human"`) in
 /// `assets/races.ron`. The id must match the lowercase form of the
@@ -33,6 +122,10 @@ pub struct RaceAsset {
     /// DCSS-style level-up stat-gain schedule (Human 4:SDI, Dwarf 4:SID,
     /// Elf 4:DI).
     pub gain_schedule: RaceGainSchedule,
+    /// Phase 3: per-skill XP-cost aptitudes. Range −5..=+5; positive =
+    /// faster training (lower XP cost via `aptitude_multiplier`).
+    #[serde(default)]
+    pub aptitudes: SkillAptitudes,
     pub description: String,
 }
 
@@ -56,6 +149,10 @@ pub struct ClassAsset {
     pub attribute_distribution: AttributeDistribution,
     #[serde(default)]
     pub starting_kit: Vec<StartingItemDef>,
+    /// Phase 3: starting skill point distribution. Sum must be 10 in
+    /// shipping data (maintenance test enforces this).
+    #[serde(default)]
+    pub starting_skills: SkillDistribution,
     pub description: String,
 }
 
@@ -226,6 +323,43 @@ mod tests {
                 total, 12,
                 "class '{id}' distribution sums to {total}, expected 12"
             );
+        }
+    }
+
+    /// Phase 3 maintenance contract: every class's `starting_skills` must
+    /// sum to exactly 10. Drift here changes chargen power level.
+    #[test]
+    fn every_class_starting_skills_sums_to_ten() {
+        let src = include_str!("../../assets/classes.ron");
+        let manifest: ClassManifest = ron::from_str(src).expect("parse");
+
+        for (id, class) in &manifest.classes {
+            let total = class.starting_skills.total();
+            assert_eq!(
+                total, 10,
+                "class '{id}' starting_skills sums to {total}, expected 10"
+            );
+        }
+    }
+
+    /// Phase 3 maintenance contract: every race's `aptitudes` must have an
+    /// entry for every `Skill` variant, with values in the −5..=+5 range.
+    /// The `for_skill` lookup never panics; this test just sanity-checks
+    /// the range.
+    #[test]
+    fn every_race_aptitude_value_is_in_range() {
+        use crate::game::skills::Skill;
+        let src = include_str!("../../assets/races.ron");
+        let manifest: RaceManifest = ron::from_str(src).expect("parse");
+
+        for (id, race) in &manifest.races {
+            for skill in Skill::ALL {
+                let apt = race.aptitudes.for_skill(skill);
+                assert!(
+                    apt.abs() <= 5,
+                    "race '{id}' aptitude for {skill:?} = {apt}, expected −5..=+5"
+                );
+            }
         }
     }
 
