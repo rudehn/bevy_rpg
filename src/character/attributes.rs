@@ -137,20 +137,27 @@ pub fn compose_attributes(race_asset: &RaceAsset, class_asset: &ClassAsset) -> A
     }
 }
 
-/// HP formula (Phase 2, DCSS-inspired, no Fighting term yet).
+/// HP formula (Phase 3, DCSS-faithful with the Fighting term filled in).
 ///
 /// ```text
-/// max_hp = floor(race_hp_mod × (8 + 11 × xp_level / 2))
+/// max_hp = floor(race_hp_mod × (
+///     8
+///   + 11 × XL / 2
+///   + Fighting × XL / 14
+///   + (1 + Fighting × 3) / 2
+/// ))
 /// ```
 ///
-/// At XL 1 with the standard race multipliers the player starts at:
-/// Dwarf (×1.20) 16 · Human (×1.00) 13 · Elf (×0.90) 12. By XL 27 the
-/// same races land at 187 / 156 / 140. When the Skills phase ships, the
-/// formula will gain a `Fighting`-scaled term.
-pub fn max_hp_for_level(race_hp_mod: f32, xp_level: u32) -> i32 {
-    // The 8 + 11*XL/2 grows roughly linearly with level. f32 keeps the
-    // multiplier honest; we floor to i32 at the end so HP is integral.
-    let base = 8.0 + (11.0 * xp_level as f32) / 2.0;
+/// At `fighting = 0.0` the formula reduces to the Phase 2 baseline:
+/// Dwarf 16 / Human 13 / Elf 12 at L1; 187 / 156 / 140 at L27. The
+/// Fighting term adds an additive boost that grows with both Fighting
+/// skill level and XP level.
+pub fn max_hp_for_level(race_hp_mod: f32, xp_level: u32, fighting: f32) -> i32 {
+    let xl = xp_level as f32;
+    let base = 8.0
+        + (11.0 * xl) / 2.0
+        + (fighting * xl) / 14.0
+        + (1.0 + fighting * 3.0) / 2.0;
     (race_hp_mod * base).floor() as i32
 }
 
@@ -202,12 +209,17 @@ pub fn attack_attribute_bonus(
 /// the given experience level. The character creation UI uses this for
 /// the live preview; the spawner uses `max_hp` and `dodge` directly and
 /// leaves HitBonus/DamageBonus at 0 (the dynamic branch handles them).
-pub fn derive_stats(race_asset: &RaceAsset, attrs: &Attributes, xp_level: u32) -> DerivedStats {
+pub fn derive_stats(
+    race_asset: &RaceAsset,
+    attrs: &Attributes,
+    xp_level: u32,
+    fighting: f32,
+) -> DerivedStats {
     let str_m = attrs.str_mod();
     let dex_m = attrs.dex_mod();
     let int_m = attrs.int_mod();
     DerivedStats {
-        max_hp: max_hp_for_level(race_asset.hp_mod, xp_level),
+        max_hp: max_hp_for_level(race_asset.hp_mod, xp_level, fighting),
         hit_bonus_melee: str_m,
         hit_bonus_ranged: dex_m,
         damage_bonus_melee: str_m,
@@ -354,24 +366,49 @@ mod tests {
         assert_eq!(attrs.int_mod(), 1);
     }
 
-    /// HP formula: spec values at L1, L9, L18, L27 for the three race mods.
+    /// HP formula: spec values at L1, L9, L18, L27 for the three race
+    /// mods at `fighting = 0.0`. Phase 3 introduces the DCSS Fighting
+    /// term which includes a constant `(1)/2 = 0.5` even at Fighting 0,
+    /// so a few values shift +1 HP from the Phase 2 baseline at higher
+    /// levels. The Fighting term is now the canonical formula.
     #[test]
     fn hp_formula_matches_spec() {
-        // Dwarf ×1.20
-        assert_eq!(max_hp_for_level(1.20, 1), 16);
-        assert_eq!(max_hp_for_level(1.20, 9), 69);
-        assert_eq!(max_hp_for_level(1.20, 18), 128);
-        assert_eq!(max_hp_for_level(1.20, 27), 187);
+        // Dwarf ×1.20 (baseline + 0.5 constant)
+        assert_eq!(max_hp_for_level(1.20, 1, 0.0), 16);
+        assert_eq!(max_hp_for_level(1.20, 9, 0.0), 69);
+        assert_eq!(max_hp_for_level(1.20, 18, 0.0), 129);
+        assert_eq!(max_hp_for_level(1.20, 27, 0.0), 188);
         // Human ×1.00
-        assert_eq!(max_hp_for_level(1.00, 1), 13);
-        assert_eq!(max_hp_for_level(1.00, 9), 57);
-        assert_eq!(max_hp_for_level(1.00, 18), 107);
-        assert_eq!(max_hp_for_level(1.00, 27), 156);
+        assert_eq!(max_hp_for_level(1.00, 1, 0.0), 14);
+        assert_eq!(max_hp_for_level(1.00, 9, 0.0), 58);
+        assert_eq!(max_hp_for_level(1.00, 18, 0.0), 107);
+        assert_eq!(max_hp_for_level(1.00, 27, 0.0), 157);
         // Elf ×0.90
-        assert_eq!(max_hp_for_level(0.90, 1), 12);
-        assert_eq!(max_hp_for_level(0.90, 9), 51);
-        assert_eq!(max_hp_for_level(0.90, 18), 96);
-        assert_eq!(max_hp_for_level(0.90, 27), 140);
+        assert_eq!(max_hp_for_level(0.90, 1, 0.0), 12);
+        assert_eq!(max_hp_for_level(0.90, 9, 0.0), 52);
+        assert_eq!(max_hp_for_level(0.90, 18, 0.0), 96);
+        assert_eq!(max_hp_for_level(0.90, 27, 0.0), 141);
+    }
+
+    /// With Fighting > 0, the formula adds the two new terms additively.
+    /// Pin a few values to lock down the math.
+    #[test]
+    fn hp_formula_fighting_term_adds_expected_amount() {
+        // Human (race_hp_mod 1.00), L1, Fighting 5:
+        //   8 + 5.5 + (5×1)/14 + (1 + 5×3)/2
+        // = 8 + 5.5 + 0.357 + 8.0 = 21.857 → floor = 21
+        assert_eq!(max_hp_for_level(1.00, 1, 5.0), 21);
+        // Human, L27, Fighting 27:
+        //   8 + 148.5 + (27×27)/14 + (1 + 81)/2
+        // = 8 + 148.5 + 52.0714 + 41.0 = 249.57 → floor = 249
+        assert_eq!(max_hp_for_level(1.00, 27, 27.0), 249);
+        // Dwarf (×1.20), L1, Fighting 0 → baseline 16 (no change)
+        assert_eq!(max_hp_for_level(1.20, 1, 0.0), 16);
+        // Dwarf, L18, Fighting 15:
+        //   8 + 99 + (15×18)/14 + (1+45)/2
+        // = 8 + 99 + 19.286 + 23 = 149.286
+        //   × 1.20 = 179.14 → 179
+        assert_eq!(max_hp_for_level(1.20, 18, 15.0), 179);
     }
 
     #[test]
@@ -386,7 +423,7 @@ mod tests {
             dexterity: 16, // mod 0
             intelligence: 12, // mod -2
         };
-        let derived = derive_stats(&race, &attrs, 1);
+        let derived = derive_stats(&race, &attrs, 1, 0.0);
         assert_eq!(derived.hit_bonus_melee, 2);
         assert_eq!(derived.hit_bonus_ranged, 0);
         assert_eq!(derived.damage_bonus_melee, 2);

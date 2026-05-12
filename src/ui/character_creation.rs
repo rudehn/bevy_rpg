@@ -529,7 +529,11 @@ fn refresh_text(
         Attributes::default()
     };
     let derived = if let Some(r) = race_asset {
-        derive_stats(r, &attrs, 1)
+        // Chargen preview always shows L1 with no skills. Once skills
+        // exist on the player entity, the post-spawn UI (character info
+        // screen, HUD bar) reads them; the preview's role is to show
+        // race+class baseline only.
+        derive_stats(r, &attrs, 1, 0.0)
     } else {
         Default::default()
     };

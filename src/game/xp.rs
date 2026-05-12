@@ -243,6 +243,7 @@ fn handle_level_up(
             &mut crate::game::combat::Health,
             &bevy::prelude::Transform,
             Option<&PendingAsi>,
+            Option<&crate::game::skills::Skills>,
         ),
         With<Player>,
     >,
@@ -258,15 +259,19 @@ fn handle_level_up(
     };
 
     for ev in level_ups.read() {
-        let Ok((race, mut health, transform, existing_pending)) = player_q.get_mut(ev.player)
+        let Ok((race, mut health, transform, existing_pending, skills_opt)) =
+            player_q.get_mut(ev.player)
         else {
             continue;
         };
 
-        // Recompute HP. Race-based mod + new XL.
+        // Recompute HP. Race-based mod + new XL + Fighting skill term.
         let race_asset = race_manifest.races.get(&race.name().to_lowercase());
         if let Some(ra) = race_asset {
-            let new_max = max_hp_for_level(ra.hp_mod, ev.new_level);
+            let fighting = skills_opt
+                .map(|s| s.get(crate::game::skills::Skill::Fighting))
+                .unwrap_or(0.0);
+            let new_max = max_hp_for_level(ra.hp_mod, ev.new_level, fighting);
             health.max = new_max;
             health.current = new_max; // heal to full on level-up (DCSS default)
         }

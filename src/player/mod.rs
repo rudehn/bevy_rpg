@@ -137,7 +137,13 @@ pub fn player_spawn_or_move_system(
         // is owned by the XP system, not the spawner. The save-load path
         // restores the saved level (and recomputes HP from the formula
         // at that level) in `apply_player_load_system`.
-        let derived = derive_stats(race_asset, &attributes, 1);
+        //
+        // Fighting passed as starting-skill level: class.starting_skills
+        // contributes a chargen Fighting bonus the spawn HP needs to
+        // reflect. The XP/level system recomputes HP on every level-up
+        // using the current Skills component.
+        let starting_fighting = class_asset.starting_skills.fighting as f32;
+        let derived = derive_stats(race_asset, &attributes, 1, starting_fighting);
 
         // Apply Elf's Keen Senses (+2 vision) at spawn. Other race effects
         // (Stoneblood poison resist) are applied below.
