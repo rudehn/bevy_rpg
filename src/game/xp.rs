@@ -171,6 +171,7 @@ fn award_xp_on_death(
     mut player_xp_q: Query<(&Level, &mut Experience), With<Player>>,
     tier_q: Query<&MonsterTier>,
     mut log_writer: MessageWriter<crate::ui::game_log::GameLogMessage>,
+    mut skill_pool: ResMut<crate::game::skills::SkillXpPool>,
 ) {
     let Ok(player_entity) = player_entity_q.single() else {
         return;
@@ -193,6 +194,10 @@ fn award_xp_on_death(
         let reward = xp_reward(tier.0, player_level);
         if reward > 0 {
             xp.0 = xp.0.saturating_add(reward);
+            // Phase 3: skill XP gets half the character XP awarded for
+            // the same kill. The allocate_skill_xp system then drains
+            // the pool per the player's training settings.
+            skill_pool.raw = skill_pool.raw.saturating_add((reward / 2) as u64);
             log_writer.write(crate::ui::game_log::GameLogMessage(format!(
                 "+{} XP",
                 reward

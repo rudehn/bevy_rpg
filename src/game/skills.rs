@@ -272,6 +272,135 @@ pub fn fighting_melee_bonus(
     (skills.get(Skill::Fighting) / 4.0).floor() as i32
 }
 
+// ---------------------------------------------------------------------
+// Plugin and systems
+// ---------------------------------------------------------------------
+
+pub struct SkillsPlugin;
+
+impl Plugin for SkillsPlugin {
+    fn build(&self, app: &mut App) {
+        app.register_type::<Skills>()
+            .register_type::<SkillTraining>()
+            .register_type::<SkillXp>()
+            .register_type::<SkillState>()
+            .register_type::<TrainingMode>()
+            .insert_resource(SkillXpPool::default())
+            .insert_resource(SkillUseCounters::default())
+            .insert_resource(TrainingMode::default())
+            .add_systems(
+                Update,
+                (
+                    allocate_skill_xp,
+                    update_skill_levels,
+                    decay_skill_use_counters_on_floor_change,
+                )
+                    .chain()
+                    .run_if(in_state(crate::game::AppState::InGame)),
+            );
+    }
+}
+
+/// Drain `SkillXpPool` into the player's `SkillXp` per the active
+/// `TrainingMode` and `SkillTraining` settings. Pure-ish: reads the
+/// pool, computes splits, applies aptitudes, writes to `SkillXp`.
+fn allocate_skill_xp(
+    mut pool: ResMut<SkillXpPool>,
+    mode: Res<TrainingMode>,
+    use_counters: Res<SkillUseCounters>,
+    race_manifest_handle: Res<crate::character::RaceManifestHandle>,
+    race_manifests: Res<Assets<crate::character::RaceManifest>>,
+    mut player_q: Query<
+        (&crate::character::Race, &SkillTraining, &mut SkillXp),
+        With<crate::player::Player>,
+    >,
+) {
+    if pool.raw == 0 {
+        return;
+    }
+    let Some(race_manifest) = race_manifests.get(&race_manifest_handle.0) else {
+        return;
+    };
+    let Ok((race, training, mut skill_xp)) = player_q.single_mut() else {
+        return;
+    };
+    let Some(race_asset) = race_manifest.races.get(&race.name().to_lowercase()) else {
+        return;
+    };
+
+    // Compute per-skill weights based on training state + mode.
+    let mut shares: Vec<(Skill, f32)> = Vec::with_capacity(Skill::ALL.len());
+    for skill in Skill::ALL {
+        let state = training.get(skill);
+        if state == SkillState::Disabled {
+            continue;
+        }
+        let raw_share = match *mode {
+            TrainingMode::Auto => use_counters.counts.get(&skill).copied().unwrap_or(0) as f32,
+            TrainingMode::Manual => 1.0,
+        };
+        if raw_share == 0.0 {
+            continue;
+        }
+        let weighted = if state == SkillState::Focused {
+            raw_share * 2.0
+        } else {
+            raw_share
+        };
+        shares.push((skill, weighted));
+    }
+
+    let total_share: f32 = shares.iter().map(|(_, w)| *w).sum();
+    if total_share == 0.0 {
+        return; // Keep XP pooled until a skill is selected / used.
+    }
+
+    let pool_amount = pool.raw as f64;
+    for (skill, weight) in &shares {
+        let fraction = (*weight as f64) / (total_share as f64);
+        let allocated = (pool_amount * fraction) as u64;
+        if allocated == 0 {
+            continue;
+        }
+        // Aptitude > 0 → faster training → divide effective cost (or
+        // equivalently multiply allocated XP). aptitude_multiplier
+        // returns 2^(-apt/4): apt 4 → 0.5× cost, so XP is effectively
+        // 2× faster. Apply by dividing the allocated XP by the cost
+        // multiplier.
+        let apt = race_asset.aptitudes.for_skill(*skill);
+        let cost_mul = aptitude_multiplier(apt);
+        let effective = (allocated as f32 / cost_mul) as u64;
+        skill_xp.add(*skill, effective);
+    }
+    pool.raw = 0;
+}
+
+/// Recompute each `Skills` level from `SkillXp`. Cheap; runs every
+/// frame, gated on `Changed<SkillXp>`.
+fn update_skill_levels(mut q: Query<(&SkillXp, &mut Skills), Changed<SkillXp>>) {
+    for (xp, mut skills) in &mut q {
+        for skill in Skill::ALL {
+            let lvl = xp_to_level(xp.get(skill));
+            skills.set(skill, lvl);
+        }
+    }
+}
+
+/// Decay use counters by 10% on floor transition. Without this,
+/// counters never reset and ancient-skill spam during the early run
+/// drowns out recent activity.
+fn decay_skill_use_counters_on_floor_change(
+    floor: Res<crate::map::dungeon::Floor>,
+    mut counters: ResMut<SkillUseCounters>,
+) {
+    if !floor.is_changed() {
+        return;
+    }
+    for value in counters.counts.values_mut() {
+        *value = (*value as f32 * 0.9) as u32;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
