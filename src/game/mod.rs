@@ -68,6 +68,7 @@ pub mod squad;
 pub mod staves;
 pub mod stats;
 pub mod systems;
+pub mod skills;
 pub mod targeting;
 pub mod tile_promotion;
 pub mod turns;
