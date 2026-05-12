@@ -113,19 +113,43 @@ If roll < target:  miss (turn still consumed)
 If natural 20:     critical hit (always hits, double damage dice)
 ```
 
-Both player and monsters use this formula (symmetric combat).
+Both player and monsters use this formula. The `hit_bonus` and
+`dodge_bonus` values come from the same per-entity components (`HitBonus`,
+`Dodge`) and the formula is identical for both — but **the inputs are
+asymmetric:** the player's `HitBonus` is baked from attribute mods +
+class_attack_bonus + equipment at spawn, while monsters' come from
+authored RON values + their own equip flow. See
+[CHARACTER.md](CHARACTER.md) §Combat Math Integration for which attribute
+mod feeds which derived stat on the player side.
+
+**Halfling Lucky:** if the attacker has `Race::Halfling` and rolls a
+natural 1, the roll is replayed once and the second result is taken
+(no cooldown). Implemented in `roll_d20_with_race`
+([src/character/dice.rs](../../src/character/dice.rs)) — every player
+d20 site routes through this helper.
 
 ### Damage Pipeline
 
 ```
 AttackIntent
   -> hit_check (d20 + hit_bonus vs 4 + dodge_bonus)
+                  ↑ Halfling Lucky reroll on nat-1
   -> damage_roll (weapon dice + damage_bonus; x2 on crit)
+                                ↑ STR_mod for melee, DEX_mod for ranged
+                                  (preview-only for ranged today — the
+                                  baked HitBonus uses STR. See
+                                  CHARACTER.md §Combat Math Integration.)
   -> damage_reduction:
        Physical: (raw - armor).max(0), then apply resistance %
+                                              ↑ Dwarf Stoneblood: +50%
+                                                poison resistance at spawn
        Poison/Fire/Lightning: skip armor, apply resistance % only
   -> apply_damage (HP change, death check)
 ```
+
+**Staff zaps** (Lightning / Fire / Force) add `INT_mod.max(0)` from the
+zapper's `Attributes` to each damage event. INT can never *reduce* a
+staff's base damage — a low-INT Mage just zaps for normal damage.
 
 ### Damage Types
 

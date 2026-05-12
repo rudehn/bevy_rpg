@@ -111,6 +111,13 @@ fn spawn_help_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                 ("-", "Zoom out"),
                 ("+", "Zoom in"),
             ]);
+
+            section(panel, "Character Creation", &[
+                ("\u{2191}/\u{2193}", "Cycle field (Race / Class / STR / DEX / CON / INT / Begin)"),
+                ("\u{2190}/\u{2192}", "Change race / class selection, or adjust focused attribute"),
+                ("Enter", "Begin Descent (when on Begin button)"),
+                ("Esc", "Return to main menu"),
+            ]);
         },
     );
 }

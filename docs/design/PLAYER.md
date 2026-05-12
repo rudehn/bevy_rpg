@@ -2,22 +2,38 @@
 
 ## Overview
 
-The player has no attribute stats (no STR, DEX, CON, etc). All character growth
-comes from **equipment** and **shrines**. The player starts as a blank slate with
-base values and becomes powerful through what they find and how they spend essence.
+> **As of the character-system pivot:** the player now picks a **race**,
+> a **class**, and allocates **4 free attribute points** across STR / DEX
+> / CON / INT before the first floor. Race + class + attributes feed
+> combat math via the same `HitBonus` / `Dodge` / `DamageBonus` /
+> `MaxHp` components described below, but their starting values are no
+> longer fixed — they're derived from the player's character creation
+> choices. See [CHARACTER.md](CHARACTER.md) for the full character
+> system: race/class tables, attribute allocation rules, the HP
+> formula, and how attribute modifiers contribute to derived stats.
+>
+> Equipment and shrines still drive run-to-run progression on top of
+> the character baseline. The "blank slate adventurer" model is gone;
+> the rest of this doc describes the *post-character-creation* stat
+> shape that gear and shrines modify.
 
 ## Base Stats
 
-| Stat | Starting Value | Increased By |
-|------|---------------|--------------|
-| HP | 25 | Equipment, shrines |
-| Mana | 10 | Equipment, shrines |
-| Hit Bonus | 0 | Equipment, shrines |
-| Dodge Bonus | 0 | Equipment, shrines |
-| Armor | 0 | Equipment, shrines |
-| Damage | 1d2 (unarmed) | Weapon equipped |
+Starting values below assume **Human Warrior, no allocated points** —
+the default character. Any other race / class / allocation produces
+different starting numbers. See [CHARACTER.md](CHARACTER.md) §Classes
+for the full table.
+
+| Stat | Default (Human Warrior) | Increased By |
+|------|---|--------------|
+| HP | 13 (class_base 12 + CON_mod +1) | CON_mod, equipment, shrines |
+| Mana | 10 | Equipment, shrines (full mana system deferred to Phase 4) |
+| Hit Bonus | +2 (STR_mod +1, class_attack_bonus +1) | STR_mod, equipment, shrines |
+| Dodge Bonus | +1 (DEX_mod) | DEX_mod, equipment, shrines |
+| Armor | 1 (from Padded Armor starting kit) | Equipment, shrines |
+| Damage | 1d6 (from Rusted Shortsword) + STR_mod (+1) | STR_mod, weapon, equipment, shrines |
 | Action Delay | 1.0x (baseline) | Equipment, shrines |
-| Vision Range | 8 tiles (min 4) | Equipment, shrines |
+| Vision Range | 8 tiles (10 for Elf via Keen Senses; min 4) | Race trait, equipment, shrines |
 | Spell Slots | 1 | Shrines |
 
 ## Equipment Slots

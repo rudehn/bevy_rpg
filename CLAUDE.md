@@ -24,6 +24,7 @@ Design docs live in `docs/design/`. Read these before making gameplay changes.
 |-----|--------|
 | [GAME.md](docs/design/GAME.md) | Vision, core loop, win/lose, combat system, damage types, player stats, progression |
 | [PLAYER.md](docs/design/PLAYER.md) | Player stats, starting kit, equipment slots |
+| [CHARACTER.md](docs/design/CHARACTER.md) | Race / class / attribute system, character creation, HP-from-CON, attribute → combat math |
 | [DUNGEON.md](docs/design/DUNGEON.md) | Map generation pipeline, terrain/liquid layers, decorations, lighting, floor structure |
 | [ENCOUNTERS.md](docs/design/ENCOUNTERS.md) | Machine system (hordes → spawn table → machines), blueprints, trapped chests, lock & key |
 | [ENEMIES.md](docs/design/ENEMIES.md) | Monster roster, factions, species, tier structure, per-monster identities |
@@ -48,11 +49,15 @@ Design docs live in `docs/design/`. Read these before making gameplay changes.
 | [ASCII_RENDERER.md](docs/design/ASCII_RENDERER.md) | Per-tile glyph variation, animated effects, lighting, color palettes |
 
 **Key design constraints:**
-- No spells/mana — player uses staves (Brogue-style charges), monsters use cooldown abilities
 - All loot comes from chests — no floor drops
 - 4 damage types: Physical, Poison, Fire, Lightning
 - Win condition: Find Amulet of Yendor on floor 26, climb back up to the Escape Portal on floor 1
-- No XP, no levels, no classes, no attributes (STR/DEX/etc.) — symmetric flat-stat combat
+- **Character system (Phase 1, see [CHARACTER.md](docs/design/CHARACTER.md)):** the game is mid-pivot from the original Brogue-style "no chargen, no attributes" model toward a D&D-flavored RPG layer. Players currently pick 1 of 4 races and 1 of 4 classes at character creation and allocate 4 free attribute points across STR/DEX/CON/INT. Race+class+attributes feed combat math via `HitBonus` / `Dodge` / `DamageBonus` baked at spawn.
+- **Symmetric combat is partially broken in this phase:** the player now has `Race`, `Class`, `Attributes` components; monsters don't. Monster-side parity (save bonuses, eventually skills) lands in later phases via the existing `Species` enum's defaults system. Don't write code that *requires* monsters to have a `Race` or `Attributes` component.
+- **No XP / levels yet.** Player is permanently level 1. XP, levels, ASIs, and the `+ (level - 1) × (class_per_level + CON_mod)` HP term ship in a later phase.
+- **Saves are deferred.** No saving throws on player or monsters yet. The `Bleeding` status effect and the SV-4 monster-save model land in the "Saves" phase. Don't write code that assumes saves exist.
+- **Skills are deferred.** No use-trained weapon/spell skill tiers yet. Equipment + attributes is the entirety of player-side scaling.
+- **Mana is deferred.** Player magic still uses staves (Brogue-style charges); INT_mod adds to staff zap damage as a hook for the future mana pool. Mages will get a real mana pool in a later phase. Monsters still use cooldown abilities.
 
 ## Project Structure
 
@@ -61,6 +66,13 @@ src/
   main.rs                # App entry, plugin registration
   constants.rs           # Shared constants (tile size, Z-layers, action costs)
   components.rs          # Shared ECS components (Position, Viewshed, Monster, etc.)
+  character/
+    mod.rs               # CharacterPlugin, CharacterChoice resource, public exports
+    race.rs              # Race enum component + RaceTrait passive enum
+    class.rs             # Class enum component + Attribute enum (STR/DEX/CON/INT)
+    attributes.rs        # Attributes component + ability_mod + compose / derive helpers
+    asset.rs             # RaceManifest / ClassManifest RON schemas + handle resources
+    dice.rs              # roll_d20_with_race helper (Halfling Lucky reroll)
   assets/
     mod.rs               # Asset loading plugin, RON manifests, sprite handles
   game/
@@ -147,6 +159,17 @@ src/
 - Systems run in `Update` gated by `run_if(in_state(...))` — always scope systems to the correct `AppState`/`TurnState`
 - Messages (events) use Bevy's `Message` / `MessageWriter` / `MessageReader` pattern (not the old `EventWriter`/`EventReader`)
 - Use `Query::single()` not `.iter().next()` when expecting exactly one entity
+
+### Character System
+- `AppState`: `Loading → Menu → CharacterCreation → InGame` (with `GameOver`/`Victory` as terminal states). The character creation screen is its own top-level state — see `src/ui/character_creation.rs`.
+- `CharacterChoice` resource holds `{ race, class, free_points: [i32; 4] }`. The character creation UI writes it on "Begin Descent"; the save-load path overwrites it from `PlayerSaveData` before player spawn (`spawn_dungeon`'s load arm, see `SpawnDungeonExtras::character_choice`).
+- The player spawner ([src/player/mod.rs](src/player/mod.rs)) reads `CharacterChoice` plus `RaceManifest` / `ClassManifest` to:
+  1. `compose_attributes(race, class, free_points)` → final `Attributes` baked onto the player entity
+  2. `derive_stats(class, attrs)` → initial `HitBonus` / `Dodge` / `DamageBonus` / `Health.max` values (STR-driven for melee; ranged uses DEX in the preview but currently STR at runtime — known follow-up).
+  3. Race-specific spawn effects: **Stoneblood** (Dwarf 50% poison resist), **Keen Senses** (Elf +2 vision range). **Lucky** (Halfling natural-1 d20 reroll) is implemented in `roll_d20_with_race` — every player d20 call site must route through this helper. **Versatile** (Human +1 cap on one stat) is UI-only.
+- Equipment continues to bump `HitBonus`/`Dodge`/`DamageBonus` incrementally on equip/unequip (existing pattern). Attribute mods are baked once at spawn; if attribute scores ever change at runtime (Phase 2 ASI), the deltas would need tracking.
+- INT contributes to staff zap damage (clamped at 0) via `handle_zap_staff` in [src/game/staves.rs](src/game/staves.rs).
+- See [docs/design/CHARACTER.md](docs/design/CHARACTER.md) for the canonical writeup. The race and class tables there are **test-enforced** to match `races.ron` / `classes.ron` — see `.claude/rules/character-writeup-required.md`.
 
 ### Turn System
 - `TurnState`: `Waiting → NextTurn → PlayerInput → Processing → NextTurn`
