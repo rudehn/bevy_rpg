@@ -115,36 +115,43 @@ If natural 20:     critical hit (always hits, double damage dice)
 
 Both player and monsters use this formula. The `hit_bonus` and
 `dodge_bonus` values come from the same per-entity components (`HitBonus`,
-`Dodge`) and the formula is identical for both — but **the inputs are
-asymmetric:** the player's `HitBonus` is baked from attribute mods +
-class_attack_bonus + equipment at spawn, while monsters' come from
-authored RON values + their own equip flow. See
-[CHARACTER.md](CHARACTER.md) §Combat Math Integration for which attribute
-mod feeds which derived stat on the player side.
+`Dodge`) — but **the inputs are asymmetric:** the player's `HitBonus`
+is just equipment contribution at spawn (no class fudge factor); the
+**attribute mod is added dynamically** at hit-check time based on
+`AttackIntentMessage.source` (STR for melee, DEX for ranged). Monsters
+have authored RON values + no attribute mod. See
+[CHARACTER.md](CHARACTER.md) §Combat Math Integration for the canonical
+table.
 
-**Halfling Lucky:** if the attacker has `Race::Halfling` and rolls a
-natural 1, the roll is replayed once and the second result is taken
-(no cooldown). Implemented in `roll_d20_with_race`
-([src/character/dice.rs](../../src/character/dice.rs)) — every player
-d20 site routes through this helper.
+**Modifier formula:** `(score - 16) / 2` (Phase 2 anchored at 16, not
+the Phase-1 D&D 5e anchor of 10). At chargen, most attribute scores
+land below 16 and most mods are negative; players grow into positive
+mods over levels.
+
+**d20 routing:** every player d20 site goes through
+`roll_d20_with_race` ([src/character/dice.rs](../../src/character/dice.rs)).
+Currently a thin `rng.roll_dice(1, 20)` wrapper — no race in the
+Phase 2 roster has a d20-affecting trait — but kept as the canonical
+site so future race / class / skill effects have one place to plug in.
 
 ### Damage Pipeline
 
 ```
-AttackIntent
-  -> hit_check (d20 + hit_bonus vs 4 + dodge_bonus)
-                  ↑ Halfling Lucky reroll on nat-1
-  -> damage_roll (weapon dice + damage_bonus; x2 on crit)
-                                ↑ STR_mod for melee, DEX_mod for ranged
-                                  (preview-only for ranged today — the
-                                  baked HitBonus uses STR. See
-                                  CHARACTER.md §Combat Math Integration.)
+AttackIntent { source: Melee | Ranged | Spell | Environment }
+  -> hit_check (d20 + hit_bonus + attr_bonus  vs  4 + dodge_bonus)
+                  ↑ via roll_d20_with_race
+                                ↑ STR_mod (Melee), DEX_mod (Ranged), 0 otherwise
+  -> damage_roll (weapon dice + damage_bonus + attr_bonus; x2 on crit)
+                                                ↑ same branch as hit-check
   -> damage_reduction:
        Physical: (raw - armor).max(0), then apply resistance %
                                               ↑ Dwarf Stoneblood: +50%
                                                 poison resistance at spawn
        Poison/Fire/Lightning: skip armor, apply resistance % only
-  -> apply_damage (HP change, death check)
+  -> apply_damage (HP change, death check) → may emit DeathEvent
+                                              ↑ XP system reads this:
+                                                killer == player → award XP
+                                                (anti-farming dropoff)
 ```
 
 **Staff zaps** (Lightning / Fire / Force) add `INT_mod.max(0)` from the

@@ -2,39 +2,46 @@
 
 ## Overview
 
-> **As of the character-system pivot:** the player now picks a **race**,
-> a **class**, and allocates **4 free attribute points** across STR / DEX
-> / CON / INT before the first floor. Race + class + attributes feed
-> combat math via the same `HitBonus` / `Dodge` / `DamageBonus` /
-> `MaxHp` components described below, but their starting values are no
-> longer fixed — they're derived from the player's character creation
-> choices. See [CHARACTER.md](CHARACTER.md) for the full character
-> system: race/class tables, attribute allocation rules, the HP
-> formula, and how attribute modifiers contribute to derived stats.
+> **As of Phase 2:** the player picks a **race** (Human / Dwarf / Elf)
+> and a **class** (Warrior / Rogue / Mage / Ranger) at character
+> creation. Attribute scores are fully **race + class sum** — there is
+> no chargen allocation step. Three attributes: **STR / DEX / INT**
+> (CON is gone; HP scales from race + level). Players grow into
+> positive modifiers through XP / levels: a racial gain schedule fires
+> every 4 levels, and dedicated player-choice ASIs at levels 3 / 9 /
+> 15 / 21 / 27 give +2 free points each. See [CHARACTER.md](CHARACTER.md)
+> for the full character system: race/class tables, HP formula,
+> stat-gain rules.
 >
-> Equipment and shrines still drive run-to-run progression on top of
-> the character baseline. The "blank slate adventurer" model is gone;
-> the rest of this doc describes the *post-character-creation* stat
-> shape that gear and shrines modify.
+> Equipment and shrines drive run-to-run progression on top of the
+> character baseline. This doc describes the *post-character-creation*
+> stat shape that gear and shrines modify.
 
 ## Base Stats
 
-Starting values below assume **Human Warrior, no allocated points** —
-the default character. Any other race / class / allocation produces
-different starting numbers. See [CHARACTER.md](CHARACTER.md) §Classes
-for the full table.
+Starting values below assume **Human Warrior** — the default character.
+Other race × class combos produce different starting numbers. See
+[CHARACTER.md](CHARACTER.md) §Races and §Classes for the full tables.
 
-| Stat | Default (Human Warrior) | Increased By |
+| Stat | Default (Human Warrior, L1) | Increased By |
 |------|---|--------------|
-| HP | 13 (class_base 12 + CON_mod +1) | CON_mod, equipment, shrines |
+| HP | 13 (`floor(1.00 × (8 + 11×1/2))`) | Level (HP formula), equipment, shrines |
 | Mana | 10 | Equipment, shrines (full mana system deferred to Phase 4) |
-| Hit Bonus | +2 (STR_mod +1, class_attack_bonus +1) | STR_mod, equipment, shrines |
-| Dodge Bonus | +1 (DEX_mod) | DEX_mod, equipment, shrines |
+| Hit Bonus | 0 at spawn (STR_mod 0 added dynamically per melee hit) | Equipment, shrines (STR_mod for melee / DEX_mod for ranged at runtime) |
+| Dodge Bonus | 0 (DEX_mod 0) | DEX_mod, equipment, shrines |
 | Armor | 1 (from Padded Armor starting kit) | Equipment, shrines |
-| Damage | 1d6 (from Rusted Shortsword) + STR_mod (+1) | STR_mod, weapon, equipment, shrines |
+| Damage | 1d6 (from Rusted Shortsword) + STR_mod (0 at chargen) | STR_mod (melee) / DEX_mod (ranged) at runtime, weapon, equipment, shrines |
 | Action Delay | 1.0x (baseline) | Equipment, shrines |
 | Vision Range | 8 tiles (10 for Elf via Keen Senses; min 4) | Race trait, equipment, shrines |
 | Spell Slots | 1 | Shrines |
+| Level | 1 (cap 27) | XP from kills |
+| Experience | 0 | XP from kills (slow-then-fast cubic curve) |
+
+**Attribute mods are applied dynamically.** Combat math reads the
+player's `Attributes` and the `AttackIntentMessage.source` at hit-check
+and damage-roll time — STR for melee, DEX for ranged. The static
+`HitBonus` and `DamageBonus` components carry only equipment
+contributions. See [CHARACTER.md](CHARACTER.md) §Combat Math Integration.
 
 ## Equipment Slots
 
@@ -58,7 +65,7 @@ See ITEMS.md for full equipment details.
 ### Hit Check (d20)
 
 ```
-Attacker rolls: d20 + hit_bonus
+Attacker rolls: d20 + hit_bonus + attribute_bonus
 Target number:  4 + target_dodge_bonus
 
 If roll >= target: hit
@@ -66,7 +73,16 @@ If roll < target:  miss (turn still consumed)
 If natural 20:     critical hit (always hits)
 ```
 
-Both player and monsters use this formula (symmetric combat).
+`attribute_bonus` is added dynamically based on `AttackIntentMessage.source`:
+- **Melee:** STR_mod
+- **Ranged:** DEX_mod
+- **Spell / Environment:** 0 (staff zaps add INT_mod separately in
+  `handle_zap_staff`)
+
+The player and monsters use the same formula structure, but monsters
+have no `Attributes` component and contribute 0 from
+`attack_attribute_bonus`. See [CHARACTER.md](CHARACTER.md) §Combat Math
+Integration for the full table.
 
 ### Critical Hits
 
@@ -79,9 +95,9 @@ Both player and monsters use this formula (symmetric combat).
 ### Melee Attack
 
 1. Player bumps into enemy — triggers melee intent
-2. Hit check: `d20 + hit_bonus >= 4 + target_dodge_bonus`
-3. On hit: `damage = weapon_dice + damage_bonus`, reduced by target armor and
-   resistance
+2. Hit check: `d20 + hit_bonus + STR_mod >= 4 + target_dodge_bonus`
+3. On hit: `damage = weapon_dice + damage_bonus + STR_mod`, reduced by target
+   armor and resistance
 4. On miss: 0 damage, turn consumed
 
 ### Ranged Attack
@@ -89,21 +105,26 @@ Both player and monsters use this formula (symmetric combat).
 - Requires bow equipped and arrows in off-hand quiver
 - Arrows are consumed on each shot
 - Range limited (default: 8 tiles)
-- Uses the same d20 hit formula
+- Uses the same d20 hit formula but with **DEX_mod** instead of STR_mod
+  for both hit and damage. A DEX-focused Ranger thus scales their bow
+  shots even with a low STR.
 
 ### Damage Pipeline
 
 ```
-AttackIntentMessage
+AttackIntentMessage { source: Melee | Ranged | Spell | Environment }
   -> hit_check_system
-      roll d20
+      roll d20 (via roll_d20_with_race)
+      attr_bonus = attack_attribute_bonus(source, attacker_attrs)
+                   # Melee: STR_mod, Ranged: DEX_mod, else: 0
       if roll == 20: is_critical = true, auto-hit
-      else: d20 + hit_bonus >= 4 + target_dodge_bonus
-      -> DamageRollMessage { is_critical, damage_type }
+      else: d20 + hit_bonus + attr_bonus >= 4 + target_dodge_bonus
+      -> DamageRollMessage { is_critical, damage_type, source }
 
   -> damage_roll_system
-      if is_critical: roll damage dice x2 + damage_bonus
-      else: roll damage dice + damage_bonus
+      attr_bonus = attack_attribute_bonus(source, attacker_attrs)
+      if is_critical: roll damage dice x2 + damage_bonus + attr_bonus
+      else: roll damage dice + damage_bonus + attr_bonus
       -> DamageReductionMessage { raw_damage, damage_type }
 
   -> damage_reduction_system
@@ -149,11 +170,36 @@ Applies symmetrically to player and monsters.
 
 ## Health & Regen
 
-- **Starting HP:** 25
-- **Regen:** HP regenerates slowly over time
+- **Starting HP:** derived from race + level. At L1: Dwarf 16, Human 13,
+  Elf 12. Formula: `floor(race_hp_mod × (8 + 11 × XL / 2))`. Recomputed
+  from scratch on every level-up; equipment HP bonuses layer on top.
+- **Level-up heals to full** (DCSS default).
+- **Regen:** HP regenerates slowly over time.
 - **Regen suppression:** Regen is suppressed for 5 turns after taking damage.
   This creates a "recover between fights" pacing — the player heals up in
   corridors, not mid-combat.
+
+## XP & Levels
+
+- Player gains XP from killing monsters. Each monster declares a `tier`
+  in `monsters.ron` (currently all default to 1; a balancing pass will
+  set per-monster tiers).
+- **Anti-farming:** XP reward scales by `player_level - monster_tier`:
+  full XP within ±2 levels, 50% at +4, **0 XP at +5 or more**. Killing
+  a tier-1 sewer rat as a level 6 character gives nothing.
+- **Punching up bonus:** killing a monster ≥3 levels above you gives
+  1.5× XP.
+- **Level cap 27** (DCSS). Slow-then-fast cubic curve: ~150 XP to L2,
+  ~2,000 to L5, ~20,000 to L10, ~90,000 to L27.
+- **Stat-gain on level-up:**
+  - **Racial schedule** fires every 4 levels (L4, 8, 12, 16, 20, 24):
+    +1 to one of the race's allowed attributes (Human and Dwarf can
+    pick any of S/D/I; Elf can pick D or I, never S).
+  - **Player-choice ASIs** at L3, 9, 15, 21, 27: +2 free points to
+    spend across any attribute.
+  - When a level-up triggers a prompt, the game enters
+    `InGameState::AsiSelect` (DCSS-style inline modal) — press
+    `S` / `D` / `I` to spend a point.
 
 ## Mana
 
