@@ -152,6 +152,35 @@ pub struct DerivedStats {
     pub dodge: i32,
 }
 
+/// Pick the attacker's attribute modifier that applies to a given
+/// `DamageSource`. Used at hit-check and damage-roll time so attribute
+/// scaling branches by weapon type rather than being baked statically into
+/// `HitBonus` / `DamageBonus` at spawn (which would force a single
+/// attribute to drive both melee and ranged).
+///
+/// - Melee: STR
+/// - Ranged: DEX
+/// - Spell / Environment / anything else: 0 (staff zaps add INT_mod
+///   separately in `handle_zap_staff`; environment damage is
+///   attribute-independent)
+///
+/// Returns 0 if the attacker has no `Attributes` component (every monster
+/// today).
+pub fn attack_attribute_bonus(
+    source: roguelike_engine::combat::DamageSource,
+    attrs: Option<&Attributes>,
+) -> i32 {
+    use roguelike_engine::combat::DamageSource;
+    let Some(attrs) = attrs else {
+        return 0;
+    };
+    match source {
+        DamageSource::Melee => attrs.str_mod(),
+        DamageSource::Ranged => attrs.dex_mod(),
+        _ => 0,
+    }
+}
+
 pub fn derive_stats(class_asset: &ClassAsset, attrs: &Attributes) -> DerivedStats {
     let str_m = attrs.str_mod();
     let dex_m = attrs.dex_mod();
@@ -365,6 +394,56 @@ mod tests {
         assert_eq!(derived.dodge, 3);
         // hit_bonus_ranged = DEX_mod (+2) + 0 = +2
         assert_eq!(derived.hit_bonus_ranged, 2);
+    }
+
+    #[test]
+    fn attack_attribute_bonus_picks_str_for_melee() {
+        use roguelike_engine::combat::DamageSource;
+        let attrs = Attributes {
+            strength: 16,    // mod +3
+            dexterity: 8,    // mod -1
+            constitution: 10,
+            intelligence: 10,
+        };
+        assert_eq!(attack_attribute_bonus(DamageSource::Melee, Some(&attrs)), 3);
+    }
+
+    #[test]
+    fn attack_attribute_bonus_picks_dex_for_ranged() {
+        use roguelike_engine::combat::DamageSource;
+        let attrs = Attributes {
+            strength: 8,     // mod -1
+            dexterity: 16,   // mod +3
+            constitution: 10,
+            intelligence: 10,
+        };
+        assert_eq!(attack_attribute_bonus(DamageSource::Ranged, Some(&attrs)), 3);
+    }
+
+    #[test]
+    fn attack_attribute_bonus_zero_for_spell_or_environment() {
+        use roguelike_engine::combat::DamageSource;
+        let attrs = Attributes {
+            strength: 16,
+            dexterity: 16,
+            constitution: 16,
+            intelligence: 16,
+        };
+        // Staff zaps add INT separately; combat-pipeline Spell damage gets 0.
+        assert_eq!(attack_attribute_bonus(DamageSource::Spell, Some(&attrs)), 0);
+        assert_eq!(
+            attack_attribute_bonus(DamageSource::Environment, Some(&attrs)),
+            0
+        );
+    }
+
+    #[test]
+    fn attack_attribute_bonus_zero_for_entities_without_attributes() {
+        use roguelike_engine::combat::DamageSource;
+        // Monsters don't have an Attributes component yet, so they get 0
+        // — preserving the existing flat hit/damage they're authored with.
+        assert_eq!(attack_attribute_bonus(DamageSource::Melee, None), 0);
+        assert_eq!(attack_attribute_bonus(DamageSource::Ranged, None), 0);
     }
 
     /// Default `CharacterChoice` is Human Warrior, 4 points into STR, per

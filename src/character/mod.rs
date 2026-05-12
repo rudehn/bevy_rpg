@@ -19,7 +19,8 @@ pub use asset::{
     ClassAsset, ClassManifest, ClassManifestHandle, RaceAsset, RaceManifest, RaceManifestHandle,
 };
 pub use attributes::{
-    ability_mod, compose_attributes, derive_stats, Attributes, CharacterChoice, DerivedStats,
+    ability_mod, attack_attribute_bonus, compose_attributes, derive_stats, Attributes,
+    CharacterChoice, DerivedStats,
 };
 pub use class::{Attribute, Class};
 pub use dice::{apply_lucky, roll_d20_with_race};

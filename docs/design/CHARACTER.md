@@ -175,9 +175,9 @@ Stacked on top of race bonuses, then free points apply.
   staves; until then your Apprentice Staff has one charge.
 - **Ranger** — DEX-primary like the Rogue but with STR secondary, so
   bow-or-melee builds both feel okay. Six arrows to start; conserving
-  ammo is the early-floor puzzle. **Known limitation:** ranged hit and
-  damage currently use STR at runtime because the hit-check doesn't
-  branch by weapon type yet (see [§Combat Math Integration](#combat-math-integration)).
+  ammo is the early-floor puzzle. Hit and damage branch by weapon type
+  at runtime: bows consume DEX_mod, melee weapons consume STR_mod (see
+  [§Combat Math Integration](#combat-math-integration)).
 
 ## Attribute Allocation
 
@@ -212,20 +212,38 @@ So a Warrior (`base 12`) with CON 14 (`mod +2`) starts at 14 HP. A Mage
 ## Combat Math Integration
 
 `Attributes` doesn't replace the existing stat components in
-[src/game/stats.rs](../../src/game/stats.rs); it **contributes** to them
-through a `recalculate_stats` system that runs on `Attributes` insert and
-on equipment-change events.
+[src/game/stats.rs](../../src/game/stats.rs). Attacker-side scaling
+(hit / damage) is **dynamic** — `hit_check_system` and `damage_roll_system`
+read the attacker's `Attributes` and the `AttackIntentMessage.source` and
+add the right modifier per attack. Defender-side scaling (Dodge) and
+one-time values (MaxHp) are **baked** at spawn.
 
-| Combat value | Phase 1 derivation |
-|---|---|
-| `HitBonus` (melee) | `ability_mod(str) + class_attack_bonus + equipment.hit_bonus` |
-| `HitBonus` (ranged) | `ability_mod(dex) + class_attack_bonus + equipment.hit_bonus` |
-| `DamageBonus` (melee) | `ability_mod(str) + equipment.damage_bonus` |
-| `DamageBonus` (ranged) | `ability_mod(dex) + equipment.damage_bonus` |
-| `DamageBonus` (staff zap) | `ability_mod(int) + equipment.damage_bonus` |
-| `Dodge` | `ability_mod(dex) + class_dodge_bonus + equipment.dodge_bonus` |
-| `Armor` | `equipment.armor` (attribute-independent) |
-| `MaxHp` | `class_base_hp + ability_mod(con)` |
+| Combat value | Phase 1 derivation | When applied |
+|---|---|---|
+| `HitBonus` component | `class_attack_bonus + equipment.hit_bonus` | baked at spawn / equip |
+| Hit-roll attribute bonus | STR_mod for melee, DEX_mod for ranged, 0 otherwise | dynamic in `hit_check_system` |
+| `DamageBonus` component | `equipment.damage_bonus` | baked at spawn / equip |
+| Damage-roll attribute bonus | STR_mod for melee, DEX_mod for ranged, 0 otherwise | dynamic in `damage_roll_system` |
+| Staff zap damage adder | `ability_mod(int).max(0)` | dynamic in `handle_zap_staff` |
+| `Dodge` | `ability_mod(dex) + class_dodge_bonus + equipment.dodge_bonus` | baked at spawn / equip |
+| `Armor` | `equipment.armor` (attribute-independent) | baked at spawn / equip |
+| `MaxHp` | `class_base_hp + ability_mod(con)` | baked at spawn |
+
+**Why dynamic on the attack side?** A single `HitBonus` value can't
+correctly represent both "STR for melee" and "DEX for ranged" — a
+Ranger with high DEX would either get a wrong melee swing or a wrong
+bow shot. Reading the modifier at roll time using the attack's source
+gives every weapon class the right scaling without bookkeeping.
+
+**Why baked on the defender side?** Dodge is attack-type-agnostic
+(a nimble target dodges arrows and swords equally well) and MaxHp is
+a one-time spawn value. Recomputing them dynamically would just be
+work without behavior change.
+
+The pure helper that drives the dynamic side is
+`attack_attribute_bonus(source, attrs)` in
+[src/character/attributes.rs](../../src/character/attributes.rs).
+Every attribute-aware combat site routes through it.
 
 **INT in Phase 1:** without saves and spells, INT would be inert.
 Letting `ability_mod(int)` scale Mage's staff zap damage gives the Mage

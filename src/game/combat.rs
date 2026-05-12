@@ -145,6 +145,7 @@ fn hit_check_system(
     mut game_rng: ResMut<GameRng>,
     query: Query<(&Name, Option<&Dodge>, Option<&HitBonus>, Has<Player>)>,
     race_query: Query<&crate::character::Race>,
+    attrs_query: Query<&crate::character::Attributes>,
 ) {
     for intent in intents.read() {
         let Ok((attacker_name, _, attacker_hit_bonus, is_player)) = query.get(intent.attacker) else {
@@ -160,11 +161,15 @@ fn hit_check_system(
         let hit_roll = crate::character::roll_d20_with_race(&mut game_rng.0, attacker_race);
 
         let hit_bonus = attacker_hit_bonus.map(|h| h.0).unwrap_or(0);
+        // Branch the attribute contribution by weapon type: STR for melee,
+        // DEX for ranged. Monsters lack `Attributes` and contribute 0.
+        let attacker_attrs = attrs_query.get(intent.attacker).ok();
+        let attr_bonus = crate::character::attack_attribute_bonus(intent.source, attacker_attrs);
         let dodge_val = target_dodge.map(|d| d.0).unwrap_or(0);
         let dodge_target = 4 + dodge_val;
         let is_natural_20 = hit_roll == 20;
 
-        if is_natural_20 || (hit_roll + hit_bonus >= dodge_target) {
+        if is_natural_20 || (hit_roll + hit_bonus + attr_bonus >= dodge_target) {
             roll_writer.write(DamageRollMessage {
                 attacker: intent.attacker,
                 target: intent.target,
@@ -202,6 +207,7 @@ fn damage_roll_system(
         Has<crate::game::abilities::Terrified>,
         Option<&DamageBonus>,
         Has<Player>,
+        Option<&crate::character::Attributes>,
     )>,
     target_query: Query<(Option<&Armor>, Option<&crate::game::abilities::RallyBuff>)>,
     player_equipment_query: Query<&crate::game::items::Equipment, With<Player>>,
@@ -211,7 +217,8 @@ fn damage_roll_system(
     position_query: Query<&Position>,
 ) {
     for message in roll_messages.read() {
-        let Ok((damage_dice, status_effects, is_terrified, damage_bonus, attacker_is_player)) = attacker_query.get(message.attacker) else {
+        let Ok((damage_dice, status_effects, is_terrified, damage_bonus, attacker_is_player, attacker_attrs))
+            = attacker_query.get(message.attacker) else {
             continue;
         };
 
@@ -223,9 +230,14 @@ fn damage_roll_system(
         };
 
         let bonus = damage_bonus.map(|d| d.0).unwrap_or(0);
+        // Branch the attribute contribution by weapon type: STR for melee,
+        // DEX for ranged. Mirrors hit_check_system so an attribute's hit
+        // and damage scaling always travel together.
+        let attr_bonus = crate::character::attack_attribute_bonus(message.source, attacker_attrs);
 
         let is_enraged = status_effects.map(|e| e.is_enraged()).unwrap_or(false);
-        let mut raw_damage = apply_damage_multipliers(rolled_damage + bonus, is_enraged, is_terrified);
+        let mut raw_damage =
+            apply_damage_multipliers(rolled_damage + bonus + attr_bonus, is_enraged, is_terrified);
 
         // Backstab: player with Backstab weapon attacking a sleeping monster deals triple damage.
         if attacker_is_player && message.source == DamageSource::Melee {

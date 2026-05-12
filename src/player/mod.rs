@@ -182,11 +182,13 @@ pub fn player_spawn_or_move_system(
                 Damage(player_asset.damage.clone()),
                 Armor(player_asset.armor),
                 Dodge(player_asset.dodge + derived.dodge),
-                // HitBonus / DamageBonus are baked with the **melee** mod
-                // (STR-driven). Ranged weapons should consume DEX instead;
-                // a follow-up commit branches the hit-check by weapon type.
-                HitBonus(derived.hit_bonus_melee),
-                DamageBonus(derived.damage_bonus_melee),
+                // Attribute mods are NOT baked into HitBonus / DamageBonus.
+                // The hit-check and damage-roll systems read the attacker's
+                // `Attributes` + the `AttackIntentMessage.source` and add
+                // STR_mod for Melee, DEX_mod for Ranged. Only the static
+                // `class_attack_bonus` lives in HitBonus at spawn.
+                HitBonus(class_asset.class_attack_bonus),
+                DamageBonus(0),
                 SpeedStats::default(),
             ))
             .insert((
