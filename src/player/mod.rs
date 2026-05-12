@@ -200,6 +200,10 @@ pub fn player_spawn_or_move_system(
                 character_choice.race,
                 character_choice.class,
                 attributes,
+                // Phase 2: level + XP. Spawned at level 1 with 0 XP. The
+                // save-load path overrides these from PlayerSaveData.
+                crate::game::xp::Level(1),
+                crate::game::xp::Experience(0),
             ))
             .insert((
                 Transform {

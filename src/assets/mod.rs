@@ -364,6 +364,12 @@ pub struct MonsterAsset {
     pub base_hp: i32,
     pub damage: String,
 
+    /// Monster tier for XP-reward scaling (Phase 2). 1 = trivial; 27 = max
+    /// challenge. Compared against the player's level to apply the
+    /// anti-farming dropoff. Defaults to 1 if omitted.
+    #[serde(default = "default_monster_tier")]
+    pub tier: u32,
+
     #[serde(default, deserialize_with = "serde_helpers::deserialize_i32_as_option")]
     pub regen: Option<i32>,
 
@@ -570,6 +576,10 @@ fn default_weight() -> i32 {
     1
 }
 fn default_count_one() -> u32 {
+    1
+}
+
+fn default_monster_tier() -> u32 {
     1
 }
 

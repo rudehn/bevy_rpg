@@ -71,6 +71,7 @@ pub mod systems;
 pub mod targeting;
 pub mod tile_promotion;
 pub mod turns;
+pub mod xp;
 pub mod water;
 pub use ai::*;
 pub use spawner::*;
@@ -102,6 +103,11 @@ pub enum InGameState {
     EnchantSelect,
     Help,
     ChasmConfirm,
+    /// DCSS-style ASI prompt — drains a `PendingAsi` component on the
+    /// player. Blocks input until all queued points are spent.
+    AsiSelect,
+    /// Character info screen (Phase 2). Bound to C.
+    CharacterInfo,
 }
 
 pub struct GamePlugin;
@@ -141,6 +147,7 @@ impl Plugin for GamePlugin {
                 crate::game::goap::GoapPlugin,
                 water::WaterPlugin,
                 ascii_mode::AsciiModePlugin,
+                crate::game::xp::XpPlugin,
             ))
             // Position→Transform sync and camera run whenever in-game, including Targeting state.
             // move_camera runs after player_spawn_or_move_system so the camera snaps to the new

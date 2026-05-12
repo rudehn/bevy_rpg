@@ -64,19 +64,13 @@ fn inventory_input_system(
     state: Res<State<InGameState>>,
     mut next_state: ResMut<NextState<InGameState>>,
 ) {
-    // Both I and C toggle the inventory screen
+    // I toggles inventory. C is reserved for the character info screen
+    // (Phase 2) and is handled in `src/ui/character_info.rs`.
     crate::ui::modal::toggle_screen(
         &keys,
         &state,
         &mut next_state,
         KeyCode::KeyI,
-        InGameState::Inventory,
-    );
-    crate::ui::modal::toggle_screen(
-        &keys,
-        &state,
-        &mut next_state,
-        KeyCode::KeyC,
         InGameState::Inventory,
     );
 }

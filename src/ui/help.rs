@@ -88,10 +88,17 @@ fn spawn_help_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
             ]);
 
             section(panel, "Screens", &[
-                ("I / C", "Inventory & Equipment"),
+                ("I", "Inventory & Equipment"),
+                ("C", "Character info (race / class / level / attributes)"),
                 ("L", "Log history"),
                 ("Tab", "Cycle nearby entities"),
                 ("?", "This help screen"),
+            ]);
+
+            section(panel, "Level-Up (when prompted)", &[
+                ("S", "Spend a point into Strength"),
+                ("D", "Spend a point into Dexterity"),
+                ("I", "Spend a point into Intelligence"),
             ]);
 
             section(panel, "Inventory Actions", &[

@@ -10,8 +10,10 @@ use crate::game::{
 use crate::map::dungeon::Floor;
 use crate::player::Player;
 
+pub mod asi_modal;
 pub mod chasm_confirm;
 pub mod character_creation;
+pub mod character_info;
 pub mod cheat_menu;
 pub mod enchant_select;
 pub mod game_log;
@@ -51,6 +53,18 @@ pub struct PlayerHealthBarBackground;
 
 #[derive(Component)]
 pub struct FloorDepthText;
+
+#[derive(Component)]
+pub struct PlayerLevelText;
+
+#[derive(Component)]
+pub struct PlayerXpText;
+
+#[derive(Component)]
+pub struct PlayerXpBar;
+
+#[derive(Component)]
+pub struct PlayerXpBarBackground;
 
 /// Container for player status effect icons in the HUD.
 /// Stores a snapshot of the last rendered effect count to avoid per-frame rebuilds.
@@ -169,6 +183,52 @@ fn spawn_player_stats_ui(
                 FloorDepthText,
             ));
 
+            // Level + XP block
+            parent.spawn((
+                Text::new("Lv 1"),
+                TextFont {
+                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                    font_size: 13.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(1.0, 0.85, 0.0)),
+                Node { margin: UiRect::top(Val::Px(4.0)), ..default() },
+                PlayerLevelText,
+            ));
+            parent.spawn((
+                Text::new("XP 0 / 151"),
+                TextFont {
+                    font: asset_server.load("fonts/Macondo-Regular.ttf"),
+                    font_size: 11.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.7, 0.7, 0.7)),
+                PlayerXpText,
+            ));
+            // XP bar
+            parent
+                .spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Px(6.0),
+                        margin: UiRect::top(Val::Px(2.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.10, 0.10, 0.18)),
+                    PlayerXpBarBackground,
+                ))
+                .with_children(|bar_bg| {
+                    bar_bg.spawn((
+                        Node {
+                            width: Val::Percent(0.0),
+                            height: Val::Percent(100.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.6, 0.4, 0.85)),
+                        PlayerXpBar,
+                    ));
+                });
+
             // Nearby entities container — populated each turn by NearbyPlugin
             parent.spawn((
                 Node {
@@ -184,7 +244,7 @@ fn spawn_player_stats_ui(
             parent.spawn(Node { flex_grow: 1.0, ..default() });
 
             parent.spawn((
-                Text::new("[I/C] Inventory"),
+                Text::new("[I] Inv  [C] Char"),
                 TextFont {
                     font: asset_server.load("fonts/Macondo-Regular.ttf"),
                     font_size: 14.0,
@@ -193,6 +253,38 @@ fn spawn_player_stats_ui(
                 TextColor(Color::srgb(0.55, 0.55, 0.55)),
             ));
         });
+}
+
+/// Update the Level + XP HUD widgets. Runs every frame in-game; cheap
+/// enough that gating on `Changed<Level>` / `Changed<Experience>` isn't
+/// necessary.
+fn update_player_level_xp_ui(
+    player_q: Query<(&crate::game::xp::Level, &crate::game::xp::Experience), With<Player>>,
+    mut level_text_q: Query<&mut Text, (With<PlayerLevelText>, Without<PlayerXpText>)>,
+    mut xp_text_q: Query<&mut Text, (With<PlayerXpText>, Without<PlayerLevelText>)>,
+    mut xp_bar_q: Query<&mut Node, With<PlayerXpBar>>,
+) {
+    let Ok((level, xp)) = player_q.single() else { return };
+
+    if let Ok(mut t) = level_text_q.single_mut() {
+        *t = Text::new(format!("Lv {}", level.0));
+    }
+    let needed = crate::game::xp::xp_to_next_level(level.0);
+    if let Ok(mut t) = xp_text_q.single_mut() {
+        if level.0 >= crate::game::xp::LEVEL_CAP {
+            *t = Text::new("XP — MAX —".to_string());
+        } else {
+            *t = Text::new(format!("XP {} / {}", xp.0, needed));
+        }
+    }
+    if let Ok(mut bar) = xp_bar_q.single_mut() {
+        let pct = if level.0 >= crate::game::xp::LEVEL_CAP || needed == 0 || needed == u32::MAX {
+            100.0
+        } else {
+            ((xp.0 as f32 / needed as f32) * 100.0).clamp(0.0, 100.0)
+        };
+        bar.width = Val::Percent(pct);
+    }
 }
 
 /// System that updates the player's health display in the UI.
@@ -483,6 +575,8 @@ impl Plugin for UiPlugin {
                 hover_info::HoverInfoPlugin, enchant_select::EnchantSelectPlugin,
                 help::HelpPlugin, chasm_confirm::ChasmConfirmPlugin,
                 character_creation::CharacterCreationPlugin,
+                asi_modal::AsiModalPlugin,
+                character_info::CharacterInfoPlugin,
             ))
             .add_systems(
                 OnEnter(AppState::InGame),
@@ -496,6 +590,7 @@ impl Plugin for UiPlugin {
                 (
                     update_player_stats_ui,
                     update_floor_ui,
+                    update_player_level_xp_ui,
                     update_player_status_effects_ui,
                     add_log_message_system,
                     update_game_log_ui,

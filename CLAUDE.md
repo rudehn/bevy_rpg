@@ -52,12 +52,13 @@ Design docs live in `docs/design/`. Read these before making gameplay changes.
 - All loot comes from chests — no floor drops
 - 4 damage types: Physical, Poison, Fire, Lightning
 - Win condition: Find Amulet of Yendor on floor 26, climb back up to the Escape Portal on floor 1
-- **Character system (Phase 1, see [CHARACTER.md](docs/design/CHARACTER.md)):** the game is mid-pivot from the original Brogue-style "no chargen, no attributes" model toward a D&D-flavored RPG layer. Players currently pick 1 of 4 races and 1 of 4 classes at character creation and allocate 4 free attribute points across STR/DEX/CON/INT. Race+class+attributes feed combat math via `HitBonus` / `Dodge` / `DamageBonus` baked at spawn.
-- **Symmetric combat is partially broken in this phase:** the player now has `Race`, `Class`, `Attributes` components; monsters don't. Monster-side parity (save bonuses, eventually skills) lands in later phases via the existing `Species` enum's defaults system. Don't write code that *requires* monsters to have a `Race` or `Attributes` component.
-- **No XP / levels yet.** Player is permanently level 1. XP, levels, ASIs, and the `+ (level - 1) × (class_per_level + CON_mod)` HP term ship in a later phase.
-- **Saves are deferred.** No saving throws on player or monsters yet. The `Bleeding` status effect and the SV-4 monster-save model land in the "Saves" phase. Don't write code that assumes saves exist.
-- **Skills are deferred.** No use-trained weapon/spell skill tiers yet. Equipment + attributes is the entirety of player-side scaling.
-- **Mana is deferred.** Player magic still uses staves (Brogue-style charges); INT_mod adds to staff zap damage as a hook for the future mana pool. Mages will get a real mana pool in a later phase. Monsters still use cooldown abilities.
+- **Character system (Phase 2, see [CHARACTER.md](docs/design/CHARACTER.md)):** the game is mid-pivot from the original Brogue-style "no chargen, no attributes" model toward a D&D-flavored RPG layer. Players pick 1 of 3 races (Human/Dwarf/Elf) and 1 of 4 classes (Warrior/Rogue/Mage/Ranger) at character creation; attribute scores are fully race + class sum (no allocation step). Three attributes: STR/DEX/INT (CON removed). Modifier formula `(score - 16) / 2` — anchored at 16 so chargen mods are typically negative and players grow into them. HP scales from race + level via `floor(race_hp_mod × (8 + 11 × XL / 2))`.
+- **XP and levels.** Player gains XP from kills (anti-farming dropoff: monsters 5+ levels below give 0 XP); level cap 27. Level-up recomputes HP, heals to full, fires a particle, and may queue ASI prompts (racial schedule every 4 levels — `Race.gain_schedule`; player-choice at L3/9/15/21/27 → +2 free points). ASI prompts route through `InGameState::AsiSelect` (DCSS-style inline modal).
+- **Symmetric combat is partially broken:** the player now has `Race`, `Class`, `Attributes`, `Level`, `Experience` components; monsters have `MonsterTier` but no attributes. Monster-side parity (save bonuses, skills) lands in later phases. Don't write code that *requires* monsters to have a `Race` or `Attributes` component.
+- **Saves are deferred.** No saving throws on player or monsters yet.
+- **Skills are deferred.** No use-trained weapon/spell skill tiers yet. The HP formula's missing Fighting term lands when the Skills phase ships.
+- **Mana is deferred.** Player magic still uses staves (Brogue-style charges); INT_mod adds to staff zap damage as a hook for the future mana pool.
+- **Monster combat-stat rebalancing is deferred.** Phase 2 introduced a much wider chargen-mod range; monster HP/damage values designed against the Phase 1 power curve will feel off until they're tuned.
 
 ## Project Structure
 
@@ -72,7 +73,7 @@ src/
     class.rs             # Class enum component + Attribute enum (STR/DEX/CON/INT)
     attributes.rs        # Attributes component + ability_mod + compose / derive helpers
     asset.rs             # RaceManifest / ClassManifest RON schemas + handle resources
-    dice.rs              # roll_d20_with_race helper (Halfling Lucky reroll)
+    dice.rs              # roll_d20_with_race helper (thin wrapper after Halfling Lucky removed in Phase 2)
   assets/
     mod.rs               # Asset loading plugin, RON manifests, sprite handles
   game/
@@ -101,6 +102,8 @@ src/
     targeting.rs         # Target selection for abilities and staves
     turns.rs             # TurnOrderPlugin, TurnManager, TurnState FSM
     water.rs             # Water effects (item sweep, movement cost, extinguish)
+    xp.rs                # Level / Experience / MonsterTier / XP curve / level-up handler
+
   map/
     mod.rs               # MapPlugin re-exports
     map.rs               # Map resource, tile visibility systems, GRID_SIZE (16x16), MAP_SIZE (80x60)
@@ -149,6 +152,7 @@ src/
     log_history.rs       # Scrollable game log history
     menu.rs              # In-game pause/options menu
     modal.rs             # Reusable modal dialog component
+    asi_modal.rs         # DCSS-style ASI prompt (InGameState::AsiSelect)
     cheat_menu.rs        # Debug cheat menu
 ```
 
@@ -160,16 +164,31 @@ src/
 - Messages (events) use Bevy's `Message` / `MessageWriter` / `MessageReader` pattern (not the old `EventWriter`/`EventReader`)
 - Use `Query::single()` not `.iter().next()` when expecting exactly one entity
 
-### Character System
+### Character System (Phase 2)
 - `AppState`: `Loading → Menu → CharacterCreation → InGame` (with `GameOver`/`Victory` as terminal states). The character creation screen is its own top-level state — see `src/ui/character_creation.rs`.
-- `CharacterChoice` resource holds `{ race, class, free_points: [i32; 4] }`. The character creation UI writes it on "Begin Descent"; the save-load path overwrites it from `PlayerSaveData` before player spawn (`spawn_dungeon`'s load arm, see `SpawnDungeonExtras::character_choice`).
+- `CharacterChoice { race, class }` resource (Phase 2 — no free_points; chargen no longer has an allocation step). The character creation UI writes it on "Begin Descent"; the save-load path overwrites it from `PlayerSaveData` before player spawn (`spawn_dungeon`'s load arm, see `SpawnDungeonExtras::character_choice`).
 - The player spawner ([src/player/mod.rs](src/player/mod.rs)) reads `CharacterChoice` plus `RaceManifest` / `ClassManifest` to:
-  1. `compose_attributes(race, class, free_points)` → final `Attributes` baked onto the player entity
-  2. `derive_stats(class, attrs)` → initial `Dodge` and `Health.max` (DEX_mod for Dodge, CON_mod for HP). `HitBonus` and `DamageBonus` are baked with only the class baseline + equipment — the attribute mod is added **dynamically** at hit-check and damage-roll time, branching on `AttackIntentMessage.source` so STR drives melee and DEX drives ranged. The pure helper is `attack_attribute_bonus(source, attrs)`.
-  3. Race-specific spawn effects: **Stoneblood** (Dwarf 50% poison resist), **Keen Senses** (Elf +2 vision range). **Lucky** (Halfling natural-1 d20 reroll) is implemented in `roll_d20_with_race` — every player d20 call site must route through this helper. **Versatile** (Human +1 cap on one stat) is UI-only.
-- Equipment continues to bump `HitBonus`/`Dodge`/`DamageBonus` incrementally on equip/unequip (existing pattern). Attribute mods are baked once at spawn; if attribute scores ever change at runtime (Phase 2 ASI), the deltas would need tracking.
+  1. `compose_attributes(race, class)` → final `Attributes` (just race + class sum; no allocation)
+  2. `derive_stats(race, attrs, 1)` → initial `Dodge` (DEX_mod) and `Health.max` (race × level HP formula). `HitBonus` and `DamageBonus` are baked at 0 — attribute mods are added **dynamically** at hit-check/damage-roll time, branching on `AttackIntentMessage.source` (STR melee, DEX ranged). The pure helper is `attack_attribute_bonus(source, attrs)`.
+  3. Race-specific spawn effects: **Stoneblood** (Dwarf 50% poison resist), **Keen Senses** (Elf +2 vision range). **Adaptive** (Human's "any stat at racial schedule") is informational; the schedule itself drives the gain.
+  4. Player spawns at `Level(1)`, `Experience(0)`.
+- Equipment continues to bump `HitBonus`/`Dodge`/`DamageBonus` incrementally on equip/unequip.
 - INT contributes to staff zap damage (clamped at 0) via `handle_zap_staff` in [src/game/staves.rs](src/game/staves.rs).
-- See [docs/design/CHARACTER.md](docs/design/CHARACTER.md) for the canonical writeup. The race and class tables there are **test-enforced** to match `races.ron` / `classes.ron` — see `.claude/rules/character-writeup-required.md`.
+- Modifier formula: `(score - 16) / 2` (anchored at 16 — chargen mods typically negative, players climb into positive).
+
+### XP / Levels (Phase 2, [src/game/xp.rs](src/game/xp.rs))
+- `Level(u32)` and `Experience(u32)` on the player. `MonsterTier(u32)` on every monster (from `MonsterAsset.tier`, default 1).
+- XP curve: `100·(L-1)² + 50·(L-1) + (10·(L-1)³)/8`. Level cap 27.
+- XP grant: `award_xp_on_death` reads `DeathEvent` where `killer == player`, computes `xp_reward(monster_tier, player_level)` (anti-farming: 0 XP if monster ≥5 levels below).
+- `process_level_thresholds` increments `Level` and fires `LevelUpEvent` for each threshold crossed.
+- `handle_level_up` recomputes HP from the race-level formula (heals to full), spawns a gold "LEVEL UP!" floating-text particle, and queues `PendingAsi` for stat-gain prompts:
+  - Racial schedule (every `Race.gain_schedule.interval` levels)
+  - Player-choice ASI (L3, 9, 15, 21, 27 → +2 free points)
+  - If both fire on the same level, the second is held in `QueuedAsi` and drains after the first ASI resolves.
+- ASI prompt UX: `InGameState::AsiSelect` (DCSS-style inline modal). Player presses S / D / I to spend a point. Disallowed letters greyed out.
+- Save schema v4 persists `level` and `experience`.
+- **Per-monster tier values are not authored yet** — every monster ships at tier 1, so XP rewards are uniform until a balancing pass. The anti-farming dropoff still works against player level.
+- See [docs/design/CHARACTER.md](docs/design/CHARACTER.md) §Level Progression for the canonical writeup. Race/class tables are test-enforced to match `races.ron` / `classes.ron` — see `.claude/rules/character-writeup-required.md`.
 
 ### Turn System
 - `TurnState`: `Waiting → NextTurn → PlayerInput → Processing → NextTurn`

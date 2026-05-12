@@ -164,6 +164,12 @@ pub fn spawn_monster(
         ))
         .id();
 
+    // Phase 2: every monster carries its tier so XP-on-kill can scale
+    // and apply the anti-farming dropoff.
+    commands
+        .entity(monster_entity)
+        .insert(crate::game::xp::MonsterTier(monster_asset.tier));
+
     if let Some(regen_rate) = monster_asset.regen {
         commands.entity(monster_entity).insert(HealthRegen {
             regen_rate,

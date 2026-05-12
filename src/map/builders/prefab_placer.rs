@@ -1531,6 +1531,7 @@ mod tests {
             tile_size: None,
             base_hp: 10,
             damage: "1d4".to_string(),
+            tier: 1,
             regen: None,
             loot_table: Vec::new(),
             damage_type: "physical".to_string(),

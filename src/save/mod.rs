@@ -491,6 +491,16 @@ pub struct PlayerSaveData {
     /// Saved `DamageBonus.0`, same shape as `hit_bonus`.
     #[serde(default)]
     pub damage_bonus: i32,
+    /// Phase 2: player XP level. Defaults to 1 on pre-v4 saves.
+    #[serde(default = "default_save_level")]
+    pub level: u32,
+    /// Phase 2: experience accumulated toward the next level.
+    #[serde(default)]
+    pub experience: u32,
+}
+
+fn default_save_level() -> u32 {
+    1
 }
 
 /// Serde default for `PlayerSaveData::attributes` — Phase 2 anchors the
@@ -679,6 +689,8 @@ pub fn auto_save_system(
             &crate::character::Attributes,
             &HitBonus,
             &DamageBonus,
+            &crate::game::xp::Level,
+            &crate::game::xp::Experience,
         ),
         With<Player>,
     >,
@@ -870,15 +882,17 @@ pub fn auto_save_system(
     // size on the main player query. Defaults applied if the player entity
     // somehow lacks them (shouldn't happen post-spawn, but the save path
     // must not crash mid-run).
-    let (race, class, attributes, hit_bonus, damage_bonus) = player_character_query
+    let (race, class, attributes, hit_bonus, damage_bonus, level, experience) = player_character_query
         .single()
-        .map(|(r, c, a, h, d)| (*r, *c, *a, h.0, d.0))
+        .map(|(r, c, a, h, d, l, x)| (*r, *c, *a, h.0, d.0, l.0, x.0))
         .unwrap_or_else(|_| {
             (
                 crate::character::Race::default(),
                 crate::character::Class::default(),
                 default_attributes_baseline(),
                 0,
+                0,
+                1,
                 0,
             )
         });
@@ -902,6 +916,8 @@ pub fn auto_save_system(
             attributes,
             hit_bonus,
             damage_bonus,
+            level,
+            experience,
         },
         monsters,
         floor_items,
@@ -1005,6 +1021,8 @@ pub fn apply_player_load_system(
             player_data.race,
             player_data.class,
             player_data.attributes,
+            crate::game::xp::Level(player_data.level),
+            crate::game::xp::Experience(player_data.experience),
         ));
     }
 
@@ -1462,6 +1480,8 @@ mod tests {
             },
             hit_bonus: 5,
             damage_bonus: 3,
+            level: 4,
+            experience: 250,
         }
     }
 
@@ -2591,6 +2611,8 @@ mod tests {
             },
             hit_bonus: 4,
             damage_bonus: 2,
+            level: 7,
+            experience: 1234,
         };
         let ron = ron::to_string(&original).expect("serialize");
         let loaded: PlayerSaveData = ron::from_str(&ron).expect("deserialize");
@@ -2600,6 +2622,8 @@ mod tests {
         assert_eq!(loaded.attributes.intelligence, 13);
         assert_eq!(loaded.hit_bonus, 4);
         assert_eq!(loaded.damage_bonus, 2);
+        assert_eq!(loaded.level, 7);
+        assert_eq!(loaded.experience, 1234);
         assert_eq!(loaded.x, 11);
         assert_eq!(loaded.hp, 30);
     }
