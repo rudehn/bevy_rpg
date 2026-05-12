@@ -210,6 +210,13 @@ pub fn player_spawn_or_move_system(
                 // save-load path overrides these from PlayerSaveData.
                 crate::game::xp::Level(1),
                 crate::game::xp::Experience(0),
+                // Phase 3: skill components. Skills levels are seeded
+                // from class.starting_skills via SkillXp (so the XP pool
+                // and level-from-xp invariant holds from frame zero).
+                // SkillTraining defaults all skills to Normal mode.
+                build_starting_skill_xp(&class_asset.starting_skills),
+                build_starting_skills(&class_asset.starting_skills),
+                crate::game::skills::SkillTraining::new(),
             ))
             .insert((
                 Transform {
@@ -239,6 +246,60 @@ pub fn player_spawn_or_move_system(
 
         turn_manager.add_entity(player_entity);
     }
+}
+
+/// Build a `Skills` component from the class's starting distribution.
+/// Floors negative values to 0 (the schema allows negatives for future
+/// classes but Skills::set already clamps; this just makes the contract
+/// explicit at the spawn boundary).
+fn build_starting_skills(
+    dist: &crate::character::SkillDistribution,
+) -> crate::game::skills::Skills {
+    let mut skills = crate::game::skills::Skills::new();
+    for (skill, level) in dist.iter() {
+        skills.set(skill, (level as f32).max(0.0));
+    }
+    skills
+}
+
+/// Build a `SkillXp` so that `xp_to_level(xp) == starting_skills_level`
+/// for each skill. Looks up the XP threshold for the target integer
+/// level in the DCSS table. Keeps Skills and SkillXp in lockstep at
+/// spawn so the `update_skill_levels` system has nothing to do on
+/// frame zero.
+fn build_starting_skill_xp(
+    dist: &crate::character::SkillDistribution,
+) -> crate::game::skills::SkillXp {
+    use crate::game::skills::{Skill, SkillXp};
+
+    let mut sx = SkillXp::new();
+    // Pre-Phase-3 there's no public accessor for the threshold table.
+    // We compute the threshold by binary search: find the lowest
+    // cumulative XP such that xp_to_level(xp) >= target. For integer
+    // targets the answer is the threshold exactly.
+    for (skill, level) in dist.iter() {
+        let target = level.max(0) as u32;
+        if target == 0 {
+            continue;
+        }
+        // The DCSS XP threshold for reaching integer level N is the
+        // first u64 in the table at index N-1. We can't access the
+        // constant directly from here, so derive it by binary search
+        // (cheap; runs once at spawn).
+        let mut lo: u64 = 0;
+        let mut hi: u64 = 30_000;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if crate::game::skills::xp_to_level(mid) < target as f32 {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        sx.add(skill, lo);
+        let _ = Skill::ALL; // silence unused-import warning until later
+    }
+    sx
 }
 
 /// Spawn starting inventory items from the player asset manifest.

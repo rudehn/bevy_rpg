@@ -16,6 +16,7 @@ mod race;
 
 pub use asset::{
     ClassAsset, ClassManifest, ClassManifestHandle, RaceAsset, RaceManifest, RaceManifestHandle,
+    SkillAptitudes, SkillDistribution,
 };
 pub use attributes::{
     ability_mod, attack_attribute_bonus, compose_attributes, derive_stats, max_hp_for_level,
