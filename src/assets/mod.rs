@@ -761,6 +761,11 @@ pub struct ItemAsset {
     /// has none — it's the no-ability balance baseline.
     #[serde(default)]
     pub weapon_ability: Option<String>,
+    /// Phase 3: which weapon-family skill applies for this weapon.
+    /// `None` for staves (no melee skill bonus — staves use Evocations
+    /// on zap, Fighting on bash) and non-weapons.
+    #[serde(default)]
+    pub weapon_skill: Option<crate::game::skills::WeaponSkill>,
     /// Whether this item is a quest item required to win the game.
     #[serde(default)]
     pub is_quest_item: bool,

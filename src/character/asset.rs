@@ -433,4 +433,28 @@ mod tests {
             }
         }
     }
+
+    /// Phase 3 maintenance contract: every weapon in items.ron has a
+    /// `weapon_skill` tag, or is a staff (which intentionally has no
+    /// weapon-skill bonus — staves use Evocations on zap, Fighting on
+    /// bash). Catches the failure mode where a new weapon ships
+    /// without a skill tag and silently bypasses skill scaling.
+    #[test]
+    fn every_weapon_has_weapon_skill_or_is_staff() {
+        use crate::assets::ItemManifest;
+        use crate::game::items::ItemKind;
+
+        let src = include_str!("../../assets/items.ron");
+        let items: ItemManifest = ron::from_str(src).expect("parse items");
+
+        for (id, item) in &items.items {
+            if item.item_kind == ItemKind::Weapon && item.weapon_skill.is_none() {
+                panic!(
+                    "weapon '{id}' has no weapon_skill set. Either set it \
+                     in items.ron or change item_kind (Staff is the only \
+                     skill-less weapon-shaped item)."
+                );
+            }
+        }
+    }
 }

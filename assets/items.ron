@@ -11,6 +11,7 @@
             damage: Some("1d4"),
             attack_speed: 0.5,
             weapon_ability: Some("Backstab"),
+            weapon_skill: Some(ShortBlades),
             rarity: Common,
             ascii_char: "/",
             ascii_fg: "#A0A0A0",
@@ -23,6 +24,7 @@
             grid_size: (8, 8),
             item_kind: Weapon,
             damage: Some("1d6"),
+            weapon_skill: Some(LongBlades),
             rarity: Common,
             ascii_char: "/",
             ascii_fg: "#A0A0A0",
@@ -34,6 +36,7 @@
             item_kind: Weapon,
             damage: Some("1d4"),
             weapon_range: 8,
+            weapon_skill: Some(Ranged),
             rarity: Common,
             ascii_char: "}",
             ascii_fg: "#A0A0A0",
@@ -47,12 +50,16 @@
             grid_size: (8, 8),
             item_kind: Weapon,
             damage: Some("1d6"),
+            weapon_skill: Some(ShortBlades),
             rarity: Common,
             ascii_char: "/",
             ascii_fg: "#7A5A3A",
         ),
         // Rogue's emergency throwable. Short range, light damage, one in
-        // the starting kit — find more in the dungeon.
+        // the starting kit — find more in the dungeon. When thrown the
+        // Ranged source steers the skill bonus toward RangedWeapons (per
+        // weapon_skill_bonus) regardless of this tag; in melee bash it
+        // counts as Short Blades.
         "Throwing Knife": (
             name: "Throwing Knife",
             tile_size: (32, 32),
@@ -60,6 +67,7 @@
             item_kind: Weapon,
             damage: Some("1d4"),
             weapon_range: 4,
+            weapon_skill: Some(ShortBlades),
             rarity: Common,
             ascii_char: "{",
             ascii_fg: "#A0A0A0",
@@ -73,6 +81,7 @@
             item_kind: Weapon,
             damage: Some("1d6"),
             weapon_range: 6,
+            weapon_skill: Some(Ranged),
             rarity: Common,
             ascii_char: "}",
             ascii_fg: "#7A5A3A",
@@ -102,6 +111,7 @@
             damage: Some("1d4"),
             attack_speed: 1.2,
             weapon_ability: Some("Cleave"),
+            weapon_skill: Some(Axes),
             rarity: Uncommon,
             ascii_char: "/",
             ascii_fg: "#B49664",
