@@ -109,6 +109,8 @@ pub enum InGameState {
     AsiSelect,
     /// Character info screen (Phase 2). Bound to C.
     CharacterInfo,
+    /// Skill training screen (Phase 3). Bound to M.
+    SkillScreen,
 }
 
 pub struct GamePlugin;

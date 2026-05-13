@@ -15,6 +15,7 @@ pub mod chasm_confirm;
 pub mod character_creation;
 pub mod character_info;
 pub mod cheat_menu;
+pub mod skill_screen;
 pub mod enchant_select;
 pub mod game_log;
 pub mod help;
@@ -244,7 +245,7 @@ fn spawn_player_stats_ui(
             parent.spawn(Node { flex_grow: 1.0, ..default() });
 
             parent.spawn((
-                Text::new("[I] Inv  [C] Char"),
+                Text::new("[I] Inv  [C] Char  [M] Skills"),
                 TextFont {
                     font: asset_server.load("fonts/Macondo-Regular.ttf"),
                     font_size: 14.0,
@@ -577,6 +578,7 @@ impl Plugin for UiPlugin {
                 character_creation::CharacterCreationPlugin,
                 asi_modal::AsiModalPlugin,
                 character_info::CharacterInfoPlugin,
+                skill_screen::SkillScreenPlugin,
             ))
             .add_systems(
                 OnEnter(AppState::InGame),

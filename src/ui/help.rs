@@ -90,6 +90,7 @@ fn spawn_help_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
             section(panel, "Screens", &[
                 ("I", "Inventory & Equipment"),
                 ("C", "Character info (race / class / level / attributes)"),
+                ("M", "Skills (training screen)"),
                 ("L", "Log history"),
                 ("Tab", "Cycle nearby entities"),
                 ("?", "This help screen"),
@@ -124,6 +125,13 @@ fn spawn_help_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                 ("\u{2190}/\u{2192}", "Change race / class selection, or adjust focused attribute"),
                 ("Enter", "Begin Descent (when on Begin button)"),
                 ("Esc", "Return to main menu"),
+            ]);
+
+            section(panel, "Skill Screen", &[
+                ("\u{2191}/\u{2193}", "Navigate skills"),
+                ("Enter", "Cycle state: Normal \u{2192} Focused \u{2192} Disabled"),
+                ("/", "Toggle Auto / Manual training mode"),
+                ("M / Esc", "Close"),
             ]);
         },
     );
