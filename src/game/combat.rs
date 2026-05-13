@@ -190,8 +190,12 @@ fn hit_check_system(
         let fighting_bonus =
             crate::game::skills::fighting_melee_bonus(intent.source, attacker_skills);
 
+        // Target dodge: flat Dodge component + Dodging skill bonus
+        // (only meaningful for the player; monsters lack Skills).
+        let target_skills = skills_query.get(intent.target).ok();
         let dodge_val = target_dodge.map(|d| d.0).unwrap_or(0);
-        let dodge_target = 4 + dodge_val;
+        let dodging_bonus = crate::game::skills::dodging_skill_bonus(target_skills);
+        let dodge_target = 4 + dodge_val + dodging_bonus;
         let is_natural_20 = hit_roll == 20;
 
         if is_natural_20
@@ -204,9 +208,9 @@ fn hit_check_system(
                 source: intent.source,
                 is_crit: is_natural_20,
             });
-            // Bump use counters on a successful hit. Monsters lack
-            // Skills so weapon_skill_tag would be None anyway, but the
-            // is_player guard documents intent.
+            // Bump attacker-side counters on a successful hit. Monsters
+            // lack Skills so weapon_skill_tag would be None anyway, but
+            // the is_player guard documents intent.
             if is_player {
                 if let Some(ws) = weapon_skill_tag {
                     use_counters.bump(ws.as_skill());
@@ -225,6 +229,12 @@ fn hit_check_system(
                 attacker: intent.attacker,
                 target: intent.target,
             });
+            // Bump Dodging use counter on every miss against a Skills-
+            // having target (the player). Per SKILLS.md §5: "Successful
+            // dodge (the d20 miss condition)."
+            if target_skills.is_some() {
+                use_counters.bump(crate::game::skills::Skill::Dodging);
+            }
         }
     }
 }
@@ -248,12 +258,17 @@ fn damage_roll_system(
         Option<&crate::character::Attributes>,
         Option<&crate::game::skills::Skills>,
     )>,
-    target_query: Query<(Option<&Armor>, Option<&crate::game::abilities::RallyBuff>)>,
+    target_query: Query<(
+        Option<&Armor>,
+        Option<&crate::game::abilities::RallyBuff>,
+        Option<&crate::game::skills::Skills>,
+    )>,
     player_equipment_query: Query<&crate::game::items::Equipment, With<Player>>,
     weapon_props_query: Query<&crate::game::items::ItemProperties>,
     target_ai_query: Query<&crate::game::MonsterAI>,
     monster_position_query: Query<(Entity, &Position), With<Monster>>,
     position_query: Query<&Position>,
+    mut use_counters: ResMut<crate::game::skills::SkillUseCounters>,
 ) {
     for message in roll_messages.read() {
         let Ok((
@@ -322,15 +337,43 @@ fn damage_roll_system(
             }
         }
 
-        // Query target armor for the engine's damage pipeline
+        // Phase 3+: armor is a random roll, not a flat subtraction.
+        // The Armor component value is the *upper bound* of a uniform
+        // roll in [0, armor_max] (inclusive). Armor skill adds to that
+        // ceiling. Non-physical damage skips armor entirely.
         let armor_val = if message.damage_type == DamageType::Physical {
-            target_query
+            let (armor_base, skill_bonus) = target_query
                 .get(message.target)
-                .map(|(armor, rally)| {
-                    armor.map(|a| a.0).unwrap_or(0)
-                        + rally.map(|r| r.armor_bonus).unwrap_or(0)
+                .map(|(armor, rally, skills)| {
+                    let base = armor.map(|a| a.0).unwrap_or(0)
+                        + rally.map(|r| r.armor_bonus).unwrap_or(0);
+                    let sb = crate::game::skills::armor_skill_bonus(skills);
+                    (base, sb)
                 })
-                .unwrap_or(0)
+                .unwrap_or((0, 0));
+            // Skill bonus only applies if you actually have armor (or a
+            // Rally buff). Naked-with-skill produces 0.
+            let armor_max = if armor_base > 0 {
+                armor_base + skill_bonus
+            } else {
+                0
+            };
+            if armor_max > 0 {
+                // Bump target's Armor skill use counter on every hit
+                // that the armor stat actually intercepts. Per the
+                // SKILLS.md spec: "Damage taken while wearing armor."
+                if target_query
+                    .get(message.target)
+                    .ok()
+                    .and_then(|(_, _, s)| s)
+                    .is_some()
+                {
+                    use_counters.bump(crate::game::skills::Skill::Armor);
+                }
+                game_rng.0.range(0, armor_max + 1)
+            } else {
+                0
+            }
         } else {
             0 // Non-physical damage bypasses armor
         };

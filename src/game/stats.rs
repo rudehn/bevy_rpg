@@ -1,7 +1,14 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// Flat armor (damage reduction).
+/// Maximum value of the armor roll. When a physical hit lands, the
+/// damage pipeline rolls a random integer in `[0, Armor.0 + skill]`
+/// inclusive and subtracts that from the raw damage (clamped at 0).
+/// A value of 10 thus reduces incoming damage by 0..=10 randomly —
+/// not a flat 10.
+///
+/// Non-physical damage (Poison / Fire / Lightning) skips the armor
+/// roll entirely; resistance percentages handle those.
 #[derive(Component, Debug, Clone, Reflect, Default, Serialize, Deserialize)]
 #[reflect(Component)]
 pub struct Armor(pub i32);

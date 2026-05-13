@@ -305,6 +305,22 @@ pub fn fighting_melee_bonus(
     (skills.get(Skill::Fighting) / 4.0).floor() as i32
 }
 
+/// Armor skill bonus — adds to the **max** of the armor roll. Returns
+/// 0 if no skills component or Armor 0. Combat code is expected to
+/// only apply this when the target is actually wearing armor; we
+/// don't gate on equipment here (pure helper).
+pub fn armor_skill_bonus(skills: Option<&Skills>) -> i32 {
+    let Some(skills) = skills else { return 0 };
+    (skills.get(Skill::Armor) / 4.0).floor() as i32
+}
+
+/// Dodging skill bonus — adds to the effective dodge target the
+/// attacker has to beat. Pure helper.
+pub fn dodging_skill_bonus(skills: Option<&Skills>) -> i32 {
+    let Some(skills) = skills else { return 0 };
+    (skills.get(Skill::Dodging) / 4.0).floor() as i32
+}
+
 // ---------------------------------------------------------------------
 // Plugin and systems
 // ---------------------------------------------------------------------
@@ -682,5 +698,26 @@ mod tests {
         assert_eq!(fighting_melee_bonus(DamageSource::Melee, Some(&s)), 3);
         assert_eq!(fighting_melee_bonus(DamageSource::Ranged, Some(&s)), 0);
         assert_eq!(fighting_melee_bonus(DamageSource::Spell, Some(&s)), 0);
+    }
+
+    #[test]
+    fn armor_skill_bonus_returns_floor_div_4() {
+        let mut s = Skills::new();
+        assert_eq!(armor_skill_bonus(None), 0);
+        assert_eq!(armor_skill_bonus(Some(&s)), 0);
+        s.set(Skill::Armor, 4.0);
+        assert_eq!(armor_skill_bonus(Some(&s)), 1);
+        s.set(Skill::Armor, 27.0);
+        assert_eq!(armor_skill_bonus(Some(&s)), 6);
+    }
+
+    #[test]
+    fn dodging_skill_bonus_returns_floor_div_4() {
+        let mut s = Skills::new();
+        assert_eq!(dodging_skill_bonus(None), 0);
+        s.set(Skill::Dodging, 8.0);
+        assert_eq!(dodging_skill_bonus(Some(&s)), 2);
+        s.set(Skill::Dodging, 15.5);
+        assert_eq!(dodging_skill_bonus(Some(&s)), 3);
     }
 }
