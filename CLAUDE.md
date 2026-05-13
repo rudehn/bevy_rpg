@@ -103,6 +103,7 @@ src/
     turns.rs             # TurnOrderPlugin, TurnManager, TurnState FSM
     water.rs             # Water effects (item sweep, movement cost, extinguish)
     xp.rs                # Level / Experience / MonsterTier / XP curve / level-up handler
+    skills.rs            # Skill / WeaponSkill / Skills / SkillXp / SkillTraining / training-mode allocator
 
   map/
     mod.rs               # MapPlugin re-exports
@@ -153,6 +154,7 @@ src/
     menu.rs              # In-game pause/options menu
     modal.rs             # Reusable modal dialog component
     asi_modal.rs         # DCSS-style ASI prompt (InGameState::AsiSelect)
+    skill_screen.rs      # Skill training screen (InGameState::SkillScreen, key M)
     cheat_menu.rs        # Debug cheat menu
 ```
 
@@ -189,6 +191,17 @@ src/
 - Save schema v4 persists `level` and `experience`.
 - **Per-monster tier values are not authored yet** — every monster ships at tier 1, so XP rewards are uniform until a balancing pass. The anti-farming dropoff still works against player level.
 - See [docs/design/CHARACTER.md](docs/design/CHARACTER.md) §Level Progression for the canonical writeup. Race/class tables are test-enforced to match `races.ron` / `classes.ron` — see `.claude/rules/character-writeup-required.md`.
+
+### Skills (Phase 3, [src/game/skills.rs](src/game/skills.rs))
+- 8 skills: Fighting, Axes, ShortBlades, LongBlades, RangedWeapons, Armor, Dodging, Evocations. Float levels `[0.0, 27.0]`; effects unlock at integer breakpoints via `floor(skill/4)`.
+- ECS data on the player: `Skills` (per-skill level), `SkillXp` (cumulative per-skill XP), `SkillTraining` (per-skill `Normal`/`Focused`/`Disabled`). Resources: `SkillXpPool` (unallocated), `SkillUseCounters` (Auto-mode weights), `TrainingMode` (global `Auto` | `Manual`).
+- XP flow: `award_xp_on_death` adds half the character XP reward to `SkillXpPool`. `allocate_skill_xp` drains the pool every frame per training settings — Auto mode weights by use counters, Manual mode splits evenly (×2 for Focused). Per-skill XP is divided by `aptitude_multiplier(race_apt)` before being added — positive aptitude = faster training. `update_skill_levels` recomputes `Skills` levels from `SkillXp` via the DCSS XP table (50 → 24,325 points across 27 levels).
+- Combat: `weapon_skill_bonus(weapon, source, skills)` and `fighting_melee_bonus(source, skills)` are added dynamically in `hit_check_system` and `damage_roll_system` alongside `attack_attribute_bonus`. Use counters bump on every successful melee/ranged hit.
+- HP formula gains the DCSS Fighting term: `+ Fighting × XL/14 + (1 + Fighting × 3)/2` inside the `race_hp_mod` multiplier. Recomputed at every `handle_level_up`.
+- Staves: `handle_zap_staff` adds `floor(Evocations/4)` to staff damage alongside `INT_mod`. The combined sum is clamped at 0. Use counter bumps on every fired zap.
+- Skill screen UI: `InGameState::SkillScreen` (key `M`). DCSS-style listing with state badges (`+`/`*`/`-`), aptitude column, pool counter, mode toggle (`/`).
+- Save schema v5 persists `skills`, `skill_xp`, `skill_training`, `skill_xp_pool`.
+- See [docs/design/SKILLS.md](docs/design/SKILLS.md) for the canonical writeup. Class `starting_skills` and race `aptitudes` are test-enforced — see `.claude/rules/skill-writeup-required.md` (next phase) and the maintenance contracts in `src/character/asset.rs`.
 
 ### Turn System
 - `TurnState`: `Waiting → NextTurn → PlayerInput → Processing → NextTurn`

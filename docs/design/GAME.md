@@ -138,11 +138,13 @@ site so future race / class / skill effects have one place to plug in.
 
 ```
 AttackIntent { source: Melee | Ranged | Spell | Environment }
-  -> hit_check (d20 + hit_bonus + attr_bonus  vs  4 + dodge_bonus)
-                  ↑ via roll_d20_with_race
+  -> hit_check (d20 + hit_bonus + attr_bonus + weapon_bonus + fighting_bonus
+                  ↑ via roll_d20_with_race                vs 4 + dodge_bonus)
                                 ↑ STR_mod (Melee), DEX_mod (Ranged), 0 otherwise
-  -> damage_roll (weapon dice + damage_bonus + attr_bonus; x2 on crit)
-                                                ↑ same branch as hit-check
+                                              ↑ floor(weapon_skill/4) — Long Blades, Axes, Ranged, etc.
+                                                            ↑ floor(Fighting/4), melee only
+  -> damage_roll (weapon dice + damage_bonus + attr_bonus + weapon_bonus + fighting_bonus; x2 on crit)
+                                                ↑ same skill bonuses as hit-check
   -> damage_reduction:
        Physical: (raw - armor).max(0), then apply resistance %
                                               ↑ Dwarf Stoneblood: +50%
@@ -152,11 +154,18 @@ AttackIntent { source: Melee | Ranged | Spell | Environment }
                                               ↑ XP system reads this:
                                                 killer == player → award XP
                                                 (anti-farming dropoff)
+                                                + half-XP to SkillXpPool
 ```
 
-**Staff zaps** (Lightning / Fire / Force) add `INT_mod.max(0)` from the
-zapper's `Attributes` to each damage event. INT can never *reduce* a
-staff's base damage — a low-INT Mage just zaps for normal damage.
+**Skill use counters** bump on every successful hit (player only):
+the weapon's skill family, plus Fighting for melee attacks. These
+counters drive Auto-mode XP allocation in the
+[skills system](../../src/game/skills.rs).
+
+**Staff zaps** (Lightning / Fire / Force) add `(INT_mod + floor(Evocations/4)).max(0)`
+from the zapper's `Attributes` and `Skills` to each damage event. The
+combined sum is clamped at 0 so a low-INT, no-skill zapper can't make
+a staff do less than its base damage.
 
 ### Damage Types
 

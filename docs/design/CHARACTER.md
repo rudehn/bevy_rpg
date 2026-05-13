@@ -162,21 +162,31 @@ yielding STR_mod on melee; a Rogue's dodge advantage comes from their
 ## HP Formula
 
 ```
-max_hp = floor(race_hp_mod × (8 + 11 × xp_level / 2))
+max_hp = floor(race_hp_mod × (
+    8
+  + 11 × xp_level / 2
+  + Fighting × xp_level / 14
+  + (1 + Fighting × 3) / 2
+))
 ```
 
-Adapted from DCSS's HP formula, minus the Fighting-skill term (which
-lands when the Skills phase ships). HP is recomputed from scratch on
-every level-up; equipment HP bonuses layer on top via the existing
-recalc.
+Adapted from DCSS's HP formula. Phase 3 filled in the Fighting term —
+see [SKILLS.md](SKILLS.md) §1 for the Fighting skill's full effect.
+HP is recomputed from scratch on every level-up; equipment HP bonuses
+layer on top via the existing recalc.
 
-**Worked values:**
+**Worked values at `Fighting = 0`** (chargen baseline before any skill
+training):
 
 | Race (HP ×) | L1 | L9 | L18 | L27 |
 |---|---|---|---|---|
-| Dwarf (1.20) | 16 | 69 | 128 | 187 |
-| Human (1.00) | 13 | 57 | 107 | 156 |
-| Elf (0.90) | 12 | 51 | 96 | 140 |
+| Dwarf (1.20) | 16 | 69 | 129 | 188 |
+| Human (1.00) | 14 | 58 | 107 | 157 |
+| Elf (0.90) | 12 | 52 | 96 | 141 |
+
+A constant `(1 + 0 × 3) / 2 = 0.5` term applies even at Fighting 0, so
+some values are +1 HP vs the Phase 2 spec table. The DCSS formula is
+canonical.
 
 ## Combat Math Integration
 

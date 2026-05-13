@@ -66,6 +66,7 @@ See ITEMS.md for full equipment details.
 
 ```
 Attacker rolls: d20 + hit_bonus + attribute_bonus
+              + weapon_skill_bonus + fighting_melee_bonus
 Target number:  4 + target_dodge_bonus
 
 If roll >= target: hit
@@ -76,13 +77,18 @@ If natural 20:     critical hit (always hits)
 `attribute_bonus` is added dynamically based on `AttackIntentMessage.source`:
 - **Melee:** STR_mod
 - **Ranged:** DEX_mod
-- **Spell / Environment:** 0 (staff zaps add INT_mod separately in
-  `handle_zap_staff`)
+- **Spell / Environment:** 0 (staff zaps add INT_mod + Evocations skill
+  bonus separately in `handle_zap_staff`)
+
+Phase 3 skill bonuses (also dynamic):
+- `weapon_skill_bonus` = `floor(skill/4)` for the weapon family
+  (Long Blades on a Sword, Ranged Weapons on any ranged attack, etc.)
+- `fighting_melee_bonus` = `floor(Fighting/4)` on melee attacks only
 
 The player and monsters use the same formula structure, but monsters
-have no `Attributes` component and contribute 0 from
-`attack_attribute_bonus`. See [CHARACTER.md](CHARACTER.md) §Combat Math
-Integration for the full table.
+have no `Attributes` or `Skills` components and contribute 0 from both
+helpers. See [CHARACTER.md](CHARACTER.md) §Combat Math Integration and
+[SKILLS.md](SKILLS.md) for the full breakdown.
 
 ### Critical Hits
 
@@ -115,16 +121,24 @@ Integration for the full table.
 AttackIntentMessage { source: Melee | Ranged | Spell | Environment }
   -> hit_check_system
       roll d20 (via roll_d20_with_race)
-      attr_bonus = attack_attribute_bonus(source, attacker_attrs)
-                   # Melee: STR_mod, Ranged: DEX_mod, else: 0
+      attr_bonus    = attack_attribute_bonus(source, attacker_attrs)
+                      # Melee: STR_mod, Ranged: DEX_mod, else: 0
+      weapon_bonus  = weapon_skill_bonus(weapon, source, attacker_skills)
+                      # floor(skill/4) for the equipped weapon's family
+      fighting_bonus = fighting_melee_bonus(source, attacker_skills)
+                      # floor(Fighting/4), melee only
       if roll == 20: is_critical = true, auto-hit
-      else: d20 + hit_bonus + attr_bonus >= 4 + target_dodge_bonus
+      else: d20 + hit_bonus + attr_bonus + weapon_bonus + fighting_bonus
+              >= 4 + target_dodge_bonus
       -> DamageRollMessage { is_critical, damage_type, source }
+      # Successful hits also bump use counters for the trained skills
 
   -> damage_roll_system
-      attr_bonus = attack_attribute_bonus(source, attacker_attrs)
-      if is_critical: roll damage dice x2 + damage_bonus + attr_bonus
-      else: roll damage dice + damage_bonus + attr_bonus
+      attr_bonus     = attack_attribute_bonus(source, attacker_attrs)
+      weapon_bonus   = weapon_skill_bonus(weapon, source, attacker_skills)
+      fighting_bonus = fighting_melee_bonus(source, attacker_skills)
+      if is_critical: roll damage dice x2 + damage_bonus + attr_bonus + weapon_bonus + fighting_bonus
+      else: roll damage dice + damage_bonus + attr_bonus + weapon_bonus + fighting_bonus
       -> DamageReductionMessage { raw_damage, damage_type }
 
   -> damage_reduction_system
