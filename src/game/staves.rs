@@ -320,8 +320,12 @@ pub fn handle_zap_staff(
     mut messages: MessageReader<ZapStaffMessage>,
     mut game_rng: ResMut<GameRng>,
     mut staff_query: Query<(&StaffData, &mut Rechargeable, Option<&Enchantment>)>,
-    zapper_query: Query<(&Name, &Position)>,
-    zapper_attrs_query: Query<&crate::character::Attributes>,
+    zapper_query: Query<(
+        &Name,
+        &Position,
+        Option<&crate::character::Attributes>,
+        Option<&crate::game::skills::Skills>,
+    )>,
     target_query: Query<(Entity, &Name, &Position, &Health, Has<Submerged>), Without<Player>>,
     all_positions: Query<(Entity, &Position), With<Health>>,
     mut status_query: Query<&mut StatusEffects>,
@@ -332,6 +336,7 @@ pub fn handle_zap_staff(
     mut tile_writers: crate::map::tile::TileMutationWriters,
     collider_query: Query<&Position, With<Collider>>,
     map: Res<Map>,
+    mut use_counters: ResMut<crate::game::skills::SkillUseCounters>,
 ) {
     for msg in messages.read() {
         let Ok((staff_data, mut rech, enchant)) = staff_query.get_mut(msg.staff_entity) else { continue; };
@@ -345,16 +350,24 @@ pub fn handle_zap_staff(
         // Deduct charge and reset recharge timer
         rech.charges -= 1;
         rech.recharge_timer = rech.recharge_rate;
+        // Phase 3: bump Evocations use counter on every fired zap so
+        // Auto-mode XP allocation tracks staff usage.
+        use_counters.bump(crate::game::skills::Skill::Evocations);
 
         let enchant_level = enchant.map(|e| e.level).unwrap_or(0);
-        let Ok((_zapper_name, zapper_pos)) = zapper_query.get(msg.zapper) else { continue; };
-        // INT_mod boosts staff damage; clamped at 0 so a low-INT Mage can't
-        // make a staff *do less* than its base. Phase 4 (Mana) will revisit.
-        let int_bonus = zapper_attrs_query
-            .get(msg.zapper)
-            .map(|attrs| attrs.int_mod())
-            .unwrap_or(0)
-            .max(0);
+        let Ok((_zapper_name, zapper_pos, zapper_attrs, zapper_skills)) =
+            zapper_query.get(msg.zapper)
+        else {
+            continue;
+        };
+        // INT_mod + Evocations skill bonus boost staff damage. The combined
+        // sum is clamped at 0 so a low-INT, no-skill zapper can't make a
+        // staff do less than its base damage. Phase 4 (Mana) will revisit.
+        let int_mod = zapper_attrs.map(|a| a.int_mod()).unwrap_or(0);
+        let evoc_bonus = zapper_skills
+            .map(|s| (s.get(crate::game::skills::Skill::Evocations) / 4.0).floor() as i32)
+            .unwrap_or(0);
+        let int_bonus = (int_mod + evoc_bonus).max(0);
 
         // Submerged targets cannot be hit by staff zaps (except self-targeting effects).
         if staff_data.effect != StaffEffect::Blinking && staff_data.effect != StaffEffect::Healing {
