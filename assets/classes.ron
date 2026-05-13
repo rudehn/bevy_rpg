@@ -27,9 +27,10 @@
             ],
             starting_skills: (
                 fighting: 3,
-                long_blades: 3,
+                long_blades: 2,
                 axes: 2,
                 armor: 2,
+                shields: 1,
             ),
             description: "Steel and discipline. STR-heavy distribution carries melee hits and damage; trade-off is low DEX and INT.",
         ),

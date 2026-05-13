@@ -488,6 +488,11 @@ pub struct PlayerSaveData {
     pub y: i32,
     pub hp: i32,
     pub armor: i32,
+    /// Phase 3 follow-up: flat shield-based damage reduction.
+    /// Defaults to 0 on pre-existing saves via serde, which matches
+    /// what `Block(0)` would be on a player with no shield equipped.
+    #[serde(default)]
+    pub block: i32,
     pub dodge: i32,
     pub viewshed_range: i32,
     pub damage: String,
@@ -724,6 +729,7 @@ pub fn auto_save_system(
             &Position,
             &Health,
             &Armor,
+            &crate::game::stats::Block,
             &Dodge,
             &Inventory,
             &Equipment,
@@ -797,7 +803,7 @@ pub fn auto_save_system(
 ) {
     auto_save_pending.0 = false;
 
-    let Ok((pos, health, armor, dodge, inventory, equipment, damage, viewshed)) =
+    let Ok((pos, health, armor, block, dodge, inventory, equipment, damage, viewshed)) =
         player_query.single()
     else {
         warn!("Auto-save skipped: no player entity found.");
@@ -968,6 +974,7 @@ pub fn auto_save_system(
             y: pos.y,
             hp: health.current,
             armor: armor.0,
+            block: block.0,
             dodge: dodge.0,
             viewshed_range: viewshed.range,
             damage: damage.0.clone(),
@@ -1016,6 +1023,7 @@ pub fn apply_player_load_system(
             &mut Position,
             &mut Health,
             &mut Armor,
+            &mut crate::game::stats::Block,
             &mut Dodge,
             &mut Inventory,
             &mut Equipment,
@@ -1042,6 +1050,7 @@ pub fn apply_player_load_system(
         mut pos,
         mut health,
         mut armor,
+        mut block,
         mut dodge,
         mut inventory,
         mut equipment,
@@ -1063,8 +1072,9 @@ pub fn apply_player_load_system(
     // --- Health ---
     health.current = player_data.hp;
 
-    // --- Armor / Dodge ---
+    // --- Armor / Block / Dodge ---
     armor.0 = player_data.armor;
+    block.0 = player_data.block;
     dodge.0 = player_data.dodge;
 
     // --- HitBonus / DamageBonus (post-equipment, post-attribute totals) ---
@@ -1519,6 +1529,7 @@ mod tests {
             y: 20,
             hp: 45,
             armor: 3,
+            block: 2,
             dodge: 2,
             viewshed_range: 8,
             damage: "1d4+1".to_string(),
@@ -2686,6 +2697,7 @@ mod tests {
             y: 12,
             hp: 30,
             armor: 2,
+            block: 0,
             dodge: 3,
             viewshed_range: 10,
             damage: "1d6+2".to_string(),

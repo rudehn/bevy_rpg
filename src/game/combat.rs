@@ -260,6 +260,7 @@ fn damage_roll_system(
     )>,
     target_query: Query<(
         Option<&Armor>,
+        Option<&crate::game::stats::Block>,
         Option<&crate::game::abilities::RallyBuff>,
         Option<&crate::game::skills::Skills>,
     )>,
@@ -337,14 +338,36 @@ fn damage_roll_system(
             }
         }
 
-        // Phase 3+: armor is a random roll, not a flat subtraction.
+        // Pull target armor / block / rally / skills once.
+        let target_info = target_query.get(message.target).ok();
+        let target_skills = target_info.and_then(|(_, _, _, s)| s);
+
+        // ----- Block: flat reduction, applies to ALL damage types -----
+        // Block comes from the OffHand slot (shields). Shields skill adds
+        // to the flat value. Only applies when the target actually has a
+        // shield equipped (Block > 0).
+        let block_base = target_info
+            .and_then(|(_, b, _, _)| b)
+            .map(|b| b.0)
+            .unwrap_or(0);
+        let block_total = if block_base > 0 {
+            let skill_bonus = crate::game::skills::shields_skill_bonus(target_skills);
+            if target_skills.is_some() {
+                use_counters.bump(crate::game::skills::Skill::Shields);
+            }
+            block_base + skill_bonus
+        } else {
+            0
+        };
+        raw_damage = (raw_damage - block_total).max(0);
+
+        // ----- Armor: random roll [0, armor_max], physical only -----
         // The Armor component value is the *upper bound* of a uniform
-        // roll in [0, armor_max] (inclusive). Armor skill adds to that
-        // ceiling. Non-physical damage skips armor entirely.
+        // roll. Armor skill adds to that ceiling. Non-physical damage
+        // skips armor entirely.
         let armor_val = if message.damage_type == DamageType::Physical {
-            let (armor_base, skill_bonus) = target_query
-                .get(message.target)
-                .map(|(armor, rally, skills)| {
+            let (armor_base, skill_bonus) = target_info
+                .map(|(armor, _, rally, skills)| {
                     let base = armor.map(|a| a.0).unwrap_or(0)
                         + rally.map(|r| r.armor_bonus).unwrap_or(0);
                     let sb = crate::game::skills::armor_skill_bonus(skills);
@@ -359,15 +382,7 @@ fn damage_roll_system(
                 0
             };
             if armor_max > 0 {
-                // Bump target's Armor skill use counter on every hit
-                // that the armor stat actually intercepts. Per the
-                // SKILLS.md spec: "Damage taken while wearing armor."
-                if target_query
-                    .get(message.target)
-                    .ok()
-                    .and_then(|(_, _, s)| s)
-                    .is_some()
-                {
+                if target_skills.is_some() {
                     use_counters.bump(crate::game::skills::Skill::Armor);
                 }
                 game_rng.0.range(0, armor_max + 1)

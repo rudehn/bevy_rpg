@@ -5,7 +5,7 @@
 Phase 2 anchored the modifier scale at 16, so chargen mods are typically
 negative and players grow into positive values via attribute gains.
 **Phase 3 layers a use-trained skill system on top** — DCSS-faithful in
-structure but pared down to 8 skills. Each skill tracks a float in
+structure but pared down to 9 skills. Each skill tracks a float in
 `[0.0, 27.0]`; effects unlock at integer breakpoints. A single global
 **skill XP pool** distributes XP across skills the player has marked for
 training, with **Auto** (use-weighted) and **Manual** (even split,
@@ -16,8 +16,8 @@ from Phase 2.
 
 **Phase 3 in scope:**
 
-- 8 skills: Fighting / Axes / Short Blades / Long Blades / Ranged Weapons
-  / Armor / Dodging / Evocations
+- 9 skills: Fighting / Axes / Short Blades / Long Blades / Ranged Weapons
+  / Armor / Dodging / Shields / Evocations
 - Float levels 0.0–27.0; integer breakpoints drive combat math
 - DCSS shared-pool XP with a training screen on key `M`
 - Class starting-skill distributions (10 points each, negatives allowed
@@ -41,13 +41,13 @@ from Phase 2.
   Phase 4 mana / spells
 - Attack-speed scaling from weapon skills (DCSS's "minimum delay"
   mechanic) — first pass uses hit/damage only
-- Stealth, Shields, Unarmed — not in the initial roster
+- Stealth, Unarmed — not in the initial roster
 
 ## Locked Decisions
 
 | Decision | Choice |
 |---|---|
-| Skill list | 8 — Fighting, Axes, Short Blades, Long Blades, Ranged Weapons, Armor, Dodging, Evocations |
+| Skill list | 9 — Fighting, Axes, Short Blades, Long Blades, Ranged Weapons, Armor, Dodging, Shields, Evocations |
 | Skill scale | float `[0.0, 27.0]` |
 | XP mechanism | DCSS shared-pool with training screen (Auto / Manual modes) |
 | Per-skill state | Normal / Focused / Disabled |
@@ -73,8 +73,9 @@ from Phase 2.
 | **Short Blades** | hit & damage with short blades | Same shape; applies for Dagger / Rusted Shortsword / Throwing Knife |
 | **Long Blades** | hit & damage with long blades | Same shape; applies for Sword |
 | **Ranged Weapons** | hit & damage with ranged | Same shape; fires on any attack where `AttackIntentMessage.source == Ranged` |
-| **Armor** | flat armor bonus when wearing armor | `+ floor(Armor/4)` added to `Armor.0` whenever a chest armor piece is equipped |
+| **Armor** | armor-roll ceiling when wearing armor | `+ floor(Armor/4)` added to the max value rolled by the armor damage-reduction roll whenever a chest armor piece is equipped (`Armor.0 > 0`) |
 | **Dodging** | flat dodge bonus | `+ floor(Dodging/4)` added to `Dodge.0` |
+| **Shields** | flat damage reduction when a shield is equipped | `+ floor(Shields/4)` added to `Block.0` whenever a shield is equipped (`Block.0 > 0`). `Block` is a flat damage reduction that applies to **every** damage type (Physical, Poison, Fire, Lightning) — unlike Armor, it cannot be bypassed by magical damage. |
 | **Evocations** | staff zap damage | Replaces the existing inline `int_mod.max(0)` add in `handle_zap_staff`. New formula: `staff_damage += (int_mod + floor(evocations/4)).max(0)`. Applies to all damage-dealing staff effects (Lightning, Fire, Force; not Healing/Blinking). |
 
 **Why `floor(skill/4)`:** keeps integer breakpoints meaningful, matches
@@ -88,10 +89,11 @@ fractional-bonus stacking in damage math.
 | Fighting | 3 | 1 | 0 | 2 |
 | Axes | 2 | 0 | 0 | 0 |
 | Short Blades | 0 | 4 | 1 | 0 |
-| Long Blades | 3 | 0 | 0 | 1 |
+| Long Blades | 2 | 0 | 0 | 1 |
 | Ranged Weapons | 0 | 1 | 0 | 4 |
 | Armor | 2 | 0 | 0 | 1 |
 | Dodging | 0 | 3 | 2 | 2 |
+| Shields | 1 | 0 | 0 | 0 |
 | Evocations | 0 | 1 | 7 | 0 |
 | **Total** | **10** | **10** | **10** | **10** |
 
@@ -116,6 +118,7 @@ DCSS-style XP-cost multipliers: `xp_multiplier(apt) = 2^(-apt/4)`.
 | Ranged Weapons | 0 | −2 | +3 |
 | Armor | 0 | +3 | −2 |
 | Dodging | 0 | −2 | +2 |
+| Shields | 0 | +2 | −2 |
 | Evocations | 0 | −1 | +2 |
 
 Authored in `assets/races.ron` as a new `aptitudes` field (i32 per skill).
@@ -188,6 +191,7 @@ Each gameplay event that "uses" a skill increments a counter:
 | Ranged Weapons | Any ranged attack |
 | Armor | Damage taken while wearing armor (`Armor.0 > 0`) |
 | Dodging | Successful dodge (the d20 miss condition) |
+| Shields | Damage taken while a shield is equipped (`Block.0 > 0`) |
 | Evocations | Staff zap fired (damaging effect) |
 
 Use counters drive Auto-mode XP allocation. Counters never directly
@@ -452,7 +456,7 @@ After implementation:
 2. `cargo test` passes (target: 426 → ~445)
 3. Manual playtest:
    - New Human Warrior → confirm starting skills (Fighting 3, Long Blades 3, Axes 2, Armor 2)
-   - Open skill screen (M), confirm 8 skills listed, modes default to Normal except disabled-by-default toggle
+   - Open skill screen (M), confirm 9 skills listed, modes default to Normal except disabled-by-default toggle
    - Swing the Rusted Shortsword (Short Blades 0). After ~10 kills, verify Short Blades has accrued XP in Auto mode.
    - Switch to Manual mode, Focus Fighting only. After 5 more kills, verify only Fighting trained.
    - Reach Long Blades 4 → confirm `+1 hit` and `+1 damage` show up in combat (compare a swing's damage roll before/after).
@@ -473,7 +477,7 @@ After implementation:
 - **Attack-speed scaling.** DCSS weapon skill reduces attack delay
   to a per-weapon minimum. We don't have a "minimum delay" concept
   yet; defer alongside the Polearms-and-friends weapon expansion.
-- **Stealth / Shields / Unarmed.** Out of v1. Stealth in particular
+- **Stealth / Unarmed.** Out of v1. Stealth in particular
   is a richer subsystem (requires monster detection mechanics not
   yet present).
 - **Magic schools (Fire / Lightning / Poison).** Land with Phase 4 mana.
@@ -491,4 +495,4 @@ After implementation:
   rebalancing pressure further)
 - ⏭ Saves phase (saving throws + Bleeding status)
 - ⏭ Monster combat-stat rebalance (deferred from Phase 2)
-- ⏭ Stealth, Shields, Unarmed skills (when their subsystems land)
+- ⏭ Stealth, Unarmed skills (when their subsystems land)

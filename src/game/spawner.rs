@@ -153,6 +153,7 @@ pub fn spawn_monster(
             Damage(monster_asset.damage.clone()),
             SpeedStats::new(monster_asset.movement_delay, monster_asset.attack_delay),
             Armor(monster_asset.base_armor),
+            crate::game::stats::Block(0),
             Dodge(monster_asset.base_dodge),
             HitBonus(0),
             DamageBonus(0),

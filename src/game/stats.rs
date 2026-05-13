@@ -18,6 +18,16 @@ pub struct Armor(pub i32);
 #[reflect(Component)]
 pub struct Dodge(pub i32);
 
+/// Flat damage reduction from a shield. Unlike `Armor`, Block is
+/// **flat (not rolled)** and applies to **all damage types** —
+/// physical, fire, lightning, poison. Block is consumed before the
+/// armor roll so it shrinks raw damage at the front of the pipeline.
+/// Shield items' `defense` field flows here via `compute_stat_delta`
+/// (any item in the `OffHand` slot routes its defense to Block).
+#[derive(Component, Debug, Clone, Reflect, Default, Serialize, Deserialize)]
+#[reflect(Component)]
+pub struct Block(pub i32);
+
 /// Flat bonus added to the d20 attack roll.
 #[derive(Component, Debug, Clone, Reflect, Default, Serialize, Deserialize)]
 #[reflect(Component)]
@@ -36,6 +46,7 @@ impl Plugin for StatsPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<Armor>()
             .register_type::<Dodge>()
+            .register_type::<Block>()
             .register_type::<HitBonus>()
             .register_type::<DamageBonus>();
     }

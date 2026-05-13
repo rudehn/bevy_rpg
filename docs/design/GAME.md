@@ -146,10 +146,12 @@ AttackIntent { source: Melee | Ranged | Spell | Environment }
   -> damage_roll (weapon dice + damage_bonus + attr_bonus + weapon_bonus + fighting_bonus; x2 on crit)
                                                 ↑ same skill bonuses as hit-check
   -> damage_reduction:
-       Physical: (raw - armor).max(0), then apply resistance %
+       block = block_base + floor(Shields/4)        ← flat, applies to ALL types
+       Physical: (raw - block - armor_roll).max(0), then apply resistance %
+                                ↑ armor_roll = rand(0..=armor_max + floor(Armor/4))
                                               ↑ Dwarf Stoneblood: +50%
                                                 poison resistance at spawn
-       Poison/Fire/Lightning: skip armor, apply resistance % only
+       Poison/Fire/Lightning: (raw - block).max(0), then apply resistance %
   -> apply_damage (HP change, death check) → may emit DeathEvent
                                               ↑ XP system reads this:
                                                 killer == player → award XP
@@ -169,16 +171,19 @@ a staff do less than its base damage.
 
 ### Damage Types
 
-| Type | Armor Applied? | Resistance Applied? | Unique Property |
-|------|---------------|---------------------|-----------------|
-| Physical | Yes (flat subtraction) | Yes (%) | Standard melee and ranged attacks |
-| Poison | No | Yes (%) | Stacks: re-application resets duration to full; multiple sources accumulate independently |
-| Fire | No | Yes (%) | Destroys wooden doors; burning DoT is fire-based |
-| Lightning | No | Yes (%) | Can chain jump to additional enemies |
+| Type | Block Applied? | Armor Applied? | Resistance Applied? | Unique Property |
+|------|---------------|---------------|---------------------|-----------------|
+| Physical | Yes (flat) | Yes (random roll, 0..=max) | Yes (%) | Standard melee and ranged attacks |
+| Poison | Yes (flat) | No | Yes (%) | Stacks: re-application resets duration to full; multiple sources accumulate independently |
+| Fire | Yes (flat) | No | Yes (%) | Destroys wooden doors; burning DoT is fire-based |
+| Lightning | Yes (flat) | No | Yes (%) | Can chain jump to additional enemies |
 
-Physical hits the full reduction chain: flat armor first, then percentage
-resistance. Poison, Fire, and Lightning skip flat armor — only their
-respective resistance applies.
+**Block** is a flat shield-based reduction that applies to every damage
+type — it's the only defense that touches magical damage. **Armor** is
+a random roll between 0 and `armor_max` (chest-piece `defense` +
+enchantment + `floor(Armor_skill/4)`), and only applies to Physical
+damage. So a fireball ignores armor entirely but still chips against a
+shield.
 
 ### Resistances
 
@@ -201,7 +206,8 @@ Applies symmetrically to player and monsters.
 | HP | 25 | Equipment, enchanting |
 | Hit Bonus | 0 | Equipment |
 | Dodge Bonus | 0 | Equipment |
-| Armor | 0 | Equipment |
+| Armor (max roll) | 0 | Equipment + Armor skill |
+| Block | 0 | Shield equipped + Shields skill |
 | Damage | 1d2 (unarmed) | Weapon equipped |
 | Action Delay | 1.0x (baseline) | Equipment |
 | Vision Range | 8 tiles (min 4) | Equipment |

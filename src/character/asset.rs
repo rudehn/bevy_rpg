@@ -37,6 +37,8 @@ pub struct SkillDistribution {
     #[serde(default)]
     pub dodging: i32,
     #[serde(default)]
+    pub shields: i32,
+    #[serde(default)]
     pub evocations: i32,
 }
 
@@ -49,6 +51,7 @@ impl SkillDistribution {
             + self.ranged_weapons
             + self.armor
             + self.dodging
+            + self.shields
             + self.evocations
     }
 
@@ -62,6 +65,7 @@ impl SkillDistribution {
             (Skill::RangedWeapons, self.ranged_weapons),
             (Skill::Armor, self.armor),
             (Skill::Dodging, self.dodging),
+            (Skill::Shields, self.shields),
             (Skill::Evocations, self.evocations),
         ]
         .into_iter()
@@ -87,6 +91,8 @@ pub struct SkillAptitudes {
     #[serde(default)]
     pub dodging: i32,
     #[serde(default)]
+    pub shields: i32,
+    #[serde(default)]
     pub evocations: i32,
 }
 
@@ -100,6 +106,7 @@ impl SkillAptitudes {
             Skill::RangedWeapons => self.ranged_weapons,
             Skill::Armor => self.armor,
             Skill::Dodging => self.dodging,
+            Skill::Shields => self.shields,
             Skill::Evocations => self.evocations,
         }
     }

@@ -22,11 +22,12 @@ pub enum Skill {
     RangedWeapons,
     Armor,
     Dodging,
+    Shields,
     Evocations,
 }
 
 impl Skill {
-    pub const ALL: [Skill; 8] = [
+    pub const ALL: [Skill; 9] = [
         Skill::Fighting,
         Skill::Axes,
         Skill::ShortBlades,
@@ -34,6 +35,7 @@ impl Skill {
         Skill::RangedWeapons,
         Skill::Armor,
         Skill::Dodging,
+        Skill::Shields,
         Skill::Evocations,
     ];
 
@@ -46,6 +48,7 @@ impl Skill {
             Skill::RangedWeapons => "Ranged Weapons",
             Skill::Armor => "Armor",
             Skill::Dodging => "Dodging",
+            Skill::Shields => "Shields",
             Skill::Evocations => "Evocations",
         }
     }
@@ -321,6 +324,15 @@ pub fn dodging_skill_bonus(skills: Option<&Skills>) -> i32 {
     (skills.get(Skill::Dodging) / 4.0).floor() as i32
 }
 
+/// Shields skill bonus — adds to the flat Block reduction applied to
+/// incoming damage. Only meaningful when the target actually has a
+/// shield equipped (Block > 0); the combat-side caller is expected
+/// to gate accordingly.
+pub fn shields_skill_bonus(skills: Option<&Skills>) -> i32 {
+    let Some(skills) = skills else { return 0 };
+    (skills.get(Skill::Shields) / 4.0).floor() as i32
+}
+
 // ---------------------------------------------------------------------
 // Plugin and systems
 // ---------------------------------------------------------------------
@@ -489,7 +501,7 @@ mod tests {
     fn all_skills_have_unique_names() {
         let names: std::collections::HashSet<_> =
             Skill::ALL.iter().map(|s| s.name()).collect();
-        assert_eq!(names.len(), 8);
+        assert_eq!(names.len(), 9);
     }
 
     #[test]
@@ -524,7 +536,7 @@ mod tests {
     #[test]
     fn skills_new_initializes_all_to_zero() {
         let s = Skills::new();
-        assert_eq!(s.levels.len(), 8);
+        assert_eq!(s.levels.len(), 9);
         for skill in Skill::ALL {
             assert_eq!(s.get(skill), 0.0);
         }
@@ -719,5 +731,16 @@ mod tests {
         assert_eq!(dodging_skill_bonus(Some(&s)), 2);
         s.set(Skill::Dodging, 15.5);
         assert_eq!(dodging_skill_bonus(Some(&s)), 3);
+    }
+
+    #[test]
+    fn shields_skill_bonus_returns_floor_div_4() {
+        let mut s = Skills::new();
+        assert_eq!(shields_skill_bonus(None), 0);
+        assert_eq!(shields_skill_bonus(Some(&s)), 0);
+        s.set(Skill::Shields, 4.5);
+        assert_eq!(shields_skill_bonus(Some(&s)), 1);
+        s.set(Skill::Shields, 27.0);
+        assert_eq!(shields_skill_bonus(Some(&s)), 6);
     }
 }

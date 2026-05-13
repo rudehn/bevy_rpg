@@ -3,14 +3,19 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 
 use crate::{
-    components::{Drifting, FloorEntityMarker, InInventory, Inventory, Name, Position},
+    components::{Drifting, Equipped, FloorEntityMarker, InInventory, Inventory, Name, Position, Viewshed},
     game::{
-        combat::GameRng,
+        actions::SpeedStats,
+        combat::{Damage, GameRng, Health, HealthRegen, Resistances},
+        enchantment::Enchantment,
+        items::{unapply_item_effects, Equipment, ItemProperties},
         magic::{GameStatusEffectsExt, StatusEffectKind, StatusEffects},
+        stats::{Armor, DamageBonus, Dodge, HitBonus},
         turns::TurnEndEvent,
         AppState,
     },
     map::{tile::{LiquidType, is_walkable}, Map},
+    player::Player,
     ui::game_log::GameLogMessage,
 };
 
@@ -41,8 +46,12 @@ impl Plugin for WaterPlugin {
 /// Each item has a 50% chance per turn to be swept away.
 fn deep_water_item_sweep_system(
     mut turn_end: MessageReader<TurnEndEvent>,
-    mut actors: Query<(&Position, &mut Inventory, &Name)>,
-    item_names: Query<&Name>,
+    mut actors: Query<(Entity, &Position, &mut Inventory)>,
+    mut player: Query<
+        (&mut Equipment, &mut Armor, &mut crate::game::stats::Block, &mut Dodge, &mut HitBonus, &mut Damage, &mut DamageBonus, &mut Health, &mut HealthRegen, &mut SpeedStats, &mut Viewshed, &mut Resistances),
+        With<Player>,
+    >,
+    item_query: Query<(&Name, &ItemProperties, Option<&Enchantment>)>,
     mut commands: Commands,
     mut game_rng: ResMut<GameRng>,
     mut log_writer: MessageWriter<GameLogMessage>,
@@ -54,11 +63,13 @@ fn deep_water_item_sweep_system(
         return;
     }
 
-    for (pos, mut inventory, _actor_name) in actors.iter_mut() {
+    for (actor_entity, pos, mut inventory) in actors.iter_mut() {
         let idx = map.xy_idx(pos.x, pos.y);
         if idx >= map.tiles.len() || map.tiles[idx].liquid != LiquidType::Water {
             continue;
         }
+
+        let mut player_bits = player.get_mut(actor_entity).ok();
 
         // Iterate in reverse to avoid index invalidation when removing
         let mut i = inventory.items.len();
@@ -67,10 +78,25 @@ fn deep_water_item_sweep_system(
             let roll = game_rng.0.range(0, 100);
             if roll < 50 {
                 let item_entity = inventory.items.remove(i);
-                let item_name = item_names
-                    .get(item_entity)
-                    .map(|n| n.0.clone())
-                    .unwrap_or_else(|_| "item".to_string());
+                let (item_name, props_opt, enchant_opt) = match item_query.get(item_entity) {
+                    Ok((name, props, enchant)) => (name.0.clone(), Some(props), enchant),
+                    Err(_) => ("item".to_string(), None, None),
+                };
+
+                // If this actor is the player and the item is equipped, unequip it
+                // so it doesn't auto-re-equip when picked back up.
+                if let Some((equipment, armor, block, dodge, hit_bonus, damage, damage_bonus, health, health_regen, speed, viewshed, resistances)) = player_bits.as_mut()
+                    && let Some(slot) = equipment.find_slot(item_entity)
+                {
+                    equipment.set_slot(slot, None);
+                    commands.entity(item_entity).remove::<Equipped>();
+                    if let Some(props) = props_opt {
+                        unapply_item_effects(
+                            props, enchant_opt, armor, block, dodge, hit_bonus, damage,
+                            damage_bonus, health, health_regen, speed, viewshed, resistances,
+                        );
+                    }
+                }
 
                 info!("Water sweep: ejecting item entity {:?} '{}' to ({}, {})", item_entity, item_name, pos.x, pos.y);
                 commands.entity(item_entity)

@@ -193,10 +193,10 @@ src/
 - See [docs/design/CHARACTER.md](docs/design/CHARACTER.md) §Level Progression for the canonical writeup. Race/class tables are test-enforced to match `races.ron` / `classes.ron` — see `.claude/rules/character-writeup-required.md`.
 
 ### Skills (Phase 3, [src/game/skills.rs](src/game/skills.rs))
-- 8 skills: Fighting, Axes, ShortBlades, LongBlades, RangedWeapons, Armor, Dodging, Evocations. Float levels `[0.0, 27.0]`; effects unlock at integer breakpoints via `floor(skill/4)`.
+- 9 skills: Fighting, Axes, ShortBlades, LongBlades, RangedWeapons, Armor, Dodging, Shields, Evocations. Float levels `[0.0, 27.0]`; effects unlock at integer breakpoints via `floor(skill/4)`.
 - ECS data on the player: `Skills` (per-skill level), `SkillXp` (cumulative per-skill XP), `SkillTraining` (per-skill `Normal`/`Focused`/`Disabled`). Resources: `SkillXpPool` (unallocated), `SkillUseCounters` (Auto-mode weights), `TrainingMode` (global `Auto` | `Manual`).
 - XP flow: `award_xp_on_death` adds half the character XP reward to `SkillXpPool`. `allocate_skill_xp` drains the pool every frame per training settings — Auto mode weights by use counters, Manual mode splits evenly (×2 for Focused). Per-skill XP is divided by `aptitude_multiplier(race_apt)` before being added — positive aptitude = faster training. `update_skill_levels` recomputes `Skills` levels from `SkillXp` via the DCSS XP table (50 → 24,325 points across 27 levels).
-- Combat: `weapon_skill_bonus(weapon, source, skills)` and `fighting_melee_bonus(source, skills)` are added dynamically in `hit_check_system` and `damage_roll_system` alongside `attack_attribute_bonus`. Use counters bump on every successful melee/ranged hit.
+- Combat: `weapon_skill_bonus(weapon, source, skills)` and `fighting_melee_bonus(source, skills)` are added dynamically in `hit_check_system` and `damage_roll_system` alongside `attack_attribute_bonus`. Armor is a **random roll** (`0..=armor_max + floor(Armor/4)`) applied to Physical damage only. **Block** (flat) — populated from off-hand shield `defense` + enchantment + `floor(Shields/4)` — is subtracted from every damage type **before** armor, so it's the only defense that touches magical damage. Use counters bump on every successful melee/ranged hit (Fighting + weapon skill), on damage taken while armored (Armor), on miss (Dodging), and on damage taken while a shield is equipped (Shields).
 - HP formula gains the DCSS Fighting term: `+ Fighting × XL/14 + (1 + Fighting × 3)/2` inside the `race_hp_mod` multiplier. Recomputed at every `handle_level_up`.
 - Staves: `handle_zap_staff` adds `floor(Evocations/4)` to staff damage alongside `INT_mod`. The combined sum is clamped at 0. Use counter bumps on every fired zap.
 - Skill screen UI: `InGameState::SkillScreen` (key `M`). DCSS-style listing with state badges (`+`/`*`/`-`), aptitude column, pool counter, mode toggle (`/`).
@@ -237,7 +237,7 @@ src/
 
 ### Combat System
 - d20 hit check: `d20 + hit_bonus >= 4 + target_dodge_bonus`
-- Damage types: Physical (armor + resistance), Poison/Fire/Lightning (resistance only)
+- Damage types: Physical (block + armor roll + resistance), Poison/Fire/Lightning (block + resistance only — no armor)
 - Player attacks via weapons (active abilities on cooldown) and staves (charges)
 - Monster attacks via melee + cooldown abilities
 - See GAME.md for full damage pipeline
