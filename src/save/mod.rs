@@ -75,7 +75,11 @@ const GAME_SAVE_KEY: &str = "ironveil_save";
 ///   the player's attribute scores can't be safely renormalized from
 ///   the Phase 1 base-10 scale to the Phase 2 base-16 scale. Acceptable
 ///   in a permadeath dev cycle with no production save data.
-pub const SAVE_SCHEMA_VERSION: u32 = 4;
+/// - **v5**: Phase 3 skills. `PlayerSaveData` gains `skills`,
+///   `skill_xp`, `skill_training`, `skill_xp_pool`. Pre-v5 saves load
+///   with empty maps and 0 pool via serde defaults — no in-game
+///   effect until the player trains; migration is a no-op.
+pub const SAVE_SCHEMA_VERSION: u32 = 5;
 
 // ---- Migration chain ----
 
@@ -215,12 +219,30 @@ impl SaveMigration for MigrateV3ToV4 {
     }
 }
 
+/// v4 → v5: Phase 3 skills are additive — `PlayerSaveData` gains
+/// skill fields with `#[serde(default)]`. No payload transformation
+/// needed; pre-v5 saves load with empty skill state, which is exactly
+/// what a fresh-spawn character looks like.
+struct MigrateV4ToV5;
+impl SaveMigration for MigrateV4ToV5 {
+    fn from_version(&self) -> u32 {
+        4
+    }
+    fn to_version(&self) -> u32 {
+        5
+    }
+    fn migrate(&self, data: &str) -> Result<String, String> {
+        Ok(data.to_string())
+    }
+}
+
 fn migrations() -> Vec<Box<dyn SaveMigration>> {
     vec![
         Box::new(MigrateV0ToV1),
         Box::new(MigrateV1ToV2),
         Box::new(MigrateV2ToV3),
         Box::new(MigrateV3ToV4),
+        Box::new(MigrateV4ToV5),
     ]
 }
 
@@ -497,6 +519,18 @@ pub struct PlayerSaveData {
     /// Phase 2: experience accumulated toward the next level.
     #[serde(default)]
     pub experience: u32,
+    /// Phase 3: per-skill float levels (mirrors `Skills` component).
+    #[serde(default)]
+    pub skills: crate::game::skills::Skills,
+    /// Phase 3: per-skill cumulative XP (mirrors `SkillXp` component).
+    #[serde(default)]
+    pub skill_xp: crate::game::skills::SkillXp,
+    /// Phase 3: per-skill training state (mirrors `SkillTraining`).
+    #[serde(default)]
+    pub skill_training: crate::game::skills::SkillTraining,
+    /// Phase 3: unallocated skill XP pool (mirrors `SkillXpPool` resource).
+    #[serde(default)]
+    pub skill_xp_pool: u64,
 }
 
 fn default_save_level() -> u32 {
@@ -660,6 +694,23 @@ pub fn save_to_cached_floor(data: &SavedFloorData) -> CachedFloor {
 
 // ---- Auto-save system ----
 
+/// Bundles the Phase 3 skill query + skill XP pool so auto_save_system
+/// stays under Bevy's 16-param cap.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct PlayerSkillSaveParams<'w, 's> {
+    pub query: Query<
+        'w,
+        's,
+        (
+            &'static crate::game::skills::Skills,
+            &'static crate::game::skills::SkillXp,
+            &'static crate::game::skills::SkillTraining,
+        ),
+        With<Player>,
+    >,
+    pub pool: Res<'w, crate::game::skills::SkillXpPool>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn auto_save_system(
     mut auto_save_pending: ResMut<AutoSavePending>,
@@ -694,6 +745,7 @@ pub fn auto_save_system(
         ),
         With<Player>,
     >,
+    skill_params: PlayerSkillSaveParams,
     inv_item_query: Query<
         (
             &Name,
@@ -897,6 +949,16 @@ pub fn auto_save_system(
             )
         });
 
+    // Phase 3 skill state. Defaults if the player entity has somehow
+    // lost its skill components mid-run (shouldn't happen post-spawn,
+    // but the save path must not crash).
+    let (skills, skill_xp, skill_training) = skill_params
+        .query
+        .single()
+        .map(|(s, x, t)| (s.clone(), x.clone(), t.clone()))
+        .unwrap_or_default();
+    let skill_pool_raw = skill_params.pool.raw;
+
     let save_data = GameSaveData {
         floor: floor.0,
         game_log: game_log.entries.clone(),
@@ -918,6 +980,10 @@ pub fn auto_save_system(
             damage_bonus,
             level,
             experience,
+            skills,
+            skill_xp,
+            skill_training,
+            skill_xp_pool: skill_pool_raw,
         },
         monsters,
         floor_items,
@@ -1023,8 +1089,16 @@ pub fn apply_player_load_system(
             player_data.attributes,
             crate::game::xp::Level(player_data.level),
             crate::game::xp::Experience(player_data.experience),
+            // Phase 3: skill components also override spawn-time values.
+            player_data.skills.clone(),
+            player_data.skill_xp.clone(),
+            player_data.skill_training.clone(),
         ));
     }
+    // Restore the skill XP pool resource.
+    commands.insert_resource(crate::game::skills::SkillXpPool {
+        raw: player_data.skill_xp_pool,
+    });
 
     // --- Inventory ---
     inventory.items.clear();
@@ -1482,6 +1556,10 @@ mod tests {
             damage_bonus: 3,
             level: 4,
             experience: 250,
+            skills: Default::default(),
+            skill_xp: Default::default(),
+            skill_training: Default::default(),
+            skill_xp_pool: 0,
         }
     }
 
@@ -2469,8 +2547,8 @@ mod tests {
     // =====================================================================
 
     #[test]
-    fn schema_version_is_four() {
-        assert_eq!(SAVE_SCHEMA_VERSION, 4);
+    fn schema_version_is_five() {
+        assert_eq!(SAVE_SCHEMA_VERSION, 5);
     }
 
     #[test]
@@ -2527,7 +2605,7 @@ mod tests {
     #[test]
     fn migrations_chain_is_ordered() {
         let migs = migrations();
-        assert_eq!(migs.len(), 4);
+        assert_eq!(migs.len(), 5);
         assert_eq!(migs[0].from_version(), 0);
         assert_eq!(migs[0].to_version(), 1);
         assert_eq!(migs[1].from_version(), 1);
@@ -2536,6 +2614,8 @@ mod tests {
         assert_eq!(migs[2].to_version(), 3);
         assert_eq!(migs[3].from_version(), 3);
         assert_eq!(migs[3].to_version(), 4);
+        assert_eq!(migs[4].from_version(), 4);
+        assert_eq!(migs[4].to_version(), 5);
     }
 
     /// v2 → v3 migration is a no-op (serde defaults handle the new fields).
@@ -2552,6 +2632,15 @@ mod tests {
     fn migrate_v3_to_v4_is_identity() {
         let payload = "PlayerSaveData(x: 0, y: 0, hp: 10)";
         let result = MigrateV3ToV4.migrate(payload).unwrap();
+        assert_eq!(result, payload);
+    }
+
+    /// v4 → v5 migration is a no-op. Phase 3 added skill fields with
+    /// serde defaults; pre-v5 saves load with empty skill state.
+    #[test]
+    fn migrate_v4_to_v5_is_identity() {
+        let payload = "PlayerSaveData(x: 0, y: 0, hp: 10)";
+        let result = MigrateV4ToV5.migrate(payload).unwrap();
         assert_eq!(result, payload);
     }
 
@@ -2613,6 +2702,10 @@ mod tests {
             damage_bonus: 2,
             level: 7,
             experience: 1234,
+            skills: Default::default(),
+            skill_xp: Default::default(),
+            skill_training: Default::default(),
+            skill_xp_pool: 0,
         };
         let ron = ron::to_string(&original).expect("serialize");
         let loaded: PlayerSaveData = ron::from_str(&ron).expect("deserialize");
@@ -2626,5 +2719,40 @@ mod tests {
         assert_eq!(loaded.experience, 1234);
         assert_eq!(loaded.x, 11);
         assert_eq!(loaded.hp, 30);
+    }
+
+    /// v5 round-trip: skill state (skills levels, raw XP totals, training
+    /// modes, pooled XP) serializes and deserializes faithfully.
+    #[test]
+    fn v5_player_save_data_round_trips_skills() {
+        use crate::game::skills::{Skill, SkillState, SkillTraining, SkillXp, Skills};
+
+        let mut skills = Skills::new();
+        skills.set(Skill::Fighting, 4.7);
+        skills.set(Skill::LongBlades, 3.2);
+        let mut skill_xp = SkillXp::new();
+        skill_xp.add(Skill::Fighting, 500);
+        skill_xp.add(Skill::LongBlades, 320);
+        let mut training = SkillTraining::new();
+        training.cycle(Skill::Fighting); // Normal → Focused
+        training.cycle(Skill::Axes); // Normal → Focused
+        training.cycle(Skill::Axes); // Focused → Disabled
+
+        let mut original = player_data();
+        original.skills = skills;
+        original.skill_xp = skill_xp;
+        original.skill_training = training;
+        original.skill_xp_pool = 1247;
+
+        let ron = ron::to_string(&original).expect("serialize");
+        let loaded: PlayerSaveData = ron::from_str(&ron).expect("deserialize");
+
+        assert!((loaded.skills.get(Skill::Fighting) - 4.7).abs() < 0.01);
+        assert!((loaded.skills.get(Skill::LongBlades) - 3.2).abs() < 0.01);
+        assert_eq!(loaded.skill_xp.get(Skill::Fighting), 500);
+        assert_eq!(loaded.skill_xp.get(Skill::LongBlades), 320);
+        assert_eq!(loaded.skill_training.get(Skill::Fighting), SkillState::Focused);
+        assert_eq!(loaded.skill_training.get(Skill::Axes), SkillState::Disabled);
+        assert_eq!(loaded.skill_xp_pool, 1247);
     }
 }
