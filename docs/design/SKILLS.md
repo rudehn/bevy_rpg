@@ -30,7 +30,10 @@ from Phase 2.
 
 - Cross-training between weapon families (Short ↔ Long Blades, the
   Maces/Axes/Polearms/Staves chain)
-- Per-class aptitudes (only race aptitudes ship in v1)
+- Per-class aptitudes — **explicitly out of scope.** Race aptitudes
+  alone carry skill-training identity. Adding a parallel set of class
+  aptitudes would double the balance knobs without enough payoff;
+  class identity is already expressed through `starting_skills`
 - Skill targets (DCSS `=` key — sets a "stop training at level X" goal)
 - Magic schools (Fire / Lightning / Poison / Restoration) — land with
   Phase 4 mana / spells
@@ -442,7 +445,8 @@ After implementation:
 - **Cross-training.** Short ↔ Long Blades, Axes ↔ Maces/Polearms.
   Architecturally similar to aptitudes; can layer in later without
   disrupting the v1 data model.
-- **Per-class aptitudes.** Currently only race aptitudes ship.
+- **Per-class aptitudes.** Out of scope. Class identity flows through
+  `starting_skills`; aptitudes belong to race.
 - **Attack-speed scaling.** DCSS weapon skill reduces attack delay
   to a per-weapon minimum. We don't have a "minimum delay" concept
   yet; defer alongside the Polearms-and-friends weapon expansion.

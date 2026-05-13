@@ -143,9 +143,10 @@ fn refresh_skill_screen(
 
     let mut body = String::new();
     body.push_str(&format!(
-        "Mode: [{}]                    XP pooled: {}\n\n",
+        "Mode: [{}]                    XP pooled: {}\n",
         mode_label, pool.raw
     ));
+    body.push_str("[+] training    [*] focused (2x XP)    [-] disabled\n\n");
 
     for (i, &skill) in Skill::ALL.iter().enumerate() {
         let state = training.get(skill);
