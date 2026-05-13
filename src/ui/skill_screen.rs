@@ -219,7 +219,13 @@ fn refresh_skill_screen(
         "Mode: [{}]                    XP pooled: {}\n",
         mode_label, pool.raw
     ));
-    body.push_str("[+] training    [*] focused (2x XP)    [-] disabled\n\n");
+    body.push_str(
+        "[+] training    [*] focused (2x weight vs Normal)    [-] disabled\n",
+    );
+    body.push_str(
+        "(focused skills only outpace others when not everything is focused — \
+         all-focused = all-normal)\n\n",
+    );
 
     for (i, &skill) in Skill::ALL.iter().enumerate() {
         let state = training.get(skill);
