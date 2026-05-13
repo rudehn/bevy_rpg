@@ -167,6 +167,12 @@ pub struct ItemProperties {
     /// has none — it's the no-ability balance baseline.
     #[serde(default)]
     pub weapon_ability: Option<String>,
+    /// Phase 3: which weapon-family skill applies on melee. None for
+    /// non-weapons, staves (which use Evocations on zap, Fighting on
+    /// bash), and any future weapon-shaped items that don't slot into
+    /// a family.
+    #[serde(default)]
+    pub weapon_skill: Option<crate::game::skills::WeaponSkill>,
 }
 
 fn default_attack_speed() -> f32 { 1.0 }

@@ -146,6 +146,10 @@ fn hit_check_system(
     query: Query<(&Name, Option<&Dodge>, Option<&HitBonus>, Has<Player>)>,
     race_query: Query<&crate::character::Race>,
     attrs_query: Query<&crate::character::Attributes>,
+    skills_query: Query<&crate::game::skills::Skills>,
+    equipment_query: Query<&crate::game::items::Equipment>,
+    weapon_props_query: Query<&crate::game::items::ItemProperties>,
+    mut use_counters: ResMut<crate::game::skills::SkillUseCounters>,
 ) {
     for intent in intents.read() {
         let Ok((attacker_name, _, attacker_hit_bonus, is_player)) = query.get(intent.attacker) else {
@@ -167,11 +171,32 @@ fn hit_check_system(
         // DEX for ranged. Monsters lack `Attributes` and contribute 0.
         let attacker_attrs = attrs_query.get(intent.attacker).ok();
         let attr_bonus = crate::character::attack_attribute_bonus(intent.source, attacker_attrs);
+
+        // Phase 3 skill bonuses: weapon-family + Fighting for melee.
+        // Look up the equipped weapon's skill tag (only meaningful for
+        // the player; monsters have no Equipment).
+        let attacker_skills = skills_query.get(intent.attacker).ok();
+        let weapon_skill_tag = equipment_query
+            .get(intent.attacker)
+            .ok()
+            .and_then(|eq| eq.weapon)
+            .and_then(|w| weapon_props_query.get(w).ok())
+            .and_then(|props| props.weapon_skill);
+        let weapon_bonus = crate::game::skills::weapon_skill_bonus(
+            weapon_skill_tag,
+            intent.source,
+            attacker_skills,
+        );
+        let fighting_bonus =
+            crate::game::skills::fighting_melee_bonus(intent.source, attacker_skills);
+
         let dodge_val = target_dodge.map(|d| d.0).unwrap_or(0);
         let dodge_target = 4 + dodge_val;
         let is_natural_20 = hit_roll == 20;
 
-        if is_natural_20 || (hit_roll + hit_bonus + attr_bonus >= dodge_target) {
+        if is_natural_20
+            || (hit_roll + hit_bonus + attr_bonus + weapon_bonus + fighting_bonus >= dodge_target)
+        {
             roll_writer.write(DamageRollMessage {
                 attacker: intent.attacker,
                 target: intent.target,
@@ -179,6 +204,17 @@ fn hit_check_system(
                 source: intent.source,
                 is_crit: is_natural_20,
             });
+            // Bump use counters on a successful hit. Monsters lack
+            // Skills so weapon_skill_tag would be None anyway, but the
+            // is_player guard documents intent.
+            if is_player {
+                if let Some(ws) = weapon_skill_tag {
+                    use_counters.bump(ws.as_skill());
+                }
+                if intent.source == roguelike_engine::combat::DamageSource::Melee {
+                    use_counters.bump(crate::game::skills::Skill::Fighting);
+                }
+            }
         } else {
             let verb = if is_player { "miss" } else { "misses" };
             log_writer.write(GameLogMessage(format!(
@@ -210,6 +246,7 @@ fn damage_roll_system(
         Option<&DamageBonus>,
         Has<Player>,
         Option<&crate::character::Attributes>,
+        Option<&crate::game::skills::Skills>,
     )>,
     target_query: Query<(Option<&Armor>, Option<&crate::game::abilities::RallyBuff>)>,
     player_equipment_query: Query<&crate::game::items::Equipment, With<Player>>,
@@ -219,8 +256,16 @@ fn damage_roll_system(
     position_query: Query<&Position>,
 ) {
     for message in roll_messages.read() {
-        let Ok((damage_dice, status_effects, is_terrified, damage_bonus, attacker_is_player, attacker_attrs))
-            = attacker_query.get(message.attacker) else {
+        let Ok((
+            damage_dice,
+            status_effects,
+            is_terrified,
+            damage_bonus,
+            attacker_is_player,
+            attacker_attrs,
+            attacker_skills,
+        )) = attacker_query.get(message.attacker)
+        else {
             continue;
         };
 
@@ -237,9 +282,27 @@ fn damage_roll_system(
         // and damage scaling always travel together.
         let attr_bonus = crate::character::attack_attribute_bonus(message.source, attacker_attrs);
 
+        // Phase 3 skill damage bonuses: weapon-family + Fighting (melee only).
+        let weapon_skill_tag = player_equipment_query
+            .get(message.attacker)
+            .ok()
+            .and_then(|eq| eq.weapon)
+            .and_then(|w| weapon_props_query.get(w).ok())
+            .and_then(|props| props.weapon_skill);
+        let weapon_bonus = crate::game::skills::weapon_skill_bonus(
+            weapon_skill_tag,
+            message.source,
+            attacker_skills,
+        );
+        let fighting_bonus =
+            crate::game::skills::fighting_melee_bonus(message.source, attacker_skills);
+
         let is_enraged = status_effects.map(|e| e.is_enraged()).unwrap_or(false);
-        let mut raw_damage =
-            apply_damage_multipliers(rolled_damage + bonus + attr_bonus, is_enraged, is_terrified);
+        let mut raw_damage = apply_damage_multipliers(
+            rolled_damage + bonus + attr_bonus + weapon_bonus + fighting_bonus,
+            is_enraged,
+            is_terrified,
+        );
 
         // Backstab: player with Backstab weapon attacking a sleeping monster deals triple damage.
         if attacker_is_player && message.source == DamageSource::Melee {

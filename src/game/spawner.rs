@@ -484,6 +484,7 @@ pub fn spawn_item(
         vision_bonus: asset.vision_bonus,
         resistances,
         weapon_ability: asset.weapon_ability.clone(),
+        weapon_skill: asset.weapon_skill,
     });
 
     entity.insert(ItemStack { count: 1, max_stack: asset.max_stack });

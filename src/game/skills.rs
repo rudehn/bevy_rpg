@@ -59,8 +59,11 @@ impl std::fmt::Display for Skill {
 
 /// Weapon family — declared on `ItemAsset` for weapons. Drives which
 /// skill `weapon_skill_bonus` returns for a given equipped weapon.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Serialize, Deserialize, Reflect, Debug, Clone, Copy, PartialEq, Eq, Hash, Default,
+)]
 pub enum WeaponSkill {
+    #[default]
     Axes,
     ShortBlades,
     LongBlades,
