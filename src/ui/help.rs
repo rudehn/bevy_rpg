@@ -130,6 +130,7 @@ fn spawn_help_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
             section(panel, "Skill Screen", &[
                 ("\u{2191}/\u{2193}", "Navigate skills"),
                 ("Enter", "Cycle state: Normal \u{2192} Focused \u{2192} Disabled"),
+                ("=", "Set target level on focused skill (auto-disables on reach)"),
                 ("/", "Toggle Auto / Manual training mode"),
                 ("M / Esc", "Close"),
             ]);

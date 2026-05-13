@@ -24,11 +24,23 @@ struct SkillScreenBodyText;
 #[derive(Resource, Default, Debug, Clone, Copy)]
 struct SkillScreenFocus(usize);
 
+/// While the user is typing a skill target, capture digits here. `None`
+/// means we're not in input mode. The input is committed on Enter, or
+/// discarded on Esc.
+#[derive(Resource, Default, Debug, Clone)]
+struct SkillTargetInput {
+    /// Skill the target is being set for (the focused row when `=` was pressed).
+    skill: Option<Skill>,
+    /// Accumulated digit string, e.g. "12".
+    buffer: String,
+}
+
 pub struct SkillScreenPlugin;
 
 impl Plugin for SkillScreenPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SkillScreenFocus>()
+            .init_resource::<SkillTargetInput>()
             .add_systems(
                 Update,
                 skill_screen_open_close
@@ -44,16 +56,28 @@ impl Plugin for SkillScreenPlugin {
             )
             .add_systems(
                 OnExit(InGameState::SkillScreen),
-                despawn_screen::<OnSkillScreen>,
+                (despawn_screen::<OnSkillScreen>, clear_target_input_on_exit),
             );
     }
+}
+
+fn clear_target_input_on_exit(mut input: ResMut<SkillTargetInput>) {
+    input.skill = None;
+    input.buffer.clear();
 }
 
 fn skill_screen_open_close(
     keys: Res<ButtonInput<KeyCode>>,
     state: Res<State<InGameState>>,
+    target_input: Res<SkillTargetInput>,
     mut next_state: ResMut<NextState<InGameState>>,
 ) {
+    // While the player is typing a target value, suppress the toggle
+    // keys — the digit keys, Enter, Esc, and Backspace are owned by
+    // the target-input handler in `skill_screen_input`.
+    if target_input.skill.is_some() {
+        return;
+    }
     crate::ui::modal::toggle_screen(
         &keys,
         &state,
@@ -72,7 +96,7 @@ fn spawn_skill_screen_ui(mut commands: Commands, asset_server: Res<AssetServer>)
         &ModalConfig {
             title: "Skills",
             title_color: GOLD,
-            footer: "[\u{2191}/\u{2193}] navigate  [Enter] cycle state  [/] Auto/Manual  [M/Esc] close",
+            footer: "[\u{2191}/\u{2193}] navigate  [Enter] cycle state  [=] set target  [/] Auto/Manual  [M/Esc] close",
             width: 600.0,
             height: 500.0,
             ..default()
@@ -96,8 +120,51 @@ fn skill_screen_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut focus: ResMut<SkillScreenFocus>,
     mut mode: ResMut<TrainingMode>,
+    mut target_input: ResMut<SkillTargetInput>,
     mut training_q: Query<&mut SkillTraining, With<Player>>,
 ) {
+    // ----- Target-input mode: digits / Enter / Esc / Backspace only -----
+    if target_input.skill.is_some() {
+        if keys.just_pressed(KeyCode::Escape) {
+            target_input.skill = None;
+            target_input.buffer.clear();
+            return;
+        }
+        if keys.just_pressed(KeyCode::Backspace) {
+            target_input.buffer.pop();
+            return;
+        }
+        if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter) {
+            let skill = target_input.skill.expect("guarded above");
+            let value: u32 = target_input.buffer.parse().unwrap_or(0);
+            if let Ok(mut training) = training_q.single_mut() {
+                training.set_target(skill, value);
+            }
+            target_input.skill = None;
+            target_input.buffer.clear();
+            return;
+        }
+        // Collect digits 0-9.
+        for (key, digit) in [
+            (KeyCode::Digit0, '0'),
+            (KeyCode::Digit1, '1'),
+            (KeyCode::Digit2, '2'),
+            (KeyCode::Digit3, '3'),
+            (KeyCode::Digit4, '4'),
+            (KeyCode::Digit5, '5'),
+            (KeyCode::Digit6, '6'),
+            (KeyCode::Digit7, '7'),
+            (KeyCode::Digit8, '8'),
+            (KeyCode::Digit9, '9'),
+        ] {
+            if keys.just_pressed(key) && target_input.buffer.len() < 2 {
+                target_input.buffer.push(digit);
+            }
+        }
+        return; // While typing, suppress all other key behaviors
+    }
+
+    // ----- Normal navigation mode -----
     if keys.just_pressed(KeyCode::ArrowDown) {
         focus.0 = (focus.0 + 1) % Skill::ALL.len();
     }
@@ -115,12 +182,18 @@ fn skill_screen_input(
             training.cycle(Skill::ALL[focus.0]);
         }
     }
+    // `=` opens target-input mode for the focused skill.
+    if keys.just_pressed(KeyCode::Equal) {
+        target_input.skill = Some(Skill::ALL[focus.0]);
+        target_input.buffer.clear();
+    }
 }
 
 fn refresh_skill_screen(
     focus: Res<SkillScreenFocus>,
     mode: Res<TrainingMode>,
     pool: Res<SkillXpPool>,
+    target_input: Res<SkillTargetInput>,
     player_q: Query<(&Race, &Skills, &SkillTraining, &SkillXp), With<Player>>,
     race_manifest_handle: Res<RaceManifestHandle>,
     race_manifests: Res<Assets<RaceManifest>>,
@@ -162,15 +235,33 @@ fn refresh_skill_screen(
         } else {
             format!("apt {:+}", apt)
         };
+        let target_str = match training.target(skill) {
+            Some(t) => format!("\u{2192}{}", t), // "→N"
+            None => "   ".to_string(),
+        };
         let cursor = if i == focus.0 { ">" } else { " " };
         body.push_str(&format!(
-            "{} [{}] {:<18}{:>5.1}   {}\n",
+            "{} [{}] {:<18}{:>5.1}  {:>4}   {}\n",
             cursor,
             badge,
             skill.name(),
             level,
+            target_str,
             apt_str,
         ));
+    }
+
+    // If the player is currently typing a target, append a prompt line.
+    if let Some(skill) = target_input.skill {
+        body.push_str(&format!(
+            "\nSet target for {}: {} _   (Enter to confirm, Esc to cancel, 0 = clear)",
+            skill.name(),
+            target_input.buffer,
+        ));
+    } else {
+        body.push_str(
+            "\n[=] set target on focused skill   (skill auto-disables on reach)\n",
+        );
     }
 
     if let Ok(mut t) = body_q.single_mut() {

@@ -34,7 +34,9 @@ from Phase 2.
   alone carry skill-training identity. Adding a parallel set of class
   aptitudes would double the balance knobs without enough payoff;
   class identity is already expressed through `starting_skills`
-- Skill targets (DCSS `=` key — sets a "stop training at level X" goal)
+- ~~Skill targets~~ — **shipped as a Phase 3 follow-up.** Press `=` on
+  the focused row to type a target level; the skill auto-disables when
+  it reaches that level. See §8 below.
 - Magic schools (Fire / Lightning / Poison / Restoration) — land with
   Phase 4 mana / spells
 - Attack-speed scaling from weapon skills (DCSS's "minimum delay"
@@ -293,6 +295,27 @@ Each Enter press on the focused row cycles: Normal → Focused → Disabled
 `/` flips global `TrainingMode` between Auto and Manual. State
 transitions: Auto mode treats every Normal/Focused skill as active
 weighted by counters; Manual mode weights are 1 (Normal) or 2 (Focused).
+
+### Skill targets
+
+Press `=` with a skill focused to enter target-input mode: type a
+1–2-digit level (1–27), then `Enter` to confirm or `Esc` to cancel.
+Each row shows the active target as `→N` in a small column between
+level and aptitude.
+
+- Setting a target on a `Disabled` skill auto-flips it to `Normal` so
+  the target is actually reachable.
+- Entering `0` clears the target.
+- When `Skills::get(skill) >= target`, the `enforce_skill_targets`
+  system flips the skill to `Disabled`, clears the target, and logs
+  `"Long Blades reaches target level 4 — auto-disabled."`
+- Targets persist in `SkillTraining.targets: HashMap<Skill, u32>`
+  and round-trip through the save file.
+
+Common pattern: queue a sequence of targets by setting them all up-front
+(`Fighting → 4`, `Long Blades → 4`, `Dodging → 6`) and let the
+auto-disable do the work as each milestone hits. The player only has
+to revisit the screen when they want a new target.
 Disabled is identical in both modes.
 
 ## 9. Combat Math Integration

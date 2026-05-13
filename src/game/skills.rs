@@ -135,12 +135,19 @@ impl Skills {
 #[reflect(Component)]
 pub struct SkillTraining {
     pub states: HashMap<Skill, SkillState>,
+    /// Optional "stop training when level reaches X" target per skill.
+    /// When `Skills::get(skill) >= target`, the allocator flips the
+    /// skill's state to `Disabled` and clears the target. Set via the
+    /// `=` keypress on the skill screen.
+    #[serde(default)]
+    pub targets: HashMap<Skill, u32>,
 }
 
 impl SkillTraining {
     pub fn new() -> Self {
         Self {
             states: Skill::ALL.iter().map(|&s| (s, SkillState::Normal)).collect(),
+            targets: HashMap::new(),
         }
     }
 
@@ -155,6 +162,29 @@ impl SkillTraining {
             SkillState::Disabled => SkillState::Normal,
         };
         self.states.insert(skill, next);
+    }
+
+    pub fn target(&self, skill: Skill) -> Option<u32> {
+        self.targets.get(&skill).copied()
+    }
+
+    /// Set a target for the given skill. `level` clamps to 1..=27;
+    /// passing 0 clears the target. Setting a target also flips the
+    /// skill to `Normal` if it was `Disabled` so it actually trains.
+    pub fn set_target(&mut self, skill: Skill, level: u32) {
+        if level == 0 {
+            self.targets.remove(&skill);
+            return;
+        }
+        let clamped = level.clamp(1, 27);
+        self.targets.insert(skill, clamped);
+        if self.get(skill) == SkillState::Disabled {
+            self.states.insert(skill, SkillState::Normal);
+        }
+    }
+
+    pub fn clear_target(&mut self, skill: Skill) {
+        self.targets.remove(&skill);
     }
 }
 
@@ -296,6 +326,7 @@ impl Plugin for SkillsPlugin {
                 (
                     allocate_skill_xp,
                     update_skill_levels,
+                    enforce_skill_targets,
                     decay_skill_use_counters_on_floor_change,
                 )
                     .chain()
@@ -389,6 +420,36 @@ fn update_skill_levels(mut q: Query<(&SkillXp, &mut Skills), Changed<SkillXp>>) 
     }
 }
 
+/// Enforce skill targets: when a skill's level reaches the player's
+/// declared target, flip the skill to `Disabled` and clear the target.
+/// Logs a line so the player notices the auto-deselect.
+fn enforce_skill_targets(
+    mut player_q: Query<(&Skills, &mut SkillTraining), With<crate::player::Player>>,
+    mut log_writer: MessageWriter<crate::ui::game_log::GameLogMessage>,
+) {
+    let Ok((skills, mut training)) = player_q.single_mut() else {
+        return;
+    };
+
+    let mut reached: Vec<(Skill, u32)> = Vec::new();
+    for skill in Skill::ALL {
+        if let Some(target) = training.target(skill) {
+            if skills.get(skill) >= target as f32 {
+                reached.push((skill, target));
+            }
+        }
+    }
+    for (skill, target) in reached {
+        training.clear_target(skill);
+        training.states.insert(skill, SkillState::Disabled);
+        log_writer.write(crate::ui::game_log::GameLogMessage(format!(
+            "{} reaches target level {} — auto-disabled.",
+            skill.name(),
+            target
+        )));
+    }
+}
+
 /// Decay use counters by 10% on floor transition. Without this,
 /// counters never reset and ancient-skill spam during the early run
 /// drowns out recent activity.
@@ -474,6 +535,41 @@ mod tests {
         assert_eq!(t.get(Skill::Fighting), SkillState::Disabled);
         t.cycle(Skill::Fighting);
         assert_eq!(t.get(Skill::Fighting), SkillState::Normal);
+    }
+
+    #[test]
+    fn set_target_clamps_to_one_through_27_and_zero_clears() {
+        let mut t = SkillTraining::new();
+        t.set_target(Skill::Fighting, 5);
+        assert_eq!(t.target(Skill::Fighting), Some(5));
+
+        t.set_target(Skill::Fighting, 99);
+        assert_eq!(t.target(Skill::Fighting), Some(27));
+
+        t.set_target(Skill::Fighting, 0);
+        assert_eq!(t.target(Skill::Fighting), None);
+    }
+
+    #[test]
+    fn set_target_revives_disabled_skill() {
+        // If a skill is Disabled and the player sets a target on it,
+        // it should auto-flip back to Normal so the target is reachable.
+        let mut t = SkillTraining::new();
+        t.cycle(Skill::Axes); // Normal → Focused
+        t.cycle(Skill::Axes); // Focused → Disabled
+        assert_eq!(t.get(Skill::Axes), SkillState::Disabled);
+
+        t.set_target(Skill::Axes, 4);
+        assert_eq!(t.get(Skill::Axes), SkillState::Normal);
+        assert_eq!(t.target(Skill::Axes), Some(4));
+    }
+
+    #[test]
+    fn clear_target_removes_entry() {
+        let mut t = SkillTraining::new();
+        t.set_target(Skill::Fighting, 6);
+        t.clear_target(Skill::Fighting);
+        assert_eq!(t.target(Skill::Fighting), None);
     }
 
     #[test]
