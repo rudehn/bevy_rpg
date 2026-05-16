@@ -343,6 +343,145 @@ fn despawn_floor_entities(
     }
 }
 
+/// Spawn entities that fell through chasms on the floor above. Pops
+/// `fallen.monsters[floor]`, places each survivor near its drop point
+/// (scattered via `occupied` so groups don't pile up), and restores
+/// HP / squad / patrol state from the saved record.
+fn spawn_fallen_monsters(
+    commands: &mut Commands,
+    map: &Map,
+    fallen: &mut FallenEntities,
+    floor: u32,
+    assets: &crate::map::floor_materializer::EntityAssets,
+    turn_manager: &mut ResMut<TurnManager>,
+    ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
+    occupied: &mut std::collections::HashSet<(i32, i32)>,
+) {
+    let Some(fallen_monsters) = fallen.monsters.remove(&floor) else { return };
+    use crate::map::floor_materializer::nearest_walkable_avoiding;
+    for m in &fallen_monsters {
+        let target = nearest_walkable_avoiding(map, Point::new(m.x, m.y), occupied);
+        let Some(entity) = crate::game::spawn_monster_by_name(
+            commands,
+            &m.name,
+            &target,
+            turn_manager,
+            &assets.monster_manifests,
+            &assets.monster_manifest_handle,
+            &assets.monster_sprite_assets,
+            ascii_font,
+        ) else {
+            warn!("Failed to spawn fallen monster '{}'", m.name);
+            continue;
+        };
+        occupied.insert((target.x, target.y));
+        if m.hp_current > 0 {
+            commands.entity(entity).insert(crate::save::SavedHp(m.hp_current));
+        }
+        if let (Some(squad_id), Some(squad_config)) = (m.squad_id, m.squad_config.clone()) {
+            commands.entity(entity).insert((
+                crate::game::squad::SquadId(squad_id),
+                squad_config,
+            ));
+            if m.is_leader {
+                commands.entity(entity).insert((
+                    crate::game::squad::SquadLeader,
+                    crate::game::squad::SquadBlackboard::default(),
+                ));
+            }
+        }
+        if let Some(patrol_route) = m.patrol_route.clone() {
+            commands.entity(entity).insert(patrol_route);
+        }
+    }
+    info!("Spawned {} fallen monsters on floor {}", fallen_monsters.len(), floor);
+}
+
+/// Spawn items that fell through chasms on the floor above. Shares the
+/// `occupied` set with [`spawn_fallen_monsters`] so monsters + items
+/// from the same drop tile scatter onto distinct neighbours.
+fn spawn_fallen_items(
+    commands: &mut Commands,
+    map: &Map,
+    fallen: &mut FallenEntities,
+    floor: u32,
+    assets: &crate::map::floor_materializer::EntityAssets,
+    ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
+    occupied: &mut std::collections::HashSet<(i32, i32)>,
+) {
+    let Some(fallen_items) = fallen.items.remove(&floor) else { return };
+    use crate::map::floor_materializer::nearest_walkable_avoiding;
+    let item_manifest = assets.item_manifests.get(&assets.item_manifest_handle.0);
+    for i in &fallen_items {
+        let target = nearest_walkable_avoiding(map, Point::new(i.x, i.y), occupied);
+        let Some(entity) = crate::game::spawner::spawn_item(
+            commands,
+            &i.name,
+            &target,
+            &assets.item_manifests,
+            &assets.item_manifest_handle,
+            &assets.item_sprite_assets,
+            ascii_font,
+            // Items keep their saved enchantment state below; skip
+            // random enchant rolling by passing None.
+            None,
+        ) else {
+            warn!("Failed to spawn fallen item '{}'", i.name);
+            continue;
+        };
+        occupied.insert((target.x, target.y));
+        if i.count > 1 {
+            let max_stack = item_manifest
+                .and_then(|m| m.items.get(i.name.as_str()))
+                .map(|a| a.max_stack)
+                .unwrap_or(1);
+            commands.entity(entity).insert(ItemStack {
+                count: i.count,
+                max_stack,
+            });
+        }
+        crate::save::restore_item_mutable_state(commands, entity, &i.state);
+        if i.drifting {
+            commands.entity(entity).insert(crate::components::Drifting);
+        }
+    }
+    info!("Spawned {} fallen items on floor {}", fallen_items.len(), floor);
+}
+
+/// Reset the per-floor spatial-index resources after a transition and
+/// repopulate the water-tile index from the new map. Fire / gas
+/// entities auto-despawn via [`FloorEntityMarker`]; this helper only
+/// resets the indices.
+fn reset_floor_spatial_indices(
+    map: &Map,
+    light_sources: &mut crate::map::light::LightSources,
+    fire_tiles: &mut crate::game::fire::FireTiles,
+    gas_tiles: &mut crate::game::gas::GasTiles,
+    water_tiles: &mut crate::game::water::WaterTiles,
+) {
+    // Clear stale non-entity light sources (fire, fungal) from the
+    // previous floor. Entity-based wall lights (candles) are re-synced
+    // automatically.
+    light_sources.remove_floor_sources();
+    fire_tiles.0.clear();
+    gas_tiles.0.clear();
+    water_tiles.0.clear();
+
+    // Repopulate the water-tile index for shimmer animation.
+    use crate::map::tile::LiquidType;
+    for y in 0..map.height {
+        for x in 0..map.width {
+            let idx = map.xy_idx(x, y);
+            match map.tiles[idx].liquid {
+                LiquidType::Water | LiquidType::ShallowWater => {
+                    water_tiles.0.insert((x, y), map.tiles[idx].liquid);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Systems
 // ---------------------------------------------------------------------------
@@ -669,127 +808,29 @@ pub fn spawn_dungeon(
 
     *map = result.map;
 
-    // Spawn any entities that fell from the floor above via chasm collapse.
-    //
-    // `occupied` scatters fallen entities so groups don't pile onto a single
-    // tile when their drop point lands in a wall or chasm. It seeds with the
-    // player's spawn tile (so nothing overlaps them) and grows as each fallen
-    // monster is placed. Items share the set with monsters — two fallers
-    // from the same tile above land on adjacent tiles instead of stacking.
+    // Place fallen entities (chasm survivors from the floor above). The
+    // `occupied` set is shared so monsters + items from the same drop
+    // tile scatter onto distinct neighbours instead of stacking. Seeded
+    // with the player spawn so nothing lands on top of the player.
     let mut occupied: std::collections::HashSet<(i32, i32)> =
         std::collections::HashSet::new();
     occupied.insert((result.player_spawn.x, result.player_spawn.y));
+    spawn_fallen_monsters(
+        &mut commands, &map, &mut extras.fallen_entities, floor.0,
+        &assets, &mut turn_manager, ascii_font.as_deref(), &mut occupied,
+    );
+    spawn_fallen_items(
+        &mut commands, &map, &mut extras.fallen_entities, floor.0,
+        &assets, ascii_font.as_deref(), &mut occupied,
+    );
 
-    if let Some(fallen_monsters) = extras.fallen_entities.monsters.remove(&floor.0) {
-        use crate::map::floor_materializer::nearest_walkable_avoiding;
-        for m in &fallen_monsters {
-            let target =
-                nearest_walkable_avoiding(&map, Point::new(m.x, m.y), &occupied);
-            if let Some(entity) = crate::game::spawn_monster_by_name(
-                &mut commands,
-                &m.name,
-                &target,
-                &mut turn_manager,
-                &assets.monster_manifests,
-                &assets.monster_manifest_handle,
-                &assets.monster_sprite_assets,
-                ascii_font.as_deref(),
-            ) {
-                occupied.insert((target.x, target.y));
-                if let Some(hp) = if m.hp_current > 0 { Some(m.hp_current) } else { None } {
-                    commands.entity(entity).insert(crate::save::SavedHp(hp));
-                }
-                if let (Some(squad_id), Some(squad_config)) = (m.squad_id, m.squad_config.clone()) {
-                    commands
-                        .entity(entity)
-                        .insert((crate::game::squad::SquadId(squad_id), squad_config));
-                    if m.is_leader {
-                        commands.entity(entity).insert((
-                            crate::game::squad::SquadLeader,
-                            crate::game::squad::SquadBlackboard::default(),
-                        ));
-                    }
-                }
-                if let Some(patrol_route) = m.patrol_route.clone() {
-                    commands.entity(entity).insert(patrol_route);
-                }
-            } else {
-                warn!("Failed to spawn fallen monster '{}'", m.name);
-            }
-        }
-        info!("Spawned {} fallen monsters on floor {}", fallen_monsters.len(), floor.0);
-    }
-
-    // Fallen items — scattered on top of the monster occupancy set so
-    // items and monsters don't stack and items from the same drop tile
-    // aren't piled together.
-    if let Some(fallen_items) = extras.fallen_entities.items.remove(&floor.0) {
-        use crate::map::floor_materializer::nearest_walkable_avoiding;
-        let item_manifest = assets
-            .item_manifests
-            .get(&assets.item_manifest_handle.0);
-        for i in &fallen_items {
-            let target =
-                nearest_walkable_avoiding(&map, Point::new(i.x, i.y), &occupied);
-            if let Some(entity) = crate::game::spawner::spawn_item(
-                &mut commands,
-                &i.name,
-                &target,
-                &assets.item_manifests,
-                &assets.item_manifest_handle,
-                &assets.item_sprite_assets,
-                ascii_font.as_deref(),
-                // Items keep their saved enchantment state below;
-                // skip random enchant rolling by passing None.
-                None,
-            ) {
-                occupied.insert((target.x, target.y));
-                if i.count > 1 {
-                    let max_stack = item_manifest
-                        .and_then(|m| m.items.get(i.name.as_str()))
-                        .map(|a| a.max_stack)
-                        .unwrap_or(1);
-                    commands.entity(entity).insert(crate::game::items::ItemStack {
-                        count: i.count,
-                        max_stack,
-                    });
-                }
-                crate::save::restore_item_mutable_state(&mut commands, entity, &i.state);
-                if i.drifting {
-                    commands.entity(entity).insert(crate::components::Drifting);
-                }
-            } else {
-                warn!("Failed to spawn fallen item '{}'", i.name);
-            }
-        }
-        info!("Spawned {} fallen items on floor {}", fallen_items.len(), floor.0);
-    }
-
-    // Clear stale non-entity light sources (fire, fungal) from the previous floor.
-    // Entity-based wall lights (candles) are re-synced automatically.
-    extras.light_sources.remove_floor_sources();
-    // Clear fire/gas state — entities auto-despawn via FloorEntityMarker but
-    // the spatial indices must also be cleared.
-    extras.fire_tiles.0.clear();
-    extras.gas_tiles.0.clear();
-    // Rebuild water tile index for shimmer animation.
-    extras.water_tiles.0.clear();
-
-    // Populate water tile index for shimmer animation.
-    // Note: `fungal_light` is intentionally not wired to any current decoration —
-    // no shipping plant emits light. The helper remains available for future content.
-    use crate::map::tile::LiquidType;
-    for y in 0..map.height {
-        for x in 0..map.width {
-            let idx = map.xy_idx(x, y);
-            match map.tiles[idx].liquid {
-                LiquidType::Water | LiquidType::ShallowWater => {
-                    extras.water_tiles.0.insert((x, y), map.tiles[idx].liquid);
-                }
-                _ => {}
-            }
-        }
-    }
+    reset_floor_spatial_indices(
+        &map,
+        &mut extras.light_sources,
+        &mut extras.fire_tiles,
+        &mut extras.gas_tiles,
+        &mut extras.water_tiles,
+    );
 
     // Honour an explicit arrival hint (set by `apply_map_transition` for
     // overworld-edge transitions). Snap to the nearest walkable tile so a
