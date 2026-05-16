@@ -63,55 +63,65 @@ pub struct EntityAssets<'w> {
 }
 
 // ---------------------------------------------------------------------------
-// Private intermediate types — the uniform floor plan
+// Floor blueprint — the typed contract between source-of-truth (builder,
+// cache, save) and the ECS materializer.
+//
+// These types are public so the planning step (`plan_floor`) can be
+// unit-tested and so future builders can construct one directly.
 // ---------------------------------------------------------------------------
 
-struct MonsterPlan {
-    pos: Point,
-    name: String,
-    squad_id: Option<u64>,
-    is_leader: bool,
-    squad_config: Option<SquadConfig>,
-    patrol_route: Option<PatrolRoute>,
-    saved_hp: Option<i32>,
-    submerged: bool,
+pub struct MonsterPlan {
+    pub pos: Point,
+    pub name: String,
+    pub squad_id: Option<u64>,
+    pub is_leader: bool,
+    pub squad_config: Option<SquadConfig>,
+    pub patrol_route: Option<PatrolRoute>,
+    pub saved_hp: Option<i32>,
+    pub submerged: bool,
 }
 
-struct ItemPlan {
-    pos: Point,
-    name: String,
-    count: u32,
+pub struct ItemPlan {
+    pub pos: Point,
+    pub name: String,
+    pub count: u32,
     /// Saved mutable item state; default means freshly generated (roll random).
-    state: crate::save::ItemMutableState,
-    drifting: bool,
+    pub state: crate::save::ItemMutableState,
+    pub drifting: bool,
 }
 
-struct PropPlan {
-    pos: Point,
-    name: String,
+pub struct PropPlan {
+    pub pos: Point,
+    pub name: String,
 }
 
-struct MachinePlan {
-    pos: Point,
-    prop_name: String,
-    trigger: MachineTrigger,
-    effect: MachineEffect,
-    consume_on_use: bool,
+pub struct MachinePlan {
+    pub pos: Point,
+    pub prop_name: String,
+    pub trigger: MachineTrigger,
+    pub effect: MachineEffect,
+    pub consume_on_use: bool,
 }
 
-struct FloorPlan {
-    map: Map,
-    monsters: Vec<MonsterPlan>,
-    items: Vec<ItemPlan>,
-    props: Vec<PropPlan>,
-    machines: Vec<MachinePlan>,
-    /// Tiles that should receive a [`MapExitTile`] component once their
-    /// tile entities exist — used by overworld edges and the temple
-    /// entrance / exit.
-    exit_tiles: Vec<(Point, crate::map::world::MapExitTile)>,
-    player_spawn: Point,
+/// A fully-resolved floor description ready for ECS materialization.
+///
+/// Built by [`plan_floor`] from a [`FloorSource`]; consumed by
+/// [`materialize_floor`]. The type is pure value-data — no Bevy
+/// resources, no ECS state — so plans can be constructed and inspected
+/// in tests without spinning up an `App`.
+pub struct FloorPlan {
+    pub map: Map,
+    pub monsters: Vec<MonsterPlan>,
+    pub items: Vec<ItemPlan>,
+    pub props: Vec<PropPlan>,
+    pub machines: Vec<MachinePlan>,
+    /// Tiles that should receive a [`crate::map::world::MapExitTile`]
+    /// component once their tile entities exist — used by overworld
+    /// edges and the temple entrance / exit.
+    pub exit_tiles: Vec<(Point, crate::map::world::MapExitTile)>,
+    pub player_spawn: Point,
     /// Carried through from the Load path for the caller.
-    pending_player_load: Option<crate::save::PlayerSaveData>,
+    pub pending_player_load: Option<crate::save::PlayerSaveData>,
 }
 
 // ---------------------------------------------------------------------------
@@ -482,7 +492,25 @@ impl FloorPlan {
 }
 
 // ---------------------------------------------------------------------------
-// Materialization — the single entry point
+// Planning — pure conversion from a source into a `FloorPlan`
+// ---------------------------------------------------------------------------
+
+/// Build a [`FloorPlan`] from any [`FloorSource`].
+///
+/// Pure — no ECS, no `Commands`. Tests can call this with a hand-built
+/// `BuilderMap` or `CachedFloor` and inspect the resulting plan
+/// directly. This is the testable seam between "what should be on the
+/// floor" and "spawn the entities".
+pub fn plan_floor(source: FloorSource) -> FloorPlan {
+    match source {
+        FloorSource::Generate(build_data) => FloorPlan::from_builder(build_data),
+        FloorSource::Restore { cached, ascending } => FloorPlan::from_cache(cached, ascending),
+        FloorSource::Load(save_data) => FloorPlan::from_save(save_data),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Materialization — the single ECS entry point
 // ---------------------------------------------------------------------------
 
 /// Materialize a floor from any source into live ECS entities.
@@ -500,11 +528,7 @@ pub fn materialize_floor(
     ascii_font: Option<&crate::game::ascii_mode::AsciiFont>,
     source: FloorSource,
 ) -> FloorResult {
-    let plan = match source {
-        FloorSource::Generate(build_data) => FloorPlan::from_builder(build_data),
-        FloorSource::Restore { cached, ascending } => FloorPlan::from_cache(cached, ascending),
-        FloorSource::Load(save_data) => FloorPlan::from_save(save_data),
-    };
+    let plan = plan_floor(source);
 
     let mut warnings = Vec::new();
 
@@ -745,5 +769,147 @@ mod tests {
         occupied.insert((0, 0));
         let got = nearest_walkable_avoiding(&map, Point::new(0, 0), &occupied);
         assert_eq!((got.x, got.y), (0, 0));
+    }
+
+    // ----- plan_floor: Restore branch -----------------------------------
+
+    /// Build a small cached floor with DownStairs at `down` and UpStairs
+    /// at `up`. The map interior is all walkable so the BFS in
+    /// `nearest_walkable` is trivial.
+    fn cached_floor_with_stairs(down: Point, up: Point) -> super::super::dungeon::CachedFloor {
+        let mut map = open_map(20, 20);
+        let down_idx = map.xy_idx(down.x, down.y);
+        map.tiles[down_idx].terrain = TerrainType::DownStairs;
+        let up_idx = map.xy_idx(up.x, up.y);
+        map.tiles[up_idx].terrain = TerrainType::UpStairs;
+        super::super::dungeon::CachedFloor {
+            map,
+            monsters: Vec::new(),
+            items: Vec::new(),
+            props: Vec::new(),
+            exit_tiles: Vec::new(),
+            down_stairs_pos: down,
+            up_stairs_pos: up,
+        }
+    }
+
+    #[test]
+    fn plan_floor_restore_ascending_lands_on_downstairs() {
+        // Ascending = the player came up from a deeper floor, so they
+        // land on the destination's DownStairs (where they originally
+        // descended from).
+        let cached = cached_floor_with_stairs(Point::new(7, 4), Point::new(2, 2));
+        let plan = plan_floor(FloorSource::Restore { cached, ascending: true });
+        assert_eq!(plan.player_spawn, Point::new(7, 4));
+    }
+
+    #[test]
+    fn plan_floor_restore_descending_lands_on_upstairs() {
+        let cached = cached_floor_with_stairs(Point::new(7, 4), Point::new(2, 2));
+        let plan = plan_floor(FloorSource::Restore { cached, ascending: false });
+        assert_eq!(plan.player_spawn, Point::new(2, 2));
+    }
+
+    #[test]
+    fn plan_floor_restore_rescans_when_stored_pos_does_not_match_terrain() {
+        // Build a cached floor whose `down_stairs_pos` lies on a Floor
+        // tile (stale data), but the map has a real DownStairs elsewhere.
+        // `from_cache` must re-scan and land the player on the actual
+        // stair.
+        let mut cached = cached_floor_with_stairs(Point::new(7, 4), Point::new(2, 2));
+        cached.down_stairs_pos = Point::new(0, 0); // sentinel — not the real stair
+        let plan = plan_floor(FloorSource::Restore { cached, ascending: true });
+        assert_eq!(plan.player_spawn, Point::new(7, 4));
+    }
+
+    #[test]
+    fn plan_floor_restore_carries_monsters_and_items() {
+        let mut cached = cached_floor_with_stairs(Point::new(7, 4), Point::new(2, 2));
+        cached.monsters.push(SavedMonster {
+            x: 5,
+            y: 5,
+            name: "Goblin".to_string(),
+            hp_current: 7,
+            squad_id: None,
+            is_leader: false,
+            squad_config: None,
+            patrol_route: None,
+            submerged: false,
+        });
+        cached.items.push(SavedItem {
+            x: 9,
+            y: 9,
+            name: "Healing Potion".to_string(),
+            count: 2,
+            state: Default::default(),
+            drifting: false,
+        });
+        let plan = plan_floor(FloorSource::Restore { cached, ascending: true });
+        assert_eq!(plan.monsters.len(), 1);
+        assert_eq!(plan.items.len(), 1);
+        assert_eq!(plan.monsters[0].name, "Goblin");
+        assert_eq!(plan.monsters[0].saved_hp, Some(7));
+        assert_eq!(plan.items[0].count, 2);
+    }
+
+    // ----- plan_floor: Generate branch ----------------------------------
+
+    #[test]
+    fn plan_floor_generate_falls_back_to_first_walkable_when_starting_pos_unset() {
+        // Build a BuilderMap with a known map but no starting_position.
+        // The plan should still produce a walkable spawn (the first
+        // walkable tile in row-major order).
+        let mut bm = super::super::builders::BuilderMap::new_for_test(10, 10);
+        for t in bm.map.tiles.iter_mut() {
+            *t = Tile {
+                terrain: TerrainType::Floor,
+                liquid: LiquidType::None,
+                decoration: Decoration::None,
+            };
+        }
+        // No `starting_position` set.
+        let plan = plan_floor(FloorSource::Generate(bm));
+        // First walkable tile in row-major order is (0, 0).
+        assert_eq!(plan.player_spawn, Point::new(0, 0));
+    }
+
+    #[test]
+    fn plan_floor_generate_uses_starting_position_when_set() {
+        let mut bm = super::super::builders::BuilderMap::new_for_test(10, 10);
+        for t in bm.map.tiles.iter_mut() {
+            *t = Tile {
+                terrain: TerrainType::Floor,
+                liquid: LiquidType::None,
+                decoration: Decoration::None,
+            };
+        }
+        bm.starting_position = Some(Position { x: 5, y: 3 });
+        let plan = plan_floor(FloorSource::Generate(bm));
+        assert_eq!(plan.player_spawn, Point::new(5, 3));
+    }
+
+    #[test]
+    fn plan_floor_generate_carries_spawn_lists() {
+        use crate::map::builders::SpawnEntry;
+        let mut bm = super::super::builders::BuilderMap::new_for_test(10, 10);
+        for t in bm.map.tiles.iter_mut() {
+            *t = Tile {
+                terrain: TerrainType::Floor,
+                liquid: LiquidType::None,
+                decoration: Decoration::None,
+            };
+        }
+        bm.starting_position = Some(Position { x: 1, y: 1 });
+        bm.spawn_list.push(SpawnEntry::solo(Point::new(3, 3), "Goblin".to_string()));
+        bm.item_spawn_list.push((Point::new(4, 4), "Apple".to_string(), 1));
+        bm.prop_spawn_list.push((Point::new(5, 5), "Pillar".to_string()));
+
+        let plan = plan_floor(FloorSource::Generate(bm));
+        assert_eq!(plan.monsters.len(), 1);
+        assert_eq!(plan.items.len(), 1);
+        assert_eq!(plan.props.len(), 1);
+        assert_eq!(plan.monsters[0].name, "Goblin");
+        assert_eq!(plan.items[0].count, 1);
+        assert_eq!(plan.props[0].name, "Pillar");
     }
 }
