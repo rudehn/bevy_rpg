@@ -229,8 +229,6 @@ pub enum MonsterBehavior {
 pub struct PrefabMonsterSpawn {
     pub x: i32,
     pub y: i32,
-    /// Combat role to resolve via faction table (e.g. "melee_guard", "ranged", "caster", "leader", "brute").
-    pub role: String,
     #[serde(default)]
     pub behavior: MonsterBehavior,
 }
@@ -257,8 +255,6 @@ pub struct PrefabTemplate {
     pub monster_spawns: Vec<PrefabMonsterSpawn>,
     #[serde(default)]
     pub item_spawns: Vec<PrefabItemSpawn>,
-    #[serde(default)]
-    pub on_leader_death: String,
     #[serde(default = "default_flee_threshold")]
     pub flee_threshold: f32,
     /// Placement mode: "room" (overlay on existing rooms), "wall" (carve into walls), "any" (try both).
@@ -434,24 +430,6 @@ pub struct MonsterAsset {
     pub stationary: bool,
 }
 
-/// Infer the combat role of a monster from its asset data (replaces the old
-/// explicit `role` field). Used by prefab placement for faction-role resolution.
-pub fn infer_role(asset: &MonsterAsset) -> &'static str {
-    // Check if any ability implies leadership
-    if asset.abilities.iter().any(|a| matches!(a, AbilityDef::WarCry { .. } | AbilityDef::Rally { .. })) {
-        return "leader";
-    }
-    // Check for ranged from AI config
-    let has_ranged = match &asset.ai {
-        AiConfig::Fsm { ranged_range, .. } => *ranged_range > 0,
-        AiConfig::Goap { traits, .. } => traits.iter().any(|t| matches!(t, AiTrait::Ranged { .. })),
-    };
-    if !asset.monster_abilities.is_empty() && !has_ranged { return "caster"; }
-    if has_ranged { return "ranged"; }
-    if asset.base_armor >= 2 { return "brute"; }
-    "melee_guard"
-}
-
 /// Detonation effect for `ExplodeOnHit`, deserialized from RON.
 #[derive(Debug, Clone, Deserialize)]
 pub enum ExplodeEffectDef {
@@ -518,10 +496,6 @@ pub struct MonsterSpawnInfo {
     /// Mixed-species group. When non-empty, `monster`/`min_group`/`max_group` are ignored.
     #[serde(default)]
     pub group: Vec<GroupMember>,
-
-    /// Squad behavior: what happens when the leader dies ("scatter", "enrage", or "" for nothing).
-    #[serde(default)]
-    pub on_leader_death: String,
 
     /// Squad behavior: collective HP ratio below which cowardly squad members flee.
     #[serde(default = "default_flee_threshold")]

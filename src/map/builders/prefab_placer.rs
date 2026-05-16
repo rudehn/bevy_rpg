@@ -1,109 +1,22 @@
+//! Prefab placer.
+//!
+//! NOTE: PrefabPlacer is currently not wired into any builder pipeline
+//! (commented out in `map/builders/mod.rs::floor_builder`). The code is
+//! retained — including geometry helpers and the rotation/flip transform
+//! suite — for re-enabling after the role system is replaced. Until then
+//! the compiler will flag most of the file as dead; suppress those
+//! warnings file-wide to keep the noise floor down.
+#![allow(dead_code)]
+
 use bracket_lib::prelude::{Algorithm2D, Point, RandomNumberGenerator, Rect};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 
 use crate::{
-    assets::{MonsterAsset, MonsterSpawnInfo, PrefabTemplate},
-    game::squad::SquadConfig,
+    assets::PrefabTemplate,
     map::tile::TerrainType,
 };
 
-use super::{BuilderMap, MetaMapBuilder, SpawnEntry};
-
-// ---------------------------------------------------------------------------
-// MonsterRoleTable — faction-first role resolution for prefab spawns
-// ---------------------------------------------------------------------------
-
-pub struct MonsterRoleEntry {
-    pub name: String,
-    pub faction_tag: String,
-    pub role: String,
-    pub min_floor: i32,
-    pub max_floor: i32,
-}
-
-pub struct MonsterRoleTable {
-    entries: Vec<MonsterRoleEntry>,
-}
-
-impl MonsterRoleTable {
-    /// Build from the monster manifest and spawn table. Each spawn table entry
-    /// contributes a floor range; the faction/role come from the monster asset.
-    pub fn from_manifest(
-        monsters: &HashMap<String, MonsterAsset>,
-        spawn_table: &[MonsterSpawnInfo],
-    ) -> Self {
-        let mut entries = Vec::new();
-        for spawn in spawn_table {
-            // Skip mixed groups — they don't map cleanly to a single monster.
-            if !spawn.group.is_empty() {
-                continue;
-            }
-            if let Some(asset) = monsters.get(&spawn.monster) {
-                let faction_tag = asset.faction.to_lowercase();
-                let role = crate::assets::infer_role(asset).to_string();
-                if !faction_tag.is_empty() && !role.is_empty() {
-                    entries.push(MonsterRoleEntry {
-                        name: asset.name.clone(),
-                        faction_tag,
-                        role,
-                        min_floor: spawn.min_floor,
-                        max_floor: spawn.max_floor,
-                    });
-                }
-            }
-        }
-        Self { entries }
-    }
-
-    /// Get all factions that have at least one monster for every required role at this depth.
-    pub fn eligible_factions(&self, roles: &[&str], depth: i32) -> Vec<String> {
-        // Unique roles needed.
-        let needed: HashSet<&str> = roles.iter().copied().collect();
-
-        // Build faction → set of available roles at this depth.
-        let mut faction_roles: HashMap<&str, HashSet<&str>> = HashMap::new();
-        for entry in &self.entries {
-            if depth >= entry.min_floor && depth <= entry.max_floor {
-                faction_roles
-                    .entry(entry.faction_tag.as_str())
-                    .or_default()
-                    .insert(entry.role.as_str());
-            }
-        }
-
-        faction_roles
-            .into_iter()
-            .filter(|(_, available)| needed.iter().all(|r| available.contains(r)))
-            .map(|(faction, _)| faction.to_string())
-            .collect()
-    }
-
-    /// Resolve a role to a random monster name within the given faction at this depth.
-    pub fn resolve_role(
-        &self,
-        faction: &str,
-        role: &str,
-        depth: i32,
-        rng: &mut RandomNumberGenerator,
-    ) -> Option<String> {
-        let candidates: Vec<&MonsterRoleEntry> = self
-            .entries
-            .iter()
-            .filter(|e| {
-                e.faction_tag == faction
-                    && e.role == role
-                    && depth >= e.min_floor
-                    && depth <= e.max_floor
-            })
-            .collect();
-
-        if candidates.is_empty() {
-            return None;
-        }
-        let idx = rng.range(0, candidates.len() as i32) as usize;
-        Some(candidates[idx].name.clone())
-    }
-}
+use super::{BuilderMap, MetaMapBuilder};
 
 /// Total tile budget for prefabs per floor. Each placed prefab consumes
 /// width × height from this budget.
@@ -213,7 +126,7 @@ fn rotate_90_cw(prefab: &PrefabTemplate) -> PrefabTemplate {
     let monster_spawns = prefab.monster_spawns.iter().map(|m| {
         let (nx, ny) = transform(m.x, m.y);
         let behavior = transform_behavior(&m.behavior, transform);
-        crate::assets::PrefabMonsterSpawn { x: nx, y: ny, role: m.role.clone(), behavior }
+        crate::assets::PrefabMonsterSpawn { x: nx, y: ny, behavior }
     }).collect();
 
     let item_spawns = prefab.item_spawns.iter().map(|i| {
@@ -231,7 +144,6 @@ fn rotate_90_cw(prefab: &PrefabTemplate) -> PrefabTemplate {
         props,
         monster_spawns,
         item_spawns,
-        on_leader_death: prefab.on_leader_death.clone(),
         flee_threshold: prefab.flee_threshold,
         placement: prefab.placement.clone(),
         allow_rotate: prefab.allow_rotate,
@@ -259,7 +171,7 @@ fn flip_prefab_h(prefab: &PrefabTemplate) -> PrefabTemplate {
     let monster_spawns = prefab.monster_spawns.iter().map(|m| {
         let (nx, ny) = transform(m.x, m.y);
         let behavior = transform_behavior(&m.behavior, transform);
-        crate::assets::PrefabMonsterSpawn { x: nx, y: ny, role: m.role.clone(), behavior }
+        crate::assets::PrefabMonsterSpawn { x: nx, y: ny, behavior }
     }).collect();
 
     let item_spawns = prefab.item_spawns.iter().map(|i| {
@@ -277,7 +189,6 @@ fn flip_prefab_h(prefab: &PrefabTemplate) -> PrefabTemplate {
         props,
         monster_spawns,
         item_spawns,
-        on_leader_death: prefab.on_leader_death.clone(),
         flee_threshold: prefab.flee_threshold,
         placement: prefab.placement.clone(),
         allow_rotate: prefab.allow_rotate,
@@ -309,7 +220,6 @@ fn transform_behavior(
 
 pub struct PrefabPlacer {
     prefabs: Vec<PrefabTemplate>,
-    role_table: MonsterRoleTable,
 }
 
 impl MetaMapBuilder for PrefabPlacer {
@@ -319,8 +229,8 @@ impl MetaMapBuilder for PrefabPlacer {
 }
 
 impl PrefabPlacer {
-    pub fn new(prefabs: Vec<PrefabTemplate>, role_table: MonsterRoleTable) -> Box<Self> {
-        Box::new(Self { prefabs, role_table })
+    pub fn new(prefabs: Vec<PrefabTemplate>) -> Box<Self> {
+        Box::new(Self { prefabs })
     }
 
     fn place_prefabs(&mut self, build_data: &mut BuilderMap) {
@@ -694,9 +604,9 @@ impl PrefabPlacer {
         true
     }
 
-    /// Add monster, prop, and item spawns for a successfully placed prefab.
-    /// Uses faction-first role resolution: pick one faction that can fill all
-    /// required roles at this depth, then resolve each role within that faction.
+    /// Add prop and item spawns for a successfully placed prefab. Monster
+    /// spawns from prefabs are no-ops: the role-based resolver has been
+    /// removed, so prefab monster slots have nothing to map to.
     fn add_prefab_spawns(
         &self,
         build_data: &mut BuilderMap,
@@ -704,97 +614,6 @@ impl PrefabPlacer {
         offset_x: i32,
         offset_y: i32,
     ) {
-        let depth = build_data.map.depth;
-        let mut rng = RandomNumberGenerator::new();
-
-        // Collect all roles needed by this prefab.
-        let needed_roles: Vec<&str> = prefab
-            .monster_spawns
-            .iter()
-            .map(|ms| ms.role.as_str())
-            .collect();
-
-        // Pick a faction that can fill all roles at this depth.
-        let eligible = self.role_table.eligible_factions(&needed_roles, depth);
-        if eligible.is_empty() {
-            // No faction can fill all roles — skip monster spawns entirely.
-            // Still place props and items below.
-        } else {
-            let faction = &eligible[rng.range(0, eligible.len() as i32) as usize];
-
-            // Resolve each monster spawn within the chosen faction.
-            let monster_count = prefab.monster_spawns.len();
-            let is_squad = monster_count >= 2;
-
-            let squad_id = if is_squad {
-                Some(build_data.squad_counter.next())
-            } else {
-                None
-            };
-
-            let squad_config = if is_squad {
-                let behavior =
-                    crate::game::squad::LeaderDeathBehavior::from_str(&prefab.on_leader_death);
-                Some(SquadConfig {
-                    on_leader_death: behavior,
-                    flee_threshold: prefab.flee_threshold,
-                })
-            } else {
-                None
-            };
-
-            let mut is_first_squad_member = true;
-            for ms in &prefab.monster_spawns {
-                let monster_name = match self.role_table.resolve_role(
-                    faction,
-                    &ms.role,
-                    depth,
-                    &mut rng,
-                ) {
-                    Some(name) => name,
-                    None => continue,
-                };
-
-                let wx = offset_x + ms.x;
-                let wy = offset_y + ms.y;
-                let pos = Point::new(wx, wy);
-
-                let mut entry = if let (Some(sid), Some(cfg)) = (squad_id, squad_config.clone()) {
-                    let leader = is_first_squad_member;
-                    is_first_squad_member = false;
-                    SpawnEntry::squad(pos, monster_name, sid, cfg, leader)
-                } else {
-                    SpawnEntry::solo(pos, monster_name)
-                };
-
-                entry.patrol_route = match &ms.behavior {
-                    crate::assets::MonsterBehavior::Sentry => {
-                        Some(crate::game::ai::PatrolRoute {
-                            state: crate::game::ai::PatrolState::sentry(pos),
-                        })
-                    }
-                    crate::assets::MonsterBehavior::Patrol(waypoints) => {
-                        let abs_points: Vec<Point> = waypoints.iter()
-                            .map(|(wpx, wpy)| Point::new(offset_x + wpx, offset_y + wpy))
-                            .collect();
-                        Some(crate::game::ai::PatrolRoute {
-                            state: crate::game::ai::PatrolState::waypoint(&abs_points),
-                        })
-                    }
-                    crate::assets::MonsterBehavior::Roam { min, max } => {
-                        Some(crate::game::ai::PatrolRoute {
-                            state: crate::game::ai::PatrolState::area_roam(
-                                Point::new(offset_x + min.0, offset_y + min.1),
-                                Point::new(offset_x + max.0, offset_y + max.1),
-                            ),
-                        })
-                    }
-                    crate::assets::MonsterBehavior::Wander => None,
-                };
-                build_data.add_monster_spawn(entry);
-            }
-        }
-
         for pe in &prefab.props {
             let wx = offset_x + pe.x;
             let wy = offset_y + pe.y;
@@ -890,7 +709,6 @@ fn check_connectivity_fast(
 mod tests {
     use super::*;
     use bracket_lib::prelude::Rect;
-    use std::collections::HashMap;
 
     // -----------------------------------------------------------------------
     // Helper constructors
@@ -911,7 +729,6 @@ mod tests {
             props: Vec::new(),
             monster_spawns: Vec::new(),
             item_spawns: Vec::new(),
-            on_leader_death: String::new(),
             flee_threshold: 0.5,
             placement: "any".to_string(),
             allow_rotate: true,
@@ -930,23 +747,6 @@ mod tests {
         p.allow_rotate = allow_rotate;
         p.allow_flip = allow_flip;
         p
-    }
-
-    /// Build a minimal MonsterRoleTable from a list of
-    /// (name, faction, role, min_floor, max_floor) tuples.
-    fn make_role_table(entries: &[(&str, &str, &str, i32, i32)]) -> MonsterRoleTable {
-        MonsterRoleTable {
-            entries: entries
-                .iter()
-                .map(|(name, faction, role, min_f, max_f)| MonsterRoleEntry {
-                    name: name.to_string(),
-                    faction_tag: faction.to_string(),
-                    role: role.to_string(),
-                    min_floor: *min_f,
-                    max_floor: *max_f,
-                })
-                .collect(),
-        }
     }
 
     // =======================================================================
@@ -1169,150 +969,6 @@ mod tests {
     }
 
     // =======================================================================
-    // MonsterRoleTable::eligible_factions
-    // =======================================================================
-
-    #[test]
-    fn eligible_factions_empty_table() {
-        let table = make_role_table(&[]);
-        let factions = table.eligible_factions(&["melee_guard"], 1);
-        assert!(factions.is_empty());
-    }
-
-    #[test]
-    fn eligible_factions_single_faction_all_roles() {
-        let table = make_role_table(&[
-            ("Goblin Warrior", "goblin", "melee_guard", 1, 5),
-            ("Goblin Archer", "goblin", "ranged", 1, 5),
-        ]);
-        let factions = table.eligible_factions(&["melee_guard", "ranged"], 3);
-        assert_eq!(factions.len(), 1);
-        assert_eq!(factions[0], "goblin");
-    }
-
-    #[test]
-    fn eligible_factions_excludes_faction_missing_role() {
-        let table = make_role_table(&[
-            ("Goblin Warrior", "goblin", "melee_guard", 1, 5),
-            // Goblins have no ranged — should be excluded when ranged is required.
-            ("Skeleton Archer", "undead", "ranged", 1, 5),
-            ("Skeleton Guard", "undead", "melee_guard", 1, 5),
-        ]);
-        let factions = table.eligible_factions(&["melee_guard", "ranged"], 3);
-        assert_eq!(factions.len(), 1);
-        assert_eq!(factions[0], "undead");
-    }
-
-    #[test]
-    fn eligible_factions_depth_filtering() {
-        let table = make_role_table(&[
-            ("Goblin Warrior", "goblin", "melee_guard", 1, 3),
-            ("Goblin Archer", "goblin", "ranged", 1, 3),
-        ]);
-        // At depth 3, goblins are eligible.
-        assert_eq!(table.eligible_factions(&["melee_guard", "ranged"], 3).len(), 1);
-        // At depth 4, goblins are out of range.
-        assert!(table.eligible_factions(&["melee_guard", "ranged"], 4).is_empty());
-    }
-
-    #[test]
-    fn eligible_factions_multiple_factions_qualify() {
-        let table = make_role_table(&[
-            ("Goblin Warrior", "goblin", "melee_guard", 1, 5),
-            ("Goblin Archer", "goblin", "ranged", 1, 5),
-            ("Skeleton Guard", "undead", "melee_guard", 1, 5),
-            ("Skeleton Archer", "undead", "ranged", 1, 5),
-        ]);
-        let mut factions = table.eligible_factions(&["melee_guard", "ranged"], 3);
-        factions.sort();
-        assert_eq!(factions, vec!["goblin", "undead"]);
-    }
-
-    #[test]
-    fn eligible_factions_no_roles_required() {
-        // With no roles required, every faction that has any entry in range qualifies.
-        let table = make_role_table(&[
-            ("Goblin Warrior", "goblin", "melee_guard", 1, 5),
-        ]);
-        let factions = table.eligible_factions(&[], 3);
-        // Empty needed set means all factions pass the "all needed" check.
-        assert!(!factions.is_empty());
-    }
-
-    #[test]
-    fn eligible_factions_duplicate_roles_treated_as_one() {
-        // Prefab might request ["melee_guard", "melee_guard"] — unique roles = {"melee_guard"}.
-        let table = make_role_table(&[
-            ("Goblin Warrior", "goblin", "melee_guard", 1, 5),
-        ]);
-        let factions = table.eligible_factions(&["melee_guard", "melee_guard"], 3);
-        assert_eq!(factions.len(), 1);
-    }
-
-    // =======================================================================
-    // MonsterRoleTable::resolve_role
-    // =======================================================================
-
-    #[test]
-    fn resolve_role_returns_valid_name() {
-        let table = make_role_table(&[
-            ("Goblin Warrior", "goblin", "melee_guard", 1, 5),
-            ("Goblin Brute", "goblin", "melee_guard", 1, 5),
-        ]);
-        let mut rng = RandomNumberGenerator::new();
-        let result = table.resolve_role("goblin", "melee_guard", 3, &mut rng);
-        assert!(result.is_some());
-        let name = result.unwrap();
-        assert!(
-            name == "Goblin Warrior" || name == "Goblin Brute",
-            "unexpected name: {name}"
-        );
-    }
-
-    #[test]
-    fn resolve_role_wrong_faction_returns_none() {
-        let table = make_role_table(&[
-            ("Goblin Warrior", "goblin", "melee_guard", 1, 5),
-        ]);
-        let mut rng = RandomNumberGenerator::new();
-        assert!(table.resolve_role("undead", "melee_guard", 3, &mut rng).is_none());
-    }
-
-    #[test]
-    fn resolve_role_wrong_role_returns_none() {
-        let table = make_role_table(&[
-            ("Goblin Warrior", "goblin", "melee_guard", 1, 5),
-        ]);
-        let mut rng = RandomNumberGenerator::new();
-        assert!(table.resolve_role("goblin", "caster", 3, &mut rng).is_none());
-    }
-
-    #[test]
-    fn resolve_role_out_of_depth_returns_none() {
-        let table = make_role_table(&[
-            ("Goblin Warrior", "goblin", "melee_guard", 1, 3),
-        ]);
-        let mut rng = RandomNumberGenerator::new();
-        assert!(table.resolve_role("goblin", "melee_guard", 5, &mut rng).is_none());
-    }
-
-    #[test]
-    fn resolve_role_at_exact_depth_boundaries() {
-        let table = make_role_table(&[
-            ("Goblin Warrior", "goblin", "melee_guard", 3, 7),
-        ]);
-        let mut rng = RandomNumberGenerator::new();
-        // At min_floor boundary.
-        assert!(table.resolve_role("goblin", "melee_guard", 3, &mut rng).is_some());
-        // At max_floor boundary.
-        assert!(table.resolve_role("goblin", "melee_guard", 7, &mut rng).is_some());
-        // Below min.
-        assert!(table.resolve_role("goblin", "melee_guard", 2, &mut rng).is_none());
-        // Above max.
-        assert!(table.resolve_role("goblin", "melee_guard", 8, &mut rng).is_none());
-    }
-
-    // =======================================================================
     // is_walkable_terrain
     // =======================================================================
 
@@ -1465,94 +1121,6 @@ mod tests {
     }
 
     // =======================================================================
-    // MonsterRoleTable::from_manifest
-    // =======================================================================
-
-    #[test]
-    fn from_manifest_skips_group_spawns() {
-        use crate::assets::{GroupMember, MonsterSpawnInfo};
-        let mut monsters = HashMap::new();
-        monsters.insert("rat".to_string(), make_test_monster("rat", "vermin"));
-
-        let spawn_table = vec![MonsterSpawnInfo {
-            monster: String::new(),
-            min_floor: 1,
-            max_floor: 5,
-            min_group: 1,
-            max_group: 2,
-            group: vec![GroupMember {
-                monster: "rat".to_string(),
-                min_count: 2,
-                max_count: 2,
-            }],
-            on_leader_death: String::new(),
-            flee_threshold: 0.5,
-            spawn_on_liquid: false,
-        }];
-
-        let table = MonsterRoleTable::from_manifest(&monsters, &spawn_table);
-        assert!(table.entries.is_empty(), "group spawns should be skipped");
-    }
-
-    #[test]
-    fn from_manifest_populates_entries() {
-        use crate::assets::MonsterSpawnInfo;
-        let mut monsters = HashMap::new();
-        monsters.insert("rat".to_string(), make_test_monster("rat", "vermin"));
-
-        let spawn_table = vec![MonsterSpawnInfo {
-            monster: "rat".to_string(),
-            min_floor: 1,
-            max_floor: 3,
-            min_group: 1,
-            max_group: 1,
-            group: Vec::new(),
-            on_leader_death: String::new(),
-            flee_threshold: 0.5,
-            spawn_on_liquid: false,
-        }];
-
-        let table = MonsterRoleTable::from_manifest(&monsters, &spawn_table);
-        assert_eq!(table.entries.len(), 1);
-        assert_eq!(table.entries[0].name, "rat");
-        assert_eq!(table.entries[0].faction_tag, "vermin");
-        assert_eq!(table.entries[0].min_floor, 1);
-        assert_eq!(table.entries[0].max_floor, 3);
-    }
-
-    /// Build a minimal MonsterAsset for testing from_manifest.
-    fn make_test_monster(name: &str, faction: &str) -> crate::assets::MonsterAsset {
-        use bevy::prelude::Color;
-        crate::assets::MonsterAsset {
-            name: name.to_string(),
-            vision: 6,
-            sprite: String::new(),
-            grid_size: None,
-            tile_size: None,
-            base_hp: 10,
-            damage: "1d4".to_string(),
-            tier: 1,
-            regen: None,
-            loot_table: Vec::new(),
-            damage_type: "physical".to_string(),
-            resistances: HashMap::new(),
-            base_armor: 0,
-            faction: faction.to_string(),
-            abilities: Vec::new(),
-            monster_abilities: Vec::new(),
-            ascii_char: String::new(),
-            ascii_fg: Color::WHITE,
-            ai: crate::assets::AiConfig::default(),
-            base_dodge: 0,
-            movement_delay: 1.0,
-            attack_delay: 1.0,
-            movement_mode: crate::components::MovementMode::default(),
-            stationary: false,
-            species: crate::components::Species::default(),
-        }
-    }
-
-    // =======================================================================
     // Orientation transforms with monster_spawns / props / items
     // =======================================================================
 
@@ -1562,7 +1130,6 @@ mod tests {
         prefab.monster_spawns.push(crate::assets::PrefabMonsterSpawn {
             x: 1,
             y: 0,
-            role: "melee_guard".to_string(),
             behavior: crate::assets::MonsterBehavior::Sentry,
         });
         // Original: W=2, H=2. Spawn at (1,0).

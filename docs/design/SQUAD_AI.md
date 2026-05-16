@@ -3,6 +3,23 @@
 Covers the generic squad coordinator system usable by any faction,
 with goblins as the first implementation.
 
+> **Implementation status (overworld milestone):** this doc is the
+> forward-looking design. What's actually wired up today is a subset:
+> `SquadId`, `SquadLeader` (marker), `SquadConfig`, `SquadBlackboard`,
+> alert propagation, and the basic morale component. **None of the
+> goblin / role / morale-table content described below ships in the
+> current build** — those depend on monsters and spawn tables, which
+> are disabled for the overworld + temple themes.
+>
+> The simple `LeaderDeathBehavior::Scatter` config flag (and the
+> `squad_leader_death_system` that consumed it) was removed during
+> the overworld milestone. The design intent "kill the warchief →
+> squad scatters" now relies entirely on the morale system below:
+> leader death contributes −0.3 morale, which drops the squad past
+> the Rout threshold (0.15), at which point individual flee behavior
+> takes over. The hard-coded scatter event is no longer part of the
+> architecture.
+
 ---
 
 ## Player Experience
@@ -545,7 +562,7 @@ Use `#[serde(default)]` on the `ai` field. Old save files and cached floors with
 
 ## Interaction With Existing Systems
 
-- **Squad System**: Reuses SquadId/SquadLeader/SquadConfig. Extends with morale-aware scatter.
+- **Squad System**: Reuses SquadId/SquadLeader/SquadConfig. Implements scatter purely through morale (no `on_leader_death` config flag — that was removed; see status note at the top of this doc).
 - **Faction Matrix**: Add "Goblin" faction. Goblin-Player: Hostile, Goblin-Monster: Neutral, Goblin-Kobold: Neutral.
 - **Status Effects**: WarCry applies Enraged + morale bonus.
 - **Save/Load**: Morale component persists. SquadBlackboard serialized with role assignments.

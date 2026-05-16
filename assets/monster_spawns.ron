@@ -18,7 +18,7 @@
     (group: [
         (monster: "Sewer Rat",  min_count: 2, max_count: 4),
         (monster: "Plague Rat", min_count: 0, max_count: 2),
-    ], min_floor: 3, max_floor: 7, on_leader_death: "scatter", flee_threshold: 0.5),
+    ], min_floor: 3, max_floor: 7, flee_threshold: 0.5),
 
     // Floor 1-2 thickening: mixed early packs so the first impression
     // isn't just "one rat at a time." Rats+Bats in the same pack gives
@@ -26,12 +26,12 @@
     (group: [
         (monster: "Giant Rat", min_count: 2, max_count: 3),
         (monster: "Giant Bat", min_count: 1, max_count: 2),
-    ], min_floor: 1, max_floor: 3, on_leader_death: "scatter", flee_threshold: 0.4),
+    ], min_floor: 1, max_floor: 3, flee_threshold: 0.4),
 
     (group: [
         (monster: "Goblin",         min_count: 1, max_count: 2),
         (monster: "Kobold Hoarder", min_count: 1, max_count: 1),
-    ], min_floor: 2, max_floor: 4, on_leader_death: "scatter"),
+    ], min_floor: 2, max_floor: 4),
 
     // ========================================================================
     // T2 — CAVES (Floors 5-9)
@@ -53,16 +53,16 @@
         (monster: "Rat Broodmother", min_count: 1, max_count: 1),
         (monster: "Sewer Rat",       min_count: 3, max_count: 4),
         (monster: "Plague Rat",      min_count: 1, max_count: 2),
-    ], min_floor: 5, max_floor: 10, on_leader_death: "scatter", flee_threshold: 0.5),
+    ], min_floor: 5, max_floor: 10, flee_threshold: 0.5),
 
     (group: [
         (monster: "Wolf", min_count: 2, max_count: 4),
-    ], min_floor: 4, max_floor: 7, on_leader_death: "scatter", flee_threshold: 0.4),
+    ], min_floor: 4, max_floor: 7, flee_threshold: 0.4),
 
     (group: [
         (monster: "Goblin Brute", min_count: 1, max_count: 1),
         (monster: "Goblin",       min_count: 2, max_count: 3),
-    ], min_floor: 6, max_floor: 9, on_leader_death: "scatter"),
+    ], min_floor: 6, max_floor: 9),
 
     // ========================================================================
     // T3 — DEPTHS (Floors 10-14)
@@ -88,7 +88,7 @@
         (monster: "Kobold Chieftain", min_count: 1, max_count: 1),
         (monster: "Kobold Marauder",  min_count: 2, max_count: 3),
         (monster: "Kobold Alchemist", min_count: 0, max_count: 1),
-    ], min_floor: 16, max_floor: 22, on_leader_death: "scatter", flee_threshold: 0.4),
+    ], min_floor: 16, max_floor: 22, flee_threshold: 0.4),
     (monster: "Goblin Sapper",      min_floor: 11, max_floor: 14),
     (monster: "Orc Warrior",        min_floor: 10, max_floor: 14, min_group: 1, max_group: 2),
     (monster: "Orc Archer",         min_floor: 11, max_floor: 14),
@@ -97,13 +97,13 @@
         (monster: "Goblin Warchief",   min_count: 1, max_count: 1),
         (monster: "Goblin",            min_count: 2, max_count: 3),
         (monster: "Goblin Firebomber", min_count: 0, max_count: 1),
-    ], min_floor: 10, max_floor: 14, on_leader_death: "scatter"),
+    ], min_floor: 10, max_floor: 14),
 
     (group: [
         (monster: "Orc Warrior", min_count: 1, max_count: 1),
         (monster: "Orc Archer",  min_count: 1, max_count: 2),
         (monster: "Orc Warrior", min_count: 1, max_count: 2),
-    ], min_floor: 11, max_floor: 14, on_leader_death: "scatter"),
+    ], min_floor: 11, max_floor: 14),
 
     (group: [
         (monster: "Spore Crawler", min_count: 1, max_count: 1),
@@ -135,13 +135,13 @@
         (monster: "Necromancer", min_count: 1, max_count: 1),
         (monster: "Skeleton",    min_count: 2, max_count: 3),
         (monster: "Zombie",      min_count: 1, max_count: 2),
-    ], min_floor: 17, max_floor: 20, on_leader_death: "scatter"),
+    ], min_floor: 17, max_floor: 20),
 
     (group: [
         (monster: "Orc Warlord", min_count: 1, max_count: 1),
         (monster: "Orc Warrior", min_count: 2, max_count: 3),
         (monster: "Orc Archer",  min_count: 1, max_count: 2),
-    ], min_floor: 15, max_floor: 18, on_leader_death: "scatter"),
+    ], min_floor: 15, max_floor: 18),
 
     (group: [
         (monster: "Mycoid Sovereign", min_count: 1, max_count: 1),
@@ -168,13 +168,13 @@
         (monster: "Hill Giant", min_count: 1, max_count: 1),
         (monster: "Ogre",       min_count: 1, max_count: 2),
         (monster: "Ogre Mage",  min_count: 1, max_count: 1),
-    ], min_floor: 21, max_floor: 24, on_leader_death: "scatter"),
+    ], min_floor: 21, max_floor: 24),
 
     (group: [
         (monster: "Elder Drake", min_count: 1, max_count: 1),
         (monster: "Drake",       min_count: 1, max_count: 2),
         (monster: "Wyrm",        min_count: 1, max_count: 1),
-    ], min_floor: 23, max_floor: 25, on_leader_death: "scatter"),
+    ], min_floor: 23, max_floor: 25),
 
     (group: [
         (monster: "Bone Colossus", min_count: 1, max_count: 1),

@@ -2,7 +2,7 @@ use std::collections::{HashSet, VecDeque};
 
 use crate::{
     assets::MonsterSpawnInfo,
-    game::squad::{LeaderDeathBehavior, SquadConfig},
+    game::squad::SquadConfig,
     map::{builders::{BuilderMap, BuilderPhase, MetaMapBuilder, SpawnEntry}, map::Map, tile::{is_walkable, LiquidType, TerrainType}},
 };
 use bevy::prelude::*;
@@ -71,9 +71,6 @@ impl MonsterSpawner {
                     };
                     if let Some(origin) = origin {
                         let squad_config = SquadConfig {
-                            on_leader_death: LeaderDeathBehavior::from_str(
-                                &monster_info.on_leader_death,
-                            ),
                             flee_threshold: monster_info.flee_threshold,
                         };
 

@@ -1,10 +1,9 @@
 //! Squad coordination — game-side wiring.
 //!
-//! The entire squad framework (components, resources, events,
-//! `SquadPlugin`, and all three systems) now lives in
+//! The entire squad framework (components, resources,
+//! `SquadPlugin`, and all systems) lives in
 //! `roguelike_engine::squad`. This file wires it into The Veiled
-//! Tyrant's scheduling and bridges the engine's
-//! [`SquadScatteredEvent`] to the game's log system.
+//! Tyrant's scheduling.
 //!
 //! # Scheduling
 //!
@@ -25,16 +24,15 @@ use bevy::prelude::*;
 
 use crate::game::combat::CombatDamageSet;
 use crate::player::Player;
-use crate::ui::game_log::GameLogMessage;
 
 // Re-export everything from the engine crate so existing game code
 // that imports `crate::game::squad::*` (spawner, save, AI, GOAP, map
 // builders, etc.) continues to resolve without changes.
 pub use roguelike_engine::squad::{
     compute_squad_hp, squad_alert_system, squad_coordinator_system, squad_damage_alert_system,
-    squad_leader_death_system, AlertLevel, LeaderDeathBehavior, Morale, SquadAlertSet,
+    AlertLevel, Morale, SquadAlertSet,
     SquadBlackboard, SquadConfig, SquadId, SquadIdCounter, SquadLeader, SquadReactionSet, SquadRole,
-    SquadScatteredEvent, SquadTarget, SQUAD_COMM_RANGE,
+    SquadTarget, SQUAD_COMM_RANGE,
 };
 
 /// The Veiled Tyrant's squad plugin.
@@ -68,7 +66,7 @@ impl Plugin for SquadPlugin {
             // 3. Bridge game-side state to the engine.
             .add_systems(
                 Update,
-                (sync_squad_target, bridge_squad_scattered_events)
+                sync_squad_target
                     .run_if(in_state(crate::game::InGameState::Running)),
             );
     }
@@ -82,16 +80,4 @@ fn sync_squad_target(
     mut target: ResMut<SquadTarget>,
 ) {
     target.position = player_query.single().ok().map(|p| p.to_point());
-}
-
-/// Converts engine-emitted `SquadScatteredEvent` messages into the
-/// game's log so players see "The group scatters!" when a squad
-/// leader dies and the scatter behavior fires.
-fn bridge_squad_scattered_events(
-    mut events: MessageReader<SquadScatteredEvent>,
-    mut log_writer: MessageWriter<GameLogMessage>,
-) {
-    for _ in events.read() {
-        log_writer.write(GameLogMessage("The group scatters!".to_string()));
-    }
 }

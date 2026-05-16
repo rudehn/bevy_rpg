@@ -456,7 +456,6 @@ pub fn process_pending_summon(
                     commands.entity(spawned_ent).insert((
                         sid,
                         crate::game::squad::SquadConfig {
-                            on_leader_death: crate::game::squad::LeaderDeathBehavior::Scatter,
                             flee_threshold: 0.5,
                         },
                         crate::game::squad::Morale::new(0.6),
