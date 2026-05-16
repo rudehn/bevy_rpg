@@ -1,5 +1,13 @@
 # Dungeon Design
 
+> **Status update (overworld milestone):** the game's current shape is an
+> **overworld + 3-floor temple**, not a 26-floor descent. See
+> [OVERWORLD.md](OVERWORLD.md) for the canonical writeup of the new structure
+> (town hub, 8-tile forest ring, temple). The 26-floor pipeline described in
+> the rest of this file is preserved for floors `>= 12`, but is not currently
+> reached in a fresh run. Spawners (monsters, items, chests) are temporarily
+> disabled in the overworld pipelines — content returns in a later phase.
+
 ## Overview
 
 The dungeon is 26 floors of procedurally generated maps. Each floor is built by
@@ -76,6 +84,42 @@ Each tile has two layers: terrain + liquid.
 - `is_passable()` is used for connectivity checks (doors count, liquids ignored)
 - `is_opaque()` blocks FOV (walls, closed doors)
 
+### Door Placement & Validation
+
+Doors are placed by three distinct passes inside `BrogueLikeBuilder`:
+
+1. **Room-attach doors** — each newly attached room gets one door at the
+   junction where its door-site aligns with the existing dungeon wall.
+   Sites are filtered by `direction_of_door_site`: the wall must have
+   **exactly one** floor neighbor among N/E/S/W, so it's a proper
+   one-tile separator.
+2. **Reward-room door** — same `direction_of_door_site` filter, but the
+   candidate is selected via the choke-map (high choke value =
+   topologically isolated wall slot).
+3. **Loop doors (`add_loops`)** — adds extra doors to shorten long
+   detours between two regions. Each candidate must satisfy
+   `loop_door_axis` (floor on opposite sides of one axis AND walls on
+   both perpendicular sides — a true one-tile separator), must have no
+   orthogonal door neighbor, and the BFS detour around it must exceed
+   the minimum-path threshold. Newly placed loop doors are treated as
+   walkable for subsequent BFS so neighbors don't pile up into chains.
+
+The `FinishDoors` cleanup pass then runs in the `TerrainCleanup` phase
+and iterates until stable, demoting any door that:
+
+- Is passable on both cardinal axes (sits in an opening, not a wall
+  separator)
+- Has 3+ blocking neighbors (dead end)
+- Has any orthogonally-adjacent door (scan-order dedup keeps the first,
+  demotes the rest)
+
+> **Future work:** the `add_loops` BFS-detour heuristic could be
+> replaced with Brogue's exact loop algorithm (validated detour at
+> proven door-site candidates with topology-aware selection). Item D in
+> the door-placement review — kept as a future TODO; current A+B+C
+> changes resolve the visible bugs (mid-floor doors, adjacent
+> clusters).
+
 **Liquid types:**
 
 | Liquid | Walkable | Notes |
@@ -146,6 +190,23 @@ must navigate around, through, or across.
 - Prefer **fewer, larger** lakes over many small disjoint puddles
 - Lakes are placed as cohesive bodies using the organic blob algorithm
 - Each floor gets 0-2 lakes depending on depth
+
+### Liquid by Depth
+
+`LakeBuilder::pick_liquid_type` decides which liquid fills each lake.
+Lava is gated to the mid-and-deep dungeon — early floors stay
+"natural" (water and chasms only) so the player meets fire hazards
+*after* descending into volcanic strata.
+
+| Floors | Water | Lava | Chasm |
+|--------|-------|------|-------|
+| 1–9    | 70%   | —    | 30%   |
+| 10–17  | 40%   | 35%  | 25%   |
+| 18–26  | 20%   | 50%  | 30%   |
+
+The "Lava Vault" machine encounter is gated by the same threshold
+(`min_floor: 10`). Bumping the lake threshold without moving the
+machine would let lava reappear via a back-door spawn.
 
 ## Decorations
 

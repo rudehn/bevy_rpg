@@ -73,6 +73,7 @@ fn chasm_confirm_input_system(
     mut next_state: ResMut<NextState<InGameState>>,
     mut pending_fall: ResMut<PendingChasmFall>,
     player_query: Query<Entity, With<Player>>,
+    floor: Res<crate::map::dungeon::Floor>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut transition_writer: MessageWriter<MapTransitionMessage>,
     mut damage_writer: MessageWriter<DamageEvent>,
@@ -106,7 +107,10 @@ fn chasm_confirm_input_system(
         }
 
         // Trigger floor descent — the damage system handles death if HP <= 0.
-        transition_writer.write(MapTransitionMessage);
+        transition_writer.write(MapTransitionMessage {
+            destination_floor: floor.0 + 1,
+            destination_pos: None,
+        });
         next_state.set(InGameState::Running);
     }
 }

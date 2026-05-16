@@ -845,7 +845,7 @@ fn all_v2_blueprints() -> Vec<MachineBlueprintV2> {
         },
         MachineBlueprintV2 {
             name: "Lava Vault",
-            min_floor: 5,
+            min_floor: 10,
             max_floor: 26,
             min_interior: 10,
             max_interior: 40,

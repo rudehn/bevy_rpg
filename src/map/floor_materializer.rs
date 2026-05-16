@@ -105,6 +105,10 @@ struct FloorPlan {
     items: Vec<ItemPlan>,
     props: Vec<PropPlan>,
     machines: Vec<MachinePlan>,
+    /// Tiles that should receive a [`MapExitTile`] component once their
+    /// tile entities exist — used by overworld edges and the temple
+    /// entrance / exit.
+    exit_tiles: Vec<(Point, crate::map::world::MapExitTile)>,
     player_spawn: Point,
     /// Carried through from the Load path for the caller.
     pending_player_load: Option<crate::save::PlayerSaveData>,
@@ -375,12 +379,15 @@ impl FloorPlan {
             })
             .collect();
 
+        let exit_tiles = build_data.exit_tile_spawn_list;
+
         FloorPlan {
             map: build_data.map,
             monsters,
             items,
             props,
             machines,
+            exit_tiles,
             player_spawn,
             pending_player_load: None,
         }
@@ -445,6 +452,7 @@ impl FloorPlan {
             items,
             props,
             machines: Vec::new(),
+            exit_tiles: cached.exit_tiles,
             player_spawn,
             pending_player_load: None,
         }
@@ -465,6 +473,8 @@ impl FloorPlan {
             items,
             props,
             machines: Vec::new(),
+            // Save schema v5 doesn't persist exit tiles; v6 will.
+            exit_tiles: Vec::new(),
             player_spawn,
             pending_player_load: Some(save_data.player),
         }
@@ -599,6 +609,22 @@ pub fn materialize_floor(
         .is_none()
         {
             warnings.push(format!("Failed to spawn prop '{}'", p.name));
+        }
+    }
+
+    // Stamp `MapExitTile` components on overworld edge / temple
+    // entrance / temple exit tiles. The tile entity is looked up via
+    // `tile_index`; if missing (out-of-bounds builder bug), we skip
+    // silently — debug builds will catch it because the player won't
+    // be able to transition.
+    for (pos, exit) in &plan.exit_tiles {
+        if let Some(&tile_entity) = tile_index.0.get(&(pos.x, pos.y)) {
+            commands.entity(tile_entity).insert(*exit);
+        } else {
+            warnings.push(format!(
+                "MapExitTile at ({}, {}) skipped — no tile entity at that coordinate",
+                pos.x, pos.y
+            ));
         }
     }
 

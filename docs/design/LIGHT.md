@@ -28,7 +28,7 @@ Every frame in `Update`, the engine's `LightingSet` runs (gated by the game's `A
 
 ## Light source flavours
 
-- **Resource-driven** (preferred for transient/algorithmic sources): code calls `light_sources.add(...)` directly. Used by fire ([src/game/fire.rs](src/game/fire.rs)) and by the engine's `apply_decoration_mutations` for fungal glow on `Decoration::Fungus`.
+- **Resource-driven** (preferred for transient/algorithmic sources): code calls `light_sources.add(...)` directly. Used by fire ([src/game/fire.rs](src/game/fire.rs)). The `fungal_light` helper is exported but **not currently wired to any decoration** — no shipping plant emits light. To restore glow on a future plant variant, rewire `apply_decoration_mutations` to match on the new `Decoration` and call `light_sources.add(fungal_light(x, y))` (and `remove_at` on transitions away).
 - **Entity-driven**: an entity carries a `LightSource` component. Candles use this so the candle entity owns its light's lifecycle. `sync_entity_lights_system` does a full resync of `on_wall: true` sources whenever any change is detected.
 
 ## Dirty propagation

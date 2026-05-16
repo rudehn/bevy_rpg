@@ -1,7 +1,17 @@
 # bevy_rpg — The Veiled Tyrant
 
-A Brogue-inspired roguelike built with Bevy 0.17 and Rust. Descend 26 floors,
-find the Amulet of Ascension, escape through the portal. Permadeath.
+A Brogue-inspired roguelike built with Bevy 0.17 and Rust.
+
+**Current shape (overworld milestone):** the player starts in a procedural
+**town** (floor 0) at the centre of a 3×3 grid of **forest tiles** (floors
+1..=8). One randomly-chosen forest tile contains the entrance to a 3-floor
+**temple** (floors 9..=11). The Amulet of Yendor sits on temple 3; return it
+to the town portal to win. Permadeath. **Monster and item spawns are
+currently disabled** in all pipelines — the amulet is the only item in the
+world. Content returns in a later phase. See
+[OVERWORLD.md](docs/design/OVERWORLD.md) for the canonical writeup. The
+legacy 26-floor descent pipeline still exists for `floor >= 12` but is not
+reached in a fresh run.
 
 ## Build & Run
 
@@ -25,7 +35,8 @@ Design docs live in `docs/design/`. Read these before making gameplay changes.
 | [GAME.md](docs/design/GAME.md) | Vision, core loop, win/lose, combat system, damage types, player stats, progression |
 | [PLAYER.md](docs/design/PLAYER.md) | Player stats, starting kit, equipment slots |
 | [CHARACTER.md](docs/design/CHARACTER.md) | Race / class / attribute system, character creation, HP-from-CON, attribute → combat math |
-| [DUNGEON.md](docs/design/DUNGEON.md) | Map generation pipeline, terrain/liquid layers, decorations, lighting, floor structure |
+| [OVERWORLD.md](docs/design/OVERWORLD.md) | **Current map structure** — town hub, forest ring, temple, transitions, save layout |
+| [DUNGEON.md](docs/design/DUNGEON.md) | Legacy 26-floor pipeline (preserved for floor >= 12). Terrain/liquid layers, decorations, lighting |
 | [ENCOUNTERS.md](docs/design/ENCOUNTERS.md) | Machine system (hordes → spawn table → machines), blueprints, trapped chests, lock & key |
 | [ENEMIES.md](docs/design/ENEMIES.md) | Monster roster, factions, species, tier structure, per-monster identities |
 | [ITEMS.md](docs/design/ITEMS.md) | Weapons (active abilities), staves (charges), armor, rings/amulets, potions, enchanting, runics |
@@ -110,10 +121,16 @@ src/
     map.rs               # Map resource, tile visibility systems, GRID_SIZE (16x16), MAP_SIZE (80x60)
     tile.rs              # Tile re-exports + TileVisibility/TileExplored components + sprite spawning + chasm_fall_reaction_system
     light.rs             # Game adapter for engine's lighting (re-exports + candle sprite animation + LightPlugin scheduling)
-    dungeon.rs           # DungeonPlugin, Floor resource, floor cache
-    floor_materializer.rs # Converts BuilderMap data into ECS entities
+    dungeon.rs           # DungeonPlugin, Floor resource, floor cache, unified player_transition_system
+    floor_materializer.rs # Converts BuilderMap data into ECS entities (incl. MapExitTile stamping)
+    ascii_renderer.rs    # Themed glyph + colour resolution (reads FloorTheme)
+    world.rs             # Overworld topology — FloorKind, GridDir, neighbor, edge/arrival positions, FloorTheme, MapExitTile, OverworldState
     builders/
-      mod.rs             # BuilderChain, BuilderMap, floor_builder pipeline
+      mod.rs             # BuilderChain, BuilderMap, floor_builder dispatch (town | forest | temple | dungeon)
+      town.rs            # TownLayoutBuilder + TownBorderStairsBuilder + TownPathBuilder + TownPortalBuilder (open-floor town, 4 border stair clusters, dirt-path network)
+      forest.rs          # ForestTerrainBuilder (hardened cellular automata) + ForestBorderStairsBuilder (4 per valid cardinal) + TempleEntranceBuilder
+      temple.rs          # TempleUpstairsLinker (temple-1 UpStairs ↔ forest entrance)
+      amulet_placer.rs   # Places the Amulet of Yendor on temple 3 (the only item)
       brogelike.rs       # BrogueLikeBuilder — primary map generator (room types + corridors)
       algorithms.rs      # BlobGenConfig, Grid, cellular automata helpers
       choke_map.rs       # Topology analysis via petgraph (chokepoints for machines)
@@ -127,9 +144,9 @@ src/
       pillar_culler.rs   # Removes isolated wall pillars
       cave_eroder.rs     # Cave wall erosion for organic shapes
       finish_doors.rs    # Final door placement/cleanup pass
-      item_spawner.rs    # Places chests with loot
-      monster_spawner.rs # Populates spawn_list from spawn table
-      candle_spawner.rs  # Places light source entities
+      item_spawner.rs    # Places chests with loot (currently unused by overworld pipelines)
+      monster_spawner.rs # Populates spawn_list (currently unused by overworld pipelines)
+      candle_spawner.rs  # Places light source entities (currently unused by overworld pipelines)
       start_point.rs     # Places player starting position
       exit_points.rs     # Places distant exit stairs
       corridors.rs       # Corridor carving
@@ -171,7 +188,7 @@ src/
 - `CharacterChoice { race, class }` resource (Phase 2 — no free_points; chargen no longer has an allocation step). The character creation UI writes it on "Begin Descent"; the save-load path overwrites it from `PlayerSaveData` before player spawn (`spawn_dungeon`'s load arm, see `SpawnDungeonExtras::character_choice`).
 - The player spawner ([src/player/mod.rs](src/player/mod.rs)) reads `CharacterChoice` plus `RaceManifest` / `ClassManifest` to:
   1. `compose_attributes(race, class)` → final `Attributes` (just race + class sum; no allocation)
-  2. `derive_stats(race, attrs, 1)` → initial `Dodge` (DEX_mod) and `Health.max` (race × level HP formula). `HitBonus` and `DamageBonus` are baked at 0 — attribute mods are added **dynamically** at hit-check/damage-roll time, branching on `AttackIntentMessage.source` (STR melee, DEX ranged). The pure helper is `attack_attribute_bonus(source, attrs)`.
+  2. `derive_stats(race, attrs, 1)` → initial `Dodge` (DEX_mod) and `Health.max` (race × level HP formula). `HitBonus` and `DamageBonus` are baked at 0 — attribute mods are added **dynamically** at hit-check/damage-roll time, branching on `AttackIntentMessage.source` *and* the equipped weapon's `weapon_skill` tag: DEX for ranged or finesse melee (Short/Long Blades); STR for any other melee (axes, fists, staff bash); 0 otherwise. The pure helper is `attack_attribute_bonus(source, finesse, attrs)`; the `finesse: bool` is computed at the call site in [src/game/combat.rs](src/game/combat.rs) from the weapon-skill tag.
   3. Race-specific spawn effects: **Stoneblood** (Dwarf 50% poison resist), **Keen Senses** (Elf +2 vision range). **Adaptive** (Human's "any stat at racial schedule") is informational; the schedule itself drives the gain.
   4. Player spawns at `Level(1)`, `Experience(0)`.
 - Equipment continues to bump `HitBonus`/`Dodge`/`DamageBonus` incrementally on equip/unequip.
@@ -196,7 +213,7 @@ src/
 - 9 skills: Fighting, Axes, ShortBlades, LongBlades, RangedWeapons, Armor, Dodging, Shields, Evocations. Float levels `[0.0, 27.0]`; effects unlock at integer breakpoints via `floor(skill/4)`.
 - ECS data on the player: `Skills` (per-skill level), `SkillXp` (cumulative per-skill XP), `SkillTraining` (per-skill `Normal`/`Focused`/`Disabled`). Resources: `SkillXpPool` (unallocated), `SkillUseCounters` (Auto-mode weights), `TrainingMode` (global `Auto` | `Manual`).
 - XP flow: `award_xp_on_death` adds half the character XP reward to `SkillXpPool`. `allocate_skill_xp` drains the pool every frame per training settings — Auto mode weights by use counters, Manual mode splits evenly (×2 for Focused). Per-skill XP is divided by `aptitude_multiplier(race_apt)` before being added — positive aptitude = faster training. `update_skill_levels` recomputes `Skills` levels from `SkillXp` via the DCSS XP table (50 → 24,325 points across 27 levels).
-- Combat: `weapon_skill_bonus(weapon, source, skills)` and `fighting_melee_bonus(source, skills)` are added dynamically in `hit_check_system` and `damage_roll_system` alongside `attack_attribute_bonus`. Armor is a **random roll** (`0..=armor_max + floor(Armor/4)`) applied to Physical damage only. **Block** (flat) — populated from off-hand shield `defense` + enchantment + `floor(Shields/4)` — is subtracted from every damage type **before** armor, so it's the only defense that touches magical damage. Use counters bump on every successful melee/ranged hit (Fighting + weapon skill), on damage taken while armored (Armor), on miss (Dodging), and on damage taken while a shield is equipped (Shields).
+- Combat: `weapon_skill_bonus(weapon, source, skills)` and `fighting_melee_bonus(source, skills)` are added dynamically in `hit_check_system` and `damage_roll_system` alongside `attack_attribute_bonus`. Armor is a **random roll** (`0..=armor_max + floor(Armor/4)`) applied to Physical damage only. **Shield blocks** use a per-attack check: `d20 + floor(Shields/4) + Block(SH) >= 17` (DC). On pass the hit is fully negated for **any** damage type — shields are the sole defense vs. magical damage. Each shield (Buckler/Kite/Tower) has a `max_blocks` budget (1/2/3) capping successful blocks per turn, tracked in `ShieldBlocksUsed` and reset on the wearer's own `ActionFinishedEvent`. Shields also impose a `dodge_bonus: -1/-3/-5` encumbrance penalty. Use counters bump on every successful melee/ranged hit (Fighting + weapon skill), on damage taken while armored (Armor), on miss (Dodging), and on each **successful** shield block (Shields).
 - HP formula gains the DCSS Fighting term: `+ Fighting × XL/14 + (1 + Fighting × 3)/2` inside the `race_hp_mod` multiplier. Recomputed at every `handle_level_up`.
 - Staves: `handle_zap_staff` adds `floor(Evocations/4)` to staff damage alongside `INT_mod`. The combined sum is clamped at 0. Use counter bumps on every fired zap.
 - Skill screen UI: `InGameState::SkillScreen` (key `M`). DCSS-style listing with state badges (`+`/`*`/`-`), aptitude column, pool counter, mode toggle (`/`).
@@ -216,11 +233,19 @@ src/
   2. ECS tile entities (`TileMarker`) — handle rendering, visibility, sprites
 - `Tile` is a value type with two layers: `TerrainType` + `LiquidType`
 - `BuilderChain` composes one `InitialMapBuilder` + N `MetaMapBuilder`s; call `build_map()` to run the pipeline
-- Current pipeline: `BrogueLikeBuilder → StartPointBuilder → LakeBuilder → DiagonalCuller → PillarCuller → FinishDoors → PrefabPlacer → MachineBuilder → IsolatedAreaCuller → CandleSpawner → MonsterSpawner → DecorationPropagator → DistantExit`
+- `floor_builder()` in [src/map/builders/mod.rs](src/map/builders/mod.rs) dispatches on `FloorKind` from [src/map/world.rs](src/map/world.rs):
+  - **Town** (floor 0) → `town_builder`: `TownLayoutBuilder → TownBorderStairsBuilder → TownPathBuilder → TownPortalBuilder` — open-floor map with 4 border stair clusters (4 stairs side-by-side per cardinal direction), a cross-shaped dirt-path network connecting the clusters and the buildings' doors, and a central return portal.
+  - **Forest** (floors 1..=8) → `forest_builder`: `ForestTerrainBuilder → ForestBorderStairsBuilder → [TempleEntranceBuilder, only on the chosen entrance tile]` — cellular-automata trees with border stair clusters (2 borders for corner forests, 3 for cardinal forests); `<` on the border facing town, `>` on lateral-forest borders.
+  - **Temple** (floors 9..=11) → `temple_builder`: `BrogueLikeBuilder → StartPointBuilder → [DistantExit on 9-10 | AmuletPlacer on 11] → [TempleUpstairsLinker on 9]`.
+  - Legacy dungeon pipeline (floor >= 12, not currently reached): `BrogueLikeBuilder → StartPointBuilder → LakeBuilder → MonsterSpawner → DecorationPropagator → DistantExit`.
+- **Map-to-map transitions** unified in `player_transition_system`: a tile carrying a `MapExitTile` component overrides the terrain-based stair check. Each overworld stair tile carries `MapExitTile { destination_floor, destination_pos: Some(<mirror K-th stair>) }` — the K-th stair on a border maps to the K-th stair on the destination's mirror border, so walking off one map lands the player at the matching slot in the destination. Bare `>` / `<` terrain (temple internal stairs) falls back to `floor ± 1`. One `MapTransitionMessage { destination_floor, destination_pos: Option<Position> }` flows through `apply_map_transition` to swap floors, with `PendingArrival` honoured by `spawn_dungeon` when a destination position is set.
+- **Town paths** are marked with `Decoration::Custom { id: TOWN_PATH_DECO_ID }` (defined in [src/map/world.rs](src/map/world.rs)); `themed_tile_display` / `themed_tile_bg` substitute a packed-dirt glyph + colour. The underlying terrain stays `Floor` so movement is unaffected.
+- **`FloorTheme` resource** (`Dungeon | Town | Forest | Temple`) is set by `spawn_dungeon` on every materialisation and read by the ASCII renderer ([src/map/ascii_renderer.rs](src/map/ascii_renderer.rs)) to override Wall/Floor glyphs and colours per biome (e.g. forest walls render as `♣`). No new `TerrainType` variants needed.
+- **`OverworldState` resource** holds `temple_entrance_floor` (which forest tile, 1..=8) and `temple_entrance_pos`. Seeded on `OnEnter(AppState::InGame)` (unless restoring from a save). Persisted in save schema v6+.
 
 ### Tile Mutation Pipeline (engine-owned)
 - Mutation messages (`TileMutationMessage`, `DecorationMutationMessage`, `LiquidMutationMessage`) and their apply systems live in `roguelike_engine::map::mutation`. The engine plugin `MapMutationPlugin` registers them; game configures `MapMutationSet` ordering inside `ProcessingPhase::Cleanup`.
-- The engine apply systems do **universal data sync only**: write `Map`, sync the tile entity's terrain/liquid component, mark `Viewshed.dirty` + `LightSources.dirty`, toggle `Collider`, insert into `PromotionCooldown`, and apply universal physics (`Decoration::CrackedFloor` → `TerrainType::Floor`, `Decoration::Fungus` ↔ `fungal_light` add/remove).
+- The engine apply systems do **universal data sync only**: write `Map`, sync the tile entity's terrain/liquid component, mark `Viewshed.dirty` + `LightSources.dirty`, toggle `Collider`, insert into `PromotionCooldown`, and apply universal physics (`Decoration::CrackedFloor` → `TerrainType::Floor`). The `fungal_light` helper is retained but no shipping decoration emits light — rewire `apply_decoration_mutations` if a future plant variant needs it.
 - **Game-specific reactions** to a mutation belong in a system that reads the same message and runs `.after(MapMutationSet)`. Current reaction: `chasm_fall_reaction_system` in [src/map/tile.rs](src/map/tile.rs) (player/monster fall, lava-kill, forced floor transition on player fall).
 - `TilePromotionPlugin` (engine, in `roguelike_engine::map::promotion`) ships the per-turn promotion tick. Game configures `TilePromotionSet` to run inside `ProcessingPhase::Cleanup` before `MapMutationSet`. See `docs/design/TILE_PROMOTION.md`.
 
@@ -237,7 +262,7 @@ src/
 
 ### Combat System
 - d20 hit check: `d20 + hit_bonus >= 4 + target_dodge_bonus`
-- Damage types: Physical (block + armor roll + resistance), Poison/Fire/Lightning (block + resistance only — no armor)
+- Damage types: Physical (shield check + armor roll + resistance), Poison/Fire/Lightning (shield check + resistance only — no armor)
 - Player attacks via weapons (active abilities on cooldown) and staves (charges)
 - Monster attacks via melee + cooldown abilities
 - See GAME.md for full damage pipeline

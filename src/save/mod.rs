@@ -79,7 +79,7 @@ const GAME_SAVE_KEY: &str = "ironveil_save";
 ///   `skill_xp`, `skill_training`, `skill_xp_pool`. Pre-v5 saves load
 ///   with empty maps and 0 pool via serde defaults — no in-game
 ///   effect until the player trains; migration is a no-op.
-pub const SAVE_SCHEMA_VERSION: u32 = 5;
+pub const SAVE_SCHEMA_VERSION: u32 = 6;
 
 // ---- Migration chain ----
 
@@ -236,6 +236,18 @@ impl SaveMigration for MigrateV4ToV5 {
     }
 }
 
+/// v5 → v6: introduces `OverworldSave` on `GameSaveData` and
+/// `exit_tiles` on `SavedFloorData`. Both fields are `#[serde(default)]`
+/// so the migration itself is a no-op — old saves load with an empty
+/// overworld state and no edge transitions, which is fine because the
+/// overworld didn't exist on v5.
+struct MigrateV5ToV6;
+impl SaveMigration for MigrateV5ToV6 {
+    fn from_version(&self) -> u32 { 5 }
+    fn to_version(&self) -> u32 { 6 }
+    fn migrate(&self, data: &str) -> Result<String, String> { Ok(data.to_string()) }
+}
+
 fn migrations() -> Vec<Box<dyn SaveMigration>> {
     vec![
         Box::new(MigrateV0ToV1),
@@ -243,6 +255,7 @@ fn migrations() -> Vec<Box<dyn SaveMigration>> {
         Box::new(MigrateV2ToV3),
         Box::new(MigrateV3ToV4),
         Box::new(MigrateV4ToV5),
+        Box::new(MigrateV5ToV6),
     ]
 }
 
@@ -379,6 +392,32 @@ pub struct GameSaveData {
     /// Items that have fallen through a chasm, waiting on the destination floor.
     #[serde(default)]
     pub fallen_items: HashMap<u32, Vec<SavedItem>>,
+    /// Per-run overworld state — which forest tile contains the temple
+    /// entrance and where on that tile the entrance sits. Schema v6+.
+    #[serde(default)]
+    pub overworld: OverworldSave,
+}
+
+/// Save-format mirror of `crate::map::world::OverworldState`.
+#[derive(Serialize, Deserialize, Clone, Copy, Default)]
+pub struct OverworldSave {
+    #[serde(default = "default_entrance_floor")]
+    pub temple_entrance_floor: u32,
+    #[serde(default)]
+    pub temple_entrance_pos: Option<[i32; 2]>,
+}
+
+fn default_entrance_floor() -> u32 { 1 }
+
+/// `MapExitTile` snapshot — used to round-trip overworld edge exits
+/// and temple stairs across save / restore. Schema v6+.
+#[derive(Serialize, Deserialize, Clone, Copy, Default)]
+pub struct SavedExitTile {
+    pub x: i32,
+    pub y: i32,
+    pub destination_floor: u32,
+    #[serde(default)]
+    pub destination_pos: Option<[i32; 2]>,
 }
 
 // ---------------------------------------------------------------------------
@@ -470,6 +509,9 @@ pub struct SavedFloorData {
     pub down_stairs_pos: [i32; 2],
     #[serde(default)]
     pub up_stairs_pos: [i32; 2],
+    /// Overworld edge / temple stair `MapExitTile` markers. Schema v6+.
+    #[serde(default)]
+    pub exit_tiles: Vec<SavedExitTile>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -488,11 +530,16 @@ pub struct PlayerSaveData {
     pub y: i32,
     pub hp: i32,
     pub armor: i32,
-    /// Phase 3 follow-up: flat shield-based damage reduction.
-    /// Defaults to 0 on pre-existing saves via serde, which matches
-    /// what `Block(0)` would be on a player with no shield equipped.
+    /// Phase 3 follow-up: shield SH value. The Block component stores
+    /// the SH (additive bonus to the block-check roll), not flat damage
+    /// reduction. Defaults to 0 on pre-existing saves via serde.
     #[serde(default)]
     pub block: i32,
+    /// Cap on shield-block attempts per turn (1 buckler / 2 kite /
+    /// 3 tower). Defaults to 0 on pre-existing saves; a fresh equip of
+    /// a shield restores the correct value via the equip handler.
+    #[serde(default)]
+    pub max_shield_blocks: u32,
     pub dodge: i32,
     pub viewshed_range: i32,
     pub damage: String,
@@ -683,6 +730,16 @@ pub fn cached_floor_to_save(cached: &CachedFloor) -> SavedFloorData {
         props: cached.props.clone(),
         down_stairs_pos: [cached.down_stairs_pos.x, cached.down_stairs_pos.y],
         up_stairs_pos: [cached.up_stairs_pos.x, cached.up_stairs_pos.y],
+        exit_tiles: cached
+            .exit_tiles
+            .iter()
+            .map(|(pt, exit)| SavedExitTile {
+                x: pt.x,
+                y: pt.y,
+                destination_floor: exit.destination_floor,
+                destination_pos: exit.destination_pos.map(|p| [p.x, p.y]),
+            })
+            .collect(),
     }
 }
 
@@ -692,6 +749,19 @@ pub fn save_to_cached_floor(data: &SavedFloorData) -> CachedFloor {
         monsters: data.monsters.clone(),
         items: data.items.clone(),
         props: data.props.clone(),
+        exit_tiles: data
+            .exit_tiles
+            .iter()
+            .map(|e| {
+                (
+                    Point::new(e.x, e.y),
+                    crate::map::world::MapExitTile {
+                        destination_floor: e.destination_floor,
+                        destination_pos: e.destination_pos.map(|p| crate::components::Position { x: p[0], y: p[1] }),
+                    },
+                )
+            })
+            .collect(),
         down_stairs_pos: Point::new(data.down_stairs_pos[0], data.down_stairs_pos[1]),
         up_stairs_pos: Point::new(data.up_stairs_pos[0], data.up_stairs_pos[1]),
     }
@@ -716,6 +786,15 @@ pub struct PlayerSkillSaveParams<'w, 's> {
     pub pool: Res<'w, crate::game::skills::SkillXpPool>,
 }
 
+/// Bundled resources for `auto_save_system` — keeps the system under
+/// Bevy's 16-param limit now that overworld state needs to be saved.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct AutoSaveExtras<'w> {
+    pub squad_counter: Res<'w, SquadIdCounter>,
+    pub fallen_entities: Res<'w, crate::map::dungeon::FallenEntities>,
+    pub overworld_state: Res<'w, crate::map::world::OverworldState>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn auto_save_system(
     mut auto_save_pending: ResMut<AutoSavePending>,
@@ -730,6 +809,7 @@ pub fn auto_save_system(
             &Health,
             &Armor,
             &crate::game::stats::Block,
+            &crate::game::stats::MaxShieldBlocks,
             &Dodge,
             &Inventory,
             &Equipment,
@@ -782,7 +862,6 @@ pub fn auto_save_system(
         ),
         With<Monster>,
     >,
-    squad_counter: Res<SquadIdCounter>,
     floor_item_query: Query<
         (
             &Position,
@@ -799,11 +878,14 @@ pub fn auto_save_system(
         (With<Item>, Without<InInventory>),
     >,
     prop_query: Query<(&Position, &Name, Option<&crate::components::PropKey>), With<Prop>>,
-    fallen_entities: Res<crate::map::dungeon::FallenEntities>,
+    auto_save_extras: AutoSaveExtras,
 ) {
     auto_save_pending.0 = false;
+    let fallen_entities = &auto_save_extras.fallen_entities;
+    let overworld_state = &auto_save_extras.overworld_state;
+    let squad_counter = &auto_save_extras.squad_counter;
 
-    let Ok((pos, health, armor, block, dodge, inventory, equipment, damage, viewshed)) =
+    let Ok((pos, health, armor, block, max_shield_blocks, dodge, inventory, equipment, damage, viewshed)) =
         player_query.single()
     else {
         warn!("Auto-save skipped: no player entity found.");
@@ -975,6 +1057,7 @@ pub fn auto_save_system(
             hp: health.current,
             armor: armor.0,
             block: block.0,
+            max_shield_blocks: max_shield_blocks.0,
             dodge: dodge.0,
             viewshed_range: viewshed.range,
             damage: damage.0.clone(),
@@ -999,6 +1082,10 @@ pub fn auto_save_system(
         squad_id_counter: squad_counter.0,
         fallen_monsters: fallen_entities.monsters.clone(),
         fallen_items: fallen_entities.items.clone(),
+        overworld: OverworldSave {
+            temple_entrance_floor: overworld_state.temple_entrance_floor,
+            temple_entrance_pos: overworld_state.temple_entrance_pos.map(|p| [p.x, p.y]),
+        },
     };
 
     match ron::ser::to_string_pretty(&save_data, ron::ser::PrettyConfig::default()) {
@@ -1024,6 +1111,7 @@ pub fn apply_player_load_system(
             &mut Health,
             &mut Armor,
             &mut crate::game::stats::Block,
+            &mut crate::game::stats::MaxShieldBlocks,
             &mut Dodge,
             &mut Inventory,
             &mut Equipment,
@@ -1051,6 +1139,7 @@ pub fn apply_player_load_system(
         mut health,
         mut armor,
         mut block,
+        mut max_shield_blocks,
         mut dodge,
         mut inventory,
         mut equipment,
@@ -1075,6 +1164,7 @@ pub fn apply_player_load_system(
     // --- Armor / Block / Dodge ---
     armor.0 = player_data.armor;
     block.0 = player_data.block;
+    max_shield_blocks.0 = player_data.max_shield_blocks;
     dodge.0 = player_data.dodge;
 
     // --- HitBonus / DamageBonus (post-equipment, post-attribute totals) ---
@@ -1530,6 +1620,7 @@ mod tests {
             hp: 45,
             armor: 3,
             block: 2,
+            max_shield_blocks: 1,
             dodge: 2,
             viewshed_range: 8,
             damage: "1d4+1".to_string(),
@@ -1582,6 +1673,7 @@ mod tests {
             props: vec![basic_prop()],
             down_stairs_pos: [3, 2],
             up_stairs_pos: [1, 1],
+            exit_tiles: Vec::new(),
         }
     }
 
@@ -1609,6 +1701,7 @@ mod tests {
             squad_id_counter: 99,
             fallen_monsters,
             fallen_items,
+            overworld: OverworldSave::default(),
         }
     }
 
@@ -1643,6 +1736,7 @@ mod tests {
             squad_id_counter,
             fallen_monsters: HashMap::new(),
             fallen_items: HashMap::new(),
+            overworld: OverworldSave::default(),
         }
     }
 
@@ -2285,6 +2379,7 @@ mod tests {
                 props: vec![],
                 down_stairs_pos: [1, 0],
                 up_stairs_pos: [0, 1],
+                exit_tiles: Vec::new(),
             },
         );
         let save = GameSaveData {
@@ -2310,6 +2405,7 @@ mod tests {
             squad_id_counter: 10,
             fallen_monsters: HashMap::new(),
             fallen_items: HashMap::new(),
+            overworld: OverworldSave::default(),
         };
         let l: GameSaveData = from_ron(&to_ron(&save));
         assert_eq!(l.floor_cache.len(), 2);
@@ -2423,6 +2519,7 @@ mod tests {
             monsters: vec![basic_monster()],
             items: vec![basic_item()],
             props: vec![basic_prop()],
+            exit_tiles: Vec::new(),
             down_stairs_pos: Point::new(1, 0),
             up_stairs_pos: Point::new(0, 1),
         };
@@ -2558,8 +2655,34 @@ mod tests {
     // =====================================================================
 
     #[test]
-    fn schema_version_is_five() {
-        assert_eq!(SAVE_SCHEMA_VERSION, 5);
+    fn schema_version_is_six() {
+        assert_eq!(SAVE_SCHEMA_VERSION, 6);
+    }
+
+    #[test]
+    fn v6_overworld_survives_roundtrip() {
+        let mut save = full_save();
+        save.overworld = OverworldSave {
+            temple_entrance_floor: 7,
+            temple_entrance_pos: Some([40, 30]),
+        };
+        let l: GameSaveData = from_ron(&to_ron(&save));
+        assert_eq!(l.overworld.temple_entrance_floor, 7);
+        assert_eq!(l.overworld.temple_entrance_pos, Some([40, 30]));
+    }
+
+    #[test]
+    fn v6_exit_tiles_survive_roundtrip() {
+        let mut floor = floor_data();
+        floor.exit_tiles = vec![
+            SavedExitTile { x: 78, y: 30, destination_floor: 5, destination_pos: Some([2, 30]) },
+            SavedExitTile { x: 1, y: 1, destination_floor: 9, destination_pos: None },
+        ];
+        let l: SavedFloorData = from_ron(&to_ron(&floor));
+        assert_eq!(l.exit_tiles.len(), 2);
+        assert_eq!(l.exit_tiles[0].destination_floor, 5);
+        assert_eq!(l.exit_tiles[0].destination_pos, Some([2, 30]));
+        assert_eq!(l.exit_tiles[1].destination_pos, None);
     }
 
     #[test]
@@ -2616,7 +2739,7 @@ mod tests {
     #[test]
     fn migrations_chain_is_ordered() {
         let migs = migrations();
-        assert_eq!(migs.len(), 5);
+        assert_eq!(migs.len(), 6);
         assert_eq!(migs[0].from_version(), 0);
         assert_eq!(migs[0].to_version(), 1);
         assert_eq!(migs[1].from_version(), 1);
@@ -2627,6 +2750,8 @@ mod tests {
         assert_eq!(migs[3].to_version(), 4);
         assert_eq!(migs[4].from_version(), 4);
         assert_eq!(migs[4].to_version(), 5);
+        assert_eq!(migs[5].from_version(), 5);
+        assert_eq!(migs[5].to_version(), 6);
     }
 
     /// v2 → v3 migration is a no-op (serde defaults handle the new fields).
@@ -2698,6 +2823,7 @@ mod tests {
             hp: 30,
             armor: 2,
             block: 0,
+            max_shield_blocks: 0,
             dodge: 3,
             viewshed_range: 10,
             damage: "1d6+2".to_string(),

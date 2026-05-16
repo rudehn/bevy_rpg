@@ -35,6 +35,7 @@ pub fn toggle_cheat_menu_system(
     mut heal_writer: MessageWriter<HealEvent>,
     mut god_mode_writer: MessageWriter<ToggleGodModeMessage>,
     mut transition_writer: MessageWriter<MapTransitionMessage>,
+    floor: Res<crate::map::dungeon::Floor>,
     mut omniscient: ResMut<Omniscient>,
 ) {
     // Open/Close toggle with Backslash
@@ -76,7 +77,10 @@ pub fn toggle_cheat_menu_system(
                 });
             }
             if keyboard_input.just_pressed(KeyCode::KeyN) {
-                transition_writer.write(MapTransitionMessage);
+                transition_writer.write(MapTransitionMessage {
+                    destination_floor: floor.0 + 1,
+                    destination_pos: None,
+                });
             }
             if keyboard_input.just_pressed(KeyCode::KeyO) {
                 omniscient.0 = !omniscient.0;
@@ -198,6 +202,7 @@ pub fn cheat_menu_button_system(
     mut heal_writer: MessageWriter<HealEvent>,
     mut god_mode_writer: MessageWriter<ToggleGodModeMessage>,
     mut transition_writer: MessageWriter<MapTransitionMessage>,
+    floor: Res<crate::map::dungeon::Floor>,
     mut omniscient: ResMut<Omniscient>,
 ) {
     for (interaction, cheat_button, mut color) in interaction_query.iter_mut() {
@@ -228,7 +233,10 @@ pub fn cheat_menu_button_system(
                         omniscient.0 = !omniscient.0;
                     }
                     CheatButton::NextLevel => {
-                        transition_writer.write(MapTransitionMessage);
+                        transition_writer.write(MapTransitionMessage {
+                            destination_floor: floor.0 + 1,
+                            destination_pos: None,
+                        });
                         cheat_menu.is_open = false;
                         for entity in root_query.iter() {
                             commands.entity(entity).despawn();

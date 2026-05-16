@@ -454,7 +454,10 @@ pub fn chasm_fall_reaction_system(
 
     // If player fell through a collapsing tile, trigger forced floor transition.
     if player_falls {
-        transition_writer.write(crate::map::dungeon::MapTransitionMessage);
+        transition_writer.write(crate::map::dungeon::MapTransitionMessage {
+            destination_floor: floor.0 + 1,
+            destination_pos: None,
+        });
     }
 }
 

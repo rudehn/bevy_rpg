@@ -39,6 +39,9 @@ pub struct CachedFloor {
     pub items: Vec<crate::save::SavedItem>,
     /// Props.
     pub props: Vec<crate::save::SavedProp>,
+    /// `MapExitTile` components stamped on overworld edge tiles and the
+    /// temple entrance / exit — re-applied when this floor is restored.
+    pub exit_tiles: Vec<(Point, crate::map::world::MapExitTile)>,
     /// Position of the DownStairs on this floor; player lands adjacent to it
     /// when returning from below (ascending).
     pub down_stairs_pos: Point,
@@ -76,18 +79,34 @@ pub struct PendingFloorRestore {
 #[derive(Message, Clone, Copy)]
 pub struct SpawnDungeonMessage;
 
+/// Unified map-to-map transition message. Replaces the older
+/// `MapTransitionMessage` (descend) + `AscendStairsMessage` (ascend)
+/// pair — the destination floor is now explicit so the receiver
+/// doesn't need to know which direction we're going.
 #[derive(Message, Clone, Copy)]
-pub struct MapTransitionMessage;
+pub struct MapTransitionMessage {
+    pub destination_floor: u32,
+    /// If `Some`, the player arrives at exactly this position on the
+    /// destination floor. If `None`, arrival is stair-relative (the
+    /// downstairs of the destination if descending, the upstairs if
+    /// ascending) — matches the legacy stair behaviour.
+    pub destination_pos: Option<crate::components::Position>,
+}
 
-#[derive(Message, Clone, Copy)]
-pub struct AscendStairsMessage;
+/// Set by [`apply_map_transition`] just before `spawn_dungeon` runs;
+/// consumed by `spawn_dungeon` to override the materialized player
+/// spawn point (used for overworld-edge arrivals).
+#[derive(Resource, Default)]
+pub struct PendingArrival(pub Option<crate::components::Position>);
 
 #[derive(Resource)]
 pub struct Floor(pub u32);
 
 impl Default for Floor {
     fn default() -> Self {
-        Floor(1)
+        // Floor 0 is the town hub. A fresh run starts there; the
+        // legacy 26-floor dungeon used to start at 1.
+        Floor(0)
     }
 }
 
@@ -127,22 +146,34 @@ pub struct DungeonPlugin;
 impl Plugin for DungeonPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Floor>()
+            .init_resource::<crate::map::world::FloorTheme>()
+            .init_resource::<crate::map::world::OverworldState>()
             .init_resource::<FloorCache>()
             .init_resource::<FallenEntities>()
             .init_resource::<PendingFloorRestore>()
             .init_resource::<PendingGameLoad>()
             .init_resource::<PendingPlayerLoad>()
             .init_resource::<AutoSavePending>()
+            .init_resource::<PendingArrival>()
             .add_message::<SpawnDungeonMessage>()
             .add_message::<MapTransitionMessage>()
-            .add_message::<AscendStairsMessage>()
             .init_resource::<PlayerSpawnPoint>()
             .configure_sets(Update, SpawnDungeonSet)
             .add_systems(
                 OnEnter(AppState::InGame),
-                |mut writer: MessageWriter<SpawnDungeonMessage>| {
-                    writer.write(SpawnDungeonMessage);
-                },
+                (
+                    |mut overworld: ResMut<crate::map::world::OverworldState>,
+                     pending_load: Res<PendingGameLoad>| {
+                        // Skip reseeding when restoring a save — the loaded
+                        // overworld state will be applied by spawn_dungeon.
+                        if pending_load.0.is_none() {
+                            crate::map::world::seed_overworld_state(&mut overworld);
+                        }
+                    },
+                    |mut writer: MessageWriter<SpawnDungeonMessage>| {
+                        writer.write(SpawnDungeonMessage);
+                    },
+                ),
             )
             .add_systems(
                 Update,
@@ -153,9 +184,8 @@ impl Plugin for DungeonPlugin {
             .add_systems(
                 Update,
                 (
-                    player_stair_system,
-                    map_transition_system.run_if(on_message::<MapTransitionMessage>),
-                    ascend_stairs_system.run_if(on_message::<AscendStairsMessage>),
+                    player_transition_system,
+                    apply_map_transition.run_if(on_message::<MapTransitionMessage>),
                 )
                     .chain()
                     .run_if(in_state(AppState::InGame)),
@@ -196,13 +226,25 @@ fn find_up_stairs(map: &Map) -> Option<Point> {
     })
 }
 
+/// Bundled snapshot queries — kept as one SystemParam so callers stay
+/// under Bevy's 16-param system limit.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct SnapshotQueries<'w, 's> {
+    pub monsters: Query<'w, 's, (&'static Position, &'static Name, &'static crate::game::combat::Health, Option<&'static crate::game::squad::SquadId>, Option<&'static crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&'static crate::game::ai::PatrolRoute>, Has<crate::components::Submerged>), With<Monster>>,
+    pub items: Query<'w, 's, (&'static Position, &'static Name, Option<&'static ItemStack>, Option<&'static Enchantment>, Option<&'static ItemWeaponRunic>, Option<&'static ItemArmorRunic>, Option<&'static RunicIdentified>, Option<&'static StaffData>, Option<&'static Rechargeable>, Has<crate::components::Drifting>), (With<Item>, Without<InInventory>)>,
+    pub props: Query<'w, 's, (&'static Position, &'static Name, Option<&'static crate::components::PropKey>), With<Prop>>,
+    pub exit_tiles: Query<'w, 's, (&'static Position, &'static crate::map::world::MapExitTile)>,
+}
+
 /// Snapshot the current floor's surviving entities into a `CachedFloor`.
 fn snapshot_floor(
     map: &Map,
-    monster_query: &Query<(&Position, &Name, &crate::game::combat::Health, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>, Has<crate::components::Submerged>), With<Monster>>,
-    item_query: &Query<(&Position, &Name, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>, Has<crate::components::Drifting>), (With<Item>, Without<InInventory>)>,
-    prop_query: &Query<(&Position, &Name, Option<&crate::components::PropKey>), With<Prop>>,
+    snap: &SnapshotQueries,
 ) -> CachedFloor {
+    let monster_query = &snap.monsters;
+    let item_query = &snap.items;
+    let prop_query = &snap.props;
+    let exit_query = &snap.exit_tiles;
     use crate::save::{SavedMonster, SavedItem, SavedProp};
 
     let monsters = monster_query
@@ -243,6 +285,11 @@ fn snapshot_floor(
         })
         .collect();
 
+    let exit_tiles = exit_query
+        .iter()
+        .map(|(pos, exit)| (Point::new(pos.x, pos.y), *exit))
+        .collect();
+
     let fallback_pos = map
         .tiles
         .iter()
@@ -272,6 +319,7 @@ fn snapshot_floor(
         monsters,
         items,
         props,
+        exit_tiles,
         down_stairs_pos,
         up_stairs_pos,
     }
@@ -299,13 +347,27 @@ fn despawn_floor_entities(
 // Systems
 // ---------------------------------------------------------------------------
 
-fn player_stair_system(
+/// Unified transition system. Replaces the old separate
+/// `player_stair_system`. Fires one `MapTransitionMessage` per trigger,
+/// regardless of whether the trigger was a `MapExitTile` component
+/// (overworld edges, temple entrance / exit) or a stair terrain
+/// (`DownStairs` / `UpStairs`).
+///
+/// Resolution order:
+/// 1. If the tile at the player's position carries a `MapExitTile`
+///    component, use its explicit destination floor + position.
+/// 2. Else `DownStairs` → `floor + 1`, stair-relative arrival.
+/// 3. Else `UpStairs` (and `floor > 1`) → `floor - 1`, stair-relative.
+/// 4. Else `Portal` → Victory if the player has a `QuestItem`,
+///    otherwise a hint log line.
+fn player_transition_system(
     mut commands: Commands,
     player_query: Query<(Entity, &Position, Has<StairCooldown>), (With<Player>, Changed<Position>)>,
     map: Res<Map>,
     floor: Res<Floor>,
-    mut down_writer: MessageWriter<MapTransitionMessage>,
-    mut up_writer: MessageWriter<AscendStairsMessage>,
+    tile_index: Res<crate::map::tile::TileEntityIndex>,
+    exit_tiles: Query<&crate::map::world::MapExitTile>,
+    mut writer: MessageWriter<MapTransitionMessage>,
     quest_item_query: Query<(), (With<crate::components::QuestItem>, With<InInventory>)>,
     mut next_state: ResMut<NextState<AppState>>,
     mut run_summary: ResMut<crate::game::RunSummary>,
@@ -314,109 +376,112 @@ fn player_stair_system(
 ) {
     for (entity, pos, has_cooldown) in player_query.iter() {
         if has_cooldown {
-            // First position change after floor transition — consume the cooldown
-            // and skip the stair check so we don't immediately re-trigger.
             commands.entity(entity).remove::<StairCooldown>();
             continue;
         }
-        if map.in_bounds(pos.to_point()) {
-            let idx = map.xy_idx(pos.x, pos.y);
-            match map.tiles[idx].terrain {
-                TerrainType::DownStairs => {
-                    down_writer.write(MapTransitionMessage);
-                }
-                TerrainType::UpStairs if floor.0 > 1 => {
-                    up_writer.write(AscendStairsMessage);
-                }
-                TerrainType::Portal => {
-                    if quest_item_query.iter().next().is_some() {
-                        // Player has the Amulet of Yendor — victory!
-                        *run_summary = crate::game::RunSummary {
-                            floor_reached: floor.0,
-                            cause: "Escaped through the portal with the Amulet of Yendor.".to_string(),
-                            victory: true,
-                            enemies_killed: run_stats.enemies_killed,
-                        };
-                        crate::save::delete_save();
-                        next_state.set(AppState::Victory);
-                    } else {
-                        log_writer.write(GameLogMessage(
-                            "The portal hums with energy, but refuses to let you pass. You sense it requires something...".to_string()
-                        ));
-                    }
-                }
-                _ => {}
+        if !map.in_bounds(pos.to_point()) {
+            continue;
+        }
+
+        // 1. Explicit MapExitTile component overrides everything.
+        if let Some(&tile_entity) = tile_index.0.get(&(pos.x, pos.y))
+            && let Ok(exit) = exit_tiles.get(tile_entity)
+        {
+            writer.write(MapTransitionMessage {
+                destination_floor: exit.destination_floor,
+                destination_pos: exit.destination_pos,
+            });
+            continue;
+        }
+
+        // 2-4. Terrain-based fallback.
+        let idx = map.xy_idx(pos.x, pos.y);
+        match map.tiles[idx].terrain {
+            TerrainType::DownStairs => {
+                writer.write(MapTransitionMessage {
+                    destination_floor: floor.0 + 1,
+                    destination_pos: None,
+                });
             }
+            TerrainType::UpStairs if floor.0 > 1 => {
+                writer.write(MapTransitionMessage {
+                    destination_floor: floor.0 - 1,
+                    destination_pos: None,
+                });
+            }
+            TerrainType::Portal => {
+                if quest_item_query.iter().next().is_some() {
+                    *run_summary = crate::game::RunSummary {
+                        floor_reached: floor.0,
+                        cause: "Escaped through the portal with the Amulet of Yendor.".to_string(),
+                        victory: true,
+                        enemies_killed: run_stats.enemies_killed,
+                    };
+                    crate::save::delete_save();
+                    next_state.set(AppState::Victory);
+                } else {
+                    log_writer.write(GameLogMessage(
+                        "The portal hums with energy, but refuses to let you pass. You sense it requires something...".to_string()
+                    ));
+                }
+            }
+            _ => {}
         }
     }
 }
 
-fn map_transition_system(
+/// Single handler for any `MapTransitionMessage`. Snapshots the
+/// outgoing floor, sets up `PendingFloorRestore` for the destination
+/// (so a previously visited floor is restored from cache), latches the
+/// explicit arrival position into `PendingArrival` if the message
+/// carries one, and fires `SpawnDungeonMessage`.
+fn apply_map_transition(
     mut commands: Commands,
+    mut messages: MessageReader<MapTransitionMessage>,
     mut floor: ResMut<Floor>,
     map: Res<Map>,
     mut floor_cache: ResMut<FloorCache>,
     mut pending_restore: ResMut<PendingFloorRestore>,
+    mut pending_arrival: ResMut<PendingArrival>,
     q_map_markers: Query<Entity, With<DungeonECSMap>>,
     q_tiles: Query<Entity, With<TileMarker>>,
     q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
-    q_monsters: Query<(&Position, &Name, &crate::game::combat::Health, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>, Has<crate::components::Submerged>), With<Monster>>,
-    q_items: Query<(&Position, &Name, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>, Has<crate::components::Drifting>), (With<Item>, Without<InInventory>)>,
-    q_props: Query<(&Position, &Name, Option<&crate::components::PropKey>), With<Prop>>,
+    snap: SnapshotQueries,
     mut turn_manager: ResMut<TurnManager>,
     mut message_writer: MessageWriter<SpawnDungeonMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
-    // Snapshot before despawning so we can return to this floor later.
-    let cached = snapshot_floor(&map, &q_monsters, &q_items, &q_props);
-    floor_cache.0.insert(floor.0, cached);
-
-    despawn_floor_entities(&mut commands, &q_map_markers, &q_tiles, &q_floor_entities);
-    *turn_manager = TurnManager::default();
-
-    floor.0 += 1;
-    log_writer.write(GameLogMessage(format!("Descending to floor {}", floor.0)));
-
-    // If the destination floor was previously visited, restore it instead of generating fresh.
-    pending_restore.floor = floor_cache.0.remove(&floor.0);
-    pending_restore.ascending = false;
-
-    message_writer.write(SpawnDungeonMessage);
-}
-
-fn ascend_stairs_system(
-    mut commands: Commands,
-    mut floor: ResMut<Floor>,
-    map: Res<Map>,
-    mut floor_cache: ResMut<FloorCache>,
-    mut pending_restore: ResMut<PendingFloorRestore>,
-    q_map_markers: Query<Entity, With<DungeonECSMap>>,
-    q_tiles: Query<Entity, With<TileMarker>>,
-    q_floor_entities: Query<Entity, With<FloorEntityMarker>>,
-    q_monsters: Query<(&Position, &Name, &crate::game::combat::Health, Option<&crate::game::squad::SquadId>, Option<&crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&crate::game::ai::PatrolRoute>, Has<crate::components::Submerged>), With<Monster>>,
-    q_items: Query<(&Position, &Name, Option<&ItemStack>, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>, Option<&StaffData>, Option<&Rechargeable>, Has<crate::components::Drifting>), (With<Item>, Without<InInventory>)>,
-    q_props: Query<(&Position, &Name, Option<&crate::components::PropKey>), With<Prop>>,
-    mut turn_manager: ResMut<TurnManager>,
-    mut message_writer: MessageWriter<SpawnDungeonMessage>,
-    mut log_writer: MessageWriter<GameLogMessage>,
-) {
-    if floor.0 <= 1 {
+    // Coalesce: if multiple messages stack in a tick, the last one wins.
+    let Some(msg) = messages.read().last().copied() else {
+        return;
+    };
+    let source = floor.0;
+    let target = msg.destination_floor;
+    if source == target {
         return;
     }
 
-    // Snapshot current floor before leaving it.
-    let cached = snapshot_floor(&map, &q_monsters, &q_items, &q_props);
-    floor_cache.0.insert(floor.0, cached);
+    let cached = snapshot_floor(&map, &snap);
+    floor_cache.0.insert(source, cached);
 
     despawn_floor_entities(&mut commands, &q_map_markers, &q_tiles, &q_floor_entities);
     *turn_manager = TurnManager::default();
 
-    floor.0 -= 1;
-    log_writer.write(GameLogMessage(format!("Ascending to floor {}", floor.0)));
+    floor.0 = target;
+    let direction_msg = if target > source {
+        format!("Descending to floor {target}")
+    } else {
+        format!("Ascending to floor {target}")
+    };
+    log_writer.write(GameLogMessage(direction_msg));
 
-    // Pull the cached floor so spawn_dungeon restores it instead of regenerating.
-    pending_restore.floor = floor_cache.0.remove(&floor.0);
-    pending_restore.ascending = true;
+    pending_restore.floor = floor_cache.0.remove(&target);
+    // Ascending = we came down from higher (numerically smaller floor going
+    // back to a smaller-still floor doesn't ascend in the dungeon sense, but
+    // the field is only consumed for stair-relative arrival, where the rule
+    // "land near the stair pointing back the way you came" still applies.
+    pending_restore.ascending = target < source;
+    pending_arrival.0 = msg.destination_pos;
 
     message_writer.write(SpawnDungeonMessage);
 }
@@ -438,6 +503,18 @@ pub(crate) struct SpawnDungeonExtras<'w> {
     /// reads — see the load arm of `spawn_dungeon`. Lives in `extras`
     /// because the top-level signature is already at Bevy's 16-param cap.
     character_choice: ResMut<'w, crate::character::CharacterChoice>,
+    /// Set by [`apply_map_transition`] when arriving on a floor via a
+    /// `MapExitTile` with an explicit destination position. If `Some`,
+    /// overrides the materializer's default player spawn point.
+    pending_arrival: ResMut<'w, PendingArrival>,
+    /// Per-run overworld state — which forest tile hosts the temple,
+    /// and where its entrance stairs sit. Mutated by `spawn_dungeon`
+    /// after building the temple-entrance forest tile so temple-floor 1
+    /// can wire its UpStairs back to the same coordinate.
+    overworld: ResMut<'w, crate::map::world::OverworldState>,
+    /// Visual theme. Set per-floor by `spawn_dungeon` so the renderer
+    /// draws forests, town, temple, and the legacy dungeon distinctly.
+    floor_theme: ResMut<'w, crate::map::world::FloorTheme>,
 }
 
 pub fn spawn_dungeon(
@@ -480,6 +557,12 @@ pub fn spawn_dungeon(
         // restored verbatim from `save_data.player.attributes`.
 
         commands.insert_resource(crate::game::squad::SquadIdCounter(save_data.squad_id_counter));
+
+        // Restore overworld state from the save so the temple entrance
+        // stays put across reloads.
+        extras.overworld.temple_entrance_floor = save_data.overworld.temple_entrance_floor;
+        extras.overworld.temple_entrance_pos =
+            save_data.overworld.temple_entrance_pos.map(|p| crate::components::Position { x: p[0], y: p[1] });
 
         let saved_floor_cache: std::collections::HashMap<u32, crate::save::CachedFloorSave> =
             save_data.floor_cache.clone();
@@ -538,13 +621,31 @@ pub fn spawn_dungeon(
             prefabs,
             &monster_manifest.monsters,
             decoration_rules,
+            *extras.overworld,
         );
         builder.build_map();
         // Write the updated counter back so future floors don't reuse IDs.
         *extras.squad_counter = builder.build_data.squad_counter.clone();
 
-        // Reset RunStats on new game (floor 1, generate path only)
-        if floor.0 == 1 {
+        // If we just built the temple-entrance forest tile, latch the
+        // chosen DownStairs coordinate on `OverworldState` so temple
+        // floor 1's UpStairs (built later) can return to it. The
+        // forest's `starting_position` is the UpStairs back to town —
+        // not the temple entrance — so we scan the map for the
+        // DownStairs tile (which `TempleEntranceBuilder` placed).
+        if floor.0 == extras.overworld.temple_entrance_floor
+            && let Some(entrance) = find_down_stairs(&builder.build_data.map)
+        {
+            extras.overworld.temple_entrance_pos = Some(crate::components::Position {
+                x: entrance.x,
+                y: entrance.y,
+            });
+        }
+
+        // Reset RunStats on new game (town, generate path only — the
+        // town is floor 0 and is always the first floor a fresh run
+        // generates).
+        if floor.0 == 0 {
             commands.insert_resource(crate::game::RunStats::default());
         }
 
@@ -677,16 +778,13 @@ pub fn spawn_dungeon(
     // Rebuild water tile index for shimmer animation.
     extras.water_tiles.0.clear();
 
-    // Add fungal glow for all Fungus tiles on this floor, and populate water tile index.
-    use crate::map::tile::{Decoration, LiquidType};
-    let mut fungal_count = 0u32;
+    // Populate water tile index for shimmer animation.
+    // Note: `fungal_light` is intentionally not wired to any current decoration —
+    // no shipping plant emits light. The helper remains available for future content.
+    use crate::map::tile::LiquidType;
     for y in 0..map.height {
         for x in 0..map.width {
             let idx = map.xy_idx(x, y);
-            if map.tiles[idx].decoration == Decoration::Fungus {
-                extras.light_sources.add(crate::map::light::fungal_light(x, y));
-                fungal_count += 1;
-            }
             match map.tiles[idx].liquid {
                 LiquidType::Water | LiquidType::ShallowWater => {
                     extras.water_tiles.0.insert((x, y), map.tiles[idx].liquid);
@@ -695,11 +793,16 @@ pub fn spawn_dungeon(
             }
         }
     }
-    if fungal_count > 0 {
-        info!("Added {} fungal glow lights", fungal_count);
-    }
 
-    let spawn = result.player_spawn;
+    // Honour an explicit arrival hint (set by `apply_map_transition` for
+    // overworld-edge transitions). Snap to the nearest walkable tile so a
+    // forest/town border that's been overgrown by a tree doesn't trap the
+    // player off the map.
+    let spawn = if let Some(arrival) = extras.pending_arrival.0.take() {
+        crate::map::floor_materializer::nearest_walkable(&map, Point::new(arrival.x, arrival.y))
+    } else {
+        result.player_spawn
+    };
     let spawn_idx = map.xy_idx(spawn.x, spawn.y);
     let spawn_tile = map.tiles[spawn_idx];
     if !crate::map::tile::is_walkable(spawn_tile) {
@@ -741,12 +844,27 @@ pub fn spawn_dungeon(
         turn_manager.len(), turn_manager.current_time
     );
 
-    log_writer.write(GameLogMessage(format!("Welcome to floor {}!", floor.0)));
+    // Floor-kind aware welcome line — town is the hub, forest is the
+    // wild ring, temple is the dungeon.
+    use crate::map::world::{FloorKind, FloorTheme, floor_kind};
+    let kind = if floor.0 <= 11 { floor_kind(floor.0) } else { FloorKind::Temple(0) };
+    // Sync theme — legacy floors (12+) stay on the dungeon look.
+    *extras.floor_theme = if floor.0 <= 11 {
+        FloorTheme::for_floor_kind(kind)
+    } else {
+        FloorTheme::Dungeon
+    };
+    let welcome = match kind {
+        FloorKind::Town       => "You arrive in the town square.".to_string(),
+        FloorKind::Forest(_)  => format!("You step into the forest. (floor {})", floor.0),
+        FloorKind::Temple(n)  => format!("You descend into the temple. (level {n})"),
+    };
+    log_writer.write(GameLogMessage(welcome));
 
-    // First floor intro — set the atmosphere.
-    if floor.0 == 1 {
+    // First-time intro on the town spawn.
+    if floor.0 == 0 {
         log_writer.write(GameLogMessage(
-            "The stone steps descend into darkness. You must find a way out."
+            "Find the Amulet of Yendor in the temple and return here."
                 .to_string(),
         ));
     }

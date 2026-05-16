@@ -6,5 +6,6 @@ pub mod light;
 #[allow(clippy::module_inception)]
 pub mod map;
 pub mod tile;
+pub mod world;
 
 pub use map::Map;

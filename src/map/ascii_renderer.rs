@@ -20,9 +20,8 @@ use crate::game::systems::Omniscient;
 use crate::game::water::WaterTiles;
 use crate::map::light::LightMap;
 use crate::map::map::Map;
-use crate::map::tile::{
-    LiquidType, TileExplored, TileMarker, TileVisibility, resolve_tile_bg, resolve_tile_display,
-};
+use crate::map::tile::{LiquidType, TileExplored, TileMarker, TileVisibility};
+use crate::map::world::{FloorTheme, themed_tile_bg, themed_tile_display};
 use crate::player::Player;
 use bracket_lib::prelude::Algorithm2D;
 
@@ -157,6 +156,7 @@ fn resolve_cell_bg(
     x: i32, y: i32,
     t: f32,
     phase: f32,
+    theme: FloorTheme,
 ) -> Color {
     if fire_tiles.0.contains(&(x, y)) {
         let (_, fire_bg) = compute_fire_colors(t, phase);
@@ -165,7 +165,7 @@ fn resolve_cell_bg(
     if let Some(gas) = gas_tiles.0.get(&(x, y)) {
         let (light, light_color) = get_light(idx, light_map);
         let light_amount = ((light - AMBIENT) / (1.0 - AMBIENT)).clamp(0.0, 1.0);
-        let base_bg = apply_light_to_color(resolve_tile_bg(tile, manifest), light_amount, light_color);
+        let base_bg = apply_light_to_color(themed_tile_bg(tile, manifest, theme), light_amount, light_color);
         let gas_bg = compute_gas_bg(gas.gas_type, gas.concentration, t, phase);
         let alpha = (gas.concentration as f32 / 300.0).clamp(0.2, 0.85);
         let g = gas_bg.to_srgba();
@@ -202,7 +202,7 @@ fn resolve_cell_bg(
     // Normal lit base bg
     let (light, light_color) = get_light(idx, light_map);
     let light_amount = ((light - AMBIENT) / (1.0 - AMBIENT)).clamp(0.0, 1.0);
-    apply_light_to_color(resolve_tile_bg(tile, manifest), light_amount, light_color)
+    apply_light_to_color(themed_tile_bg(tile, manifest, theme), light_amount, light_color)
 }
 
 struct CellEntity {
@@ -224,6 +224,18 @@ pub struct EntityCellQueries<'w, 's> {
     props: Query<'w, 's, (&'static Position, &'static AsciiDisplay), With<Prop>>,
 }
 
+/// Bundled tile-effect resources (fire/gas/water/lighting/omniscience/theme).
+/// Exists to keep `render_tile_ascii` under Bevy's 16-param system limit.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct TileEffectRes<'w> {
+    pub light_map: Res<'w, LightMap>,
+    pub fire_tiles: Res<'w, FireTiles>,
+    pub gas_tiles: Res<'w, GasTiles>,
+    pub water_tiles: Res<'w, WaterTiles>,
+    pub omniscient: Res<'w, Omniscient>,
+    pub floor_theme: Res<'w, FloorTheme>,
+}
+
 /// Unified ASCII tile renderer. Runs every frame in ASCII mode.
 ///
 /// For each tile entity, resolves what to display using a priority cascade
@@ -235,11 +247,7 @@ pub fn render_tile_ascii(
     player_query: Query<&Viewshed, With<Player>>,
     viewshed_changed: Query<(), (With<Player>, Changed<Viewshed>)>,
     map: Res<Map>,
-    light_map: Res<LightMap>,
-    fire_tiles: Res<FireTiles>,
-    gas_tiles: Res<GasTiles>,
-    water_tiles: Res<WaterTiles>,
-    omniscient: Res<Omniscient>,
+    effects: TileEffectRes,
     tile_manifests: Res<Assets<TileManifest>>,
     tile_manifest_handle: Res<TileManifestHandle>,
     tile_index: Res<TileEntityIndex>,
@@ -260,9 +268,15 @@ pub fn render_tile_ascii(
     let Some(manifest) = tile_manifests.get(&tile_manifest_handle.0) else {
         return;
     };
+    let light_map = &effects.light_map;
+    let fire_tiles = &effects.fire_tiles;
+    let gas_tiles = &effects.gas_tiles;
+    let water_tiles = &effects.water_tiles;
+    let omniscient = &effects.omniscient;
     let fov_tiles = &player_viewshed.visible_tiles;
     let omni = omniscient.0;
     let t = time.elapsed_secs();
+    let theme = *effects.floor_theme;
     let fov_changed = !viewshed_changed.is_empty()
         || fire_tiles.is_changed()
         || gas_tiles.is_changed()
@@ -375,7 +389,7 @@ pub fn render_tile_ascii(
                 fg_color = entity_cell.color;
                 bg_color = resolve_cell_bg(
                     tile, manifest, idx, &light_map, &fire_tiles, &gas_tiles,
-                    &water_tiles, x, y, t, phase,
+                    &water_tiles, x, y, t, phase, theme,
                 );
             } else if is_fire {
                 // 1. Fire: self-luminous, special glyph
@@ -386,7 +400,7 @@ pub fn render_tile_ascii(
             } else if let Some(gas) = gas_data {
                 // 2. Gas: keep base glyph, apply lighting to fg, gas bg is self-luminous.
                 // Blend gas bg over the tile's base bg so thin gas doesn't black out the tile.
-                let (base_char, base_fg, _) = resolve_tile_display(tile, manifest);
+                let (base_char, base_fg, _) = themed_tile_display(tile, manifest, theme);
                 glyph_char = base_char;
 
                 let (light, light_color) = get_light(idx, &light_map);
@@ -395,7 +409,7 @@ pub fn render_tile_ascii(
 
                 let gas_bg = compute_gas_bg(gas.gas_type, gas.concentration, t, phase);
                 let base_bg = apply_light_to_color(
-                    resolve_tile_bg(tile, manifest), light_amount, light_color,
+                    themed_tile_bg(tile, manifest, theme), light_amount, light_color,
                 );
                 // Alpha blend: thicker gas covers more of the base
                 let alpha = (gas.concentration as f32 / 300.0).clamp(0.2, 0.85);
@@ -408,7 +422,7 @@ pub fn render_tile_ascii(
                 );
             } else if let Some(liquid) = water_data {
                 // 3. Water: shimmer with per-channel sine waves
-                let (base_char, _, _) = resolve_tile_display(tile, manifest);
+                let (base_char, _, _) = themed_tile_display(tile, manifest, theme);
                 glyph_char = base_char;
 
                 let (light, light_color) = get_light(idx, &light_map);
@@ -455,8 +469,8 @@ pub fn render_tile_ascii(
                 );
             } else {
                 // 5. Base: normal tile with lighting
-                let (base_char, base_fg, _) = resolve_tile_display(tile, manifest);
-                let base_bg = resolve_tile_bg(tile, manifest);
+                let (base_char, base_fg, _) = themed_tile_display(tile, manifest, theme);
+                let base_bg = themed_tile_bg(tile, manifest, theme);
                 glyph_char = base_char;
 
                 let (light, light_color) = get_light(idx, &light_map);
@@ -466,8 +480,8 @@ pub fn render_tile_ascii(
             }
         } else {
             // Explored but not visible: dim base glyph
-            let (base_char, base_fg, _) = resolve_tile_display(tile, manifest);
-            let base_bg = resolve_tile_bg(tile, manifest);
+            let (base_char, base_fg, _) = themed_tile_display(tile, manifest, theme);
+            let base_bg = themed_tile_bg(tile, manifest, theme);
             glyph_char = base_char;
             fg_color = dim_color(base_fg, 0.45);
             bg_color = dim_color(base_bg, 0.35);
