@@ -66,35 +66,26 @@ pub struct EntityAssets<'w> {
 // Floor blueprint — the typed contract between source-of-truth (builder,
 // cache, save) and the ECS materializer.
 //
-// These types are public so the planning step (`plan_floor`) can be
-// unit-tested and so future builders can construct one directly.
+// Maintenance contract for adding a persisted component:
+//   1. Component definition: add `Serialize, Deserialize`.
+//   2. `crate::save::SavedMonster` (or `SavedItem`/`SavedProp`): add the
+//      field with `#[serde(default)]` for backward compat.
+//   3. `crate::map::dungeon::SnapshotQueries`: include the component in
+//      the query tuple.
+//   4. `crate::map::dungeon::snapshot_floor`: copy the live component
+//      value into the new `SavedX` field.
+//   5. `materialize_floor` (below): apply the saved value back onto the
+//      spawned entity.
+//
+// `FloorPlan` carries the canonical `SavedMonster` / `SavedItem` /
+// `SavedProp` directly — there is no intermediate `MonsterPlan` shape
+// to also update. The save format and the in-memory plan share one
+// type per entity kind.
 // ---------------------------------------------------------------------------
 
-pub struct MonsterPlan {
-    pub pos: Point,
-    pub name: String,
-    pub squad_id: Option<u64>,
-    pub is_leader: bool,
-    pub squad_config: Option<SquadConfig>,
-    pub patrol_route: Option<PatrolRoute>,
-    pub saved_hp: Option<i32>,
-    pub submerged: bool,
-}
-
-pub struct ItemPlan {
-    pub pos: Point,
-    pub name: String,
-    pub count: u32,
-    /// Saved mutable item state; default means freshly generated (roll random).
-    pub state: crate::save::ItemMutableState,
-    pub drifting: bool,
-}
-
-pub struct PropPlan {
-    pub pos: Point,
-    pub name: String,
-}
-
+/// Machine spawn — no `SavedMachine` exists yet because machines aren't
+/// snapshotted between floors. Kept as a dedicated type so the
+/// materializer can match it cleanly.
 pub struct MachinePlan {
     pub pos: Point,
     pub prop_name: String,
@@ -111,9 +102,9 @@ pub struct MachinePlan {
 /// in tests without spinning up an `App`.
 pub struct FloorPlan {
     pub map: Map,
-    pub monsters: Vec<MonsterPlan>,
-    pub items: Vec<ItemPlan>,
-    pub props: Vec<PropPlan>,
+    pub monsters: Vec<SavedMonster>,
+    pub items: Vec<SavedItem>,
+    pub props: Vec<SavedProp>,
     pub machines: Vec<MachinePlan>,
     /// Tiles that should receive a [`crate::map::world::MapExitTile`]
     /// component once their tile entities exist — used by overworld
@@ -277,51 +268,6 @@ pub(crate) fn spawn_tiles_into_ecs(
 // Conversions
 // ---------------------------------------------------------------------------
 
-/// Convert saved monsters to MonsterPlans. `restore_hp` controls whether
-/// saved HP is applied (true for cache/load, false would skip).
-fn monsters_from_saved(saved: Vec<SavedMonster>, restore_hp: bool) -> Vec<MonsterPlan> {
-    saved
-        .into_iter()
-        .map(|m| MonsterPlan {
-            pos: Point::new(m.x, m.y),
-            name: m.name.clone(),
-            squad_id: m.squad_id,
-            is_leader: m.is_leader,
-            squad_config: m.squad_config,
-            patrol_route: m.patrol_route,
-            saved_hp: if restore_hp && m.hp_current > 0 {
-                Some(m.hp_current)
-            } else {
-                None
-            },
-            submerged: m.submerged,
-        })
-        .collect()
-}
-
-fn items_from_saved(saved: Vec<SavedItem>) -> Vec<ItemPlan> {
-    saved
-        .into_iter()
-        .map(|i| ItemPlan {
-            pos: Point::new(i.x, i.y),
-            name: i.name,
-            count: i.count,
-            state: i.state,
-            drifting: i.drifting,
-        })
-        .collect()
-}
-
-fn props_from_saved(saved: Vec<SavedProp>) -> Vec<PropPlan> {
-    saved
-        .into_iter()
-        .map(|p| PropPlan {
-            pos: Point::new(p.x, p.y),
-            name: p.name,
-        })
-        .collect()
-}
-
 impl FloorPlan {
     fn from_builder(build_data: BuilderMap) -> Self {
         let starting_pos = build_data.starting_position.unwrap_or_else(|| {
@@ -349,17 +295,22 @@ impl FloorPlan {
         );
         let player_spawn = nearest_walkable(&build_data.map, starting_pt);
 
+        // Fresh-spawn monsters/items/props: build `SavedX` records with
+        // `hp_current: 0` (sentinel for "use manifest default") and
+        // default mutable state. The materializer's `hp_current > 0`
+        // check distinguishes restored entities from fresh spawns.
         let monsters = build_data
             .spawn_list
             .into_iter()
-            .map(|entry| MonsterPlan {
-                pos: entry.pos,
+            .map(|entry| SavedMonster {
+                x: entry.pos.x,
+                y: entry.pos.y,
                 name: entry.name,
+                hp_current: 0,
                 squad_id: entry.squad_id.map(|s| s.0),
                 is_leader: entry.is_leader,
                 squad_config: entry.squad_config,
                 patrol_route: entry.patrol_route,
-                saved_hp: None,
                 submerged: false,
             })
             .collect();
@@ -367,8 +318,9 @@ impl FloorPlan {
         let items = build_data
             .item_spawn_list
             .into_iter()
-            .map(|(pt, name, count)| ItemPlan {
-                pos: pt,
+            .map(|(pt, name, count)| SavedItem {
+                x: pt.x,
+                y: pt.y,
                 name,
                 count,
                 state: Default::default(),
@@ -379,7 +331,7 @@ impl FloorPlan {
         let props = build_data
             .prop_spawn_list
             .into_iter()
-            .map(|(pt, name)| PropPlan { pos: pt, name })
+            .map(|(pt, name)| SavedProp { x: pt.x, y: pt.y, name })
             .collect();
 
         let machines = build_data
@@ -459,15 +411,13 @@ impl FloorPlan {
         };
         let player_spawn = nearest_walkable(&cached.map, target_stairs);
 
-        let monsters = monsters_from_saved(cached.monsters, true);
-        let items = items_from_saved(cached.items);
-        let props = props_from_saved(cached.props);
-
+        // Cache/save paths use SavedMonster/Item/Prop directly — no
+        // conversion needed since FloorPlan carries the canonical types.
         FloorPlan {
             map: cached.map,
-            monsters,
-            items,
-            props,
+            monsters: cached.monsters,
+            items: cached.items,
+            props: cached.props,
             machines: Vec::new(),
             exit_tiles: cached.exit_tiles,
             player_spawn,
@@ -483,15 +433,11 @@ impl FloorPlan {
         let player_spawn = Point::new(save_data.player.x, save_data.player.y);
         let map = save_data_to_map(&save_data.map);
 
-        let monsters = monsters_from_saved(save_data.monsters, true);
-        let items = items_from_saved(save_data.floor_items);
-        let props = props_from_saved(save_data.props);
-
         FloorPlan {
             map,
-            monsters,
-            items,
-            props,
+            monsters: save_data.monsters,
+            items: save_data.floor_items,
+            props: save_data.props,
             machines: Vec::new(),
             // Save schema v5 doesn't persist exit tiles; v6 will.
             exit_tiles: Vec::new(),
@@ -547,12 +493,15 @@ pub fn materialize_floor(
     // Spawn tiles
     spawn_tiles_into_ecs(commands, map_entity, &plan.map, tile_assets, tile_index, ascii_font);
 
-    // Spawn monsters
+    // Spawn monsters. `hp_current == 0` is the sentinel for "fresh
+    // spawn — use the manifest default HP"; any positive value is a
+    // restored HP from cache or save.
     for m in &plan.monsters {
+        let pos = m.pos();
         if let Some(entity) = spawn_monster_by_name(
             commands,
             &m.name,
-            &m.pos,
+            &pos,
             turn_manager,
             &entity_assets.monster_manifests,
             &entity_assets.monster_manifest_handle,
@@ -573,8 +522,8 @@ pub fn materialize_floor(
             if let Some(patrol_route) = m.patrol_route.clone() {
                 commands.entity(entity).insert(patrol_route);
             }
-            if let Some(hp) = m.saved_hp {
-                commands.entity(entity).insert(SavedHp(hp));
+            if m.hp_current > 0 {
+                commands.entity(entity).insert(SavedHp(m.hp_current));
             }
             if m.submerged {
                 commands.entity(entity).insert(crate::components::Submerged);
@@ -586,6 +535,7 @@ pub fn materialize_floor(
 
     // Spawn items
     for i in &plan.items {
+        let pos = i.pos();
         // If the item has saved enchantment data, skip random enchantment rolling
         // by passing None for enchant_floor_depth.
         let has_saved_enchantment = i.state.enchantment.is_some()
@@ -600,7 +550,7 @@ pub fn materialize_floor(
         if let Some(entity) = spawn_item(
             commands,
             &i.name,
-            &i.pos,
+            &pos,
             &entity_assets.item_manifests,
             &entity_assets.item_manifest_handle,
             &entity_assets.item_sprite_assets,
@@ -633,10 +583,11 @@ pub fn materialize_floor(
 
     // Spawn props
     for p in &plan.props {
+        let pos = p.pos();
         if spawn_prop(
             commands,
             &p.name,
-            &p.pos,
+            &pos,
             &entity_assets.prop_manifests,
             &entity_assets.prop_manifest_handle,
             &entity_assets.prop_sprite_assets,
@@ -860,7 +811,7 @@ mod tests {
         assert_eq!(plan.monsters.len(), 1);
         assert_eq!(plan.items.len(), 1);
         assert_eq!(plan.monsters[0].name, "Goblin");
-        assert_eq!(plan.monsters[0].saved_hp, Some(7));
+        assert_eq!(plan.monsters[0].hp_current, 7);
         assert_eq!(plan.items[0].count, 2);
     }
 
@@ -954,5 +905,62 @@ mod tests {
         let cached = cached_floor_with_stairs(Point::new(7, 4), Point::new(2, 2));
         let plan = plan_floor(FloorSource::Restore { cached, ascending: true });
         assert!(plan.overworld_edit.is_none());
+    }
+
+    #[test]
+    fn plan_floor_restore_preserves_all_saved_monster_fields() {
+        // Round-trip invariant: every field on a SavedMonster must
+        // survive cache → plan unchanged. Now that FloorPlan carries
+        // SavedMonster directly (instead of a parallel MonsterPlan
+        // struct), this is a one-line copy — but the test pins the
+        // contract so a future refactor can't silently drop a field.
+        use crate::game::squad::SquadConfig;
+        let mut cached = cached_floor_with_stairs(Point::new(7, 4), Point::new(2, 2));
+        let monster = SavedMonster {
+            x: 12,
+            y: 7,
+            name: "Goblin Chieftain".to_string(),
+            hp_current: 25,
+            squad_id: Some(42),
+            is_leader: true,
+            squad_config: Some(SquadConfig { flee_threshold: 0.3 }),
+            patrol_route: None,
+            submerged: true,
+        };
+        cached.monsters.push(monster.clone());
+        let plan = plan_floor(FloorSource::Restore { cached, ascending: true });
+        let got = &plan.monsters[0];
+        assert_eq!(got.x, monster.x);
+        assert_eq!(got.y, monster.y);
+        assert_eq!(got.name, monster.name);
+        assert_eq!(got.hp_current, monster.hp_current);
+        assert_eq!(got.squad_id, monster.squad_id);
+        assert_eq!(got.is_leader, monster.is_leader);
+        assert_eq!(got.submerged, monster.submerged);
+        assert!(got.squad_config.is_some());
+    }
+
+    #[test]
+    fn plan_floor_generate_marks_fresh_monsters_with_zero_hp() {
+        // Builder-spawn monsters carry `hp_current: 0` so the
+        // materializer applies the manifest default. Restored monsters
+        // carry a positive `hp_current`.
+        use crate::map::builders::SpawnEntry;
+        let mut bm = super::super::builders::BuilderMap::new_for_test(10, 10);
+        for t in bm.map.tiles.iter_mut() {
+            *t = Tile {
+                terrain: TerrainType::Floor,
+                liquid: LiquidType::None,
+                decoration: Decoration::None,
+            };
+        }
+        bm.starting_position = Some(Position { x: 1, y: 1 });
+        bm.spawn_list.push(SpawnEntry::solo(Point::new(3, 3), "Goblin".to_string()));
+
+        let plan = plan_floor(FloorSource::Generate(bm));
+        assert_eq!(plan.monsters.len(), 1);
+        assert_eq!(plan.monsters[0].hp_current, 0,
+            "fresh-spawn monsters from the builder must carry hp_current = 0 \
+             (the manifest-default sentinel)");
     }
 }

@@ -432,6 +432,8 @@ pub struct SavedMonster {
     pub x: i32,
     pub y: i32,
     pub name: String,
+    /// 0 means "freshly generated — let the manifest decide HP". Any
+    /// positive value is a restored HP from cache or save.
     #[serde(default)]
     pub hp_current: i32,
     #[serde(default)]
@@ -444,6 +446,10 @@ pub struct SavedMonster {
     pub patrol_route: Option<crate::game::ai::PatrolRoute>,
     #[serde(default)]
     pub submerged: bool,
+}
+
+impl SavedMonster {
+    pub fn pos(&self) -> Point { Point::new(self.x, self.y) }
 }
 
 /// Shared mutable item state — enchantment, runic, and staff fields.
@@ -488,12 +494,20 @@ pub struct SavedItem {
     pub drifting: bool,
 }
 
+impl SavedItem {
+    pub fn pos(&self) -> Point { Point::new(self.x, self.y) }
+}
+
 /// A prop's state, shared by save files and the floor cache.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct SavedProp {
     pub x: i32,
     pub y: i32,
     pub name: String,
+}
+
+impl SavedProp {
+    pub fn pos(&self) -> Point { Point::new(self.x, self.y) }
 }
 
 /// A complete floor snapshot, shared by the in-memory floor cache and
@@ -1315,7 +1329,7 @@ mod tests {
         GameStatusEffectsExt, STATUS_ENRAGED, STATUS_ENTANGLED, STATUS_FIRE_RESISTANCE,
         STATUS_POISON_RESISTANCE, StatusEffectInstance, StatusEffectKind, StatusEffects,
     };
-    use crate::game::squad::{LeaderDeathBehavior, SquadConfig};
+    use crate::game::squad::SquadConfig;
     use crate::game::staves::StaffEffect;
     use crate::map::tile::{Decoration, LiquidType, TerrainType, Tile};
 
@@ -1424,7 +1438,6 @@ mod tests {
             squad_id: Some(42),
             is_leader: true,
             squad_config: Some(SquadConfig {
-                on_leader_death: LeaderDeathBehavior::Scatter,
                 flee_threshold: 0.3,
             }),
             patrol_route: Some(PatrolRoute {
@@ -1443,7 +1456,6 @@ mod tests {
             squad_id: Some(42),
             is_leader: false,
             squad_config: Some(SquadConfig {
-                on_leader_death: LeaderDeathBehavior::Nothing,
                 flee_threshold: 0.5,
             }),
             patrol_route: Some(PatrolRoute {
@@ -1960,7 +1972,6 @@ mod tests {
         assert_eq!(loaded.squad_id, Some(42));
         assert!(loaded.is_leader);
         let cfg = loaded.squad_config.unwrap();
-        assert_eq!(cfg.on_leader_death, LeaderDeathBehavior::Scatter);
         assert!((cfg.flee_threshold - 0.3).abs() < f32::EPSILON);
         match loaded.patrol_route.unwrap().state {
             PatrolState::Sentry { home } => assert_eq!(home, (12, 7)),
