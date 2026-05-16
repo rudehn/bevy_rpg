@@ -630,14 +630,12 @@ pub fn spawn_dungeon(
         // Write the updated counter back so future floors don't reuse IDs.
         *extras.squad_counter = builder.build_data.squad_counter.clone();
 
-        // If we just built the temple-entrance forest tile, latch the
-        // chosen DownStairs coordinate on `OverworldState` so temple
-        // floor 1's UpStairs (built later) can return to it.
-        if let Some(entrance) = crate::map::transition::overworld_edit_for_floor(
-            floor.0,
-            &builder.build_data.map,
-            &extras.overworld,
-        ) {
+        // If we just built the temple-entrance forest tile,
+        // `TempleEntranceBuilder` stamped its chosen DownStairs
+        // coordinate onto `build_data.overworld_edit`. Latch it onto
+        // `OverworldState` so temple floor 1's UpStairs (built later)
+        // can return to it. No map scan needed.
+        if let Some(entrance) = builder.build_data.overworld_edit {
             extras.overworld.temple_entrance_pos = Some(entrance);
         }
 

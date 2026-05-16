@@ -188,6 +188,16 @@ impl MetaMapBuilder for TempleEntranceBuilder {
         };
         // Temple floor 1 = floor index 9.
         build.add_exit_tile(target, 9, None);
+        // Record the chosen entrance position on the builder output so
+        // the orchestrator can latch it onto OverworldState without a
+        // post-hoc map scan. The condition "is this floor the entrance
+        // forest?" is implicit — TempleEntranceBuilder is only chained
+        // for the chosen entrance forest tile (see
+        // `crate::map::builders::level_builder`).
+        build.overworld_edit = Some(crate::components::Position {
+            x: target.x,
+            y: target.y,
+        });
     }
 }
 
@@ -559,6 +569,28 @@ mod tests {
         assert_eq!(bm.map.tiles[idx].terrain, TerrainType::DownStairs);
         assert_eq!(exit.destination_floor, 9);
         assert!(exit.destination_pos.is_none());
+    }
+
+    #[test]
+    fn temple_entrance_records_overworld_edit() {
+        // Builder must record the chosen DownStairs position on
+        // `build.overworld_edit` so the orchestrator can latch it onto
+        // OverworldState without a post-hoc map scan.
+        let mut bm = build_forest(forest_index(GridDir::SW));
+        ForestBorderStairsBuilder.build_map(&mut bm);
+        assert!(bm.overworld_edit.is_none(),
+            "overworld_edit must start unset before TempleEntranceBuilder runs");
+
+        TempleEntranceBuilder.build_map(&mut bm);
+
+        let edit = bm.overworld_edit.expect("overworld_edit must be set after entrance is placed");
+        // Position must match the DownStairs the builder stamped.
+        let (pt, _) = *bm.exit_tile_spawn_list.last().unwrap();
+        assert_eq!(edit.x, pt.x);
+        assert_eq!(edit.y, pt.y);
+        // And the tile under that position is genuinely a DownStairs.
+        let idx = bm.map.xy_idx(edit.x, edit.y);
+        assert_eq!(bm.map.tiles[idx].terrain, TerrainType::DownStairs);
     }
 
     #[test]

@@ -24,7 +24,7 @@ use crate::{
             lake_builder::LakeBuilder,
             monster_spawner::MonsterSpawner,
             pillar_culler::PillarCuller,
-            prefab_placer::{MonsterRoleTable, PrefabPlacer},
+            prefab_placer::PrefabPlacer,
             start_point::{StartPointBuilder, XStart, YStart},
         },
     },
@@ -124,6 +124,12 @@ pub struct BuilderMap {
     pub decoration_exclusion_zones: Vec<Rect>,
     /// Seeded RNG for deterministic map generation.
     pub rng: RandomNumberGenerator,
+    /// Set by [`forest::TempleEntranceBuilder`] when it stamps the
+    /// temple-entrance DownStairs. The orchestrator latches this onto
+    /// [`crate::map::world::OverworldState::temple_entrance_pos`] so
+    /// temple floor 1's UpStairs (built later) can return to the same
+    /// coordinate. `None` for every other floor.
+    pub overworld_edit: Option<Position>,
 }
 
 /// Implement the engine's `BuildContext` so engine builders can operate on
@@ -234,6 +240,7 @@ impl BuilderMap {
             squad_counter: SquadIdCounter::default(),
             decoration_exclusion_zones: Vec::new(),
             rng: RandomNumberGenerator::new(),
+            overworld_edit: None,
         }
     }
 
@@ -289,6 +296,7 @@ impl BuilderChain {
                 squad_counter,
                 decoration_exclusion_zones: Vec::new(),
                 rng: RandomNumberGenerator::new(),
+                overworld_edit: None,
             },
         }
     }
@@ -497,8 +505,8 @@ pub fn floor_builder(
     spawn_table: &[MonsterSpawnInfo],
     _item_spawn_table: &[ItemSpawnInfo],
     squad_counter: SquadIdCounter,
-    prefabs: Vec<PrefabTemplate>,
-    monster_manifest: &HashMap<String, MonsterAsset>,
+    _prefabs: Vec<PrefabTemplate>,
+    _monster_manifest: &HashMap<String, MonsterAsset>,
     decoration_rules: Vec<crate::assets::DecorationRule>,
     overworld: crate::map::world::OverworldState,
 ) -> BuilderChain {
@@ -528,8 +536,6 @@ pub fn floor_builder(
     let profile = floor_profile_for_depth(new_depth);
     let mut builder = BuilderChain::new(new_depth, width, height, map_name, squad_counter);
 
-    let role_table = MonsterRoleTable::from_manifest(monster_manifest, spawn_table);
-
     // MAP Generation
     builder.start_with(Box::new(brogelike::BrogueLikeBuilder::dungeon(
         new_depth, width, height, profile,
@@ -540,7 +546,7 @@ pub fn floor_builder(
     // builder.with_named("DiagonalCuller2", DiagonalCuller::new());
     // builder.with_named("PillarCuller", PillarCuller::new());
     // builder.with_named("FinishDoors", FinishDoors::new());
-    // builder.with_named("PrefabPlacer", PrefabPlacer::new(prefabs, role_table));
+    // builder.with_named("PrefabPlacer", PrefabPlacer::new(prefabs));
     // builder.with_named("MachineBuilder", machine_builder::MachineBuilder::new());
     // builder.with_named("IsolatedAreaCuller", IsolatedAreaCuller::new());
     // --- Spawners run after IsolatedAreaCuller so entities are never placed in walled-off regions ---

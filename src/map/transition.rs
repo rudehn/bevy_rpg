@@ -7,41 +7,7 @@
 //! the decisions behind a floor transition can be unit-tested without
 //! spinning up an `App`.
 
-use crate::components::Position;
-use crate::map::Map;
-use crate::map::tile::TerrainType;
-use crate::map::world::{FloorKind, FloorTheme, OverworldState, floor_kind};
-
-// ---------------------------------------------------------------------------
-// Overworld writeback
-// ---------------------------------------------------------------------------
-
-/// If `floor` is the chosen temple-entrance forest tile, scan `map` for
-/// the `DownStairs` the forest builder stamped and return its position
-/// so the caller can latch it onto [`OverworldState::temple_entrance_pos`].
-///
-/// Returns `None` when this floor is not the entrance forest, or when
-/// the map has no `DownStairs` (the legacy / non-overworld pipeline).
-///
-/// Replaces the post-hoc scan that used to live inline in
-/// `spawn_dungeon` so the writeback can be tested without a Bevy World.
-pub fn overworld_edit_for_floor(
-    floor: u32,
-    map: &Map,
-    overworld: &OverworldState,
-) -> Option<Position> {
-    if floor != overworld.temple_entrance_floor {
-        return None;
-    }
-    map.tiles.iter().enumerate().find_map(|(idx, tile)| {
-        if tile.terrain == TerrainType::DownStairs {
-            let (x, y) = map.idx_xy(idx);
-            Some(Position { x, y })
-        } else {
-            None
-        }
-    })
-}
+use crate::map::world::{FloorKind, FloorTheme, floor_kind};
 
 // ---------------------------------------------------------------------------
 // Welcome line + theme
@@ -145,80 +111,6 @@ pub fn decide_transition(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map::tile::{Decoration, LiquidType, Tile};
-    use crate::map::world::{GridDir, forest_index};
-
-    fn empty_map(depth: u32, w: i32, h: i32) -> Map {
-        let mut map = Map::new(depth as i32, w, h, "test");
-        for t in map.tiles.iter_mut() {
-            *t = Tile {
-                terrain: TerrainType::Floor,
-                liquid: LiquidType::None,
-                decoration: Decoration::None,
-            };
-        }
-        map
-    }
-
-    // ----- overworld_edit_for_floor --------------------------------------
-
-    #[test]
-    fn overworld_edit_returns_none_for_non_entrance_forest() {
-        let mut map = empty_map(2, 10, 10);
-        // Stamp a DownStairs at (5, 5).
-        let idx = map.xy_idx(5, 5);
-        map.tiles[idx].terrain = TerrainType::DownStairs;
-        let overworld = OverworldState {
-            temple_entrance_floor: 3, // entrance is floor 3, not 2
-            temple_entrance_pos: None,
-        };
-        assert_eq!(overworld_edit_for_floor(2, &map, &overworld), None);
-    }
-
-    #[test]
-    fn overworld_edit_returns_pos_for_entrance_forest_with_downstairs() {
-        let mut map = empty_map(3, 10, 10);
-        let idx = map.xy_idx(7, 4);
-        map.tiles[idx].terrain = TerrainType::DownStairs;
-        let overworld = OverworldState {
-            temple_entrance_floor: 3,
-            temple_entrance_pos: None,
-        };
-        assert_eq!(
-            overworld_edit_for_floor(3, &map, &overworld),
-            Some(Position { x: 7, y: 4 }),
-        );
-    }
-
-    #[test]
-    fn overworld_edit_returns_none_when_entrance_floor_has_no_downstairs() {
-        let map = empty_map(3, 10, 10);
-        let overworld = OverworldState {
-            temple_entrance_floor: 3,
-            temple_entrance_pos: None,
-        };
-        assert_eq!(overworld_edit_for_floor(3, &map, &overworld), None);
-    }
-
-    #[test]
-    fn overworld_edit_picks_first_downstairs_when_multiple_exist() {
-        // Forests shouldn't have two DownStairs, but the helper should
-        // be deterministic — first walkable index wins.
-        let mut map = empty_map(forest_index(GridDir::N), 10, 10);
-        let idx_a = map.xy_idx(3, 3);
-        let idx_b = map.xy_idx(7, 7);
-        map.tiles[idx_a].terrain = TerrainType::DownStairs;
-        map.tiles[idx_b].terrain = TerrainType::DownStairs;
-        let overworld = OverworldState {
-            temple_entrance_floor: forest_index(GridDir::N),
-            temple_entrance_pos: None,
-        };
-        // (3, 3) has the lower index in row-major iteration.
-        assert_eq!(
-            overworld_edit_for_floor(forest_index(GridDir::N), &map, &overworld),
-            Some(Position { x: 3, y: 3 }),
-        );
-    }
 
     // ----- welcome_line --------------------------------------------------
 
