@@ -18,15 +18,32 @@ pub struct Armor(pub i32);
 #[reflect(Component)]
 pub struct Dodge(pub i32);
 
-/// Flat damage reduction from a shield. Unlike `Armor`, Block is
-/// **flat (not rolled)** and applies to **all damage types** —
-/// physical, fire, lightning, poison. Block is consumed before the
-/// armor roll so it shrinks raw damage at the front of the pipeline.
-/// Shield items' `defense` field flows here via `compute_stat_delta`
-/// (any item in the `OffHand` slot routes its defense to Block).
+/// Shield "SH" value — the additive bonus to a per-attack block check.
+/// When a hit lands and Block > 0, the defender rolls
+/// `d20 + floor(Shields_skill/4) + Block` against DC 17. On pass, the
+/// hit's damage is **fully negated** (zeroed) for every damage type.
+/// On fail, no reduction applies. Shield items' `defense` field flows
+/// here via `compute_stat_delta` (any item in the `OffHand` slot routes
+/// its defense to Block). The number of blocks an entity can attempt
+/// per turn is bounded by [`MaxShieldBlocks`].
 #[derive(Component, Debug, Clone, Reflect, Default, Serialize, Deserialize)]
 #[reflect(Component)]
 pub struct Block(pub i32);
+
+/// Cap on shield block attempts per turn. Set from the equipped
+/// shield's `max_blocks` field (1 buckler / 2 kite / 3 tower).
+/// Reset is automatic — counters live in [`ShieldBlocksUsed`].
+#[derive(Component, Debug, Clone, Reflect, Default, Serialize, Deserialize)]
+#[reflect(Component)]
+pub struct MaxShieldBlocks(pub u32);
+
+/// Counter of shield blocks consumed since the entity's last turn end.
+/// Only **successful** blocks decrement the budget; failed checks
+/// still let the entity try again next swing. Reset to 0 on
+/// `TurnEndEvent` for the matching entity.
+#[derive(Component, Debug, Clone, Reflect, Default, Serialize, Deserialize)]
+#[reflect(Component)]
+pub struct ShieldBlocksUsed(pub u32);
 
 /// Flat bonus added to the d20 attack roll.
 #[derive(Component, Debug, Clone, Reflect, Default, Serialize, Deserialize)]
@@ -47,6 +64,8 @@ impl Plugin for StatsPlugin {
         app.register_type::<Armor>()
             .register_type::<Dodge>()
             .register_type::<Block>()
+            .register_type::<MaxShieldBlocks>()
+            .register_type::<ShieldBlocksUsed>()
             .register_type::<HitBonus>()
             .register_type::<DamageBonus>();
     }

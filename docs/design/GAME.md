@@ -1,5 +1,14 @@
 # The Veiled Tyrant — Game Design
 
+> **Status update (overworld milestone):** the world is now a **town hub** at
+> the centre of a **3×3 forest grid**, with a **3-floor temple** under one of
+> the forest tiles. The hero recovers the **Amulet of Yendor** from the
+> temple's bottom and returns to the town portal to win. The legacy 26-floor
+> descent (Amulet of Ascension) is preserved in code but not currently
+> reached. See [OVERWORLD.md](OVERWORLD.md) for the canonical writeup of the
+> current map structure and win condition. Spawning is disabled for now —
+> the amulet is the only item in the world; content returns in a later phase.
+
 ## Vision
 
 A Brogue-inspired roguelike where a lone hero descends a 26-floor dungeon to
@@ -140,18 +149,22 @@ site so future race / class / skill effects have one place to plug in.
 AttackIntent { source: Melee | Ranged | Spell | Environment }
   -> hit_check (d20 + hit_bonus + attr_bonus + weapon_bonus + fighting_bonus
                   ↑ via roll_d20_with_race                vs 4 + dodge_bonus)
-                                ↑ STR_mod (Melee), DEX_mod (Ranged), 0 otherwise
+                                ↑ DEX_mod (Ranged or finesse melee — Short/Long Blades),
+                                  STR_mod (any other melee), 0 otherwise
                                               ↑ floor(weapon_skill/4) — Long Blades, Axes, Ranged, etc.
                                                             ↑ floor(Fighting/4), melee only
   -> damage_roll (weapon dice + damage_bonus + attr_bonus + weapon_bonus + fighting_bonus; x2 on crit)
                                                 ↑ same skill bonuses as hit-check
   -> damage_reduction:
-       block = block_base + floor(Shields/4)        ← flat, applies to ALL types
-       Physical: (raw - block - armor_roll).max(0), then apply resistance %
+       shield_check (any damage type):
+         if Block > 0 AND blocks_used < MaxShieldBlocks:
+           d20 + floor(Shields/4) + Block >= 17  → full negation (damage = 0),
+                                                  blocks_used += 1
+       Physical: (raw - armor_roll).max(0), then apply resistance %
                                 ↑ armor_roll = rand(0..=armor_max + floor(Armor/4))
                                               ↑ Dwarf Stoneblood: +50%
                                                 poison resistance at spawn
-       Poison/Fire/Lightning: (raw - block).max(0), then apply resistance %
+       Poison/Fire/Lightning: raw, then apply resistance %
   -> apply_damage (HP change, death check) → may emit DeathEvent
                                               ↑ XP system reads this:
                                                 killer == player → award XP
@@ -171,19 +184,22 @@ a staff do less than its base damage.
 
 ### Damage Types
 
-| Type | Block Applied? | Armor Applied? | Resistance Applied? | Unique Property |
+| Type | Shield Check? | Armor Applied? | Resistance Applied? | Unique Property |
 |------|---------------|---------------|---------------------|-----------------|
-| Physical | Yes (flat) | Yes (random roll, 0..=max) | Yes (%) | Standard melee and ranged attacks |
-| Poison | Yes (flat) | No | Yes (%) | Stacks: re-application resets duration to full; multiple sources accumulate independently |
-| Fire | Yes (flat) | No | Yes (%) | Destroys wooden doors; burning DoT is fire-based |
-| Lightning | Yes (flat) | No | Yes (%) | Can chain jump to additional enemies |
+| Physical | Yes (full negation on pass) | Yes (random roll, 0..=max) | Yes (%) | Standard melee and ranged attacks |
+| Poison | Yes (full negation on pass) | No | Yes (%) | Stacks: re-application resets duration to full; multiple sources accumulate independently |
+| Fire | Yes (full negation on pass) | No | Yes (%) | Destroys wooden doors; burning DoT is fire-based |
+| Lightning | Yes (full negation on pass) | No | Yes (%) | Can chain jump to additional enemies |
 
-**Block** is a flat shield-based reduction that applies to every damage
-type — it's the only defense that touches magical damage. **Armor** is
-a random roll between 0 and `armor_max` (chest-piece `defense` +
-enchantment + `floor(Armor_skill/4)`), and only applies to Physical
-damage. So a fireball ignores armor entirely but still chips against a
-shield.
+**Shield Block** is a per-attack `d20 + floor(Shields/4) + Block ≥ 17`
+check. On pass the hit is fully negated, regardless of damage type — a
+fireball can be blocked by a tower shield. Each shield has a
+`max_blocks` budget (1 buckler / 2 kite / 3 tower) that caps successful
+blocks per turn; once exhausted, further hits pass through until the
+defender finishes their own action. **Armor** is a random roll between
+0 and `armor_max` (chest-piece `defense` + enchantment +
+`floor(Armor_skill/4)`), and only applies to Physical damage. So a
+fireball ignores armor entirely, but the shield gets a chance at it.
 
 ### Resistances
 
@@ -207,7 +223,8 @@ Applies symmetrically to player and monsters.
 | Hit Bonus | 0 | Equipment |
 | Dodge Bonus | 0 | Equipment |
 | Armor (max roll) | 0 | Equipment + Armor skill |
-| Block | 0 | Shield equipped + Shields skill |
+| Block SH | 0 | Shield equipped (Buckler/Kite/Tower) |
+| Max Shield Blocks | 0 | Per-shield: 1/2/3 |
 | Damage | 1d2 (unarmed) | Weapon equipped |
 | Action Delay | 1.0x (baseline) | Equipment |
 | Vision Range | 8 tiles (min 4) | Equipment |

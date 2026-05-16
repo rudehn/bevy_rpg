@@ -86,16 +86,16 @@
             ascii_char: "}",
             ascii_fg: "#7A5A3A",
         ),
-        // Mage's starter staff. Lightning effect with a deliberately long
-        // recharge (500 vs the standard 250) so the Mage has a single
-        // meaningful zap early and must conserve until they find better.
+        // Mage's starter staff. Lightning effect at the standard 250-turn
+        // recharge — the staff IS the Mage's primary weapon, not a once-
+        // per-floor panic button.
         "Apprentice Staff": (
             name: "Apprentice Staff",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Staff,
             staff_effect: Some(Lightning),
-            base_recharge: 500,
+            base_recharge: 250,
             rarity: Common,
             ascii_char: "/",
             ascii_fg: "#8888AA",
@@ -295,24 +295,33 @@
         // ===========================
         // SHIELDS (3 tiers)
         // ===========================
-        "Wooden Shield": (
-            name: "Wooden Shield",
-            tile_size: (32, 32),
-            grid_size: (8, 8),
-            item_kind: Armor,
-            armor_slot: Some(OffHand),
-            defense: 2,
-            rarity: Common,
-            ascii_char: ")",
-            ascii_fg: "#B49664",
-        ),
-        "Iron Shield": (
-            name: "Iron Shield",
+        // Shields use a per-attack SH check (d20 + floor(Shields/4) + defense
+        // vs DC 17). `defense` is the SH bonus, NOT a flat damage reduction.
+        // `dodge_bonus` is the encumbrance penalty (negative). `max_blocks`
+        // caps successful blocks per turn — once consumed, further hits
+        // pass through until the entity's next turn.
+        "Buckler": (
+            name: "Buckler",
             tile_size: (32, 32),
             grid_size: (8, 8),
             item_kind: Armor,
             armor_slot: Some(OffHand),
             defense: 3,
+            dodge_bonus: -1,
+            max_blocks: 1,
+            rarity: Common,
+            ascii_char: ")",
+            ascii_fg: "#B49664",
+        ),
+        "Kite Shield": (
+            name: "Kite Shield",
+            tile_size: (32, 32),
+            grid_size: (8, 8),
+            item_kind: Armor,
+            armor_slot: Some(OffHand),
+            defense: 8,
+            dodge_bonus: -3,
+            max_blocks: 2,
             rarity: Uncommon,
             ascii_char: ")",
             ascii_fg: "#A0A0A0",
@@ -323,7 +332,9 @@
             grid_size: (8, 8),
             item_kind: Armor,
             armor_slot: Some(OffHand),
-            defense: 5,
+            defense: 13,
+            dodge_bonus: -5,
+            max_blocks: 3,
             // Speed penalty: +10% delay on every action while equipped.
             delay_modifier: 0.1,
             rarity: Rare,

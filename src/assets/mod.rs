@@ -766,6 +766,11 @@ pub struct ItemAsset {
     /// on zap, Fighting on bash) and non-weapons.
     #[serde(default)]
     pub weapon_skill: Option<crate::game::skills::WeaponSkill>,
+    /// Phase 3 follow-up: per-turn shield-block budget. Only meaningful
+    /// for OffHand armor (shields). 1 buckler / 2 kite / 3 tower. Field
+    /// is ignored on non-shield items; defaults to 0.
+    #[serde(default)]
+    pub max_blocks: u32,
     /// Whether this item is a quest item required to win the game.
     #[serde(default)]
     pub is_quest_item: bool,

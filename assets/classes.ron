@@ -40,7 +40,7 @@
             starting_kit: [
                 (name: "Dagger"),
                 (name: "Cloth Wraps"),
-                (name: "Throwing Knife", count: 1),
+                (name: "Throwing Knife", count: 3),
             ],
             starting_skills: (
                 fighting: 1,

@@ -99,11 +99,21 @@ chosen strategy.
 
 ### Off-hand
 
-| Item | Effect |
-|------|--------|
-| Wooden Shield | +2 armor |
-| Iron Shield | +3 armor |
-| Tower Shield | +5 armor, +0.1 delay (10% slower on every action) |
+Shields are **not** flat damage reduction — they enable a per-attack
+block check (`d20 + floor(Shields/4) + SH >= 17`). On pass the hit is
+fully negated for any damage type, including magical. Each shield has
+a `max_blocks` budget capping successful blocks per turn; once
+exhausted, further hits this turn bypass the shield. Shields impose a
+Dodge penalty (encumbrance).
+
+| Item | SH | Dodge | Max blocks/turn | Chargen block chance |
+|------|---|---|---|---|
+| Buckler | +3 | −1 | 1 | 35% |
+| Kite Shield | +8 | −3 | 2 | 60% |
+| Tower Shield | +13 | −5 | 3 | 85% (+ 10% delay penalty) |
+
+Block chance scales with the Shields skill at `+floor(Shields/4)` per
+attempt; see [SKILLS.md](SKILLS.md) §1 for the full curve.
 
 ## Rings & Amulets
 

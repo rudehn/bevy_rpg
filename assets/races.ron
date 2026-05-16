@@ -25,18 +25,21 @@
                 interval: 4,
                 allowed: [Str, Dex, Int],
             ),
+            // "Disciplined soldier" aptitudes — modest +1 in the
+            // Fighting/Armor/Shields cluster. Gives the Human race a
+            // mechanical identity beyond the open gain schedule.
             aptitudes: (
-                fighting: 0,
+                fighting: 1,
                 axes: 0,
                 short_blades: 0,
                 long_blades: 0,
                 ranged_weapons: 0,
-                armor: 0,
+                armor: 1,
                 dodging: 0,
-                shields: 0,
+                shields: 1,
                 evocations: 0,
             ),
-            description: "Adaptive and balanced. Gains any of STR/DEX/INT every 4 levels.",
+            description: "Adaptive and disciplined. Modest aptitude for Fighting, Armor, and Shields; gains any of STR/DEX/INT every 4 levels.",
         ),
         "dwarf": (
             name: "Dwarf",

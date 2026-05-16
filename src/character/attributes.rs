@@ -185,13 +185,20 @@ pub struct DerivedStats {
 /// `DamageSource`. Used at hit-check and damage-roll time so attribute
 /// scaling branches by weapon type.
 ///
-/// - Melee: STR
+/// - Melee, finesse weapon (short/long blades): DEX
+/// - Melee, any other weapon (axes, unarmed, staff bash): STR
 /// - Ranged: DEX
 /// - Spell / Environment / anything else: 0 (staff zaps add INT_mod
 ///   separately in `handle_zap_staff`; environment damage is
 ///   attribute-independent)
+///
+/// `finesse` is computed by the call site from the equipped weapon's
+/// `weapon_skill` tag (kept out of this module to preserve the
+/// `character → game::skills` layering — `WeaponSkill` lives in
+/// `game::skills`).
 pub fn attack_attribute_bonus(
     source: roguelike_engine::combat::DamageSource,
+    finesse: bool,
     attrs: Option<&Attributes>,
 ) -> i32 {
     use roguelike_engine::combat::DamageSource;
@@ -199,6 +206,7 @@ pub fn attack_attribute_bonus(
         return 0;
     };
     match source {
+        DamageSource::Melee if finesse => attrs.dex_mod(),
         DamageSource::Melee => attrs.str_mod(),
         DamageSource::Ranged => attrs.dex_mod(),
         _ => 0,
@@ -433,14 +441,52 @@ mod tests {
     }
 
     #[test]
-    fn attack_attribute_bonus_picks_str_for_melee() {
+    fn attack_attribute_bonus_picks_str_for_brute_melee() {
         use roguelike_engine::combat::DamageSource;
         let attrs = Attributes {
             strength: 20,
             dexterity: 12,
             intelligence: 10,
         };
-        assert_eq!(attack_attribute_bonus(DamageSource::Melee, Some(&attrs)), 2);
+        // Non-finesse melee (axes, fists, staff bash) → STR.
+        assert_eq!(
+            attack_attribute_bonus(DamageSource::Melee, false, Some(&attrs)),
+            2
+        );
+    }
+
+    #[test]
+    fn attack_attribute_bonus_picks_dex_for_finesse_melee() {
+        use roguelike_engine::combat::DamageSource;
+        let attrs = Attributes {
+            strength: 10,
+            dexterity: 20,
+            intelligence: 12,
+        };
+        // Finesse melee (short/long blades) → DEX.
+        assert_eq!(
+            attack_attribute_bonus(DamageSource::Melee, true, Some(&attrs)),
+            2
+        );
+    }
+
+    #[test]
+    fn attack_attribute_bonus_finesse_flag_ignored_for_ranged() {
+        use roguelike_engine::combat::DamageSource;
+        let attrs = Attributes {
+            strength: 20,
+            dexterity: 12,
+            intelligence: 10,
+        };
+        // Ranged is always DEX regardless of finesse.
+        assert_eq!(
+            attack_attribute_bonus(DamageSource::Ranged, false, Some(&attrs)),
+            -2
+        );
+        assert_eq!(
+            attack_attribute_bonus(DamageSource::Ranged, true, Some(&attrs)),
+            -2
+        );
     }
 
     #[test]
@@ -451,7 +497,10 @@ mod tests {
             dexterity: 20,
             intelligence: 12,
         };
-        assert_eq!(attack_attribute_bonus(DamageSource::Ranged, Some(&attrs)), 2);
+        assert_eq!(
+            attack_attribute_bonus(DamageSource::Ranged, false, Some(&attrs)),
+            2
+        );
     }
 
     #[test]
@@ -462,9 +511,12 @@ mod tests {
             dexterity: 24,
             intelligence: 24,
         };
-        assert_eq!(attack_attribute_bonus(DamageSource::Spell, Some(&attrs)), 0);
         assert_eq!(
-            attack_attribute_bonus(DamageSource::Environment, Some(&attrs)),
+            attack_attribute_bonus(DamageSource::Spell, false, Some(&attrs)),
+            0
+        );
+        assert_eq!(
+            attack_attribute_bonus(DamageSource::Environment, false, Some(&attrs)),
             0
         );
     }
@@ -472,8 +524,9 @@ mod tests {
     #[test]
     fn attack_attribute_bonus_zero_for_entities_without_attributes() {
         use roguelike_engine::combat::DamageSource;
-        assert_eq!(attack_attribute_bonus(DamageSource::Melee, None), 0);
-        assert_eq!(attack_attribute_bonus(DamageSource::Ranged, None), 0);
+        assert_eq!(attack_attribute_bonus(DamageSource::Melee, false, None), 0);
+        assert_eq!(attack_attribute_bonus(DamageSource::Melee, true, None), 0);
+        assert_eq!(attack_attribute_bonus(DamageSource::Ranged, false, None), 0);
     }
 
     #[test]

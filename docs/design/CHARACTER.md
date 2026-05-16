@@ -111,9 +111,12 @@ would auto-apply.
 
 **Playstyle at a glance:**
 
-- **Human** — adaptive in every way. Even +8 spread across all three
-  stats; can pick S/D/I freely at racial-schedule levels. Pairs well
-  with any class.
+- **Human** — adaptive and disciplined. Even +8 spread across all
+  three stats; can pick S/D/I freely at racial-schedule levels. Modest
+  +1 aptitude in **Fighting / Armor / Shields** gives Humans a
+  legible "soldier" identity — they train those skills ~17% faster
+  than the racial baseline, slightly favouring tanky melee builds
+  without locking them out of anything else.
 - **Dwarf** — hardy and strong. The +12 STR distribution and 1.20 HP
   multiplier make a Dwarf Warrior the most durable opener. Stoneblood
   is a quiet life-saver on poison-heavy floors. Less DEX means a Dwarf
@@ -133,28 +136,33 @@ Each class allocates a **12-point distribution** across STR/DEX/INT
 (no negatives in shipping data; the schema allows them for future
 class designs). All class differentiation flows through the
 distribution — there is no `class_attack_bonus` or `class_dodge_bonus`
-fudge factor. A Warrior's hit advantage comes from their +8 STR
-yielding STR_mod on melee; a Rogue's dodge advantage comes from their
-+8 DEX yielding DEX_mod on dodge.
+fudge factor. A Warrior's brute-melee hit advantage comes from their
++8 STR; a Rogue's blade and dodge advantage both come from their +8
+DEX (finesse blades scale on DEX — see §Combat Math Integration).
 
 | Class | STR | DEX | INT | Starting Kit |
 |---|---|---|---|---|
-| Warrior | 8 | 2 | 2 | Rusted Shortsword (1d6), Padded Armor (armor 1) |
-| Rogue | 2 | 8 | 2 | Dagger (1d4 +1 hit), Cloth Wraps (+1 dodge), 1 throwing knife |
-| Mage | 1 | 3 | 8 | Apprentice Staff (1d3 lightning, slow recharge), Robe |
+| Warrior | 8 | 2 | 2 | Rusted Shortsword (1d6, finesse), Padded Armor (armor 1) |
+| Rogue | 2 | 8 | 2 | Dagger (1d4 finesse, Backstab), Cloth Wraps (+1 dodge), 3 throwing knives |
+| Mage | 1 | 3 | 8 | Apprentice Staff (1d3 lightning, 250 recharge), Robe |
 | Ranger | 3 | 8 | 1 | Shortbow (1d6, range 6), 6 arrows, Padded Armor |
 
 **Playstyle at a glance:**
 
-- **Warrior** — STR-driven melee. +8 STR means at chargen a Dwarf
-  Warrior has STR 20 (mod +2), Human Warrior has STR 16 (mod 0). Hit
-  and damage scale with STR on every swing.
-- **Rogue** — DEX-driven, dodge-focused. +8 DEX scales hit/damage on
-  the Dagger and on every ranged attack; also feeds Dodge.
+- **Warrior** — Heavy hitter, brute-melee fantasy. STR-driven on
+  axes and any non-blade weapon. The starter Rusted Shortsword is a
+  finesse weapon, so it scales on DEX until the Warrior finds an Axe
+  (their preferred long-game weapon) — the starter is intentionally
+  a tide-over.
+- **Rogue** — DEX-driven, blade- and dodge-focused. +8 DEX scales
+  hit/damage on Daggers, Swords, and throwing weapons; also feeds
+  Dodge. Backstab (3× damage vs unaware) is the L1 power spike.
   Intentionally fragile until you grow into INT for scroll use.
 - **Mage** — INT-driven. The +8 INT yields INT_mod ≥ +0 for an Elf
-  Mage at chargen; staff zap damage scales with INT_mod (clamped at 0).
-  Frailest class — Elf Mage has only 12 HP at L1.
+  Mage at chargen; staff zap damage scales with INT_mod (clamped at
+  0). Frailest class — Elf Mage has only 12 HP at L1. The Apprentice
+  Staff recharges at the standard 250-turn rate, so the staff IS the
+  Mage's primary weapon, not a panic button.
 - **Ranger** — DEX-driven ranged. Bow attacks consume DEX_mod for both
   hit and damage. Six arrows to start; conserving ammo is the early
   puzzle.
@@ -194,20 +202,25 @@ HitBonus, DamageBonus, Dodge stay as flat-value components on the
 player entity. **Attribute mods for attacks are added dynamically**
 at hit-check / damage-roll time, branching on `AttackIntentMessage.source`:
 
-| Combat value | Phase 2 derivation | When applied |
+| Combat value | Phase 2/3 derivation | When applied |
 |---|---|---|
 | `HitBonus` component | `equipment.hit_bonus` only | baked at spawn / equip |
-| Hit-roll attribute bonus | STR_mod for melee, DEX_mod for ranged, 0 otherwise | dynamic in `hit_check_system` |
+| Hit-roll attribute bonus | DEX_mod for ranged or **finesse melee** (Short/Long Blades), STR_mod for any other melee, 0 otherwise | dynamic in `hit_check_system` |
 | `DamageBonus` component | `equipment.damage_bonus` only | baked at spawn / equip |
-| Damage-roll attribute bonus | STR_mod for melee, DEX_mod for ranged, 0 otherwise | dynamic in `damage_roll_system` |
+| Damage-roll attribute bonus | DEX_mod for ranged or **finesse melee** (Short/Long Blades), STR_mod for any other melee, 0 otherwise | dynamic in `damage_roll_system` |
 | Staff zap damage adder | `ability_mod(int).max(0)` | dynamic in `handle_zap_staff` |
 | `Dodge` | `dex_mod + equipment.dodge_bonus` | baked at spawn / equip |
 | `Armor` | `equipment.armor` (attribute-independent) | baked at spawn / equip |
 | `MaxHp` | `floor(race_hp_mod × (8 + 11 × XL / 2))` | recomputed on every level-up |
 
 The pure helper that drives the dynamic side is
-`attack_attribute_bonus(source, attrs)` in
-[src/character/attributes.rs](../../src/character/attributes.rs).
+`attack_attribute_bonus(source, finesse, attrs)` in
+[src/character/attributes.rs](../../src/character/attributes.rs). The
+`finesse` flag is computed at the call site from the equipped weapon's
+`weapon_skill` tag — `Some(ShortBlades) | Some(LongBlades)` → finesse.
+Axes, fists, and staff-bash are brute (STR). Future finesse-tagged
+weapons (rapiers, whips) plug in by adding their `WeaponSkill` variant
+to the match.
 
 ## Level Progression
 

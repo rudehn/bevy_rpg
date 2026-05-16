@@ -52,8 +52,8 @@
         // ===========================
         // SHIELDS
         // ===========================
-        (item: "Wooden Shield",           min_floor: 1,  max_floor: 12, weight: 3),
-        (item: "Iron Shield",             min_floor: 3,  max_floor: 26, weight: 2),
+        (item: "Buckler",                 min_floor: 1,  max_floor: 12, weight: 3),
+        (item: "Kite Shield",             min_floor: 3,  max_floor: 26, weight: 2),
         (item: "Tower Shield",            min_floor: 6,  max_floor: 14, weight: 1),
         (item: "Tower Shield",            min_floor: 15, max_floor: 26, weight: 3),
 

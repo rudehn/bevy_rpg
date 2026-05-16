@@ -51,6 +51,7 @@ fn deep_water_item_sweep_system(
         (&mut Equipment, &mut Armor, &mut crate::game::stats::Block, &mut Dodge, &mut HitBonus, &mut Damage, &mut DamageBonus, &mut Health, &mut HealthRegen, &mut SpeedStats, &mut Viewshed, &mut Resistances),
         With<Player>,
     >,
+    mut player_shield: Query<(&mut crate::game::stats::MaxShieldBlocks, &mut crate::game::stats::ShieldBlocksUsed), With<Player>>,
     item_query: Query<(&Name, &ItemProperties, Option<&Enchantment>)>,
     mut commands: Commands,
     mut game_rng: ResMut<GameRng>,
@@ -95,6 +96,12 @@ fn deep_water_item_sweep_system(
                             props, enchant_opt, armor, block, dodge, hit_bonus, damage,
                             damage_bonus, health, health_regen, speed, viewshed, resistances,
                         );
+                        if props.armor_slot == Some(crate::game::items::ArmorSlot::OffHand)
+                            && let Ok((mut max_blocks, mut blocks_used)) = player_shield.single_mut()
+                        {
+                            max_blocks.0 = 0;
+                            blocks_used.0 = 0;
+                        }
                     }
                 }
 

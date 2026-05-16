@@ -27,10 +27,10 @@ Other race × class combos produce different starting numbers. See
 |------|---|--------------|
 | HP | 13 (`floor(1.00 × (8 + 11×1/2))`) | Level (HP formula), equipment, shrines |
 | Mana | 10 | Equipment, shrines (full mana system deferred to Phase 4) |
-| Hit Bonus | 0 at spawn (STR_mod 0 added dynamically per melee hit) | Equipment, shrines (STR_mod for melee / DEX_mod for ranged at runtime) |
+| Hit Bonus | 0 at spawn (attribute mod added dynamically per hit) | Equipment, shrines (DEX_mod for ranged or finesse melee; STR_mod for brute melee — see Combat below) |
 | Dodge Bonus | 0 (DEX_mod 0) | DEX_mod, equipment, shrines |
 | Armor | 1 (from Padded Armor starting kit) | Equipment, shrines |
-| Damage | 1d6 (from Rusted Shortsword) + STR_mod (0 at chargen) | STR_mod (melee) / DEX_mod (ranged) at runtime, weapon, equipment, shrines |
+| Damage | 1d6 (from Rusted Shortsword, finesse → DEX_mod) | DEX_mod (ranged or finesse melee) / STR_mod (brute melee) at runtime, weapon, equipment, shrines |
 | Action Delay | 1.0x (baseline) | Equipment, shrines |
 | Vision Range | 8 tiles (10 for Elf via Keen Senses; min 4) | Race trait, equipment, shrines |
 | Spell Slots | 1 | Shrines |
@@ -38,10 +38,18 @@ Other race × class combos produce different starting numbers. See
 | Experience | 0 | XP from kills (slow-then-fast cubic curve) |
 
 **Attribute mods are applied dynamically.** Combat math reads the
-player's `Attributes` and the `AttackIntentMessage.source` at hit-check
-and damage-roll time — STR for melee, DEX for ranged. The static
-`HitBonus` and `DamageBonus` components carry only equipment
-contributions. See [CHARACTER.md](CHARACTER.md) §Combat Math Integration.
+player's `Attributes`, the `AttackIntentMessage.source`, and the
+equipped weapon's `weapon_skill` tag at hit-check and damage-roll time.
+Selection rule:
+
+- **Ranged** attack → DEX_mod
+- **Melee + finesse weapon** (Short Blades or Long Blades) → DEX_mod
+- **Melee + any other weapon** (Axes, fists, staff bash) → STR_mod
+- Spell / Environment → 0 (staves add INT_mod separately)
+
+The static `HitBonus` and `DamageBonus` components carry only
+equipment contributions. See [CHARACTER.md](CHARACTER.md) §Combat
+Math Integration.
 
 ## Equipment Slots
 
@@ -74,9 +82,11 @@ If roll < target:  miss (turn still consumed)
 If natural 20:     critical hit (always hits)
 ```
 
-`attribute_bonus` is added dynamically based on `AttackIntentMessage.source`:
-- **Melee:** STR_mod
+`attribute_bonus` is added dynamically based on
+`AttackIntentMessage.source` and the equipped weapon's `weapon_skill`:
 - **Ranged:** DEX_mod
+- **Melee, finesse weapon** (Short Blades / Long Blades): DEX_mod
+- **Melee, any other weapon** (Axes / fists / staff bash): STR_mod
 - **Spell / Environment:** 0 (staff zaps add INT_mod + Evocations skill
   bonus separately in `handle_zap_staff`)
 
@@ -101,9 +111,11 @@ helpers. See [CHARACTER.md](CHARACTER.md) §Combat Math Integration and
 ### Melee Attack
 
 1. Player bumps into enemy — triggers melee intent
-2. Hit check: `d20 + hit_bonus + STR_mod >= 4 + target_dodge_bonus`
-3. On hit: `damage = weapon_dice + damage_bonus + STR_mod`, reduced by target
-   armor and resistance
+2. Hit check: `d20 + hit_bonus + attr_mod >= 4 + target_dodge_bonus`
+   - `attr_mod` = DEX_mod for finesse weapons (Short/Long Blades),
+     otherwise STR_mod
+3. On hit: `damage = weapon_dice + damage_bonus + attr_mod`, reduced
+   by target armor and resistance
 4. On miss: 0 damage, turn consumed
 
 ### Ranged Attack
@@ -111,9 +123,9 @@ helpers. See [CHARACTER.md](CHARACTER.md) §Combat Math Integration and
 - Requires bow equipped and arrows in off-hand quiver
 - Arrows are consumed on each shot
 - Range limited (default: 8 tiles)
-- Uses the same d20 hit formula but with **DEX_mod** instead of STR_mod
-  for both hit and damage. A DEX-focused Ranger thus scales their bow
-  shots even with a low STR.
+- Uses the same d20 hit formula but with **DEX_mod** for both hit and
+  damage regardless of weapon. A DEX-focused Ranger thus scales their
+  bow shots even with a low STR.
 
 ### Damage Pipeline
 
@@ -121,8 +133,12 @@ helpers. See [CHARACTER.md](CHARACTER.md) §Combat Math Integration and
 AttackIntentMessage { source: Melee | Ranged | Spell | Environment }
   -> hit_check_system
       roll d20 (via roll_d20_with_race)
-      attr_bonus    = attack_attribute_bonus(source, attacker_attrs)
-                      # Melee: STR_mod, Ranged: DEX_mod, else: 0
+      finesse       = matches!(weapon.weapon_skill, ShortBlades | LongBlades)
+      attr_bonus    = attack_attribute_bonus(source, finesse, attacker_attrs)
+                      # Ranged: DEX_mod
+                      # Melee + finesse: DEX_mod
+                      # Melee, non-finesse: STR_mod
+                      # else: 0
       weapon_bonus  = weapon_skill_bonus(weapon, source, attacker_skills)
                       # floor(skill/4) for the equipped weapon's family
       fighting_bonus = fighting_melee_bonus(source, attacker_skills)
@@ -134,7 +150,7 @@ AttackIntentMessage { source: Melee | Ranged | Spell | Environment }
       # Successful hits also bump use counters for the trained skills
 
   -> damage_roll_system
-      attr_bonus     = attack_attribute_bonus(source, attacker_attrs)
+      attr_bonus     = attack_attribute_bonus(source, finesse, attacker_attrs)
       weapon_bonus   = weapon_skill_bonus(weapon, source, attacker_skills)
       fighting_bonus = fighting_melee_bonus(source, attacker_skills)
       if is_critical: roll damage dice x2 + damage_bonus + attr_bonus + weapon_bonus + fighting_bonus

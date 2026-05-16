@@ -75,12 +75,30 @@ from Phase 2.
 | **Ranged Weapons** | hit & damage with ranged | Same shape; fires on any attack where `AttackIntentMessage.source == Ranged` |
 | **Armor** | armor-roll ceiling when wearing armor | `+ floor(Armor/4)` added to the max value rolled by the armor damage-reduction roll whenever a chest armor piece is equipped (`Armor.0 > 0`) |
 | **Dodging** | flat dodge bonus | `+ floor(Dodging/4)` added to `Dodge.0` |
-| **Shields** | flat damage reduction when a shield is equipped | `+ floor(Shields/4)` added to `Block.0` whenever a shield is equipped (`Block.0 > 0`). `Block` is a flat damage reduction that applies to **every** damage type (Physical, Poison, Fire, Lightning) — unlike Armor, it cannot be bypassed by magical damage. |
+| **Shields** | per-attack block-check bonus | `+ floor(Shields/4)` added to the shield-block roll: `d20 + skill_bonus + Block.0 >= 17` (DC). On pass, the **entire incoming hit is negated** (any damage type — block is the only defense that touches magical damage). Each shield has a `max_blocks` budget (1 buckler / 2 kite / 3 tower) that caps successful blocks per turn; failed checks don't consume the budget. The budget resets when the wearer finishes their own action (`ActionFinishedEvent`). |
 | **Evocations** | staff zap damage | Replaces the existing inline `int_mod.max(0)` add in `handle_zap_staff`. New formula: `staff_damage += (int_mod + floor(evocations/4)).max(0)`. Applies to all damage-dealing staff effects (Lightning, Fire, Force; not Healing/Blinking). |
 
 **Why `floor(skill/4)`:** keeps integer breakpoints meaningful, matches
 the DCSS rhythm of "every 4 levels = +1 mechanical step", and avoids
 fractional-bonus stacking in damage math.
+
+### Shield block curves
+
+`Shield_check_passes(d20, Shields_skill_bonus, shield_SH) = d20 + bonus + SH >= 17`.
+Chargen (Shields 0) and trained (Shields 16, +4) block-chance per
+incoming attack:
+
+| Shield | SH | Dodge penalty | Max blocks/turn | Chargen | Skill 16 |
+|---|---|---|---|---|---|
+| Buckler | +3 | −1 | 1 | 35% | 55% |
+| Kite | +8 | −3 | 2 | 60% | 80% |
+| Tower | +13 | −5 | 3 | 85% | 100% |
+
+Block applies to **every** damage type (Physical, Poison, Fire,
+Lightning) — shields are the only defense vs. magical damage. Failed
+checks don't consume the per-turn block budget; only successful blocks
+do. The budget resets on `ActionFinishedEvent` for the wearer, so a
+Tower shield refreshes 3 blocks every time you act.
 
 ## 2. Class Starting Skill Distributions (10 points each)
 
@@ -191,7 +209,7 @@ Each gameplay event that "uses" a skill increments a counter:
 | Ranged Weapons | Any ranged attack |
 | Armor | Damage taken while wearing armor (`Armor.0 > 0`) |
 | Dodging | Successful dodge (the d20 miss condition) |
-| Shields | Damage taken while a shield is equipped (`Block.0 > 0`) |
+| Shields | Successful shield block (the check passed) |
 | Evocations | Staff zap fired (damaging effect) |
 
 Use counters drive Auto-mode XP allocation. Counters never directly
@@ -329,19 +347,28 @@ alongside the existing `attack_attribute_bonus`. The order:
 
 ```
 hit_roll = d20
-         + HitBonus.0                        // equipment + class
-         + attack_attribute_bonus(source)    // STR/DEX/INT mod
-         + weapon_skill_bonus(equipped, skills)  // floor(Long Blades/4), etc.
-         + floor(Fighting / 4)               // melee only
+         + HitBonus.0                                    // equipment
+         + attack_attribute_bonus(source, finesse)       // DEX_mod for ranged or
+                                                         //   finesse melee (Short/Long
+                                                         //   Blades); STR_mod for any
+                                                         //   other melee; 0 otherwise
+         + weapon_skill_bonus(equipped, skills)          // floor(Long Blades/4), etc.
+         + floor(Fighting / 4)                           // melee only
 ```
 
 ```
 damage = weapon_dice_roll
        + DamageBonus.0
-       + attack_attribute_bonus(source)
+       + attack_attribute_bonus(source, finesse)
        + weapon_skill_bonus(equipped, skills)
-       + floor(Fighting / 4)                 // melee only
+       + floor(Fighting / 4)                             // melee only
 ```
+
+`finesse` is computed at the call site:
+`matches!(weapon.weapon_skill, Some(ShortBlades) | Some(LongBlades))`.
+The `character` module deliberately doesn't depend on `game::skills` —
+the call site (combat.rs) inspects the equipped weapon's tag and
+passes the boolean in.
 
 A new pure helper `weapon_skill_bonus(weapon: Option<&ItemProperties>,
 skills: &Skills, source: DamageSource) -> i32` returns the right skill

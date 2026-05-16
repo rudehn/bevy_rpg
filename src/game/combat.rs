@@ -108,6 +108,37 @@ pub use roguelike_engine::combat::{
     apply_damage_multipliers, apply_resistance, compute_after_armor,
 };
 
+/// Difficulty class for the shield block check. A fixed value (mirrors
+/// the dodge baseline of 4 — neither scales with attack power) keeps
+/// the math symmetric across damage sources and lets tower shields
+/// stay meaningful into the late game.
+pub const SHIELD_BLOCK_DC: i32 = 17;
+
+/// Pure shield-check resolver: given a d20 roll, the floored Shields
+/// skill bonus, and the shield's SH value, return whether the block
+/// succeeds. Extracted so the formula is unit-testable without ECS.
+///
+/// At chargen (Shields 0): Buckler (+3) blocks 35% of incoming hits,
+/// Kite (+8) 60%, Tower (+13) 85%. See SKILLS.md §1 for the curve.
+pub fn shield_check_passes(d20_roll: i32, shields_skill_bonus: i32, shield_sh: i32) -> bool {
+    d20_roll + shields_skill_bonus + shield_sh >= SHIELD_BLOCK_DC
+}
+
+/// Resets an entity's `ShieldBlocksUsed` to 0 each time it finishes
+/// its own action. This refreshes the per-turn block budget on a
+/// rolling "between my actions" window — between my action N and N+1,
+/// incoming attackers chew through `MaxShieldBlocks` successful blocks.
+fn reset_shield_blocks_on_turn_end(
+    mut finished: MessageReader<crate::game::actions::ActionFinishedEvent>,
+    mut q: Query<&mut crate::game::stats::ShieldBlocksUsed>,
+) {
+    for ev in finished.read() {
+        if let Ok(mut used) = q.get_mut(ev.entity) {
+            used.0 = 0;
+        }
+    }
+}
+
 // --- Systems ---
 
 /// System that handles health regeneration at the end of a global turn cycle.
@@ -167,10 +198,6 @@ fn hit_check_system(
         let hit_roll = crate::character::roll_d20_with_race(&mut game_rng.0, attacker_race);
 
         let hit_bonus = attacker_hit_bonus.map(|h| h.0).unwrap_or(0);
-        // Branch the attribute contribution by weapon type: STR for melee,
-        // DEX for ranged. Monsters lack `Attributes` and contribute 0.
-        let attacker_attrs = attrs_query.get(intent.attacker).ok();
-        let attr_bonus = crate::character::attack_attribute_bonus(intent.source, attacker_attrs);
 
         // Phase 3 skill bonuses: weapon-family + Fighting for melee.
         // Look up the equipped weapon's skill tag (only meaningful for
@@ -182,6 +209,19 @@ fn hit_check_system(
             .and_then(|eq| eq.weapon)
             .and_then(|w| weapon_props_query.get(w).ok())
             .and_then(|props| props.weapon_skill);
+
+        // Branch the attribute contribution by weapon type: finesse blades
+        // (Short/Long) use DEX in melee, everything else uses STR; ranged
+        // is always DEX. Monsters lack `Attributes` and contribute 0.
+        let attacker_attrs = attrs_query.get(intent.attacker).ok();
+        let finesse = matches!(
+            weapon_skill_tag,
+            Some(crate::game::skills::WeaponSkill::ShortBlades)
+                | Some(crate::game::skills::WeaponSkill::LongBlades)
+        );
+        let attr_bonus =
+            crate::character::attack_attribute_bonus(intent.source, finesse, attacker_attrs);
+
         let weapon_bonus = crate::game::skills::weapon_skill_bonus(
             weapon_skill_tag,
             intent.source,
@@ -263,7 +303,9 @@ fn damage_roll_system(
         Option<&crate::game::stats::Block>,
         Option<&crate::game::abilities::RallyBuff>,
         Option<&crate::game::skills::Skills>,
+        Option<&crate::game::stats::MaxShieldBlocks>,
     )>,
+    mut shield_blocks_used_query: Query<&mut crate::game::stats::ShieldBlocksUsed>,
     player_equipment_query: Query<&crate::game::items::Equipment, With<Player>>,
     weapon_props_query: Query<&crate::game::items::ItemProperties>,
     target_ai_query: Query<&crate::game::MonsterAI>,
@@ -293,10 +335,6 @@ fn damage_roll_system(
         };
 
         let bonus = damage_bonus.map(|d| d.0).unwrap_or(0);
-        // Branch the attribute contribution by weapon type: STR for melee,
-        // DEX for ranged. Mirrors hit_check_system so an attribute's hit
-        // and damage scaling always travel together.
-        let attr_bonus = crate::character::attack_attribute_bonus(message.source, attacker_attrs);
 
         // Phase 3 skill damage bonuses: weapon-family + Fighting (melee only).
         let weapon_skill_tag = player_equipment_query
@@ -305,6 +343,19 @@ fn damage_roll_system(
             .and_then(|eq| eq.weapon)
             .and_then(|w| weapon_props_query.get(w).ok())
             .and_then(|props| props.weapon_skill);
+
+        // Branch the attribute contribution by weapon type: finesse blades
+        // (Short/Long) use DEX in melee, everything else uses STR; ranged
+        // is always DEX. Mirrors hit_check_system so an attribute's hit
+        // and damage scaling always travel together.
+        let finesse = matches!(
+            weapon_skill_tag,
+            Some(crate::game::skills::WeaponSkill::ShortBlades)
+                | Some(crate::game::skills::WeaponSkill::LongBlades)
+        );
+        let attr_bonus =
+            crate::character::attack_attribute_bonus(message.source, finesse, attacker_attrs);
+
         let weapon_bonus = crate::game::skills::weapon_skill_bonus(
             weapon_skill_tag,
             message.source,
@@ -340,26 +391,48 @@ fn damage_roll_system(
 
         // Pull target armor / block / rally / skills once.
         let target_info = target_query.get(message.target).ok();
-        let target_skills = target_info.and_then(|(_, _, _, s)| s);
+        let target_skills = target_info.and_then(|(_, _, _, s, _)| s);
 
-        // ----- Block: flat reduction, applies to ALL damage types -----
-        // Block comes from the OffHand slot (shields). Shields skill adds
-        // to the flat value. Only applies when the target actually has a
-        // shield equipped (Block > 0).
+        // ----- Shield block: per-attack check, full negation on pass -----
+        // Gated entirely on having a shield equipped (Block > 0). Roll
+        // d20 + floor(Shields/4) + Block vs DC 17. On pass, the entire
+        // hit is negated (any damage type — block is the only defense
+        // that touches magical damage). Successful blocks consume one
+        // slot from the per-turn ShieldBlocksUsed budget; failed checks
+        // leave it untouched.
         let block_base = target_info
-            .and_then(|(_, b, _, _)| b)
+            .and_then(|(_, b, _, _, _)| b)
             .map(|b| b.0)
             .unwrap_or(0);
-        let block_total = if block_base > 0 {
+        let max_blocks = target_info
+            .and_then(|(_, _, _, _, m)| m)
+            .map(|m| m.0)
+            .unwrap_or(0);
+        let blocks_used_now = shield_blocks_used_query
+            .get(message.target)
+            .map(|b| b.0)
+            .unwrap_or(0);
+        let can_attempt_block = block_base > 0 && blocks_used_now < max_blocks;
+        if can_attempt_block {
             let skill_bonus = crate::game::skills::shields_skill_bonus(target_skills);
-            if target_skills.is_some() {
-                use_counters.bump(crate::game::skills::Skill::Shields);
+            let d20 = game_rng.0.range(1, 21);
+            if shield_check_passes(d20, skill_bonus, block_base) {
+                raw_damage = 0;
+                if let Ok(mut used) = shield_blocks_used_query.get_mut(message.target) {
+                    used.0 = used.0.saturating_add(1);
+                }
+                if target_skills.is_some() {
+                    use_counters.bump(crate::game::skills::Skill::Shields);
+                }
+                log_writer.write(GameLogMessage(
+                    if attacker_is_player {
+                        "Your blow is blocked!".to_string()
+                    } else {
+                        "You block the attack!".to_string()
+                    }
+                ));
             }
-            block_base + skill_bonus
-        } else {
-            0
-        };
-        raw_damage = (raw_damage - block_total).max(0);
+        }
 
         // ----- Armor: random roll [0, armor_max], physical only -----
         // The Armor component value is the *upper bound* of a uniform
@@ -367,7 +440,7 @@ fn damage_roll_system(
         // skips armor entirely.
         let armor_val = if message.damage_type == DamageType::Physical {
             let (armor_base, skill_bonus) = target_info
-                .map(|(armor, _, rally, skills)| {
+                .map(|(armor, _, rally, skills, _)| {
                     let base = armor.map(|a| a.0).unwrap_or(0)
                         + rally.map(|r| r.armor_bonus).unwrap_or(0);
                     let sb = crate::game::skills::armor_skill_bonus(skills);
@@ -762,6 +835,7 @@ impl Plugin for GameCombatPlugin {
                     regen_system,
                     tick_regen_suppression,
                     handle_toggle_god_mode_system,
+                    reset_shield_blocks_on_turn_end,
                 )
                     .run_if(in_state(AppState::InGame)),
             );
@@ -803,5 +877,65 @@ mod tests {
             turns -= 1;
         }
         assert_eq!(turns, 1);
+    }
+
+    // --- Shield block check ---
+
+    #[test]
+    fn shield_check_passes_at_dc_exactly() {
+        // d20 = 14, no skill, +3 buckler → 17 (exactly DC) = pass.
+        assert!(shield_check_passes(14, 0, 3));
+    }
+
+    #[test]
+    fn shield_check_misses_below_dc() {
+        // d20 = 13, no skill, +3 buckler → 16 = fail.
+        assert!(!shield_check_passes(13, 0, 3));
+    }
+
+    #[test]
+    fn shield_check_buckler_chargen_threshold() {
+        // Buckler (+3), Shields 0 → need d20 ≥ 14 to hit DC 17.
+        // d20 = 13 fails, d20 = 14 passes → 7 of 20 outcomes block → 35%.
+        let buckler = 3;
+        let pass_count: i32 = (1..=20).filter(|&d| shield_check_passes(d, 0, buckler)).count() as i32;
+        assert_eq!(pass_count, 7); // 14..=20 inclusive
+    }
+
+    #[test]
+    fn shield_check_kite_chargen_threshold() {
+        // Kite (+8), Shields 0 → need d20 ≥ 9.
+        let kite = 8;
+        let pass_count: i32 = (1..=20).filter(|&d| shield_check_passes(d, 0, kite)).count() as i32;
+        assert_eq!(pass_count, 12); // 9..=20 = 12 of 20 = 60%
+    }
+
+    #[test]
+    fn shield_check_tower_chargen_threshold() {
+        // Tower (+13), Shields 0 → need d20 ≥ 4.
+        let tower = 13;
+        let pass_count: i32 = (1..=20).filter(|&d| shield_check_passes(d, 0, tower)).count() as i32;
+        assert_eq!(pass_count, 17); // 4..=20 = 17 of 20 = 85%
+    }
+
+    #[test]
+    fn shield_check_skill_bonus_lowers_required_roll() {
+        // Buckler (+3), Shields 16 (+4) → need d20 ≥ 10 → 11 of 20 = 55%.
+        let buckler = 3;
+        let skill_bonus = 4;
+        let pass_count: i32 = (1..=20)
+            .filter(|&d| shield_check_passes(d, skill_bonus, buckler))
+            .count() as i32;
+        assert_eq!(pass_count, 11);
+    }
+
+    #[test]
+    fn shield_check_tower_with_max_skill_autoblocks() {
+        // Tower (+13), Shields 27 (+6) → d20 + 19 always ≥ 17 (worst = 20).
+        let tower = 13;
+        let skill_bonus = 6;
+        for d in 1..=20 {
+            assert!(shield_check_passes(d, skill_bonus, tower), "d20={} should pass", d);
+        }
     }
 }

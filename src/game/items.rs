@@ -173,6 +173,12 @@ pub struct ItemProperties {
     /// a family.
     #[serde(default)]
     pub weapon_skill: Option<crate::game::skills::WeaponSkill>,
+    /// For shields (OffHand armor): max successful block attempts the
+    /// wearer gets per turn. 1 = buckler / 2 = kite / 3 = tower. Set
+    /// to 0 for any non-shield item; the field is ignored unless the
+    /// `armor_slot` is `OffHand`.
+    #[serde(default)]
+    pub max_blocks: u32,
 }
 
 fn default_attack_speed() -> f32 { 1.0 }
@@ -294,6 +300,11 @@ pub struct UnequipItemMessage {
 pub struct StatDelta {
     pub armor: i32,
     pub block: i32,
+    /// Max shield-block attempts per turn. Non-zero only for shields
+    /// (OffHand armor). Additive in the same shape as the rest of the
+    /// delta, but since only one off-hand item is equipped at a time
+    /// the additive form collapses to "the equipped shield's value".
+    pub max_blocks: u32,
     pub dodge: i32,
     pub hit_bonus: i32,
     pub damage_bonus: i32,
@@ -316,6 +327,7 @@ pub fn compute_stat_delta(props: &ItemProperties, enchantment: Option<&crate::ga
     let mut delta = StatDelta {
         armor: if is_offhand { 0 } else { props.defense },
         block: if is_offhand { props.defense } else { 0 },
+        max_blocks: if is_offhand { props.max_blocks } else { 0 },
         dodge: props.dodge_bonus,
         hit_bonus: props.hit_bonus,
         damage_bonus: props.damage_bonus,
@@ -434,6 +446,7 @@ pub fn handle_equip_item(
         (Entity, &mut Equipment, &Inventory, &mut Armor, &mut crate::game::stats::Block, &mut Dodge, &mut HitBonus, &mut Damage, &mut DamageBonus, &mut Health, &mut HealthRegen, &mut SpeedStats, &mut crate::components::Viewshed, &mut crate::game::combat::Resistances),
         With<Player>,
     >,
+    mut shield_query: Query<(&mut crate::game::stats::MaxShieldBlocks, &mut crate::game::stats::ShieldBlocksUsed), With<Player>>,
     item_query: Query<(&ItemProperties, &Name, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>)>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
@@ -441,6 +454,9 @@ pub fn handle_equip_item(
     let Ok((player_entity, mut equipment, inventory, mut armor, mut block, mut dodge, mut hit_bonus, mut damage, mut damage_bonus, mut health, mut health_regen, mut speed, mut viewshed, mut resistances)) =
         player_query.single_mut()
     else {
+        return;
+    };
+    let Ok((mut max_shield_blocks, mut shield_blocks_used)) = shield_query.single_mut() else {
         return;
     };
 
@@ -477,6 +493,10 @@ pub fn handle_equip_item(
         if let Some(old_entity) = equipment.get_entity(slot) {
             if let Ok((old_props, _, old_enchant, _, _, _)) = item_query.get(old_entity) {
                 unapply_item_effects(old_props, old_enchant, &mut armor, &mut block, &mut dodge, &mut hit_bonus, &mut damage, &mut damage_bonus, &mut health, &mut health_regen, &mut speed, &mut viewshed, &mut resistances);
+                if old_props.armor_slot == Some(ArmorSlot::OffHand) {
+                    max_shield_blocks.0 = 0;
+                    shield_blocks_used.0 = 0;
+                }
                 commands.entity(old_entity).remove::<Equipped>();
             } else {
                 warn!("Equipped item entity {:?} in slot '{}' no longer exists; clearing slot.", old_entity, slot);
@@ -488,6 +508,10 @@ pub fn handle_equip_item(
         equipment.set_slot(slot, Some(msg.item_entity));
         commands.entity(msg.item_entity).insert(Equipped);
         apply_item_effects(props, enchant, &mut armor, &mut block, &mut dodge, &mut hit_bonus, &mut damage, &mut damage_bonus, &mut health, &mut health_regen, &mut speed, &mut viewshed, &mut resistances);
+        if props.armor_slot == Some(ArmorSlot::OffHand) {
+            max_shield_blocks.0 = props.max_blocks;
+            shield_blocks_used.0 = 0;
+        }
 
         let dname = display_item_name(&name.0, enchant, weapon_runic, armor_runic, runic_id);
         log_writer.write(GameLogMessage(format!("You equip the {}.", dname)));
@@ -503,6 +527,7 @@ pub fn handle_unequip_item(
         (Entity, &mut Equipment, &mut Armor, &mut crate::game::stats::Block, &mut Dodge, &mut HitBonus, &mut Damage, &mut DamageBonus, &mut Health, &mut HealthRegen, &mut SpeedStats, &mut crate::components::Viewshed, &mut crate::game::combat::Resistances),
         With<Player>,
     >,
+    mut shield_query: Query<(&mut crate::game::stats::MaxShieldBlocks, &mut crate::game::stats::ShieldBlocksUsed), With<Player>>,
     item_query: Query<(&ItemProperties, &Name, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>)>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
@@ -510,6 +535,9 @@ pub fn handle_unequip_item(
     let Ok((player_entity, mut equipment, mut armor, mut block, mut dodge, mut hit_bonus, mut damage, mut damage_bonus, mut health, mut health_regen, mut speed, mut viewshed, mut resistances)) =
         player_query.single_mut()
     else {
+        return;
+    };
+    let Ok((mut max_shield_blocks, mut shield_blocks_used)) = shield_query.single_mut() else {
         return;
     };
 
@@ -526,6 +554,10 @@ pub fn handle_unequip_item(
         equipment.set_slot(slot, None);
         commands.entity(msg.item_entity).remove::<Equipped>();
         unapply_item_effects(props, enchant, &mut armor, &mut block, &mut dodge, &mut hit_bonus, &mut damage, &mut damage_bonus, &mut health, &mut health_regen, &mut speed, &mut viewshed, &mut resistances);
+        if props.armor_slot == Some(ArmorSlot::OffHand) {
+            max_shield_blocks.0 = 0;
+            shield_blocks_used.0 = 0;
+        }
 
         let dname = display_item_name(&name.0, enchant, weapon_runic, armor_runic, runic_id);
         log_writer.write(GameLogMessage(format!("You unequip the {}.", dname)));
@@ -543,6 +575,7 @@ pub fn handle_drop_item(
         (Entity, &mut Equipment, &mut Inventory, &Position, &mut Armor, &mut crate::game::stats::Block, &mut Dodge, &mut HitBonus, &mut Damage, &mut DamageBonus, &mut Health, &mut HealthRegen, &mut SpeedStats, &mut crate::components::Viewshed, &mut crate::game::combat::Resistances),
         With<Player>,
     >,
+    mut shield_query: Query<(&mut crate::game::stats::MaxShieldBlocks, &mut crate::game::stats::ShieldBlocksUsed), With<Player>>,
     item_query: Query<(&Name, &ItemProperties, Option<&ItemStack>, &Transform, Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>)>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
@@ -550,6 +583,9 @@ pub fn handle_drop_item(
     let Ok((player_entity, mut equipment, mut inv, player_pos, mut armor, mut block, mut dodge, mut hit_bonus, mut damage, mut damage_bonus, mut health, mut health_regen, mut speed, mut viewshed, mut resistances)) =
         player_query.single_mut()
     else {
+        return;
+    };
+    let Ok((mut max_shield_blocks, mut shield_blocks_used)) = shield_query.single_mut() else {
         return;
     };
 
@@ -560,6 +596,10 @@ pub fn handle_drop_item(
             commands.entity(msg.item_entity).remove::<Equipped>();
             if let Ok((_, props, _, _, enchant, _, _, _)) = item_query.get(msg.item_entity) {
                 unapply_item_effects(props, enchant, &mut armor, &mut block, &mut dodge, &mut hit_bonus, &mut damage, &mut damage_bonus, &mut health, &mut health_regen, &mut speed, &mut viewshed, &mut resistances);
+                if props.armor_slot == Some(ArmorSlot::OffHand) {
+                    max_shield_blocks.0 = 0;
+                    shield_blocks_used.0 = 0;
+                }
             }
         }
 
@@ -1044,6 +1084,7 @@ mod tests {
         assert_eq!(d, StatDelta {
             armor: 1,
             block: 0,
+            max_blocks: 0,
             dodge: 2,
             hit_bonus: 3,
             damage_bonus: 4,

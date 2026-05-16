@@ -190,6 +190,8 @@ pub fn player_spawn_or_move_system(
                 Damage(player_asset.damage.clone()),
                 Armor(player_asset.armor),
                 crate::game::stats::Block(0),
+                crate::game::stats::MaxShieldBlocks(0),
+                crate::game::stats::ShieldBlocksUsed(0),
                 Dodge(player_asset.dodge + derived.dodge),
                 // HitBonus / DamageBonus start at 0. The hit-check and
                 // damage-roll systems add STR_mod (melee) or DEX_mod

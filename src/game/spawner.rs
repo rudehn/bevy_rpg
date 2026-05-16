@@ -154,6 +154,8 @@ pub fn spawn_monster(
             SpeedStats::new(monster_asset.movement_delay, monster_asset.attack_delay),
             Armor(monster_asset.base_armor),
             crate::game::stats::Block(0),
+            crate::game::stats::MaxShieldBlocks(0),
+            crate::game::stats::ShieldBlocksUsed(0),
             Dodge(monster_asset.base_dodge),
             HitBonus(0),
             DamageBonus(0),
@@ -486,6 +488,7 @@ pub fn spawn_item(
         resistances,
         weapon_ability: asset.weapon_ability.clone(),
         weapon_skill: asset.weapon_skill,
+        max_blocks: asset.max_blocks,
     });
 
     entity.insert(ItemStack { count: 1, max_stack: asset.max_stack });
