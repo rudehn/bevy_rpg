@@ -457,9 +457,16 @@ fn apply_map_transition(
     };
     let source = floor.0;
     let target = msg.destination_floor;
-    if source == target {
+
+    // Pure decision: snapshot/restore/arrival-direction. `None` means
+    // the message was a no-op (same source and target).
+    let Some(decision) = crate::map::transition::decide_transition(
+        source,
+        target,
+        floor_cache.0.contains_key(&target),
+    ) else {
         return;
-    }
+    };
 
     let cached = snapshot_floor(&map, &snap);
     floor_cache.0.insert(source, cached);
@@ -468,19 +475,15 @@ fn apply_map_transition(
     *turn_manager = TurnManager::default();
 
     floor.0 = target;
-    let direction_msg = if target > source {
-        format!("Descending to floor {target}")
-    } else {
+    let direction_msg = if decision.ascending {
         format!("Ascending to floor {target}")
+    } else {
+        format!("Descending to floor {target}")
     };
     log_writer.write(GameLogMessage(direction_msg));
 
     pending_restore.floor = floor_cache.0.remove(&target);
-    // Ascending = we came down from higher (numerically smaller floor going
-    // back to a smaller-still floor doesn't ascend in the dungeon sense, but
-    // the field is only consumed for stair-relative arrival, where the rule
-    // "land near the stair pointing back the way you came" still applies.
-    pending_restore.ascending = target < source;
+    pending_restore.ascending = decision.ascending;
     pending_arrival.0 = msg.destination_pos;
 
     message_writer.write(SpawnDungeonMessage);
@@ -629,17 +632,13 @@ pub fn spawn_dungeon(
 
         // If we just built the temple-entrance forest tile, latch the
         // chosen DownStairs coordinate on `OverworldState` so temple
-        // floor 1's UpStairs (built later) can return to it. The
-        // forest's `starting_position` is the UpStairs back to town —
-        // not the temple entrance — so we scan the map for the
-        // DownStairs tile (which `TempleEntranceBuilder` placed).
-        if floor.0 == extras.overworld.temple_entrance_floor
-            && let Some(entrance) = find_down_stairs(&builder.build_data.map)
-        {
-            extras.overworld.temple_entrance_pos = Some(crate::components::Position {
-                x: entrance.x,
-                y: entrance.y,
-            });
+        // floor 1's UpStairs (built later) can return to it.
+        if let Some(entrance) = crate::map::transition::overworld_edit_for_floor(
+            floor.0,
+            &builder.build_data.map,
+            &extras.overworld,
+        ) {
+            extras.overworld.temple_entrance_pos = Some(entrance);
         }
 
         // Reset RunStats on new game (town, generate path only — the
@@ -844,22 +843,12 @@ pub fn spawn_dungeon(
         turn_manager.len(), turn_manager.current_time
     );
 
-    // Floor-kind aware welcome line — town is the hub, forest is the
-    // wild ring, temple is the dungeon.
-    use crate::map::world::{FloorKind, FloorTheme, floor_kind};
-    let kind = if floor.0 <= 11 { floor_kind(floor.0) } else { FloorKind::Temple(0) };
-    // Sync theme — legacy floors (12+) stay on the dungeon look.
-    *extras.floor_theme = if floor.0 <= 11 {
-        FloorTheme::for_floor_kind(kind)
-    } else {
-        FloorTheme::Dungeon
-    };
-    let welcome = match kind {
-        FloorKind::Town       => "You arrive in the town square.".to_string(),
-        FloorKind::Forest(_)  => format!("You step into the forest. (floor {})", floor.0),
-        FloorKind::Temple(n)  => format!("You descend into the temple. (level {n})"),
-    };
-    log_writer.write(GameLogMessage(welcome));
+    // Floor-kind aware welcome line + theme — both are pure functions
+    // of the floor index (see `crate::map::transition`).
+    *extras.floor_theme = crate::map::transition::theme_for_floor(floor.0);
+    log_writer.write(GameLogMessage(
+        crate::map::transition::welcome_line_for_floor(floor.0),
+    ));
 
     // First-time intro on the town spawn.
     if floor.0 == 0 {
