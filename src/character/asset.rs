@@ -40,6 +40,8 @@ pub struct SkillDistribution {
     pub shields: i32,
     #[serde(default)]
     pub evocations: i32,
+    #[serde(default)]
+    pub stealth: i32,
 }
 
 impl SkillDistribution {
@@ -53,6 +55,7 @@ impl SkillDistribution {
             + self.dodging
             + self.shields
             + self.evocations
+            + self.stealth
     }
 
     /// Iterate as `(Skill, i32)` pairs in `Skill::ALL` order.
@@ -67,6 +70,7 @@ impl SkillDistribution {
             (Skill::Dodging, self.dodging),
             (Skill::Shields, self.shields),
             (Skill::Evocations, self.evocations),
+            (Skill::Stealth, self.stealth),
         ]
         .into_iter()
     }
@@ -94,6 +98,8 @@ pub struct SkillAptitudes {
     pub shields: i32,
     #[serde(default)]
     pub evocations: i32,
+    #[serde(default)]
+    pub stealth: i32,
 }
 
 impl SkillAptitudes {
@@ -108,9 +114,7 @@ impl SkillAptitudes {
             Skill::Dodging => self.dodging,
             Skill::Shields => self.shields,
             Skill::Evocations => self.evocations,
-            // Stealth field added in Phase D2 — defaults to 0 here so
-            // D1 compiles cleanly before the field exists.
-            Skill::Stealth => 0,
+            Skill::Stealth => self.stealth,
         }
     }
 }
