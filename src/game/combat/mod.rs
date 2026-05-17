@@ -1,3 +1,5 @@
+pub mod resolve;
+
 use bevy::prelude::*;
 use bracket_lib::random::RandomNumberGenerator;
 use serde::{Deserialize, Serialize};
