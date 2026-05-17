@@ -120,5 +120,11 @@ pub use crate::lighting::{
     FUNGAL_LIGHT_COLOR, FUNGAL_LIGHT_INTENSITY, FUNGAL_LIGHT_RADIUS,
 };
 
+// ---- Stealth ----
+pub use crate::stealth::{
+    awareness_tick_system, noise_decay_system, noise_modifier, notice_probability, Awareness,
+    AwarenessAlertEvent, AwarenessRecord, AwarenessState, NoiseMap, StealthPlugin,
+};
+
 // ---- Constants ----
 pub use crate::constants::{BASE_ACTION_COST, TILE_SIZE_X, TILE_SIZE_Y, Z_ITEM, Z_MONSTER, Z_PLAYER};
