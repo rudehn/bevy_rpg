@@ -1,8 +1,24 @@
 # RFC 0001 — Combat as a Pure Resolution Pipeline
 
-**Status:** Draft
+**Status:** Landed
 **Branch:** `refactor/combat-resolver-rfc`
 **Related docs:** [GAME.md](../design/GAME.md), [CHARACTER.md](../design/CHARACTER.md), [SKILLS.md](../design/SKILLS.md), [ABILITIES.md](../design/ABILITIES.md)
+
+## What shipped
+
+- `src/game/combat/resolve.rs` — pure-Rust resolver, 49 unit tests
+- `attack_resolution_system` in `src/game/combat/mod.rs` — Bevy adapter (~200 LOC, replaces a 350-LOC two-stage pair)
+- `resolve::apply_damage` consumed by Cleave splash (per-target armor + shield)
+- `resolve::roll_damage` + `resolve::apply_damage` consumed by Lightning chain + Fire AoE staff zaps
+- `range_to_dice` helper in `src/game/staves.rs` converting `(low, high)` curves to engine dice notation
+- `DefenderQueries` + `StaffEventWriters` SystemParams centralizing defender snapshot construction and writer bundling
+
+### Deviations from the original plan
+
+- **Resistance moved out of the resolver.** The drafted resolver applied resistance internally, which would have double-resisted every hit alongside the engine's `damage_application_system`. Resistance is the engine's job; the resolver stops at shield block + armor roll and exposes `armor_roll` to the adapter.
+- **`ShieldKind` enum dropped.** Production shields come from items.ron as integer `Block` values; the enum forced a brittle `Block(3) → Buckler` mapping on the adapter. Replaced with `shield_block_bonus: i32`.
+- **Cleave splash, Lightning chain, Fire AoE now respect shields.** This was promised in CLAUDE.md ("shield blocks beat fire/poison/lightning equally") but had been unmet in production. Cleave splash also now respects per-victim armor.
+- **Force / Healing / Poison / Blinking staff effects stay inline.** Force is knockback, Healing is `HealEvent` (a different pipeline), Poison only applies a status, Blinking is teleport. None have a damage roll the resolver could reuse.
 
 ## Problem
 
