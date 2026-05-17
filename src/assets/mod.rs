@@ -27,7 +27,7 @@ use std::collections::HashMap;
 
 use crate::components::{MovementMode, Species};
 use crate::game::effects::Effect;
-use crate::game::items::{ArmorSlot, ItemKind, Rarity};
+use crate::game::items::{ArmorSlot, ItemKind, OnHitEffect, Rarity};
 use crate::game::staves::MonsterAbilityDef;
 
 use crate::game::{AppState, camera};
@@ -469,6 +469,20 @@ pub struct MonsterAsset {
     /// If true, the monster never moves — it only uses abilities/ranged attacks.
     #[serde(default)]
     pub stationary: bool,
+
+    /// Phase B loadout: item names this monster spawns wielding/wearing.
+    /// At spawn the items are looked up in `items.ron`, instantiated as
+    /// entities attached to the monster's `Equipment` component, and
+    /// their effects apply via the same paths as player equipment —
+    /// equipped weapon's `damage` dice override the monster's intrinsic
+    /// `damage:` field; weapon `on_hit_effects` proc through
+    /// `handle_weapon_on_hit_effects`; armor adds to base armor/dodge.
+    ///
+    /// Empty by default. Monsters with no `equipped:` fall back to the
+    /// intrinsic `damage:` / `base_armor:` / `base_dodge:` fields exactly
+    /// as before.
+    #[serde(default)]
+    pub equipped: Vec<String>,
 }
 
 /// Detonation effect for `ExplodeOnHit`, deserialized from RON.
@@ -701,6 +715,109 @@ pub struct TileManifest {
     pub tiles: HashMap<String, TileAsset>,
 }
 
+/// Weapon-only data — only meaningful when `ItemKindData::Weapon(...)`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WeaponData {
+    /// Damage dice (e.g. `"1d6"`, `"2d4+1"`). Required for weapons.
+    pub damage: String,
+    /// Attack-speed multiplier. 0.5 = twice as fast, 1.0 = normal.
+    #[serde(default = "default_attack_speed")]
+    pub attack_speed: f32,
+    /// Range for ranged weapons (> 1 = ranged; 0 or 1 = melee/default).
+    #[serde(default)]
+    pub weapon_range: u32,
+    /// Active weapon ability name (e.g. `"Backstab"`, `"Cleave"`). Sword
+    /// has none — the no-ability balance baseline.
+    #[serde(default)]
+    pub weapon_ability: Option<String>,
+    /// Weapon-family skill applied on melee/ranged hits.
+    #[serde(default)]
+    pub weapon_skill: Option<crate::game::skills::WeaponSkill>,
+    /// On-hit effects applied to the wielder's successful attacks.
+    /// Empty by default; `[PoisonStrike(...), ...]` for proc-weapons.
+    #[serde(default)]
+    pub on_hit_effects: Vec<OnHitEffect>,
+}
+
+/// Armor-only data — only meaningful when `ItemKindData::Armor(...)`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ArmorData {
+    /// Which equipment slot this armor piece occupies. Required.
+    pub slot: ArmorSlot,
+    /// Flat armor value (chest/helm/etc.) or block value (OffHand
+    /// shields). The runtime routing lives in `compute_stat_delta`.
+    #[serde(default)]
+    pub defense: i32,
+    /// Per-turn shield block budget (Buckler=1, Kite=2, Tower=3). Only
+    /// meaningful for OffHand armor; ignored on other slots.
+    #[serde(default)]
+    pub max_blocks: u32,
+}
+
+/// Staff-only data — only meaningful when `ItemKindData::Staff(...)`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct StaffData {
+    /// Which spell effect this staff casts. Required.
+    pub effect: crate::game::staves::StaffEffect,
+    /// Turns per charge at +0 enchantment.
+    #[serde(default)]
+    pub base_recharge: u32,
+}
+
+/// Consumable-only data — only meaningful when `ItemKindData::Consumable(...)`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConsumableData {
+    /// One-shot effect applied when used. `None` = inert (e.g. arrows).
+    #[serde(default)]
+    pub effect: Option<Effect>,
+    /// Maximum stack size (1 = non-stackable).
+    #[serde(default = "default_max_stack")]
+    pub max_stack: u32,
+    /// Whether this item is ammunition consumed by ranged attacks.
+    #[serde(default)]
+    pub is_ammo: bool,
+}
+
+/// Tagged-union for kind-specific item data. The variant determines
+/// which set of fields is meaningful; the universal equip bonuses
+/// (`hit_bonus`, `damage_bonus`, etc.) stay flat on `ItemAsset`
+/// because they apply across multiple kinds.
+#[derive(Debug, Clone, Deserialize)]
+pub enum ItemKindData {
+    Weapon(WeaponData),
+    Armor(ArmorData),
+    Staff(StaffData),
+    Consumable(ConsumableData),
+    /// Ring — all data lives in the universal equip-bonus fields on `ItemAsset`.
+    Ring,
+    /// Amulet — all data lives in the universal equip-bonus fields on `ItemAsset`.
+    Amulet,
+}
+
+impl ItemKindData {
+    /// Project the variant onto the simpler runtime `ItemKind` tag.
+    pub fn as_kind(&self) -> ItemKind {
+        match self {
+            ItemKindData::Weapon(_) => ItemKind::Weapon,
+            ItemKindData::Armor(_) => ItemKind::Armor,
+            ItemKindData::Staff(_) => ItemKind::Staff,
+            ItemKindData::Consumable(_) => ItemKind::Consumable,
+            ItemKindData::Ring => ItemKind::Ring,
+            ItemKindData::Amulet => ItemKind::Amulet,
+        }
+    }
+}
+
+impl Default for ItemKindData {
+    fn default() -> Self {
+        ItemKindData::Consumable(ConsumableData {
+            effect: None,
+            max_stack: 1,
+            is_ammo: false,
+        })
+    }
+}
+
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
 pub struct ItemAsset {
     pub name: String,
@@ -717,36 +834,17 @@ pub struct ItemAsset {
     )]
     pub tile_size: Option<UVec2>,
 
+    /// Kind-specific data (Weapon/Armor/Staff/Consumable/Ring/Amulet).
+    /// Replaces the old flat `item_kind` + `damage` + `armor_slot` + ...
+    /// soup. Fields that only make sense for one kind live in the
+    /// matching variant; fields that apply across kinds stay flat below.
     #[serde(default)]
-    pub item_kind: ItemKind,
-    #[serde(default)]
-    pub armor_slot: Option<ArmorSlot>,
-    #[serde(default)]
-    pub damage: Option<String>,
-    #[serde(default)]
-    pub defense: i32,
+    pub kind: ItemKindData,
+
     #[serde(default)]
     pub rarity: Rarity,
-    #[serde(default)]
-    pub effect: Option<Effect>,
-    /// Range for ranged weapons (> 1 = ranged; 0 or 1 = melee/default).
-    #[serde(default)]
-    pub weapon_range: u32,
-    /// Attack speed multiplier (0.5 = twice as fast, 1.0 = normal). Defaults to 1.0.
-    #[serde(default = "default_attack_speed")]
-    pub attack_speed: f32,
-    /// Staff effect type (only for Staff items).
-    #[serde(default)]
-    pub staff_effect: Option<crate::game::staves::StaffEffect>,
-    /// Base recharge rate for staves (turns per charge at +0 enchantment).
-    #[serde(default)]
-    pub base_recharge: u32,
-    /// Maximum number of items that can share one inventory slot (1 = not stackable).
-    #[serde(default = "default_max_stack")]
-    pub max_stack: u32,
-    /// Whether this item is ammunition (consumed by ranged attacks).
-    #[serde(default)]
-    pub is_ammo: bool,
+
+    // ---- Universal equip bonuses (apply to rings, amulets, armor, weapons) ----
     /// Dodge bonus granted when equipped.
     #[serde(default)]
     pub dodge_bonus: i32,
@@ -762,7 +860,7 @@ pub struct ItemAsset {
     /// Max HP bonus granted when equipped.
     #[serde(default)]
     pub max_hp_bonus: i32,
-    /// Speed delay modifier when equipped (negative = faster, positive = slower).
+    /// Speed delay modifier when equipped (negative = faster).
     #[serde(default)]
     pub delay_modifier: f32,
     /// Vision range bonus when equipped (Ring of Perception).
@@ -772,20 +870,7 @@ pub struct ItemAsset {
     /// Keys are damage-type names ("fire", "lightning", "poison", "physical").
     #[serde(default)]
     pub resistances: HashMap<String, i32>,
-    /// Active weapon ability name (e.g. "Backstab", "Cleave"). The Sword
-    /// has none — it's the no-ability balance baseline.
-    #[serde(default)]
-    pub weapon_ability: Option<String>,
-    /// Phase 3: which weapon-family skill applies for this weapon.
-    /// `None` for staves (no melee skill bonus — staves use Evocations
-    /// on zap, Fighting on bash) and non-weapons.
-    #[serde(default)]
-    pub weapon_skill: Option<crate::game::skills::WeaponSkill>,
-    /// Phase 3 follow-up: per-turn shield-block budget. Only meaningful
-    /// for OffHand armor (shields). 1 buckler / 2 kite / 3 tower. Field
-    /// is ignored on non-shield items; defaults to 0.
-    #[serde(default)]
-    pub max_blocks: u32,
+
     /// Whether this item is a quest item required to win the game.
     #[serde(default)]
     pub is_quest_item: bool,
@@ -793,6 +878,33 @@ pub struct ItemAsset {
     pub ascii_char: String,
     #[serde(default = "default_white_hex", deserialize_with = "serde_helpers::deserialize_hex_color")]
     pub ascii_fg: Color,
+}
+
+impl ItemAsset {
+    pub fn item_kind(&self) -> ItemKind {
+        self.kind.as_kind()
+    }
+
+    pub fn weapon_data(&self) -> Option<&WeaponData> {
+        if let ItemKindData::Weapon(w) = &self.kind { Some(w) } else { None }
+    }
+
+    pub fn armor_data(&self) -> Option<&ArmorData> {
+        if let ItemKindData::Armor(a) = &self.kind { Some(a) } else { None }
+    }
+
+    pub fn staff_data(&self) -> Option<&StaffData> {
+        if let ItemKindData::Staff(s) = &self.kind { Some(s) } else { None }
+    }
+
+    pub fn consumable_data(&self) -> Option<&ConsumableData> {
+        if let ItemKindData::Consumable(c) = &self.kind { Some(c) } else { None }
+    }
+
+    /// Convenience: max stack size. 1 for any non-Consumable kind.
+    pub fn max_stack(&self) -> u32 {
+        self.consumable_data().map(|c| c.max_stack).unwrap_or(1)
+    }
 }
 
 fn default_attack_speed() -> f32 {
@@ -1162,6 +1274,126 @@ mod species_tests {
                 faction,
                 floors.len()
             );
+        }
+    }
+
+    /// Items in `assets/items.ron` parse into the new tagged-union shape.
+    /// Every shipped item must classify into exactly one `ItemKindData`
+    /// variant — flat `item_kind: X` is gone.
+    #[test]
+    fn items_ron_parses_into_tagged_union() {
+        let src = include_str!("../../assets/items.ron");
+        let manifest: ItemManifest = ron::from_str(src).expect("items.ron must parse");
+        assert!(!manifest.items.is_empty(), "items.ron must declare at least one item");
+        // Every kind variant projects cleanly to the runtime ItemKind tag.
+        for (name, item) in &manifest.items {
+            let kind = item.item_kind();
+            // Round-trip: helper returns a meaningful variant for every item.
+            assert!(
+                matches!(
+                    kind,
+                    ItemKind::Weapon | ItemKind::Armor | ItemKind::Staff
+                    | ItemKind::Consumable | ItemKind::Ring | ItemKind::Amulet,
+                ),
+                "item '{}' has unexpected kind tag", name,
+            );
+        }
+    }
+
+    /// Every Weapon-kind item declares its damage dice in the Weapon
+    /// variant. Catches forgetting to migrate a flat `damage: Some("...")`
+    /// field when adding a new weapon.
+    #[test]
+    fn every_weapon_declares_damage_dice() {
+        let src = include_str!("../../assets/items.ron");
+        let manifest: ItemManifest = ron::from_str(src).expect("items.ron must parse");
+        for (name, item) in &manifest.items {
+            if let Some(w) = item.weapon_data() {
+                assert!(
+                    !w.damage.trim().is_empty(),
+                    "weapon '{}' has empty damage dice; declare damage in kind: Weapon((...))",
+                    name,
+                );
+            }
+        }
+    }
+
+    /// Every Armor-kind item declares its slot in the Armor variant.
+    /// Catches forgetting to migrate a flat `armor_slot: Some(...)` field.
+    #[test]
+    fn every_armor_declares_slot() {
+        let src = include_str!("../../assets/items.ron");
+        let manifest: ItemManifest = ron::from_str(src).expect("items.ron must parse");
+        for (name, item) in &manifest.items {
+            if item.item_kind() == ItemKind::Armor {
+                assert!(
+                    item.armor_data().is_some(),
+                    "armor '{}' missing kind: Armor((slot: ...)); flat armor_slot was dropped in the kind-union refactor",
+                    name,
+                );
+            }
+        }
+    }
+
+    /// Every Staff-kind item declares its effect in the Staff variant.
+    #[test]
+    fn every_staff_declares_effect() {
+        let src = include_str!("../../assets/items.ron");
+        let manifest: ItemManifest = ron::from_str(src).expect("items.ron must parse");
+        for (name, item) in &manifest.items {
+            if item.item_kind() == ItemKind::Staff {
+                assert!(
+                    item.staff_data().is_some(),
+                    "staff '{}' missing kind: Staff((effect: ...))",
+                    name,
+                );
+            }
+        }
+    }
+
+    /// A weapon can declare `on_hit_effects` and round-trip through RON.
+    /// This is the new authoring contract the Ritual Dagger relies on.
+    #[test]
+    fn weapon_on_hit_effects_round_trip() {
+        let ron = r#"(
+            name: "Test Dagger",
+            kind: Weapon((
+                damage: "1d4",
+                attack_speed: 0.5,
+                on_hit_effects: [
+                    PoisonStrike(damage_per_turn: 1, duration: 3, chance: 30),
+                ],
+            )),
+        )"#;
+        let asset: ItemAsset = ron::from_str(ron).expect("parse weapon with on_hit");
+        let w = asset.weapon_data().expect("must be weapon");
+        assert_eq!(w.damage, "1d4");
+        assert_eq!(w.on_hit_effects.len(), 1);
+        match &w.on_hit_effects[0] {
+            OnHitEffect::PoisonStrike { damage_per_turn, duration, chance } => {
+                assert_eq!(*damage_per_turn, 1);
+                assert_eq!(*duration, 3);
+                assert_eq!(*chance, 30);
+            }
+            other => panic!("expected PoisonStrike, got {:?}", other),
+        }
+    }
+
+    /// Ring and Amulet are unit variants — all their data lives in the
+    /// universal equip-bonus fields on `ItemAsset`.
+    #[test]
+    fn ring_and_amulet_parse_as_unit_variants() {
+        for (label, ron_str) in [
+            ("ring", r#"(name: "Test Ring", kind: Ring, hit_bonus: 2)"#),
+            ("amulet", r#"(name: "Test Amulet", kind: Amulet, max_hp_bonus: 15)"#),
+        ] {
+            let asset: ItemAsset = ron::from_str(ron_str)
+                .unwrap_or_else(|e| panic!("{label} must parse: {e}"));
+            match asset.item_kind() {
+                ItemKind::Ring => assert_eq!(asset.hit_bonus, 2),
+                ItemKind::Amulet => assert_eq!(asset.max_hp_bonus, 15),
+                other => panic!("{label} wrong kind {:?}", other),
+            }
         }
     }
 

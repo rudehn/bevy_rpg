@@ -335,7 +335,7 @@ fn spawn_starting_items(
                 let max_stack = item_manifests
                     .get(&item_manifest_handle.0)
                     .and_then(|m| m.items.get(def.name.as_str()))
-                    .map(|a| a.max_stack)
+                    .map(|a| a.max_stack())
                     .unwrap_or(1);
                 commands.entity(entity).insert(ItemStack {
                     count: def.count,

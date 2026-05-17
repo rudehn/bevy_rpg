@@ -455,13 +455,18 @@ mod tests {
         let items: ItemManifest = ron::from_str(src).expect("parse items");
 
         for (id, item) in &items.items {
-            if item.item_kind == ItemKind::Weapon && item.weapon_skill.is_none() {
-                panic!(
-                    "weapon '{id}' has no weapon_skill set. Either set it \
-                     in items.ron or change item_kind (Staff is the only \
-                     skill-less weapon-shaped item)."
-                );
+            if let Some(w) = item.weapon_data() {
+                if w.weapon_skill.is_none() {
+                    panic!(
+                        "weapon '{id}' has no weapon_skill set. Either set it \
+                         in items.ron or change kind (Staff is the only \
+                         skill-less weapon-shaped item)."
+                    );
+                }
             }
         }
+        // Silence the unused-import warning when the test only uses ItemKind
+        // for documentation. (Imported above so the test reads cleanly.)
+        let _ = ItemKind::Weapon;
     }
 }

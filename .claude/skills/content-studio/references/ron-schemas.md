@@ -79,6 +79,21 @@ Live list in `src/game/abilities.rs`. Parseable RON forms:
 - `Terrify(radius)` — fear aura
 - `MimicDisguise` — mimic-as-item
 
+### Equipped loadout (`equipped` array)
+
+```ron
+equipped: ["Ritual Dagger", "Cult Robes"],
+```
+
+Names look up `items.ron`. At spawn the monster gets an `Equipment`
+component with the items in the appropriate slots, each item spawned
+as a minimal entity (no world Position, no rendering). Stat overrides
+apply automatically: equipped weapon's `damage:` replaces the monster's
+intrinsic `damage:`; armor `defense` adds to Armor (Block for OffHand
+shields); armor `dodge_bonus` adds to Dodge. Weapon `on_hit_effects`
+proc through the same handler the player's weapon procs use. Defaults
+to empty; monsters without `equipped:` keep their intrinsic stats.
+
 ### Monster abilities (`monster_abilities` array) — cooldown casts
 ```ron
 monster_abilities: [(
@@ -113,34 +128,23 @@ Optional: `spawn_on_liquid: true` for aquatic monsters.
 
 ## Items
 
-**Source:** `src/assets/mod.rs::ItemAsset`
+**Source:** `src/assets/mod.rs::ItemAsset`, `src/assets/mod.rs::ItemKindData`
 **File:** `assets/items.ron`
+
+Items use a tagged-union `kind:` field. Kind-specific data lives inside
+the matching variant; **universal equip bonuses stay flat**.
 
 ```ron
 "Item Name": (
     name: "Item Name",            // required
     tile_size: (32, 32),          // required for sprite rendering
     grid_size: (8, 8),            // required for sprite rendering
-    item_kind: Weapon,            // required — Weapon|Armor|Ring|Amulet|Consumable|Staff
+    kind: Weapon((...)),          // required — see variants below
     rarity: Common,               // required — Common|Uncommon|Rare|Legendary
     ascii_char: "/",              // required
     ascii_fg: "#A0A0A0",          // required
 
-    // Kind-specific (all optional, defaults)
-    armor_slot: Some(Chest),      // Helm|Chest|Gloves|Boots|OffHand
-    damage: Some("1d6"),          // weapon dice
-    defense: 0,                   // flat armor
-    weapon_range: 0,              // 0 = melee; >1 = ranged
-    attack_speed: 1.0,
-    weapon_ability: Some("Cleave"),  // Sword has none; Dagger="Backstab"; Axe="Cleave"
-    staff_effect: Some(Lightning), // Fire|Lightning|Poison|Healing|Blinking|Force
-    base_recharge: 250,
-    max_stack: 1,                 // 1 = non-stackable
-    is_ammo: false,
-    is_quest_item: false,
-    effect: Some(HealHp(15)),     // for Consumables — see Effects below
-
-    // Equip modifiers (all default 0)
+    // Universal equip modifiers (apply to weapons, armor, rings, amulets)
     dodge_bonus: 0,
     hit_bonus: 0,
     damage_bonus: 0,
@@ -149,7 +153,62 @@ Optional: `spawn_on_liquid: true` for aquatic monsters.
     delay_modifier: 0.0,
     vision_bonus: 0,
     resistances: {"fire": 50},    // HashMap<String, i32> %
+    is_quest_item: false,
 ),
+```
+
+### `kind:` variants
+
+```ron
+// Weapons — damage required; everything else optional.
+kind: Weapon((
+    damage: "1d6",                              // REQUIRED — dice string
+    attack_speed: 1.0,                          // default 1.0
+    weapon_range: 0,                            // 0 = melee; >1 = ranged
+    weapon_ability: Some("Backstab"),           // "Backstab" | "Cleave" | None
+    weapon_skill: Some(LongBlades),             // weapon-family skill tag
+    on_hit_effects: [                           // proc-weapons declare here
+        PoisonStrike(damage_per_turn: 1, duration: 3, chance: 30),
+    ],
+)),
+
+// Armor — slot required.
+kind: Armor((
+    slot: Chest,                                // REQUIRED — Helm|Chest|Gloves|Boots|OffHand
+    defense: 3,                                 // default 0
+    max_blocks: 0,                              // OffHand shields only (1/2/3)
+)),
+
+// Staff — effect required.
+kind: Staff((
+    effect: Lightning,                          // REQUIRED — Fire|Lightning|Poison|Healing|Blinking|Force
+    base_recharge: 250,
+)),
+
+// Consumable — all fields optional.
+kind: Consumable((
+    effect: Some(HealHp(15)),                   // None = inert (e.g. arrows)
+    max_stack: 10,                              // 1 = non-stackable
+    is_ammo: false,
+)),
+
+// Rings & amulets — unit variants; all data lives in the flat equip bonuses.
+kind: Ring,
+kind: Amulet,
+```
+
+### `OnHitEffect` variants (`src/game/items.rs::OnHitEffect`)
+
+Wielder-agnostic on-hit procs. Apply to any entity with `Equipment.weapon`
+pointing at this item — player or monster (Phase B). Mirrors a subset
+of monster `AbilityDef`'s on-hit variants:
+
+```ron
+PoisonStrike  { damage_per_turn, duration, chance }   // %
+BurningStrike { damage_per_turn, duration, chance }   // %
+StunningBlow  { duration, chance }                    // %
+SlowStrike    { duration, chance }                    // %
+LifeDrain     { percent }                             // % of damage healed
 ```
 
 ### Consumable effects (`src/game/effects.rs::Effect`)

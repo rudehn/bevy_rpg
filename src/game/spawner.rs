@@ -173,6 +173,17 @@ pub fn spawn_monster(
         .entity(monster_entity)
         .insert(crate::game::xp::MonsterTier(monster_asset.tier));
 
+    // Phase B: monsters with declared `equipped:` get an empty Equipment
+    // component immediately and an UnequippedLoadout marker for the
+    // deferred-equip system to process next frame. Keeps this function's
+    // signature small — the equip system pulls ItemManifest via Res.
+    if !monster_asset.equipped.is_empty() {
+        commands.entity(monster_entity).insert((
+            crate::game::items::Equipment::default(),
+            crate::game::items::UnequippedLoadout(monster_asset.equipped.clone()),
+        ));
+    }
+
     if let Some(regen_rate) = monster_asset.regen {
         commands.entity(monster_entity).insert(HealthRegen {
             regen_rate,
@@ -451,11 +462,34 @@ pub fn spawn_item(
         RenderLayers::layer(1),
     ));
 
+    // Unpack the tagged-union kind into the runtime ItemProperties shape.
+    // ItemProperties stays flat — handlers across the codebase read those
+    // fields directly. The asset is the only authoring shape that uses
+    // the tagged union.
+    let kind = asset.item_kind();
+    let armor_slot = asset.armor_data().map(|a| a.slot.clone());
+    let defense = asset.armor_data().map(|a| a.defense).unwrap_or(0);
+    let max_blocks = asset.armor_data().map(|a| a.max_blocks).unwrap_or(0);
+    let damage = asset.weapon_data().map(|w| w.damage.clone());
+    let weapon_range = asset.weapon_data().map(|w| w.weapon_range).unwrap_or(0);
+    let attack_speed = asset.weapon_data().map(|w| w.attack_speed).unwrap_or(1.0);
+    let weapon_ability = asset.weapon_data().and_then(|w| w.weapon_ability.clone());
+    let weapon_skill = asset.weapon_data().and_then(|w| w.weapon_skill);
+    let on_hit_effects = asset
+        .weapon_data()
+        .map(|w| w.on_hit_effects.clone())
+        .unwrap_or_default();
+    let staff_effect = asset.staff_data().map(|s| s.effect);
+    let staff_base_recharge = asset.staff_data().map(|s| s.base_recharge).unwrap_or(0);
+    let consumable_effect = asset.consumable_data().and_then(|c| c.effect.clone());
+    let max_stack = asset.consumable_data().map(|c| c.max_stack).unwrap_or(1);
+    let is_ammo = asset.consumable_data().map(|c| c.is_ammo).unwrap_or(false);
+
     // Staves get Effect::ZapStaff automatically so they can be used from inventory.
-    let effect = if asset.staff_effect.is_some() && asset.effect.is_none() {
+    let effect = if staff_effect.is_some() && consumable_effect.is_none() {
         Some(crate::game::effects::Effect::ZapStaff)
     } else {
-        asset.effect.clone()
+        consumable_effect
     };
 
     // Convert the manifest's string-keyed resistance map to typed
@@ -468,16 +502,16 @@ pub fn spawn_item(
         .collect();
 
     entity.insert(ItemProperties {
-        kind: asset.item_kind.clone(),
-        armor_slot: asset.armor_slot.clone(),
-        damage: asset.damage.clone(),
-        defense: asset.defense,
+        kind: kind.clone(),
+        armor_slot: armor_slot.clone(),
+        damage,
+        defense,
         rarity: asset.rarity.clone(),
         effect,
-        weapon_range: asset.weapon_range,
-        attack_speed: asset.attack_speed,
-        staff_effect: asset.staff_effect,
-        base_recharge: asset.base_recharge,
+        weapon_range,
+        attack_speed,
+        staff_effect,
+        base_recharge: staff_base_recharge,
         dodge_bonus: asset.dodge_bonus,
         hit_bonus: asset.hit_bonus,
         damage_bonus: asset.damage_bonus,
@@ -486,19 +520,20 @@ pub fn spawn_item(
         delay_modifier: asset.delay_modifier,
         vision_bonus: asset.vision_bonus,
         resistances,
-        weapon_ability: asset.weapon_ability.clone(),
-        weapon_skill: asset.weapon_skill,
-        max_blocks: asset.max_blocks,
+        weapon_ability,
+        weapon_skill,
+        max_blocks,
+        on_hit_effects,
     });
 
-    entity.insert(ItemStack { count: 1, max_stack: asset.max_stack });
+    entity.insert(ItemStack { count: 1, max_stack });
 
     // Consumable items (potions, scrolls) are destroyed on use.
-    if matches!(asset.item_kind, crate::game::items::ItemKind::Consumable) {
+    if matches!(kind, crate::game::items::ItemKind::Consumable) {
         entity.insert(crate::components::Consumable);
     }
 
-    if asset.is_ammo {
+    if is_ammo {
         entity.insert(Ammo);
     }
 
@@ -521,18 +556,18 @@ pub fn spawn_item(
     // Roll random enchantment and runic for weapons/armor
     if let Some(depth) = enchant_floor_depth {
         let mut rng = bracket_lib::random::RandomNumberGenerator::new();
-        crate::game::enchantment::enchant_item(commands, item_entity, &asset.item_kind, depth, &mut rng);
+        crate::game::enchantment::enchant_item(commands, item_entity, &kind, depth, &mut rng);
     }
 
     // Insert staff components if this is a staff item
-    if let Some(effect) = asset.staff_effect {
+    if let Some(effect) = staff_effect {
         let enchant_level = 0; // Staff enchantment is handled by the Enchantment component
         commands.entity(item_entity).insert((
             crate::game::staves::StaffData {
                 effect,
-                base_recharge: asset.base_recharge,
+                base_recharge: staff_base_recharge,
             },
-            crate::game::staves::Rechargeable::new(asset.base_recharge, enchant_level),
+            crate::game::staves::Rechargeable::new(staff_base_recharge, enchant_level),
         ));
     }
 

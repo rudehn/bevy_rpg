@@ -562,7 +562,7 @@ pub fn materialize_floor(
                     .item_manifests
                     .get(&entity_assets.item_manifest_handle.0)
                     .and_then(|m| m.items.get(i.name.as_str()))
-                    .map(|a| a.max_stack)
+                    .map(|a| a.max_stack())
                     .unwrap_or(1);
                 commands
                     .entity(entity)
