@@ -262,7 +262,7 @@ fn loot_drop_system(
                         let max_stack = item_manifests
                             .get(&item_manifest_handle.0)
                             .and_then(|m| m.items.get(entry.item.as_str()))
-                            .map(|a| a.max_stack)
+                            .map(|a| a.max_stack())
                             .unwrap_or(1);
                         commands.entity(entity).insert(crate::game::items::ItemStack { count, max_stack });
                     }

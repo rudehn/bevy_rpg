@@ -269,6 +269,8 @@ src/
 
 ### Item System
 - All items found in chests (placed by builder pipeline)
+- **`ItemAsset` uses a tagged-union `kind:` field** (`Weapon(WeaponData)` / `Armor(ArmorData)` / `Staff(StaffData)` / `Consumable(ConsumableData)` / `Ring` / `Amulet`). Kind-specific fields live inside the variant; universal equip bonuses (`hit_bonus`, `damage_bonus`, `dodge_bonus`, `regen_bonus`, `max_hp_bonus`, `delay_modifier`, `vision_bonus`, `resistances`) stay flat because they apply across rings, amulets, armor, and weapons. The runtime `ItemProperties` component remains flat — the spawner unpacks the asset's variant into the flat shape, keeping every downstream reader unchanged.
+- **`OnHitEffect`** (`src/game/items.rs`): wielder-agnostic on-hit procs declared on the weapon variant's `on_hit_effects: Vec<OnHitEffect>`. Variants: `PoisonStrike`, `BurningStrike`, `StunningBlow`, `SlowStrike`, `LifeDrain`. Applied by `handle_weapon_on_hit_effects` in `CombatReactionSet`, reading the attacker's `Equipment.weapon`. Works for player and any entity with an `Equipment` component pointing at a weapon entity (Phase B will give monsters one).
 - Weapons differentiate via active abilities: Sword is the no-ability balance baseline; Dagger has Backstab (3× damage vs unaware); Axe has Cleave (lower damage but splashes the rolled damage to all 8 tiles around the attacker); Bow uses ranged targeting via `F`
 - Staves use Brogue-style charges (enchanting adds charges + power)
 - Armor provides either dodge bonus or flat armor (light vs heavy)

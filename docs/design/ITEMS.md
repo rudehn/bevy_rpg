@@ -12,6 +12,56 @@ All loot comes from chests. Chests are placed deliberately by the builder
 pipeline — inside machines, guarded by monsters, behind hidden doors, in
 difficult terrain, or trapped (see ENCOUNTERS.md).
 
+## Authoring shape (RON)
+
+Items in `assets/items.ron` declare a **tagged-union `kind:` field**.
+Kind-specific fields live inside the matching variant; universal equip
+bonuses (`hit_bonus`, `damage_bonus`, `dodge_bonus`, `regen_bonus`,
+`max_hp_bonus`, `delay_modifier`, `vision_bonus`, `resistances`) stay
+flat because they apply across rings, amulets, armor, and weapons.
+
+```ron
+"Sword": (
+    name: "Sword",
+    rarity: Common,
+    ascii_char: "/", ascii_fg: "#A0A0A0",
+    kind: Weapon((
+        damage: "1d6",
+        weapon_skill: Some(LongBlades),
+        on_hit_effects: [],            // proc-weapons declare procs here
+    )),
+),
+```
+
+Variants: `Weapon(WeaponData)`, `Armor(ArmorData)`, `Staff(StaffData)`,
+`Consumable(ConsumableData)`, `Ring`, `Amulet`. See
+[content-studio/references/ron-schemas.md](../../.claude/skills/content-studio/references/ron-schemas.md)
+for the full schema.
+
+The runtime `ItemProperties` component stays flat — the spawner unpacks
+the asset's variant into the flat shape on entity creation, so combat,
+equip/unequip, UI, and save code all read the same field bag they
+always did.
+
+### On-hit weapon procs
+
+Weapons can declare `on_hit_effects: Vec<OnHitEffect>`. After a successful
+melee or ranged hit, `handle_weapon_on_hit_effects` (in `src/game/items.rs`,
+scheduled into `CombatReactionSet`) reads the attacker's `Equipment.weapon`
+and applies each effect. Variants mirror a subset of monster ability
+on-hit procs:
+
+| Variant | Effect |
+|---|---|
+| `PoisonStrike { damage_per_turn, duration, chance }` | applies `Poisoned` (% per hit) |
+| `BurningStrike { damage_per_turn, duration, chance }` | applies `Burning` (% per hit) |
+| `StunningBlow { duration, chance }` | applies `Stunned` (% per hit) |
+| `SlowStrike { duration, chance }` | applies `Slowed` (% per hit) |
+| `LifeDrain { percent }` | heals attacker for % of damage dealt (always) |
+
+Wielder-agnostic: any entity with an `Equipment` component pointing at
+a weapon with `on_hit_effects` triggers the proc — player or monster.
+
 ## Weapons
 
 ### Weapon Types

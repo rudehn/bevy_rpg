@@ -4,11 +4,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::{Equipped, FloorEntityMarker, GameEntityMarker, InInventory, Inventory, Item, Name, Position};
 use crate::constants::{BASE_ACTION_COST, UNARMED_DAMAGE, Z_ITEM};
+use crate::game::abilities::OnHitTriggerMessage;
 use crate::game::actions::{finish_turn, ActionFinishedEvent, ActionKind};
+use crate::game::combat::{Damage, DamageSource, GameRng, HealEvent, Health, HealthRegen};
 use crate::game::effects::Effect;
 use crate::game::enchantment::{display_item_name, Enchantment, ItemArmorRunic, ItemWeaponRunic, RunicIdentified};
 use crate::game::actions::SpeedStats;
-use crate::game::combat::{Damage, Health, HealthRegen};
+use crate::game::magic::{GameStatusEffectsExt, StatusEffectKind, StatusEffects};
 use crate::game::stats::{Armor, DamageBonus, Dodge, HitBonus};
 use crate::player::Player;
 use crate::ui::game_log::GameLogMessage;
@@ -95,6 +97,22 @@ impl std::fmt::Display for Rarity {
     }
 }
 
+/// On-hit effect attached to a weapon. Procs after a successful melee
+/// or ranged hit, in addition to the base damage roll. Mirrors a
+/// subset of monster `AbilityDef` variants — the ones that make sense
+/// to bake into gear rather than into a creature's intrinsic abilities.
+///
+/// Wielder-agnostic: the same dagger procs the same poison whether the
+/// player or a cultist swings it.
+#[derive(Debug, Clone, Reflect, Serialize, Deserialize, PartialEq, Eq)]
+pub enum OnHitEffect {
+    BurningStrike { damage_per_turn: i32, duration: u32, chance: u32 },
+    PoisonStrike { damage_per_turn: i32, duration: u32, chance: u32 },
+    StunningBlow { duration: u32, chance: u32 },
+    SlowStrike { duration: u32, chance: u32 },
+    LifeDrain { percent: i32 },
+}
+
 // --- Components ---
 
 /// Tracks how many of this item are in this stack slot.
@@ -179,6 +197,11 @@ pub struct ItemProperties {
     /// `armor_slot` is `OffHand`.
     #[serde(default)]
     pub max_blocks: u32,
+    /// On-hit effects applied after a successful attack with this weapon.
+    /// Empty for plain weapons; populated for proc-weapons (e.g. Ritual
+    /// Dagger with `PoisonStrike`).
+    #[serde(default)]
+    pub on_hit_effects: Vec<OnHitEffect>,
 }
 
 fn default_attack_speed() -> f32 { 1.0 }
@@ -664,6 +687,94 @@ pub fn handle_drop_item(
     }
 }
 
+/// On-hit handler for weapon-side procs (`ItemProperties.on_hit_effects`).
+/// Runs alongside the monster ability on-hit handlers in `CombatReactionSet`.
+/// Reads the attacker's equipped weapon and dispatches each declared effect.
+/// Wielder-agnostic: works for any entity with an `Equipment` component
+/// pointing at a weapon entity.
+pub fn handle_weapon_on_hit_effects(
+    mut messages: MessageReader<OnHitTriggerMessage>,
+    mut game_rng: ResMut<GameRng>,
+    attacker_query: Query<(&Name, &Equipment)>,
+    defender_query: Query<&Name>,
+    item_props_query: Query<&ItemProperties>,
+    mut status_query: Query<&mut StatusEffects>,
+    mut heal_writer: MessageWriter<HealEvent>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+) {
+    for msg in messages.read() {
+        if !matches!(msg.source, DamageSource::Melee | DamageSource::Ranged) {
+            continue;
+        }
+        let Ok((attacker_name, equipment)) = attacker_query.get(msg.attacker) else { continue; };
+        let Some(weapon_entity) = equipment.weapon else { continue; };
+        let Ok(weapon_props) = item_props_query.get(weapon_entity) else { continue; };
+        if weapon_props.on_hit_effects.is_empty() { continue; }
+        let Ok(defender_name) = defender_query.get(msg.defender) else { continue; };
+
+        for effect in &weapon_props.on_hit_effects {
+            match effect {
+                OnHitEffect::PoisonStrike { damage_per_turn, duration, chance } => {
+                    if game_rng.0.roll_dice(1, 100) <= *chance as i32 {
+                        if let Ok(mut effects) = status_query.get_mut(msg.defender) {
+                            effects.add_effect_with_magnitude(
+                                StatusEffectKind::Poisoned, *duration, *damage_per_turn, None,
+                            );
+                        }
+                        log_writer.write(GameLogMessage(format!(
+                            "{}'s attack poisons {}!", attacker_name.0, defender_name.0
+                        )));
+                    }
+                }
+                OnHitEffect::BurningStrike { damage_per_turn, duration, chance } => {
+                    if game_rng.0.roll_dice(1, 100) <= *chance as i32 {
+                        if let Ok(mut effects) = status_query.get_mut(msg.defender) {
+                            effects.add_effect_with_magnitude(
+                                StatusEffectKind::Burning, *duration, *damage_per_turn, None,
+                            );
+                        }
+                        log_writer.write(GameLogMessage(format!(
+                            "{}'s attack sets {} ablaze!", attacker_name.0, defender_name.0
+                        )));
+                    }
+                }
+                OnHitEffect::StunningBlow { duration, chance } => {
+                    if game_rng.0.roll_dice(1, 100) <= *chance as i32 {
+                        if let Ok(mut effects) = status_query.get_mut(msg.defender) {
+                            effects.add_effect(StatusEffectKind::Stunned, *duration);
+                        }
+                        log_writer.write(GameLogMessage(format!(
+                            "{}'s blow stuns {}!", attacker_name.0, defender_name.0
+                        )));
+                    }
+                }
+                OnHitEffect::SlowStrike { duration, chance } => {
+                    if game_rng.0.roll_dice(1, 100) <= *chance as i32 {
+                        if let Ok(mut effects) = status_query.get_mut(msg.defender) {
+                            effects.add_effect(StatusEffectKind::Slowed, *duration);
+                        }
+                        log_writer.write(GameLogMessage(format!(
+                            "{}'s strike slows {}!", attacker_name.0, defender_name.0
+                        )));
+                    }
+                }
+                OnHitEffect::LifeDrain { percent } => {
+                    let heal_amount = (msg.final_damage * percent / 100).max(1);
+                    heal_writer.write(HealEvent {
+                        target: msg.attacker,
+                        amount: heal_amount,
+                        source: None,
+                    });
+                    log_writer.write(GameLogMessage(format!(
+                        "{} drains life from {}! (+{} HP)",
+                        attacker_name.0, defender_name.0, heal_amount
+                    )));
+                }
+            }
+        }
+    }
+}
+
 // --- Loot Table ---
 
 #[derive(Debug, Clone)]
@@ -686,11 +797,12 @@ pub struct ItemsPlugin;
 
 impl Plugin for ItemsPlugin {
     fn build(&self, app: &mut App) {
-        use crate::game::turns::ProcessingPhase;
+        use crate::game::turns::{CombatReactionSet, ProcessingPhase};
         app.register_type::<ItemKind>()
             .register_type::<ArmorSlot>()
             .register_type::<Rarity>()
             .register_type::<Effect>()
+            .register_type::<OnHitEffect>()
             .register_type::<ItemProperties>()
             .register_type::<ItemStack>()
             .register_type::<Equipment>()
@@ -702,6 +814,13 @@ impl Plugin for ItemsPlugin {
                 Update,
                 (handle_equip_item, handle_unequip_item, handle_drop_item)
                     .in_set(ProcessingPhase::ResolveActions),
+            )
+            // Weapon-side on-hit procs (poison dagger, vampiric blade, …)
+            // run in the same set as monster ability on-hit handlers so
+            // they see fresh damage events from the same combat tick.
+            .add_systems(
+                Update,
+                handle_weapon_on_hit_effects.in_set(CombatReactionSet),
             );
     }
 }

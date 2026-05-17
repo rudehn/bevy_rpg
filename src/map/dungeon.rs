@@ -433,7 +433,7 @@ fn spawn_fallen_items(
         if i.count > 1 {
             let max_stack = item_manifest
                 .and_then(|m| m.items.get(i.name.as_str()))
-                .map(|a| a.max_stack)
+                .map(|a| a.max_stack())
                 .unwrap_or(1);
             commands.entity(entity).insert(ItemStack {
                 count: i.count,
