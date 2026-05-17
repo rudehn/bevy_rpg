@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use bracket_lib::prelude::Point;
 
 use crate::character::Attributes;
+use crate::game::items::{Equipment, ItemProperties};
 use crate::game::skills::{Skill, Skills};
 use roguelike_engine::stealth::{noise_modifier, NoiseMap};
 
@@ -131,6 +132,32 @@ pub fn compute_perception_mod(
     chebyshev_distance: i32,
 ) -> i32 {
     compute_perception_components(monster_base_perception, is_asleep, chebyshev_distance).total()
+}
+
+/// Sum the stealth penalty across the wearer's currently equipped
+/// armor slots (helm, chest, gloves, boots, offhand). Weapons, rings,
+/// and amulets are ignored — they all carry `armor_stealth_penalty: 0`
+/// in the asset schema but we skip them defensively to make the intent
+/// obvious. Returns 0 if the wearer has no armor equipped or none of
+/// the slot entities resolve to an `ItemProperties` component.
+///
+/// Used by `perception_tick_system` to feed `compute_stealth_mod`.
+pub fn equipped_armor_stealth_penalty(
+    equipment: &Equipment,
+    item_query: &Query<&ItemProperties>,
+) -> i32 {
+    [
+        equipment.helm,
+        equipment.chest,
+        equipment.gloves,
+        equipment.boots,
+        equipment.offhand,
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|e| item_query.get(e).ok())
+    .map(|props| props.armor_stealth_penalty)
+    .sum()
 }
 
 #[cfg(test)]

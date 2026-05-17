@@ -524,6 +524,7 @@ pub fn spawn_item(
         weapon_skill,
         max_blocks,
         on_hit_effects,
+        armor_stealth_penalty: asset.armor_stealth_penalty,
     });
 
     entity.insert(ItemStack { count: 1, max_stack });
