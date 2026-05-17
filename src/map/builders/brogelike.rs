@@ -376,53 +376,51 @@ impl BrogueLikeBuilder {
         let mut map_for_dijkstra = Map::new(1, w, h, "tmp");
         map_for_dijkstra.tiles = tiles.to_vec();
 
-        // Make all doors open in the Dijkstra map for pathfinding
+        // Make all doors open in the Dijkstra map for pathfinding so the
+        // detour BFS sees them as passable shortcuts.
         for i in 0..map_for_dijkstra.tiles.len() {
             if map_for_dijkstra.tiles[i].terrain == TerrainType::Door {
                 map_for_dijkstra.tiles[i].terrain = TerrainType::OpenDoor;
             }
         }
 
-        let directions = [(1i32, 0i32), (0, 1)];
+        // Terrain cache mirrors the live `tiles` slice (existing Doors stay
+        // as Door), which is what the adjacency / geometry checks consult.
+        let mut terrain_cache: Vec<TerrainType> = tiles.iter().map(|t| t.terrain).collect();
 
-        // Pre-filter: only consider wall tiles that have walkable tiles on both
-        // sides of at least one axis. This avoids the expensive Dijkstra for
-        // walls that can't possibly be loop doors.
+        // Candidate filter: wall tiles that form a proper one-tile-thick
+        // separator — floor on both sides of one cardinal axis AND walls on
+        // both sides of the perpendicular axis. This matches the geometry
+        // `direction_of_door_site` enforces for room-attach doors, lifted to
+        // the two-sided form needed for loop doors.
         let mut candidates: Vec<(usize, i32, i32)> = Vec::new();
         for idx in 0..total_cells {
-            if map_for_dijkstra.tiles[idx].terrain != TerrainType::Wall { continue; }
+            if terrain_cache[idx] != TerrainType::Wall { continue; }
             let (x, y) = map_for_dijkstra.idx_xy(idx);
-            for &(dx, dy) in &directions {
-                let nx = x + dx;
-                let ny = y + dy;
-                let ox = x - dx;
-                let oy = y - dy;
-                if !map_for_dijkstra.in_bounds(Point::new(nx, ny))
-                    || !map_for_dijkstra.in_bounds(Point::new(ox, oy))
-                {
-                    continue;
-                }
-                let t1 = map_for_dijkstra.tiles[map_for_dijkstra.xy_idx(nx, ny)];
-                let t2 = map_for_dijkstra.tiles[map_for_dijkstra.xy_idx(ox, oy)];
-                if is_walkable(t1) && is_walkable(t2) {
-                    candidates.push((idx, dx, dy));
-                }
+            if x < 1 || y < 1 || x >= w - 1 || y >= h - 1 { continue; }
+            if let Some((dx, dy)) = loop_door_axis(&terrain_cache, w, x, y) {
+                candidates.push((idx, dx, dy));
             }
         }
         // Fisher-Yates shuffle using the provided RNG is not possible here
         // since add_loops doesn't have access to ctx. We use a simple
         // deterministic shuffle seeded from the candidate count instead.
-        // (The original code used `rand::rng()` here too — this is acceptable
-        // because loop placement order has minimal gameplay impact.)
         fisher_yates_simple(&mut candidates);
 
-        // Use a single Dijkstra from all walkable tiles would be wrong -- we need
-        // per-candidate distance. But we can use BFS which is much faster than
-        // bracket-lib's DijkstraMap for unweighted graphs.
         for (idx, dx, dy) in candidates {
+            // A previous iteration may have demoted, replaced, or invalidated
+            // this candidate's geometry — recheck before placing.
+            if terrain_cache[idx] != TerrainType::Wall { continue; }
             let (x, y) = map_for_dijkstra.idx_xy(idx);
-            // Recheck the wall -- a previous iteration may have turned it into a door
-            if map_for_dijkstra.tiles[idx].terrain != TerrainType::Wall { continue; }
+
+            // Reject if any orthogonal neighbor is already a door (existing or
+            // freshly placed in this pass). Prevents adjacent / "row of doors"
+            // clusters.
+            if has_adjacent_door(&terrain_cache, w, h, x, y) { continue; }
+
+            // Re-verify the separator geometry — adjacent placements could
+            // have shifted the perpendicular sides from wall to floor.
+            if loop_door_axis(&terrain_cache, w, x, y).is_none() { continue; }
 
             let nx = x + dx;
             let ny = y + dy;
@@ -437,7 +435,11 @@ impl BrogueLikeBuilder {
 
             if distance > minimum_path_distance {
                 tiles[idx].terrain = TerrainType::Door;
-                map_for_dijkstra.tiles[idx].terrain = TerrainType::Door;
+                terrain_cache[idx] = TerrainType::Door;
+                // Treat the new door as passable in subsequent BFS so nearby
+                // candidates see the new shortcut and (correctly) fail their
+                // detour threshold instead of stacking into chains.
+                map_for_dijkstra.tiles[idx].terrain = TerrainType::OpenDoor;
             }
         }
     }
@@ -485,6 +487,52 @@ fn fisher_yates_simple<T>(slice: &mut [T]) {
         let j = (state >> 33) as usize % (i + 1);
         slice.swap(i, j);
     }
+}
+
+/// Returns the axis `(dx, dy)` along which a wall tile separates two floor
+/// regions (floor on both sides of that axis AND walls on both sides of the
+/// perpendicular axis). Returns `None` if the tile isn't a one-tile-thick
+/// wall separator. Used by `add_loops` to identify proper Brogue-style
+/// loop-door sites.
+fn loop_door_axis(tiles: &[TerrainType], w: i32, x: i32, y: i32) -> Option<(i32, i32)> {
+    let at = |xx: i32, yy: i32| -> TerrainType { tiles[(yy * w + xx) as usize] };
+    let n = at(x, y - 1);
+    let s = at(x, y + 1);
+    let e = at(x + 1, y);
+    let we = at(x - 1, y);
+    let is_floor = |t: TerrainType| t == TerrainType::Floor;
+    let is_wall = |t: TerrainType| matches!(t, TerrainType::Wall | TerrainType::Empty);
+
+    // Horizontal-axis separator: floor E/W, walls N/S
+    if is_floor(e) && is_floor(we) && is_wall(n) && is_wall(s) {
+        return Some((1, 0));
+    }
+    // Vertical-axis separator: floor N/S, walls E/W
+    if is_floor(n) && is_floor(s) && is_wall(e) && is_wall(we) {
+        return Some((0, 1));
+    }
+    None
+}
+
+/// Returns true if any orthogonal neighbor of `(x, y)` is already a door
+/// (Door, OpenDoor, LockedDoor, or HiddenDoor).
+fn has_adjacent_door(tiles: &[TerrainType], w: i32, h: i32, x: i32, y: i32) -> bool {
+    for (ax, ay) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+        let nx = x + ax;
+        let ny = y + ay;
+        if nx < 0 || ny < 0 || nx >= w || ny >= h { continue; }
+        let n_idx = (ny * w + nx) as usize;
+        if matches!(
+            tiles[n_idx],
+            TerrainType::Door
+                | TerrainType::OpenDoor
+                | TerrainType::LockedDoor
+                | TerrainType::HiddenDoor
+        ) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Fisher-Yates shuffle using the builder context's seeded RNG.
@@ -852,6 +900,106 @@ mod tests {
         // We expect at least the original door to remain
         assert!(final_door_count >= initial_door_count,
             "Should not remove existing doors: had {}, now {}", initial_door_count, final_door_count);
+    }
+
+    /// add_loops must not place doors mid-floor — every door it adds must sit
+    /// in a one-tile-thick wall separator (floor on opposite sides AND walls
+    /// on the perpendicular axis).
+    #[test]
+    fn add_loops_only_places_doors_in_thin_walls() {
+        use crate::map::tile::{Decoration, LiquidType};
+        let builder = BrogueLikeBuilder::dungeon(1, 30, 10, FloorProfile {
+            cavern_weight: 0, force_cavern_start: false, target_rooms: 5,
+            hallway_chance: 0, erosion_percent: 0, relaxed_fitting: false,
+            decoration_density: 0.0,
+        });
+
+        // Two large rooms separated by a one-tile-thick vertical wall at x=14.
+        let mut map = Map::new(1, 30, 10, "test");
+        for y in 1..9 {
+            for x in 1..29 {
+                if x == 14 { continue; } // wall column
+                let idx = map.xy_idx(x, y);
+                map.tiles[idx] = Tile {
+                    terrain: TerrainType::Floor,
+                    liquid: LiquidType::None,
+                    decoration: Decoration::None,
+                };
+            }
+        }
+        // Single pre-existing door at the far north end of the wall.
+        let door_idx = map.xy_idx(14, 1);
+        map.tiles[door_idx].terrain = TerrainType::Door;
+
+        builder.add_loops(&mut map.tiles, 30, 10, 5);
+
+        for y in 1..9 {
+            for x in 1..29 {
+                let idx = map.xy_idx(x, y);
+                if map.tiles[idx].terrain != TerrainType::Door { continue; }
+                // Every placed door must sit in a proper separator.
+                let terrain_cache: Vec<TerrainType> =
+                    map.tiles.iter().map(|t| t.terrain).collect();
+                // We allow the pre-existing door's position too — it was
+                // placed in a separator slot when the wall went up.
+                assert!(
+                    loop_door_axis(&terrain_cache, 30, x, y).is_some()
+                        || (x, y) == (14, 1),
+                    "Door at ({x}, {y}) is not in a one-tile-thick wall separator"
+                );
+            }
+        }
+    }
+
+    /// add_loops must never produce two doors orthogonally adjacent to each
+    /// other.
+    #[test]
+    fn add_loops_does_not_cluster_doors() {
+        use crate::map::tile::{Decoration, LiquidType};
+        let builder = BrogueLikeBuilder::dungeon(1, 40, 12, FloorProfile {
+            cavern_weight: 0, force_cavern_start: false, target_rooms: 5,
+            hallway_chance: 0, erosion_percent: 0, relaxed_fitting: false,
+            decoration_density: 0.0,
+        });
+
+        // Two long rooms separated by a wall column at x=20; rooms are large
+        // so the detour between any two facing tiles is long enough to pass
+        // the minimum-path-distance check.
+        let mut map = Map::new(1, 40, 12, "test");
+        for y in 1..11 {
+            for x in 1..39 {
+                if x == 20 { continue; }
+                let idx = map.xy_idx(x, y);
+                map.tiles[idx] = Tile {
+                    terrain: TerrainType::Floor,
+                    liquid: LiquidType::None,
+                    decoration: Decoration::None,
+                };
+            }
+        }
+        // One pre-existing door at the top so the rooms are connected.
+        let door_idx = map.xy_idx(20, 1);
+        map.tiles[door_idx].terrain = TerrainType::Door;
+
+        builder.add_loops(&mut map.tiles, 40, 12, 5);
+
+        // No door tile may have a door orthogonal neighbor.
+        for y in 1..11 {
+            for x in 1..39 {
+                let idx = map.xy_idx(x, y);
+                if !matches!(map.tiles[idx].terrain, TerrainType::Door) { continue; }
+                for (ax, ay) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                    let nx = x + ax;
+                    let ny = y + ay;
+                    if nx < 0 || ny < 0 || nx >= 40 || ny >= 12 { continue; }
+                    let n_idx = map.xy_idx(nx, ny);
+                    assert!(
+                        !matches!(map.tiles[n_idx].terrain, TerrainType::Door),
+                        "Adjacent doors at ({x}, {y}) and ({nx}, {ny})"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

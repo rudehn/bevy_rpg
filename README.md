@@ -6,9 +6,12 @@ Extracted from [The Veiled Tyrant](https://github.com/rudehn/bevy_rpg), a Brogue
 
 ## What it ships
 
-- **Map generation** — `Map` resource, `Tile`/`TerrainType`/`LiquidType`/`Decoration` types, bracket-lib FOV/pathfinding integration, and a full `BuilderChain` framework with 13 pure builders (BrogueLike generator, BSP, cullers, corridors, lakes, doors, exit placement)
+- **Map generation** — `Map` resource, `Tile`/`TerrainType`/`LiquidType`/`Decoration` types, `DecorationRule`, bracket-lib FOV/pathfinding integration, and a full `BuilderChain` framework with 14 pure builders (BrogueLike generator, BSP, cullers, corridors, lakes, doors, exit placement, decoration propagator)
+- **Tile mutation pipeline** — `TileMutationMessage` / `DecorationMutationMessage` / `LiquidMutationMessage` + `MapMutationPlugin` / `MapMutationSet`. Apply systems sync `Map`, tile entities, `Viewshed.dirty`, `LightSources.dirty`, `Collider`, and apply universal physics (CrackedFloor → Floor, Fungus → fungal light)
+- **Tile promotion** — `TilePromotionPlugin` runs Brogue-style timed promotions (door auto-close, grass regrow, cracked-floor → chasm) once per `TurnEndEvent`
+- **Lighting** — `LightingPlugin` produces a per-tile `LightMap` (intensity + tint) via Bresenham LOS from `LightSources`. Headless: data only, games render with it
 - **Combat math** — `DamageType`, `Resistances`, `Health`, armor reduction, resistance percentages, status-buff multipliers
-- **Turn scheduling** — `TurnManager` with variable-speed actors, pure dequeue logic, reinsert-time computation
+- **Turn scheduling** — `TurnManager` with variable-speed actors, pure dequeue logic, reinsert-time computation, `TurnEndEvent`
 - **AI primitives** — `MonsterAI` state machine (sleep/hunt/idle), pure decision helpers (flee, kite, chase leash, erratic movement), GOAP planner framework
 - **Squad coordination** — `SquadPlugin` with alert propagation, shared morale, tactical blackboard
 - **Factions** — `FactionMatrix` (string-keyed, symmetric, data-driven from RON)

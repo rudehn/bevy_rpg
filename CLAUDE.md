@@ -6,7 +6,7 @@ Bevy 0.17 headless engine for turn-based grid roguelikes, extracted from [The Ve
 
 ```bash
 cargo check          # Fast type check
-cargo test           # Run all tests (~400+)
+cargo test           # Run all tests (427+)
 cargo clippy         # Lint
 cargo bench          # Run benchmarks
 cargo doc --no-deps  # Build docs
@@ -26,11 +26,12 @@ All public items re-exported through `roguelike_engine::prelude::*`.
 | `dice/` | Dice notation wrappers: `roll_dice_string`, `avg_damage_from_dice` |
 | `factions/` | Data-driven faction hostility matrix (RON-loadable `FactionMatrix`) |
 | `geometry/` | Distance functions, `Direction` enum, AoE helpers |
-| `map/` | `Map` resource, 3-layer tile system (terrain/liquid/decoration), 13 procedural builders, `BuilderChain` pipeline |
+| `lighting/` | Per-tile `LightMap` + `LightSources` resource, Bresenham LOS accumulation, `LightingPlugin` |
+| `map/` | `Map` resource, 3-layer tile system (terrain/liquid/decoration), 14 procedural builders, `BuilderChain` pipeline, `DecorationRule`, `TileEntityIndex`, `MapMutationPlugin` (mutation messages + apply systems), `TilePromotionPlugin` + `PromotionCooldown` |
 | `save/` | Platform-agnostic save I/O with schema versioning and migrations |
 | `squad/` | Squad coordination: alerts, morale, blackboard, roles |
 | `status/` | Status effect framework: `StatusEffects` component, tick system, DoT |
-| `turn/` | Turn scheduling: `BinaryHeap`-based `TurnManager`, pure `dequeue_next_batch_pure` |
+| `turn/` | Turn scheduling: `BinaryHeap`-based `TurnManager`, pure `dequeue_next_batch_pure`, `TurnEndEvent` |
 
 ## Key Architectural Patterns
 
@@ -40,7 +41,9 @@ All public items re-exported through `roguelike_engine::prelude::*`.
 - **SystemSet markers** — Plugins expose empty `SystemSet`s (`SquadAlertSet`, `CombatEventSet`, `FovSet`, etc.) for games to configure with `.after()`/`.before()`/`.run_if()`.
 - **Bevy 0.17 events** — Use `#[derive(Message)]`, `MessageWriter<T>`, `MessageReader<T>` (NOT old `EventWriter`/`EventReader`).
 - **BuildContext trait** — Map builders are generic over `C: BuildContext`. Engine ships `EngineBuilderMap`; games wrap it with their own context.
-- **Tile promotions** — Three-layer tiles with `on_step_promotion()` and `timed_promotion()` rules.
+- **Tile promotions** — Three-layer tiles with `on_step_promotion()` and `timed_promotion()` rules. The `TilePromotionPlugin` runs the per-turn tick; the `MapMutationPlugin` applies the resulting mutations.
+- **Mutation = data sync only** — The engine's apply systems do universal data sync (Map ↔ tile entity ↔ viewshed ↔ lighting ↔ collider ↔ promotion cooldown) plus tile-data-driven physics (`Decoration::CrackedFloor` → `Floor`, `Decoration::Fungus` → fungal light). Game-specific reactions (e.g. chasm fall, lava kill) belong in game systems that read the same mutation messages and run `.after(MapMutationSet)`.
+- **Headless lighting** — `LightingPlugin` produces a per-tile `LightMap`. The engine never renders; games consume the data for sprite tints, ASCII colors, etc.
 
 ## Conventions
 

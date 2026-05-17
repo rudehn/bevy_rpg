@@ -27,6 +27,7 @@ pub mod bsp_dungeon;
 pub mod cave_eroder;
 pub mod choke_map;
 pub mod corridors;
+pub mod decoration_propagator;
 pub mod diagonal_culler;
 pub mod exit_points;
 pub mod finish_doors;

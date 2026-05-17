@@ -30,16 +30,18 @@ impl LakeBuilder {
 
     /// Pick liquid type based on depth (Brogue's liquidType function).
     /// Brogue: below minimumLavaLevel → no lava; below minimumBrimstoneLevel → no brimstone.
-    /// We simplify: early = water, mid = water/lava, deep = water/lava/chasm.
+    /// Tuning:
+    /// - Floors 1-9: water + chasm only (no lava — early descent is "natural" hazards).
+    /// - Floors 10-17: water/lava/chasm at moderate lava share.
+    /// - Floors 18+: deep-dungeon mix, lava-dominant.
     fn pick_liquid_type(&self, rng: &mut RandomNumberGenerator) -> LiquidType {
         let roll: f32 = rng.range(0.0f32, 1.0f32);
         match self.depth {
-            1..=5 => {
+            1..=9 => {
                 if roll < 0.70 { LiquidType::Water }
-                else if roll < 0.85 { LiquidType::Lava }
                 else { LiquidType::Chasm }
             }
-            6..=10 => {
+            10..=17 => {
                 if roll < 0.40 { LiquidType::Water }
                 else if roll < 0.75 { LiquidType::Lava }
                 else { LiquidType::Chasm }
@@ -461,10 +463,31 @@ impl<C: BuildContext> MapBuilder<C> for LakeBuilder {
 mod tests {
     use super::*;
 
-    /// Verify that depths 1-5 can produce all three liquid types (Water, Lava, Chasm).
+    /// Floors 1-9 must never produce lava — only water + chasm.
     #[test]
-    fn pick_liquid_type_early_depths_include_all_types() {
-        let builder = LakeBuilder { depth: 3 };
+    fn pick_liquid_type_floors_1_to_9_excludes_lava() {
+        let mut rng = RandomNumberGenerator::new();
+        for depth in 1..=9 {
+            let builder = LakeBuilder { depth };
+            let mut saw_water = false;
+            let mut saw_chasm = false;
+            for _ in 0..2000 {
+                match builder.pick_liquid_type(&mut rng) {
+                    LiquidType::Water => saw_water = true,
+                    LiquidType::Chasm => saw_chasm = true,
+                    LiquidType::Lava => panic!("depth {} must not produce lava", depth),
+                    _ => {}
+                }
+            }
+            assert!(saw_water, "depth {} should produce water", depth);
+            assert!(saw_chasm, "depth {} should produce chasm", depth);
+        }
+    }
+
+    /// Floor 10 is the first floor where lava can appear.
+    #[test]
+    fn pick_liquid_type_floor_10_can_produce_lava() {
+        let builder = LakeBuilder { depth: 10 };
         let mut rng = RandomNumberGenerator::new();
         let mut saw_water = false;
         let mut saw_lava = false;
@@ -477,62 +500,36 @@ mod tests {
                 _ => {}
             }
         }
-        assert!(saw_water, "depth 3 should produce water");
-        assert!(saw_lava, "depth 3 should produce lava");
-        assert!(saw_chasm, "depth 3 should produce chasm");
+        assert!(saw_water, "depth 10 should produce water");
+        assert!(saw_lava, "depth 10 should produce lava");
+        assert!(saw_chasm, "depth 10 should produce chasm");
     }
 
-    /// Verify that depths 6-10 can produce all three liquid types.
+    /// Verify shallow-floor distribution is roughly 70% water / 30% chasm.
     #[test]
-    fn pick_liquid_type_late_depths_include_all_types() {
-        let builder = LakeBuilder { depth: 8 };
-        let mut rng = RandomNumberGenerator::new();
-        let mut saw_water = false;
-        let mut saw_lava = false;
-        let mut saw_chasm = false;
-        for _ in 0..2000 {
-            match builder.pick_liquid_type(&mut rng) {
-                LiquidType::Water => saw_water = true,
-                LiquidType::Lava => saw_lava = true,
-                LiquidType::Chasm => saw_chasm = true,
-                _ => {}
-            }
-        }
-        assert!(saw_water, "depth 8 should produce water");
-        assert!(saw_lava, "depth 8 should produce lava");
-        assert!(saw_chasm, "depth 8 should produce chasm");
-    }
-
-    /// Verify early-depth distribution is roughly 70/15/15.
-    #[test]
-    fn pick_liquid_type_early_depth_distribution() {
-        let builder = LakeBuilder { depth: 2 };
+    fn pick_liquid_type_shallow_distribution() {
+        let builder = LakeBuilder { depth: 5 };
         let mut rng = RandomNumberGenerator::new();
         let n = 10_000;
         let mut water = 0;
-        let mut lava = 0;
         let mut chasm = 0;
         for _ in 0..n {
             match builder.pick_liquid_type(&mut rng) {
                 LiquidType::Water => water += 1,
-                LiquidType::Lava => lava += 1,
                 LiquidType::Chasm => chasm += 1,
                 _ => {}
             }
         }
         let water_pct = water as f64 / n as f64;
-        let lava_pct = lava as f64 / n as f64;
         let chasm_pct = chasm as f64 / n as f64;
-        // Allow 5% tolerance
         assert!((water_pct - 0.70).abs() < 0.05, "water {:.2} expected ~0.70", water_pct);
-        assert!((lava_pct - 0.15).abs() < 0.05, "lava {:.2} expected ~0.15", lava_pct);
-        assert!((chasm_pct - 0.15).abs() < 0.05, "chasm {:.2} expected ~0.15", chasm_pct);
+        assert!((chasm_pct - 0.30).abs() < 0.05, "chasm {:.2} expected ~0.30", chasm_pct);
     }
 
-    /// Verify late-depth distribution is roughly 40/35/25.
+    /// Verify mid-depth distribution (floors 10-17) is roughly 40/35/25.
     #[test]
-    fn pick_liquid_type_late_depth_distribution() {
-        let builder = LakeBuilder { depth: 7 };
+    fn pick_liquid_type_mid_distribution() {
+        let builder = LakeBuilder { depth: 12 };
         let mut rng = RandomNumberGenerator::new();
         let n = 10_000;
         let mut water = 0;
@@ -549,7 +546,6 @@ mod tests {
         let water_pct = water as f64 / n as f64;
         let lava_pct = lava as f64 / n as f64;
         let chasm_pct = chasm as f64 / n as f64;
-        // Allow 5% tolerance
         assert!((water_pct - 0.40).abs() < 0.05, "water {:.2} expected ~0.40", water_pct);
         assert!((lava_pct - 0.35).abs() < 0.05, "lava {:.2} expected ~0.35", lava_pct);
         assert!((chasm_pct - 0.25).abs() < 0.05, "chasm {:.2} expected ~0.25", chasm_pct);

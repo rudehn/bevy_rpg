@@ -30,11 +30,12 @@
 //!
 //! | Module | What it provides |
 //! |--------|-----------------|
-//! | [`map`] | `Map` resource, `Tile`/`TerrainType`/`LiquidType`/`Decoration` types, `BaseMap`/`Algorithm2D` bracket-lib integration |
-//! | [`map::builders`] | `BuildContext` trait, `BuilderChain<C>`, `MapBuilder<C>`, 13 pure builders (BrogueLike, BSP, cullers, corridors, lakes, doors, exit placement, ...) |
+//! | [`map`] | `Map` resource, `Tile`/`TerrainType`/`LiquidType`/`Decoration` types, `DecorationRule`, `TileEntityIndex`, `MapMutationPlugin` (mutation messages + apply systems), `TilePromotionPlugin` + `PromotionCooldown`, `BaseMap`/`Algorithm2D` bracket-lib integration |
+//! | [`map::builders`] | `BuildContext` trait, `BuilderChain<C>`, `MapBuilder<C>`, 14 pure builders (BrogueLike, BSP, cullers, corridors, lakes, doors, exit placement, decoration propagator, ...) |
 //! | [`abilities`] | `AbilityDef`, `Abilities`, `AbilitySlot`, `TargetingRule`, `AbilityTarget`, `AbilityUseEvent`, targeting/cost helpers, `AbilityPlugin` |
 //! | [`combat`] | `DamageType`, `Resistances`, `Health`, `compute_after_armor`, `apply_resistance`, `apply_damage_multipliers` |
 //! | [`status`] | `StatusEffectKind`, `StatusEffects`, `StatusEffectInstance`, `compute_speed_modifier`, `compute_damage_modifier`, `StatusEffectPlugin` |
+//! | [`lighting`] | `LightMap`, `LightSources`, `LightSource` component, Bresenham accumulation, `LightingPlugin` (engine is headless — produces light data, games render with it) |
 //! | [`turn`] | `TurnManager`, `dequeue_next_batch_pure`, `compute_reinsert_time` |
 //! | [`ai`] | `MonsterAI` state machine data, pure decision helpers, GOAP planner (`WorldState`, `Goal`, `ActionDef`, `plan`) |
 //! | [`squad`] | `SquadPlugin` with alert propagation, leader-death effects, shared morale, tactical blackboard |
@@ -76,6 +77,7 @@ pub mod constants;
 pub mod dice;
 pub mod factions;
 pub mod geometry;
+pub mod lighting;
 pub mod map;
 pub mod prelude;
 pub mod save;

@@ -36,7 +36,13 @@ pub use crate::map::tile::{
     can_entity_enter_tile, is_opaque, is_passable, is_pathing_blocker, is_walkable, Decoration,
     LiquidType, PromotionRule, PromotionTarget, TerrainType, Tile,
 };
-pub use crate::map::{populate_blocked_tiles, Map, MapWithMode};
+pub use crate::map::{
+    apply_decoration_mutations, apply_liquid_mutations, apply_tile_mutations,
+    populate_blocked_tiles, tile_promotion_tick_system, DecorationChain,
+    DecorationMutationMessage, DecorationRule, LiquidMutationMessage, Map, MapMutationPlugin,
+    MapMutationSet, MapWithMode, PromotionCooldown, TileEntityIndex, TileMutationMessage,
+    TilePromotionPlugin, TilePromotionSet,
+};
 
 // ---- Builder framework ----
 pub use crate::map::builders::{
@@ -48,6 +54,7 @@ pub use crate::map::builders::brogelike::BrogueLikeBuilder;
 pub use crate::map::builders::bsp_dungeon::{BspConfig, BspDungeonBuilder};
 pub use crate::map::builders::cave_eroder::CaveEroder;
 pub use crate::map::builders::corridors::{draw_corridor, NearestCorridors};
+pub use crate::map::builders::decoration_propagator::DecorationPropagator;
 pub use crate::map::builders::diagonal_culler::DiagonalCuller;
 pub use crate::map::builders::exit_points::DistantExit;
 pub use crate::map::builders::finish_doors::FinishDoors;
@@ -60,7 +67,8 @@ pub use crate::map::builders::unseen_culler::UnseenCuller;
 
 // ---- Turn scheduling ----
 pub use crate::turn::{
-    compute_reinsert_time, dequeue_next_batch_pure, DequeueOutcome, TurnManager, MAX_NPC_BATCH,
+    compute_reinsert_time, dequeue_next_batch_pure, DequeueOutcome, TurnEndEvent, TurnManager,
+    MAX_NPC_BATCH,
 };
 
 // ---- AI ----
@@ -103,6 +111,13 @@ pub use crate::save::{
 pub use crate::status::{
     compute_damage_modifier, compute_speed_modifier, StatusAppliedEvent, StatusEffectInstance,
     StatusEffectKind, StatusEffectPlugin, StatusEffectSet, StatusEffects, StatusExpiredEvent,
+};
+
+// ---- Lighting ----
+pub use crate::lighting::{
+    fungal_light, rebuild_light_map_system, sync_entity_lights_system, LightMap, LightSource,
+    LightSourceData, LightSources, LightingPlugin, LightingSet, CANDLE_RADIUS,
+    FUNGAL_LIGHT_COLOR, FUNGAL_LIGHT_INTENSITY, FUNGAL_LIGHT_RADIUS,
 };
 
 // ---- Constants ----

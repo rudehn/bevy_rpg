@@ -12,7 +12,7 @@
 //! - [`FactionMatrix`] is a Bevy resource holding a symmetric
 //!   `(String, String) → Relation` map. Symmetric: inserting `(A, B, X)`
 //!   also records `(B, A, X)`. Same-faction pairs are always `Allied`.
-//!   Unknown pairs default to `Hostile`.
+//!   Unknown pairs default to `Neutral`.
 //! - [`FactionMatrixAsset`] + [`FactionRelationEntry`] are Bevy
 //!   [`Asset`](bevy::asset::Asset) types loadable from a RON file. The
 //!   engine provides the types but NOT the filename — games wire up
@@ -47,8 +47,9 @@ pub enum Relation {
 /// Data-driven hostility matrix keyed by faction name strings.
 ///
 /// Lookups are symmetric — `(A, B)` and `(B, A)` yield the same
-/// result. Unknown pairs default to [`Relation::Hostile`]. Same faction
-/// is always [`Relation::Allied`].
+/// result. Unknown pairs default to [`Relation::Neutral`] — undeclared
+/// pairs do not fight on sight. Same faction is always
+/// [`Relation::Allied`].
 #[derive(Resource, Debug, Default, Clone)]
 pub struct FactionMatrix {
     relations: HashMap<(String, String), Relation>,
@@ -91,7 +92,7 @@ impl FactionMatrix {
         self.relations
             .get(&(a.to_string(), b.to_string()))
             .copied()
-            .unwrap_or(Relation::Hostile)
+            .unwrap_or(Relation::Neutral)
     }
 }
 
@@ -197,10 +198,15 @@ mod tests {
     }
 
     #[test]
-    fn unknown_faction_defaults_to_hostile() {
+    fn unknown_faction_defaults_to_neutral() {
+        // Undeclared pairs do not fight on sight. This makes adding a new
+        // faction safe — you don't have to declare every pair, only the
+        // ones that should be hostile.
         let m = test_matrix();
-        assert!(m.is_hostile_to("Player", "Unknown"));
-        assert!(m.is_hostile_to("Unknown", "Monster"));
+        assert!(m.is_neutral("Player", "Unknown"));
+        assert!(m.is_neutral("Unknown", "Monster"));
+        assert!(!m.is_hostile_to("Player", "Unknown"));
+        assert!(!m.is_hostile_to("Unknown", "Monster"));
     }
 
     #[test]

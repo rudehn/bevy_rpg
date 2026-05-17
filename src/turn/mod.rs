@@ -16,6 +16,12 @@ use std::collections::BinaryHeap;
 
 use bevy::prelude::*;
 
+/// Emitted when a full turn cycle has ended. Subscribers (tile promotion,
+/// fire/gas/water sims, status-effect ticks, etc.) listen for this to run
+/// their per-turn updates.
+#[derive(Message)]
+pub struct TurnEndEvent;
+
 /// A single entry in the turn queue, ordered first by scheduled time and then
 /// by insertion order (to break ties deterministically, preserving FIFO
 /// semantics for equal times).
