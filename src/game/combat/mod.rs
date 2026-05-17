@@ -103,6 +103,91 @@ pub use roguelike_engine::combat::{
 /// stay meaningful into the late game.
 pub const SHIELD_BLOCK_DC: i32 = 17;
 
+/// Bundled queries every adapter needs to build a
+/// [`resolve::DefenderSnapshot`] for one entity and to write back the
+/// shield-budget delta after the call. Used by
+/// `attack_resolution_system` (primary + Cleave splash) and
+/// `handle_zap_staff` (AoE staff zaps). Bundling them keeps each
+/// system under Bevy's parameter ceiling.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct DefenderQueries<'w, 's> {
+    pub by_entity: Query<
+        'w,
+        's,
+        (
+            Option<&'static Dodge>,
+            Option<&'static Armor>,
+            Option<&'static crate::game::stats::Block>,
+            Option<&'static crate::game::stats::MaxShieldBlocks>,
+            Option<&'static crate::game::abilities::RallyBuff>,
+            Option<&'static crate::game::skills::Skills>,
+        ),
+    >,
+    pub shield_blocks_used: Query<'w, 's, &'static mut crate::game::stats::ShieldBlocksUsed>,
+}
+
+impl<'w, 's> DefenderQueries<'w, 's> {
+    /// Fetch components for `entity` and build a snapshot, or return
+    /// `None` if the entity has no defender components at all (rare —
+    /// entities with Health usually have at least Dodge).
+    pub fn snapshot(&self, entity: Entity) -> Option<resolve::DefenderSnapshot> {
+        let (dodge, armor, block, max_blocks, rally, skills) = self.by_entity.get(entity).ok()?;
+        let blocks_used_now = self
+            .shield_blocks_used
+            .get(entity)
+            .map(|b| b.0)
+            .unwrap_or(0);
+        Some(build_defender_snapshot(
+            dodge,
+            armor,
+            block,
+            max_blocks,
+            rally,
+            skills,
+            blocks_used_now,
+        ))
+    }
+
+    /// Increment the per-turn shield-block counter on `entity`. Called
+    /// after `apply_damage` reports a successful block.
+    pub fn bump_shield_blocks_used(&mut self, entity: Entity) {
+        if let Ok(mut used) = self.shield_blocks_used.get_mut(entity) {
+            used.0 = used.0.saturating_add(1);
+        }
+    }
+}
+
+/// Build a [`resolve::DefenderSnapshot`] from the optional ECS
+/// components on a defender entity. Shared by every Bevy adapter that
+/// calls into the pure resolver (`attack_resolution_system`,
+/// `handle_zap_staff`, Cleave splash). The adapter passes the already-
+/// fetched components; this helper computes derived values
+/// (`armor_max` = base + rally, `shield_budget_left` = max - used).
+pub fn build_defender_snapshot(
+    dodge: Option<&Dodge>,
+    armor: Option<&Armor>,
+    block: Option<&crate::game::stats::Block>,
+    max_blocks: Option<&crate::game::stats::MaxShieldBlocks>,
+    rally: Option<&crate::game::abilities::RallyBuff>,
+    skills: Option<&crate::game::skills::Skills>,
+    blocks_used_now: u32,
+) -> resolve::DefenderSnapshot {
+    let armor_max =
+        armor.map(|a| a.0).unwrap_or(0) + rally.map(|r| r.armor_bonus).unwrap_or(0);
+    let block_base = block.map(|b| b.0).unwrap_or(0);
+    let max_blocks_val = max_blocks.map(|m| m.0).unwrap_or(0);
+    let shield_budget_left = max_blocks_val
+        .saturating_sub(blocks_used_now)
+        .min(u8::MAX as u32) as u8;
+    resolve::DefenderSnapshot {
+        dodge: dodge.map(|d| d.0).unwrap_or(0),
+        skills: skills.cloned(),
+        armor_max,
+        shield_block_bonus: block_base,
+        shield_budget_left,
+    }
+}
+
 /// Pure shield-check resolver: given a d20 roll, the floored Shields
 /// skill bonus, and the shield's SH value, return whether the block
 /// succeeds. Extracted so the formula is unit-testable without ECS.
@@ -268,22 +353,19 @@ fn attack_resolution_system(
         };
 
         // ----- Build defender snapshot. -----
-        let armor_base =
-            target_armor.map(|a| a.0).unwrap_or(0) + target_rally.map(|r| r.armor_bonus).unwrap_or(0);
-        let block_base = target_block.map(|b| b.0).unwrap_or(0);
-        let max_blocks = target_max_blocks.map(|m| m.0).unwrap_or(0);
         let blocks_used_now = shield_blocks_used_query
             .get(intent.target)
             .map(|b| b.0)
             .unwrap_or(0);
-        let shield_budget_left = max_blocks.saturating_sub(blocks_used_now).min(u8::MAX as u32) as u8;
-        let mut defender_snap = resolve::DefenderSnapshot {
-            dodge: target_dodge.map(|d| d.0).unwrap_or(0),
-            skills: target_skills.cloned(),
-            armor_max: armor_base,
-            shield_block_bonus: block_base,
-            shield_budget_left,
-        };
+        let mut defender_snap = build_defender_snapshot(
+            target_dodge,
+            target_armor,
+            target_block,
+            target_max_blocks,
+            target_rally,
+            target_skills,
+            blocks_used_now,
+        );
 
         // ----- Build weapon snapshot. -----
         let weapon_snap = resolve::WeaponSnapshot {
@@ -337,19 +419,26 @@ fn attack_resolution_system(
                 armor: outcome.armor_roll,
             });
 
-            // Cleave splash. Kept inline through step 2; step 3 will
-            // migrate this loop to `resolve::apply_damage`. Note: the
-            // splash uses `outcome.amount` (post-shield-block, post-
-            // multipliers) as the per-tile damage and `armor: 0` so
-            // each victim's own armor / resistance still applies via
-            // the engine's `damage_application_system`.
+            // Cleave splash. Each of the 8 tiles around the attacker
+            // takes the primary's rolled damage as an independent
+            // `DamagePacket`, then runs through the full defense
+            // pipeline via `resolve::apply_damage`: per-splash-target
+            // shield block + per-splash-target armor roll. The
+            // `DamageEvent.source` stays `Environment` so the splash
+            // never recursively re-triggers Cleave or on-hit procs.
             if is_player
                 && intent.source == DamageSource::Melee
                 && weapon_ability == Some("Cleave")
             {
                 if let Ok(attacker_pos) = position_query.get(intent.attacker) {
                     let (ax, ay) = (attacker_pos.x, attacker_pos.y);
+                    let splash_packet = resolve::DamagePacket {
+                        amount: outcome.amount,
+                        damage_type: DamageType::Physical,
+                        crit: matches!(outcome.result, resolve::HitResult::Crit),
+                    };
                     let mut hit = 0;
+                    let mut splash_targets: Vec<Entity> = Vec::new();
                     for (other_entity, other_pos) in monster_position_query.iter() {
                         if other_entity == intent.target {
                             continue;
@@ -357,16 +446,59 @@ fn attack_resolution_system(
                         let dx = (other_pos.x - ax).abs();
                         let dy = (other_pos.y - ay).abs();
                         if dx <= 1 && dy <= 1 && (dx + dy) > 0 {
-                            damage_writer.write(DamageEvent {
-                                target: other_entity,
-                                amount: outcome.amount,
-                                damage_type: DamageType::Physical,
-                                source: DamageSource::Environment,
-                                attacker: Some(intent.attacker),
-                                armor: 0,
-                            });
-                            hit += 1;
+                            splash_targets.push(other_entity);
                         }
+                    }
+                    // Resolve each splash target through `apply_damage`.
+                    // Defender query reads happen first; mutable shield-
+                    // budget writes happen after, to avoid an overlap.
+                    for splash_entity in splash_targets {
+                        let Ok((
+                            _splash_name,
+                            splash_dodge,
+                            splash_armor,
+                            splash_block,
+                            splash_max_blocks,
+                            splash_rally,
+                            splash_skills,
+                        )) = defender_query.get(splash_entity)
+                        else {
+                            continue;
+                        };
+                        let splash_blocks_used = shield_blocks_used_query
+                            .get(splash_entity)
+                            .map(|b| b.0)
+                            .unwrap_or(0);
+                        let mut splash_def = build_defender_snapshot(
+                            splash_dodge,
+                            splash_armor,
+                            splash_block,
+                            splash_max_blocks,
+                            splash_rally,
+                            splash_skills,
+                            splash_blocks_used,
+                        );
+                        let splash_out = resolve::apply_damage(
+                            splash_packet.clone(),
+                            &mut splash_def,
+                            &mut game_rng.0,
+                        );
+                        if splash_out.blocked {
+                            if let Ok(mut used) =
+                                shield_blocks_used_query.get_mut(splash_entity)
+                            {
+                                used.0 = used.0.saturating_add(1);
+                            }
+                        }
+                        damage_writer.write(DamageEvent {
+                            target: splash_entity,
+                            amount: splash_out.amount,
+                            damage_type: DamageType::Physical,
+                            source: DamageSource::Environment,
+                            attacker: Some(intent.attacker),
+                            armor: splash_out.armor_roll,
+                        });
+                        hit += 1;
                     }
                     if hit > 0 {
                         let suffix = if hit == 1 { "y" } else { "ies" };

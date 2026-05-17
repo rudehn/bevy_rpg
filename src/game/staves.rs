@@ -12,7 +12,7 @@ use crate::components::{Collider, Inventory, Name, Position, Submerged};
 use crate::constants::BASE_ACTION_COST;
 use crate::game::actions::{finish_turn, ActionFinishedEvent, ActionKind};
 use crate::game::combat::{
-    DamageEvent, DamageSource, DamageType, GameRng, HealEvent, Health,
+    self as combat_mod, resolve, DamageEvent, DamageSource, DamageType, GameRng, HealEvent, Health,
 };
 use crate::game::enchantment::Enchantment;
 use crate::game::magic::{GameStatusEffectsExt, StatusEffectKind, StatusEffects};
@@ -107,6 +107,31 @@ impl StaffEffect {
 // =====================================================================
 // Scaling Formulas
 // =====================================================================
+
+/// Convert a `(low, high)` inclusive damage range to a dice expression
+/// the engine's `roll_dice_string` understands.
+///
+/// `(low, high)` → `1d{span}+{modifier}`, where `span = high - low + 1`
+/// and `modifier = low - 1`. The combat resolver consumes this string
+/// via [`crate::game::combat::resolve::roll_damage`] / `apply_damage`.
+///
+/// Examples:
+/// - `(1, 4)` → `"1d4"`
+/// - `(3, 8)` → `"1d6+2"`     (Lightning at enchant 0)
+/// - `(2, 12)` → `"1d11+1"`   (Fire at enchant 0)
+/// - `(0, 5)` → `"1d6-1"`
+/// - `(5, 5)` → `"1d1+4"`     (constant value)
+pub fn range_to_dice(low: i32, high: i32) -> String {
+    let span = (high - low + 1).max(1);
+    let modifier = low - 1;
+    if modifier > 0 {
+        format!("1d{}+{}", span, modifier)
+    } else if modifier < 0 {
+        format!("1d{}{}", span, modifier)
+    } else {
+        format!("1d{}", span)
+    }
+}
 
 /// Lightning damage range (low, high) based on enchantment.
 pub fn lightning_damage(enchant: i32) -> (i32, i32) {
@@ -314,6 +339,18 @@ pub fn staff_recharge_system(
     }
 }
 
+/// Event writers used across the staff-zap branches. Bundled so the
+/// system stays under Bevy's parameter ceiling once `DefenderQueries`
+/// is added (Lightning + Fire now route damage through the combat
+/// resolver).
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct StaffEventWriters<'w> {
+    damage: MessageWriter<'w, DamageEvent>,
+    heal: MessageWriter<'w, HealEvent>,
+    log: MessageWriter<'w, GameLogMessage>,
+    finish: MessageWriter<'w, ActionFinishedEvent>,
+}
+
 /// Handle staff zaps: deduct charge, apply effect.
 pub fn handle_zap_staff(
     mut commands: Commands,
@@ -329,21 +366,19 @@ pub fn handle_zap_staff(
     target_query: Query<(Entity, &Name, &Position, &Health, Has<Submerged>), Without<Player>>,
     all_positions: Query<(Entity, &Position), With<Health>>,
     mut status_query: Query<&mut StatusEffects>,
-    mut damage_writer: MessageWriter<DamageEvent>,
-    mut heal_writer: MessageWriter<HealEvent>,
-    mut log_writer: MessageWriter<GameLogMessage>,
-    mut finish_writer: MessageWriter<ActionFinishedEvent>,
+    mut writers: StaffEventWriters,
     mut tile_writers: crate::map::tile::TileMutationWriters,
     collider_query: Query<&Position, With<Collider>>,
     map: Res<Map>,
     mut use_counters: ResMut<crate::game::skills::SkillUseCounters>,
+    mut defender_queries: combat_mod::DefenderQueries,
 ) {
     for msg in messages.read() {
         let Ok((staff_data, mut rech, enchant)) = staff_query.get_mut(msg.staff_entity) else { continue; };
 
         if rech.charges <= 0 {
-            log_writer.write(GameLogMessage("The staff has no charges!".to_string()));
-            finish_turn(&mut commands, &mut finish_writer, msg.zapper, BASE_ACTION_COST, ActionKind::Attack);
+            writers.log.write(GameLogMessage("The staff has no charges!".to_string()));
+            finish_turn(&mut commands, &mut writers.finish, msg.zapper, BASE_ACTION_COST, ActionKind::Attack);
             continue;
         }
 
@@ -375,8 +410,8 @@ pub fn handle_zap_staff(
                 if is_submerged {
                     // Refund the charge since the zap failed
                     rech.charges += 1;
-                    log_writer.write(GameLogMessage("The target is submerged and cannot be hit!".to_string()));
-                    finish_turn(&mut commands, &mut finish_writer, msg.zapper, BASE_ACTION_COST, ActionKind::Attack);
+                    writers.log.write(GameLogMessage("The target is submerged and cannot be hit!".to_string()));
+                    finish_turn(&mut commands, &mut writers.finish, msg.zapper, BASE_ACTION_COST, ActionKind::Attack);
                     continue;
                 }
             }
@@ -384,13 +419,38 @@ pub fn handle_zap_staff(
 
         match staff_data.effect {
             StaffEffect::Lightning => {
-                // Walk a line from zapper toward target, damage everything in path
+                // Walk a line from zapper toward target, damage every
+                // entity along the path. Each entity rolls damage
+                // independently and runs through the combat resolver's
+                // defense pipeline (shield block + resistance — armor
+                // is Physical-only, so Lightning skips it).
                 let Ok((_, _, target_pos, _, _)) = target_query.get(msg.target) else { continue; };
                 let (low, high) = lightning_damage(enchant_level);
+                let dice = range_to_dice(low, high);
 
                 let dx = (target_pos.x - zapper_pos.x).signum();
                 let dy = (target_pos.y - zapper_pos.y).signum();
                 if dx == 0 && dy == 0 { continue; }
+
+                let weapon_snap = resolve::WeaponSnapshot {
+                    damage_dice: dice,
+                    damage_type: DamageType::Lightning,
+                    weapon_skill: None,
+                };
+                // INT + Evocations bonus is pre-baked into damage_bonus
+                // so the resolver — which can't see staff-specific
+                // scaling — adds it uniformly. Attributes and skills
+                // are set to None to suppress the resolver's standard
+                // attribute / weapon-skill / Fighting branches.
+                let attacker_snap = resolve::AttackerSnapshot {
+                    hit_bonus: 0,
+                    damage_bonus: int_bonus,
+                    attributes: None,
+                    skills: None,
+                    enraged: false,
+                    terrified: false,
+                    damage_multiplier_bp: 100,
+                };
 
                 let mut x = zapper_pos.x + dx;
                 let mut y = zapper_pos.y + dy;
@@ -402,22 +462,39 @@ pub fn handle_zap_staff(
                         break;
                     }
 
-                    // Check for entities at this position
                     for (entity, pos) in all_positions.iter() {
                         if entity != msg.zapper && pos.x == x && pos.y == y {
-                            let dmg = game_rng.0.range(low, high + 1) + int_bonus;
-                            damage_writer.write(DamageEvent {
+                            let Some(mut def_snap) = defender_queries.snapshot(entity) else { continue; };
+                            let packet = resolve::roll_damage(
+                                &attacker_snap,
+                                &weapon_snap,
+                                DamageSource::Spell,
+                                false,
+                                &mut game_rng.0,
+                            );
+                            let applied = resolve::apply_damage(packet, &mut def_snap, &mut game_rng.0);
+                            if applied.blocked {
+                                defender_queries.bump_shield_blocks_used(entity);
+                                if let Ok((_, name, _, _, _)) = target_query.get(entity) {
+                                    writers.log.write(GameLogMessage(format!(
+                                        "{} blocks the lightning bolt!",
+                                        name.0
+                                    )));
+                                }
+                                continue;
+                            }
+                            writers.damage.write(DamageEvent {
                                 attacker: Some(msg.zapper),
                                 target: entity,
-                                amount: dmg,
+                                amount: applied.amount,
                                 damage_type: DamageType::Lightning,
                                 source: DamageSource::Environment,
-                                armor: 0,
+                                armor: applied.armor_roll,
                             });
                             if let Ok((_, name, _, _, _)) = target_query.get(entity) {
-                                log_writer.write(GameLogMessage(format!(
+                                writers.log.write(GameLogMessage(format!(
                                     "Lightning strikes {} for {} damage!",
-                                    name.0, dmg
+                                    name.0, applied.amount
                                 )));
                             }
                             hit_count += 1;
@@ -429,7 +506,7 @@ pub fn handle_zap_staff(
                 }
 
                 if hit_count == 0 {
-                    log_writer.write(GameLogMessage("The lightning bolt fizzles.".to_string()));
+                    writers.log.write(GameLogMessage("The lightning bolt fizzles.".to_string()));
                 }
             }
             StaffEffect::Poison => {
@@ -445,7 +522,7 @@ pub fn handle_zap_staff(
                         Some(msg.zapper),
                     );
                 }
-                log_writer.write(GameLogMessage(format!(
+                writers.log.write(GameLogMessage(format!(
                     "{} is poisoned for {} turns!",
                     target_name.0, duration
                 )));
@@ -479,17 +556,21 @@ pub fn handle_zap_staff(
 
                 if final_x != zapper_pos.x || final_y != zapper_pos.y {
                     commands.entity(msg.zapper).insert(Position { x: final_x, y: final_y });
-                    log_writer.write(GameLogMessage(format!(
+                    writers.log.write(GameLogMessage(format!(
                         "You blink {} tiles!",
                         (final_x - zapper_pos.x).abs() + (final_y - zapper_pos.y).abs()
                     )));
                 } else {
-                    log_writer.write(GameLogMessage("You can't blink there.".to_string()));
+                    writers.log.write(GameLogMessage("You can't blink there.".to_string()));
                 }
             }
             StaffEffect::Fire => {
-                // AoE fire damage in 3x3 area centered on target tile position.
-                // Uses target_pos (tile coordinates) since fire can target ground.
+                // AoE fire damage in 3x3 area centered on target tile
+                // position. Each victim rolls damage independently and
+                // runs through the resolver's defense pipeline (shield
+                // block + resistance — Fire skips armor as it's not
+                // Physical). Successful shield blocks suppress both
+                // damage and the Burning status on that target.
                 let (center_x, center_y) = if let Some((tx, ty)) = msg.target_pos {
                     (tx, ty)
                 } else if let Ok((_, _, tp, _, _)) = target_query.get(msg.target) {
@@ -498,28 +579,63 @@ pub fn handle_zap_staff(
                     continue;
                 };
                 let (low, high) = fire_damage(enchant_level);
+                let dice = range_to_dice(low, high);
+                let weapon_snap = resolve::WeaponSnapshot {
+                    damage_dice: dice,
+                    damage_type: DamageType::Fire,
+                    weapon_skill: None,
+                };
+                let attacker_snap = resolve::AttackerSnapshot {
+                    hit_bonus: 0,
+                    damage_bonus: int_bonus,
+                    attributes: None,
+                    skills: None,
+                    enraged: false,
+                    terrified: false,
+                    damage_multiplier_bp: 100,
+                };
                 let mut hit_count = 0;
 
                 for (entity, pos) in all_positions.iter() {
                     let dx = (pos.x - center_x).abs();
                     let dy = (pos.y - center_y).abs();
                     if dx <= 1 && dy <= 1 {
-                        let dmg = game_rng.0.range(low, high + 1) + int_bonus;
-                        damage_writer.write(DamageEvent {
+                        let Some(mut def_snap) = defender_queries.snapshot(entity) else { continue; };
+                        let packet = resolve::roll_damage(
+                            &attacker_snap,
+                            &weapon_snap,
+                            DamageSource::Spell,
+                            false,
+                            &mut game_rng.0,
+                        );
+                        let applied = resolve::apply_damage(packet, &mut def_snap, &mut game_rng.0);
+                        if applied.blocked {
+                            defender_queries.bump_shield_blocks_used(entity);
+                            if let Ok((_, name, _, _, _)) = target_query.get(entity) {
+                                writers.log.write(GameLogMessage(format!(
+                                    "{} blocks the fire blast!",
+                                    name.0
+                                )));
+                            }
+                            continue;
+                        }
+                        writers.damage.write(DamageEvent {
                             attacker: Some(msg.zapper),
                             target: entity,
-                            amount: dmg,
+                            amount: applied.amount,
                             damage_type: DamageType::Fire,
                             source: DamageSource::Environment,
-                            armor: 0,
+                            armor: applied.armor_roll,
                         });
                         if let Ok((_, name, _, _, _)) = target_query.get(entity) {
-                            log_writer.write(GameLogMessage(format!(
+                            writers.log.write(GameLogMessage(format!(
                                 "{} is engulfed in flames for {} damage!",
-                                name.0, dmg
+                                name.0, applied.amount
                             )));
                         }
-                        // Apply burning status for 3 turns
+                        // Apply burning status for 3 turns. Suppressed
+                        // when the shield blocks (handled by the
+                        // `continue` branch above).
                         if let Ok(mut effects) = status_query.get_mut(entity) {
                             effects.add_effect_with_magnitude(
                                 StatusEffectKind::Burning,
@@ -533,7 +649,7 @@ pub fn handle_zap_staff(
                 }
 
                 if hit_count == 0 {
-                    log_writer.write(GameLogMessage("The fire blast hits nothing.".to_string()));
+                    writers.log.write(GameLogMessage("The fire blast hits nothing.".to_string()));
                 }
 
                 // Ignite flammable tiles in the 3x3 area
@@ -557,12 +673,12 @@ pub fn handle_zap_staff(
                 let (low, high) = healing_amount(enchant_level);
                 let heal = game_rng.0.range(low, high + 1);
 
-                heal_writer.write(HealEvent {
+                writers.heal.write(HealEvent {
                     target: msg.zapper,
                     amount: heal,
                     source: None,
                 });
-                log_writer.write(GameLogMessage(format!(
+                writers.log.write(GameLogMessage(format!(
                     "The staff glows warmly. You recover {} HP.",
                     heal
                 )));
@@ -574,7 +690,7 @@ pub fn handle_zap_staff(
                 let dmg = game_rng.0.range(low, high + 1) + int_bonus;
 
                 // Apply damage
-                damage_writer.write(DamageEvent {
+                writers.damage.write(DamageEvent {
                     attacker: Some(msg.zapper),
                     target: msg.target,
                     amount: dmg,
@@ -610,18 +726,18 @@ pub fn handle_zap_staff(
                     if final_x != target_pos.x || final_y != target_pos.y {
                         commands.entity(msg.target).insert(Position { x: final_x, y: final_y });
                         let dist = (final_x - target_pos.x).abs() + (final_y - target_pos.y).abs();
-                        log_writer.write(GameLogMessage(format!(
+                        writers.log.write(GameLogMessage(format!(
                             "A blast of force hits {} for {} damage and knocks it back {} tiles!",
                             target_name.0, dmg, dist
                         )));
                     } else {
-                        log_writer.write(GameLogMessage(format!(
+                        writers.log.write(GameLogMessage(format!(
                             "A blast of force hits {} for {} damage!",
                             target_name.0, dmg
                         )));
                     }
                 } else {
-                    log_writer.write(GameLogMessage(format!(
+                    writers.log.write(GameLogMessage(format!(
                         "A blast of force hits {} for {} damage!",
                         target_name.0, dmg
                     )));
@@ -629,7 +745,7 @@ pub fn handle_zap_staff(
             }
         }
 
-        finish_turn(&mut commands, &mut finish_writer, msg.zapper, BASE_ACTION_COST, ActionKind::Attack);
+        finish_turn(&mut commands, &mut writers.finish, msg.zapper, BASE_ACTION_COST, ActionKind::Attack);
     }
 }
 
@@ -740,6 +856,66 @@ impl Plugin for StavesPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn range_to_dice_simple_range_no_modifier() {
+        assert_eq!(range_to_dice(1, 4), "1d4");
+        assert_eq!(range_to_dice(1, 6), "1d6");
+        assert_eq!(range_to_dice(1, 20), "1d20");
+    }
+
+    #[test]
+    fn range_to_dice_positive_modifier() {
+        // 3..=8 → span 6, modifier 2 → "1d6+2"
+        assert_eq!(range_to_dice(3, 8), "1d6+2");
+        // 2..=12 → span 11, modifier 1 → "1d11+1"
+        assert_eq!(range_to_dice(2, 12), "1d11+1");
+    }
+
+    #[test]
+    fn range_to_dice_negative_modifier() {
+        // 0..=5 → span 6, modifier -1 → "1d6-1"
+        assert_eq!(range_to_dice(0, 5), "1d6-1");
+        // -2..=2 → span 5, modifier -3 → "1d5-3"
+        assert_eq!(range_to_dice(-2, 2), "1d5-3");
+    }
+
+    #[test]
+    fn range_to_dice_constant_value() {
+        // 5..=5 → span 1, modifier 4 → "1d1+4"
+        assert_eq!(range_to_dice(5, 5), "1d1+4");
+        // 1..=1 → span 1, modifier 0 → "1d1"
+        assert_eq!(range_to_dice(1, 1), "1d1");
+    }
+
+    #[test]
+    fn range_to_dice_lightning_curve_smoke_check() {
+        // Lightning at enchant 0 is (1, 4) → "1d4".
+        let (low, high) = lightning_damage(0);
+        assert_eq!(range_to_dice(low, high), "1d4");
+        // Lightning at enchant 1: (2, 6) → span 5, mod 1 → "1d5+1".
+        let (low, high) = lightning_damage(1);
+        assert_eq!(low, 2);
+        assert_eq!(high, 6);
+        assert_eq!(range_to_dice(low, high), "1d5+1");
+    }
+
+    #[test]
+    fn range_to_dice_produces_correct_range_when_rolled() {
+        // For (low, high), every roll of `1d{span}+{modifier}` lands in
+        // [low, high] — verified by enumerating all dice outcomes.
+        let cases = [(1, 4), (3, 8), (0, 5), (5, 5), (-2, 2)];
+        for (low, high) in cases {
+            let span = high - low + 1;
+            for face in 1..=span {
+                let result = face + (low - 1);
+                assert!(
+                    result >= low && result <= high,
+                    "range_to_dice({low},{high}): face {face} → {result} outside [{low},{high}]"
+                );
+            }
+        }
+    }
 
     #[test]
     fn lightning_damage_scales() {
