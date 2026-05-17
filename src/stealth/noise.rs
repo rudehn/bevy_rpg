@@ -7,17 +7,11 @@
 use bevy::prelude::*;
 use bracket_lib::prelude::Point;
 
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, Default)]
 pub struct NoiseMap {
     pub tiles: Vec<i32>,
     pub width: usize,
     pub height: usize,
-}
-
-impl Default for NoiseMap {
-    fn default() -> Self {
-        Self { tiles: Vec::new(), width: 0, height: 0 }
-    }
 }
 
 impl NoiseMap {
