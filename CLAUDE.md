@@ -94,7 +94,9 @@ src/
     ai.rs                # MonsterAI component and logic
     ascii_mode.rs        # ASCII rendering mode toggle
     camera.rs            # Camera follow and visibility toggle
-    combat.rs            # Health, Damage, combat messages and systems
+    combat/
+      mod.rs             # Bevy adapter: attack_resolution_system, combat_trigger_system, combat_log_system, death_system, regen, GodMode, plugin
+      resolve.rs         # Pure attack resolver (no Bevy, no ECS). Owns hit math, damage math, shield block, armor roll
     effects.rs           # Effect application (item use, on-hit effects)
     enchantment.rs       # Enchant scroll system (+1 to any item)
     factions.rs          # Faction definitions and hostility matrix
@@ -266,6 +268,7 @@ src/
 - Player attacks via weapons (active abilities on cooldown) and staves (charges)
 - Monster attacks via melee + cooldown abilities
 - See GAME.md for full damage pipeline
+- **Weapon-attack pipeline (melee + ranged) goes through the pure resolver in [src/game/combat/resolve.rs](src/game/combat/resolve.rs).** The Bevy adapter `attack_resolution_system` in [src/game/combat/mod.rs](src/game/combat/mod.rs) reads `AttackIntentMessage`, builds `AttackerSnapshot` / `DefenderSnapshot` / `WeaponSnapshot` from ECS components, calls `resolve::resolve_attack`, and writes `DamageEvent` / `MissMessage` / log lines from the `AttackOutcome`. The resolver owns the bonus stack (attribute → weapon-skill → Fighting → Enraged/Terrified → Backstab via `damage_multiplier_bp`), shield block, and the armor *roll*. The engine's `damage_application_system` still owns armor *subtraction* and resistance percentage — the adapter writes the resolver's `armor_roll` value into `DamageEvent.armor`, and the engine reads the defender's `Resistances` component downstream. **Cleave splash and staff zaps remain inline** — they bypass armor on purpose and emit `DamageEvent { armor: 0 }` directly. See [docs/rfcs/0001-combat-resolver.md](docs/rfcs/0001-combat-resolver.md) for the migration RFC.
 
 ### Item System
 - All items found in chests (placed by builder pipeline)
