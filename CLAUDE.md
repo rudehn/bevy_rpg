@@ -58,6 +58,7 @@ Design docs live in `docs/design/`. Read these before making gameplay changes.
 | [TILE_PROMOTION.md](docs/design/TILE_PROMOTION.md) | Cracked floor → chasm, grass regrowth, embers → ash, promotion cooldown |
 | [LIGHT.md](docs/design/LIGHT.md) | Per-tile light intensity + color, Bresenham LOS, resource vs. entity-driven sources, dirty propagation |
 | [ASCII_RENDERER.md](docs/design/ASCII_RENDERER.md) | Per-tile glyph variation, animated effects, lighting, color palettes |
+| [SAVE.md](docs/design/SAVE.md) | Save/load architecture — schema versions v0–v6, persisted shape, save/load triggers, permadeath flow, serde compatibility contract |
 
 **Key design constraints:**
 - All loot comes from chests — no floor drops
