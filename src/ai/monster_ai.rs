@@ -134,6 +134,37 @@ impl MonsterAI {
             _ => "Active",
         }
     }
+
+    /// Awareness-driven mode update. Replaces the legacy LOS-only check
+    /// for callers that have wired up the stealth system. The highest
+    /// state across all awareness records determines the mode:
+    ///
+    /// - `Aware` or `Searching` → `Hunting`
+    /// - `Suspicious` → `Idle` (unless already `Hunting`)
+    /// - `Hidden` → preserve current mode (so `Asleep` stays `Asleep`
+    ///   until a successful perception roll flips a record to `Aware`)
+    ///
+    /// Awareness records' `last_known_pos` / `suspect_pos` are not
+    /// copied into `last_known_player_position` here — the caller is
+    /// responsible for that wiring at the perception-tick site, since
+    /// awareness state is target-keyed and only the caller knows which
+    /// record describes the player.
+    pub fn update_mode_from_awareness(&mut self, awareness: &crate::stealth::Awareness) {
+        use crate::stealth::AwarenessState;
+        match awareness.highest() {
+            AwarenessState::Aware | AwarenessState::Searching { .. } => {
+                self.mode = MonsterAIMode::Hunting;
+            }
+            AwarenessState::Suspicious { .. } => {
+                if self.mode != MonsterAIMode::Hunting {
+                    self.mode = MonsterAIMode::Idle;
+                }
+            }
+            AwarenessState::Hidden => {
+                // Preserve current default — Asleep keeps sleeping.
+            }
+        }
+    }
 }
 
 // =====================================================================
@@ -143,6 +174,7 @@ impl MonsterAI {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::prelude::Entity;
 
     #[test]
     fn default_is_asleep() {
@@ -199,6 +231,69 @@ mod tests {
         assert_eq!(ai.display_state(), "Hunting");
         ai.mode = MonsterAIMode::Idle;
         assert_eq!(ai.display_state(), "Wandering");
+    }
+
+    #[test]
+    fn awareness_aware_drives_hunting() {
+        use crate::stealth::{Awareness, AwarenessState};
+        let mut ai = MonsterAI::default();
+        let mut aware = Awareness::default();
+        let target = Entity::from_raw_u32(42).expect("valid test entity");
+        aware.set(target, AwarenessState::Aware, 0);
+        ai.update_mode_from_awareness(&aware);
+        assert_eq!(ai.mode, MonsterAIMode::Hunting);
+    }
+
+    #[test]
+    fn awareness_searching_drives_hunting() {
+        use crate::stealth::{Awareness, AwarenessState};
+        let mut ai = MonsterAI::default();
+        let mut aware = Awareness::default();
+        let target = Entity::from_raw_u32(42).expect("valid test entity");
+        aware.set(
+            target,
+            AwarenessState::Searching {
+                last_known_pos: Point::new(3, 3),
+                giveup_at_turn: 100,
+            },
+            0,
+        );
+        ai.update_mode_from_awareness(&aware);
+        assert_eq!(ai.mode, MonsterAIMode::Hunting);
+    }
+
+    #[test]
+    fn awareness_hidden_keeps_asleep_default() {
+        use crate::stealth::Awareness;
+        let mut ai = MonsterAI::default();
+        ai.mode = MonsterAIMode::Asleep;
+        let aware = Awareness::default(); // empty == Hidden
+        ai.update_mode_from_awareness(&aware);
+        assert_eq!(ai.mode, MonsterAIMode::Asleep);
+    }
+
+    #[test]
+    fn awareness_suspicious_idles_unless_hunting() {
+        use crate::stealth::{Awareness, AwarenessState};
+        let mut ai = MonsterAI::default();
+        ai.mode = MonsterAIMode::Asleep;
+        let mut aware = Awareness::default();
+        let target = Entity::from_raw_u32(42).expect("valid test entity");
+        aware.set(
+            target,
+            AwarenessState::Suspicious {
+                suspect_pos: Point::new(2, 2),
+                decay_at_turn: 50,
+            },
+            0,
+        );
+        ai.update_mode_from_awareness(&aware);
+        assert_eq!(ai.mode, MonsterAIMode::Idle);
+
+        // But if already hunting, suspicious doesn't downgrade it.
+        ai.mode = MonsterAIMode::Hunting;
+        ai.update_mode_from_awareness(&aware);
+        assert_eq!(ai.mode, MonsterAIMode::Hunting);
     }
 
     #[test]
