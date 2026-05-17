@@ -82,5 +82,6 @@ pub mod map;
 pub mod prelude;
 pub mod save;
 pub mod squad;
+pub mod stealth;
 pub mod status;
 pub mod turn;
