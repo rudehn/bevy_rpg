@@ -2,7 +2,6 @@ PropManifest(
     props: {
         "candle": PropAsset(
             name: "Candle",
-            sprite: "sprites/candle.png#0",
             is_blocking: false,
             is_opaque: false,
             light_radius: Some(30.0),
@@ -14,7 +13,6 @@ PropManifest(
         ),
         "watchfire": PropAsset(
             name: "Watchfire",
-            sprite: "sprites/props/watchfire.png#0",
             is_blocking: false,
             is_opaque: false,
             light_radius: Some(40.0),
@@ -27,7 +25,6 @@ PropManifest(
         ),
         "totem_pole": PropAsset(
             name: "Totem Pole",
-            sprite: "sprites/props/totem_pole.png#0",
             is_blocking: true,
             is_opaque: false,
             grid_size: Some((1, 1)),
@@ -37,7 +34,6 @@ PropManifest(
         ),
         "barricade": PropAsset(
             name: "Barricade",
-            sprite: "sprites/props/barricade.png#0",
             is_blocking: true,
             is_opaque: false,
             grid_size: Some((1, 1)),
@@ -47,7 +43,6 @@ PropManifest(
         ),
         "barrel": PropAsset(
             name: "Barrel",
-            sprite: "sprites/props/barrel.png#0",
             is_blocking: true,
             is_opaque: false,
             grid_size: Some((1, 1)),
@@ -57,7 +52,6 @@ PropManifest(
         ),
         "altar": PropAsset(
             name: "Altar",
-            sprite: "sprites/props/totem_pole.png#0",
             is_blocking: true,
             is_opaque: false,
             light_radius: Some(20.0),
@@ -69,7 +63,6 @@ PropManifest(
         ),
         "chest": PropAsset(
             name: "Chest",
-            sprite: "sprites/props/chest.png#0",
             is_blocking: true,
             is_opaque: false,
             grid_size: Some((1, 1)),

@@ -1,0 +1,86 @@
+// Class manifest for character creation. See docs/design/CHARACTER.md §Classes.
+//
+// Phase 2 schema:
+//   - attribute_distribution: 12 points across STR/DEX/INT. Negatives are
+//     allowed at the schema level (for future class designs) but no
+//     currently-shipping class uses negative entries. A maintenance test
+//     pins `total() == 12`.
+//   - No more primary_attr / secondary_attr / class_attack_bonus /
+//     class_dodge_bonus — class differentiation flows entirely through
+//     the attribute distribution and the starting kit.
+//
+// id      | STR | DEX | INT | total
+// --------|-----|-----|-----|------
+// warrior |  8  |  2  |  2  |  12
+// rogue   |  2  |  8  |  2  |  12
+// mage    |  1  |  3  |  8  |  12
+// ranger  |  3  |  8  |  1  |  12
+
+(
+    classes: {
+        "warrior": (
+            name: "Warrior",
+            attribute_distribution: (str: 8, dex: 2, int: 2),
+            starting_kit: [
+                (name: "Rusted Shortsword"),
+                (name: "Padded Armor"),
+            ],
+            starting_skills: (
+                fighting: 3,
+                long_blades: 2,
+                axes: 2,
+                armor: 2,
+                shields: 1,
+            ),
+            description: "Steel and discipline. STR-heavy distribution carries melee hits and damage; trade-off is low DEX and INT.",
+        ),
+        "rogue": (
+            name: "Rogue",
+            attribute_distribution: (str: 2, dex: 8, int: 2),
+            starting_kit: [
+                (name: "Dagger"),
+                (name: "Cloth Wraps"),
+                (name: "Throwing Knife", count: 3),
+            ],
+            starting_skills: (
+                fighting: 1,
+                short_blades: 4,
+                ranged_weapons: 1,
+                dodging: 3,
+                evocations: 1,
+            ),
+            description: "Light, slippery, and dangerous in the right opening. DEX-driven hit and dodge; INT modest enough to identify scrolls.",
+        ),
+        "mage": (
+            name: "Mage",
+            attribute_distribution: (str: 1, dex: 3, int: 8),
+            starting_kit: [
+                (name: "Apprentice Staff"),
+                (name: "Robe"),
+            ],
+            starting_skills: (
+                short_blades: 1,
+                dodging: 2,
+                evocations: 7,
+            ),
+            description: "Frail but charged with potential. INT scales staff zap damage. Don't trade blows.",
+        ),
+        "ranger": (
+            name: "Ranger",
+            attribute_distribution: (str: 3, dex: 8, int: 1),
+            starting_kit: [
+                (name: "Shortbow"),
+                (name: "Padded Armor"),
+                (name: "Arrow", count: 6),
+            ],
+            starting_skills: (
+                fighting: 2,
+                long_blades: 1,
+                ranged_weapons: 4,
+                armor: 1,
+                dodging: 2,
+            ),
+            description: "Patient at range. DEX-driven ranged hit and damage; STR is the fallback if you draw a melee.",
+        ),
+    },
+)

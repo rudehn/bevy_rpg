@@ -2,31 +2,46 @@
     relations: [
         // Player is hostile to all monster factions
         ( a: "Player",  b: "Monster", relation: Hostile ),
-        ( a: "Player",  b: "Kobold",  relation: Hostile ),
         ( a: "Player",  b: "Goblin",  relation: Hostile ),
         ( a: "Player",  b: "Orc",     relation: Hostile ),
         ( a: "Player",  b: "Fungal",  relation: Hostile ),
         ( a: "Player",  b: "Undead",  relation: Hostile ),
         ( a: "Player",  b: "Giant",   relation: Hostile ),
         ( a: "Player",  b: "Dragon",  relation: Hostile ),
+        ( a: "Player",  b: "Rat",     relation: Hostile ),
+        ( a: "Player",  b: "Kobold",  relation: Hostile ),
+
+        // Rat faction: hostile to Player, neutral to all monster factions
+        ( a: "Monster", b: "Rat",     relation: Neutral ),
+        ( a: "Rat",     b: "Goblin",  relation: Neutral ),
+        ( a: "Rat",     b: "Orc",     relation: Neutral ),
+        ( a: "Rat",     b: "Fungal",  relation: Neutral ),
+        ( a: "Rat",     b: "Undead",  relation: Neutral ),
+        ( a: "Rat",     b: "Giant",   relation: Neutral ),
+        ( a: "Rat",     b: "Dragon",  relation: Neutral ),
+        ( a: "Rat",     b: "Kobold",  relation: Neutral ),
 
         // Monster factions are neutral to each other (don't infight)
-        ( a: "Monster", b: "Kobold",  relation: Neutral ),
         ( a: "Monster", b: "Goblin",  relation: Neutral ),
         ( a: "Monster", b: "Orc",     relation: Neutral ),
         ( a: "Monster", b: "Fungal",  relation: Neutral ),
         ( a: "Monster", b: "Undead",  relation: Neutral ),
         ( a: "Monster", b: "Giant",   relation: Neutral ),
         ( a: "Monster", b: "Dragon",  relation: Neutral ),
+        ( a: "Monster", b: "Kobold",  relation: Neutral ),
 
         // Cross-faction relationships
-        ( a: "Goblin",  b: "Kobold",  relation: Neutral ),
         ( a: "Goblin",  b: "Orc",     relation: Neutral ),
         ( a: "Goblin",  b: "Fungal",  relation: Hostile ),
         ( a: "Goblin",  b: "Undead",  relation: Hostile ),
-        ( a: "Orc",     b: "Kobold",  relation: Neutral ),
+        ( a: "Goblin",  b: "Kobold",  relation: Hostile ),
         ( a: "Orc",     b: "Undead",  relation: Hostile ),
+        ( a: "Orc",     b: "Kobold",  relation: Neutral ),
         ( a: "Undead",  b: "Fungal",  relation: Neutral ),
+        ( a: "Undead",  b: "Kobold",  relation: Neutral ),
+        ( a: "Fungal",  b: "Kobold",  relation: Neutral ),
         ( a: "Dragon",  b: "Giant",   relation: Neutral ),
+        ( a: "Dragon",  b: "Kobold",  relation: Neutral ),
+        ( a: "Giant",   b: "Kobold",  relation: Neutral ),
     ],
 )

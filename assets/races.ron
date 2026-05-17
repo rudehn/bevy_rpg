@@ -1,0 +1,91 @@
+// Race manifest for character creation. See docs/design/CHARACTER.md §Races.
+//
+// Phase 2 schema:
+//   - 24-point attribute distribution across STR/DEX/INT (no negatives)
+//   - hp_mod: HP-formula multiplier (Dwarf 1.20, Human 1.00, Elf 0.90)
+//   - gain_schedule: DCSS-style level-up stat-gain spec ({interval, allowed})
+//
+// Halfling was removed in Phase 2 (Lucky d20 reroll gone with it).
+//
+// id    | STR | DEX | INT | HP × | Schedule (DCSS notation)
+// ------|-----|-----|-----|------|-------------------------
+// human |  8  |  8  |  8  | 1.00 | 4:SDI  (any of STR/DEX/INT)
+// dwarf | 12  |  4  |  8  | 1.20 | 4:SID  (any of STR/INT/DEX — same options, different doc order)
+// elf   |  4  | 10  | 10  | 0.90 | 4:DI   (DEX or INT — no STR)
+
+(
+    races: {
+        "human": (
+            name: "Human",
+            str_bonus: 8,
+            dex_bonus: 8,
+            int_bonus: 8,
+            hp_mod: 1.00,
+            gain_schedule: (
+                interval: 4,
+                allowed: [Str, Dex, Int],
+            ),
+            // "Disciplined soldier" aptitudes — modest +1 in the
+            // Fighting/Armor/Shields cluster. Gives the Human race a
+            // mechanical identity beyond the open gain schedule.
+            aptitudes: (
+                fighting: 1,
+                axes: 0,
+                short_blades: 0,
+                long_blades: 0,
+                ranged_weapons: 0,
+                armor: 1,
+                dodging: 0,
+                shields: 1,
+                evocations: 0,
+            ),
+            description: "Adaptive and disciplined. Modest aptitude for Fighting, Armor, and Shields; gains any of STR/DEX/INT every 4 levels.",
+        ),
+        "dwarf": (
+            name: "Dwarf",
+            str_bonus: 12,
+            dex_bonus: 4,
+            int_bonus: 8,
+            hp_mod: 1.20,
+            gain_schedule: (
+                interval: 4,
+                allowed: [Str, Int, Dex],
+            ),
+            aptitudes: (
+                fighting: 2,
+                axes: 3,
+                short_blades: 0,
+                long_blades: 1,
+                ranged_weapons: -2,
+                armor: 3,
+                dodging: -2,
+                shields: 2,
+                evocations: -1,
+            ),
+            description: "Hardy folk of the deep places. Stoneblood grants 50% poison resistance and a stout HP frame.",
+        ),
+        "elf": (
+            name: "Elf",
+            str_bonus: 4,
+            dex_bonus: 10,
+            int_bonus: 10,
+            hp_mod: 0.90,
+            gain_schedule: (
+                interval: 4,
+                allowed: [Dex, Int],
+            ),
+            aptitudes: (
+                fighting: -1,
+                axes: -2,
+                short_blades: 1,
+                long_blades: 2,
+                ranged_weapons: 3,
+                armor: -2,
+                dodging: 2,
+                shields: -2,
+                evocations: 2,
+            ),
+            description: "Long-sighted and quick. Keen senses extend your vision by 2 tiles; you grow into DEX or INT but never STR.",
+        ),
+    },
+)

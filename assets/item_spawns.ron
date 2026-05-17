@@ -3,83 +3,90 @@
         // ===========================
         // CONSUMABLES
         // ===========================
-        (item: "Healing Potion",          min_floor: 1,  max_floor: 10, weight: 5),
-        (item: "Greater Healing Potion",  min_floor: 6,  max_floor: 10, weight: 2),
+        // Basic Healing fades at mid depth; Greater takes over from T3 onward.
+        (item: "Healing Potion",          min_floor: 1,  max_floor: 14, weight: 5),
+        (item: "Greater Healing Potion",  min_floor: 6,  max_floor: 26, weight: 4),
         // Mana potions removed — mana system replaced.
-        (item: "Arrow",                   min_floor: 1,  max_floor: 10, weight: 4, min_count: 5, max_count: 12),
-        (item: "Swiftness Potion",         min_floor: 2,  max_floor: 10, weight: 2),
-        (item: "Fire Resistance Potion",  min_floor: 2,  max_floor: 10, weight: 2),
-        (item: "Antidote",                min_floor: 2,  max_floor: 10, weight: 2),
-        (item: "Scroll of Enchanting",    min_floor: 2,  max_floor: 10, weight: 2),
+        (item: "Arrow",                   min_floor: 1,  max_floor: 26, weight: 4, min_count: 5, max_count: 12),
+        (item: "Swiftness Potion",         min_floor: 2,  max_floor: 26, weight: 2),
+        (item: "Fire Resistance Potion",  min_floor: 2,  max_floor: 26, weight: 2),
+        (item: "Antidote",                min_floor: 2,  max_floor: 26, weight: 2),
+        (item: "Scroll of Enchanting",    min_floor: 2,  max_floor: 26, weight: 2),
 
         // ===========================
         // WEAPONS (enchantment/runic rolled at spawn)
         // ===========================
-        (item: "Dagger",                  min_floor: 1,  max_floor: 10, weight: 3),
-        (item: "Sword",                   min_floor: 1,  max_floor: 10, weight: 3),
-        (item: "Bow",                     min_floor: 1,  max_floor: 10, weight: 2),
+        (item: "Dagger",                  min_floor: 1,  max_floor: 26, weight: 3),
+        (item: "Sword",                   min_floor: 1,  max_floor: 26, weight: 3),
+        (item: "Bow",                     min_floor: 1,  max_floor: 26, weight: 2),
+        (item: "Axe",                     min_floor: 3,  max_floor: 26, weight: 2),
 
         // ===========================
         // ARMOR — Light (dodge-focused)
         // ===========================
-        (item: "Leather Cap",             min_floor: 1,  max_floor: 10, weight: 3),
-        (item: "Robe",                    min_floor: 1,  max_floor: 10, weight: 3),
-        (item: "Leather Gloves",          min_floor: 1,  max_floor: 10, weight: 3),
-        (item: "Soft Boots",              min_floor: 1,  max_floor: 10, weight: 3),
+        (item: "Leather Cap",             min_floor: 1,  max_floor: 26, weight: 3),
+        (item: "Robe",                    min_floor: 1,  max_floor: 26, weight: 3),
+        (item: "Leather Gloves",          min_floor: 1,  max_floor: 26, weight: 3),
+        (item: "Soft Boots",              min_floor: 1,  max_floor: 26, weight: 3),
 
         // ===========================
         // ARMOR — Medium (mixed)
         // ===========================
-        (item: "Iron Helm",               min_floor: 3,  max_floor: 10, weight: 2),
-        (item: "Chainmail",               min_floor: 3,  max_floor: 10, weight: 2),
-        (item: "Splint Gloves",           min_floor: 3,  max_floor: 10, weight: 2),
-        (item: "Iron Boots",              min_floor: 3,  max_floor: 10, weight: 2),
+        (item: "Iron Helm",               min_floor: 3,  max_floor: 26, weight: 2),
+        (item: "Chainmail",               min_floor: 3,  max_floor: 26, weight: 2),
+        (item: "Splint Gloves",           min_floor: 3,  max_floor: 26, weight: 2),
+        (item: "Iron Boots",              min_floor: 3,  max_floor: 26, weight: 2),
 
         // ===========================
-        // ARMOR — Heavy (armor-focused)
+        // ARMOR — Heavy (armor-focused). Rare early, dominant late.
         // ===========================
-        (item: "Full Helm",               min_floor: 5,  max_floor: 10, weight: 1),
-        (item: "Plate Armor",             min_floor: 5,  max_floor: 10, weight: 1),
-        (item: "Gauntlets",               min_floor: 5,  max_floor: 10, weight: 1),
-        (item: "Heavy Boots",             min_floor: 5,  max_floor: 10, weight: 1),
+        (item: "Full Helm",               min_floor: 5,  max_floor: 14, weight: 1),
+        (item: "Plate Armor",             min_floor: 5,  max_floor: 14, weight: 1),
+        (item: "Gauntlets",               min_floor: 5,  max_floor: 14, weight: 1),
+        (item: "Heavy Boots",             min_floor: 5,  max_floor: 14, weight: 1),
+        (item: "Full Helm",               min_floor: 15, max_floor: 26, weight: 3),
+        (item: "Plate Armor",             min_floor: 15, max_floor: 26, weight: 3),
+        (item: "Gauntlets",               min_floor: 15, max_floor: 26, weight: 3),
+        (item: "Heavy Boots",             min_floor: 15, max_floor: 26, weight: 3),
 
         // ===========================
         // SHIELDS
         // ===========================
-        (item: "Wooden Shield",           min_floor: 1,  max_floor: 10, weight: 3),
-        (item: "Iron Shield",             min_floor: 3,  max_floor: 10, weight: 2),
-        (item: "Tower Shield",            min_floor: 6,  max_floor: 10, weight: 1),
+        (item: "Buckler",                 min_floor: 1,  max_floor: 12, weight: 3),
+        (item: "Kite Shield",             min_floor: 3,  max_floor: 26, weight: 2),
+        (item: "Tower Shield",            min_floor: 6,  max_floor: 14, weight: 1),
+        (item: "Tower Shield",            min_floor: 15, max_floor: 26, weight: 3),
 
         // ===========================
         // STAVES
         // ===========================
-        (item: "Staff of Lightning",      min_floor: 1,  max_floor: 10, weight: 2),
-        (item: "Staff of Poison",         min_floor: 1,  max_floor: 10, weight: 2),
-        (item: "Staff of Blinking",       min_floor: 3,  max_floor: 10, weight: 1),
-        (item: "Staff of Fire",          min_floor: 1,  max_floor: 10, weight: 2),
-        (item: "Staff of Healing",       min_floor: 1,  max_floor: 10, weight: 2),
-        (item: "Staff of Force",         min_floor: 2,  max_floor: 10, weight: 2),
+        (item: "Staff of Lightning",      min_floor: 1,  max_floor: 26, weight: 2),
+        (item: "Staff of Poison",         min_floor: 1,  max_floor: 26, weight: 2),
+        (item: "Staff of Blinking",       min_floor: 3,  max_floor: 26, weight: 1),
+        (item: "Staff of Fire",          min_floor: 1,  max_floor: 26, weight: 2),
+        (item: "Staff of Healing",       min_floor: 1,  max_floor: 26, weight: 2),
+        (item: "Staff of Force",         min_floor: 2,  max_floor: 26, weight: 2),
 
         // ===========================
         // RINGS
         // ===========================
-        (item: "Ring of Perception",      min_floor: 3,  max_floor: 10, weight: 1),
-        (item: "Ring of Protection",      min_floor: 3,  max_floor: 10, weight: 1),
-        (item: "Ring of Might",           min_floor: 3,  max_floor: 10, weight: 1),
-        (item: "Ring of Precision",       min_floor: 3,  max_floor: 10, weight: 1),
-        (item: "Ring of Evasion",         min_floor: 3,  max_floor: 10, weight: 1),
-        (item: "Ring of Regeneration",    min_floor: 3,  max_floor: 10, weight: 1),
-        (item: "Ring of Speed",           min_floor: 3,  max_floor: 10, weight: 1),
-        (item: "Ring of Vitality",        min_floor: 3,  max_floor: 10, weight: 1),
+        (item: "Ring of Perception",      min_floor: 3,  max_floor: 26, weight: 1),
+        (item: "Ring of Protection",      min_floor: 3,  max_floor: 26, weight: 1),
+        (item: "Ring of Might",           min_floor: 3,  max_floor: 26, weight: 1),
+        (item: "Ring of Precision",       min_floor: 3,  max_floor: 26, weight: 1),
+        (item: "Ring of Evasion",         min_floor: 3,  max_floor: 26, weight: 1),
+        (item: "Ring of Regeneration",    min_floor: 3,  max_floor: 26, weight: 1),
+        (item: "Ring of Speed",           min_floor: 3,  max_floor: 26, weight: 1),
+        (item: "Ring of Vitality",        min_floor: 3,  max_floor: 26, weight: 1),
 
         // ===========================
         // AMULETS
         // ===========================
-        (item: "Amulet of Life",          min_floor: 3,  max_floor: 10, weight: 1),
-        (item: "Amulet of Warding",       min_floor: 3,  max_floor: 10, weight: 1),
-        (item: "Amulet of Swiftness",     min_floor: 3,  max_floor: 10, weight: 1),
-        (item: "Amulet of the Inferno",   min_floor: 3,  max_floor: 10, weight: 1),
-        (item: "Amulet of Grounding",     min_floor: 3,  max_floor: 10, weight: 1),
-        (item: "Amulet of Antivenom",     min_floor: 3,  max_floor: 10, weight: 1),
+        (item: "Amulet of Life",          min_floor: 3,  max_floor: 26, weight: 1),
+        (item: "Amulet of Warding",       min_floor: 3,  max_floor: 26, weight: 1),
+        (item: "Amulet of Swiftness",     min_floor: 3,  max_floor: 26, weight: 1),
+        (item: "Amulet of the Inferno",   min_floor: 3,  max_floor: 26, weight: 1),
+        (item: "Amulet of Grounding",     min_floor: 3,  max_floor: 26, weight: 1),
+        (item: "Amulet of Antivenom",     min_floor: 3,  max_floor: 26, weight: 1),
     ]
 )
