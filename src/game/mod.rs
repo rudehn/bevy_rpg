@@ -11,8 +11,8 @@ use crate::{
     ui::game_log::GameLogMessage,
     game::{
         camera::{move_camera, toggle_main_camera_visibility},
-        combat::{CombatDamageSet, GameCombatPlugin, DeathEvent, GameRng, death_system},
-        items::{ItemsPlugin, LootTable},
+        combat::{CombatDamageSet, GameCombatPlugin, DeathEvent, GameRng, death_system, Health},
+        items::{Equipment, ItemsPlugin, LootTable},
         magic::MagicPlugin,
         particles::ParticlesPlugin,
         stats::StatsPlugin,
@@ -203,7 +203,11 @@ impl Plugin for GamePlugin {
                         .after(roguelike_engine::components::FovSet),
                     loot_drop_system.after(CombatDamageSet),
                     crate::game::combat::drop_inventory_on_death.after(CombatDamageSet),
-                    death_system.after(loot_drop_system).after(crate::game::combat::drop_inventory_on_death),
+                    drop_equipment_on_death.after(CombatDamageSet),
+                    death_system
+                        .after(loot_drop_system)
+                        .after(crate::game::combat::drop_inventory_on_death)
+                        .after(drop_equipment_on_death),
                 )
                     .run_if(in_state(InGameState::Running)),
             )
@@ -269,6 +273,67 @@ fn loot_drop_system(
                 let count_str = if count > 1 { format!(" (x{})", count) } else { String::new() };
                 log_writer.write(GameLogMessage(format!(
                     "{} dropped a {}{}.", name.0, entry.item, count_str
+                )));
+            }
+        }
+    }
+}
+
+/// On death, drop everything the entity had equipped onto the floor at
+/// its death position. Mirrors the existing `drop_inventory_on_death`
+/// for `Inventory.items`, but handles `Equipment` slots — including the
+/// minimal item entities the monster loadout system spawns (no Position,
+/// no rendering). For those, the simplest path is to despawn the bare
+/// entity and re-`spawn_item` a full floor-ready one at the death tile.
+///
+/// Loadout items are sterile (no enchantment, no runic — monsters don't
+/// enchant their gear), so re-spawning loses nothing. If monster
+/// equipment ever gains state (enchantment, durability), this is the
+/// system to revisit.
+fn drop_equipment_on_death(
+    mut commands: Commands,
+    dead_query: Query<(&Health, &Position, &Equipment, &Name)>,
+    item_name_query: Query<&Name>,
+    item_manifests: Res<Assets<ItemManifest>>,
+    item_manifest_handle: Res<ItemManifestHandle>,
+    item_sprite_assets: Res<ItemSpriteAssets>,
+    ascii_font: Option<Res<crate::game::ascii_mode::AsciiFont>>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+) {
+    use bracket_lib::prelude::Point;
+    for (health, pos, equipment, owner_name) in dead_query.iter() {
+        if health.current > 0 {
+            continue;
+        }
+        let drop_point = Point::new(pos.x, pos.y);
+        let slot_entities = [
+            equipment.weapon,
+            equipment.offhand,
+            equipment.helm,
+            equipment.chest,
+            equipment.gloves,
+            equipment.boots,
+            equipment.ring_l,
+            equipment.ring_r,
+            equipment.amulet,
+        ];
+        for slot_entity in slot_entities.into_iter().flatten() {
+            let Ok(item_name) = item_name_query.get(slot_entity) else { continue; };
+            let item_name_str = item_name.0.clone();
+            // Despawn the bare equipped entity; spawn a fresh floor item.
+            commands.entity(slot_entity).despawn();
+            if spawn_item(
+                &mut commands,
+                &item_name_str,
+                &drop_point,
+                &item_manifests,
+                &item_manifest_handle,
+                &item_sprite_assets,
+                ascii_font.as_deref(),
+                None,
+            ).is_some() {
+                log_writer.write(GameLogMessage(format!(
+                    "{} drops a {}.", owner_name.0, item_name_str
                 )));
             }
         }
