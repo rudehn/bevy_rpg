@@ -10,7 +10,7 @@ Extracted from [The Veiled Tyrant](https://github.com/rudehn/bevy_rpg), a Brogue
 - **Combat math** — `DamageType`, `Resistances`, `Health`, armor reduction, resistance percentages, status-buff multipliers
 - **Turn scheduling** — `TurnManager` with variable-speed actors, pure dequeue logic, reinsert-time computation
 - **AI primitives** — `MonsterAI` state machine (sleep/hunt/idle), pure decision helpers (flee, kite, chase leash, erratic movement), GOAP planner framework
-- **Squad coordination** — `SquadPlugin` with alert propagation, leader-death effects, shared morale, tactical blackboard
+- **Squad coordination** — `SquadPlugin` with alert propagation, shared morale, tactical blackboard
 - **Factions** — `FactionMatrix` (string-keyed, symmetric, data-driven from RON)
 - **Components** — `Position`, `Viewshed`, `Name`, `Inventory`, `Faction`, `MovementMode`, `Collider`, `PatrolRoute`
 - **Geometry** — `Direction` (8-way), Manhattan/Chebyshev distance, adjacency, AoE tiles

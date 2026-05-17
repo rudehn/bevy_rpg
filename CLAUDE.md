@@ -28,7 +28,7 @@ All public items re-exported through `roguelike_engine::prelude::*`.
 | `geometry/` | Distance functions, `Direction` enum, AoE helpers |
 | `map/` | `Map` resource, 3-layer tile system (terrain/liquid/decoration), 13 procedural builders, `BuilderChain` pipeline |
 | `save/` | Platform-agnostic save I/O with schema versioning and migrations |
-| `squad/` | Squad coordination: alerts, morale, leader death, blackboard, roles |
+| `squad/` | Squad coordination: alerts, morale, blackboard, roles |
 | `status/` | Status effect framework: `StatusEffects` component, tick system, DoT |
 | `turn/` | Turn scheduling: `BinaryHeap`-based `TurnManager`, pure `dequeue_next_batch_pure` |
 

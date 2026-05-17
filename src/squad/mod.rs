@@ -2,20 +2,16 @@
 //!
 //! Monsters spawned as groups (rat packs, goblin war parties, kobold
 //! raids) can be linked by a shared [`SquadId`] component. This module
-//! provides four cooperative behaviors on top of that link:
+//! provides three cooperative behaviors on top of that link:
 //!
 //! 1. **Shared alerting** — when any squad member spots the configured
 //!    [`SquadTarget`] or takes damage, every nearby member transitions
 //!    from `Asleep` to `Hunting`.
-//! 2. **Leader death effects** — each squad may have one
-//!    [`SquadLeader`]. On leader death, [`SquadConfig::on_leader_death`]
-//!    fires: `Scatter` clears targets on all surviving members;
-//!    `Nothing` does nothing. A new leader is promoted from survivors.
-//! 3. **Collective morale** — [`squad_coordinator_system`] ticks each
+//! 2. **Collective morale** — [`squad_coordinator_system`] ticks each
 //!    squad's morale as a function of member count, leader presence,
 //!    collective HP, and time-since-contact. Members flee when the
 //!    shared morale drops below their [`SquadConfig::flee_threshold`].
-//! 4. **Shared blackboard** — [`SquadBlackboard`] holds alert level,
+//! 3. **Shared blackboard** — [`SquadBlackboard`] holds alert level,
 //!    known target position, retreat flag, and role assignments for
 //!    squad-level GOAP decisions.
 //!
@@ -29,9 +25,6 @@
 //!   each frame from whatever "primary threat" type they have.
 //! - **Monster filter**: dropped. The queries already require
 //!   `&mut MonsterAI` / `&SquadId`, which implicitly narrow to monsters.
-//! - **Logging**: leader-death scatter emits a [`SquadScatteredEvent`]
-//!   message instead of writing to a game-specific log. Games bridge
-//!   this to their own UI/log system.
 //! - **Scheduling**: the plugin registers systems into
 //!   [`SquadAlertSet`] and [`SquadReactionSet`] with no ordering or
 //!   state predicates. Games configure those sets to run at the right
@@ -79,9 +72,9 @@ impl Morale {
     }
 }
 
-/// Marker for the squad's current leader. When the leader dies,
-/// effects from [`SquadConfig::on_leader_death`] trigger and a new
-/// leader is promoted.
+/// Marker for the squad's current leader. Used by squad-aware AI
+/// (coordinator, blackboard) to identify who carries the shared
+/// tactical state.
 #[derive(Component, Debug, Clone)]
 pub struct SquadLeader;
 
@@ -89,35 +82,13 @@ pub struct SquadLeader;
 /// of a squad carries the same config (copied from the spawn table).
 #[derive(Component, Clone, Debug, Serialize, Deserialize)]
 pub struct SquadConfig {
-    pub on_leader_death: LeaderDeathBehavior,
     pub flee_threshold: f32,
 }
 
 impl Default for SquadConfig {
     fn default() -> Self {
         Self {
-            on_leader_death: LeaderDeathBehavior::Nothing,
             flee_threshold: 0.5,
-        }
-    }
-}
-
-/// What happens to remaining squad members when the leader dies.
-#[non_exhaustive]
-#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub enum LeaderDeathBehavior {
-    /// No special effect; squad dissolves.
-    #[default]
-    Nothing,
-    /// Members lose their target and wander aimlessly.
-    Scatter,
-}
-
-impl LeaderDeathBehavior {
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "scatter" => Self::Scatter,
-            _ => Self::Nothing,
         }
     }
 }
@@ -189,22 +160,10 @@ pub struct SquadAlertSet;
 pub struct SquadReactionSet;
 
 // =====================================================================
-// Events
-// =====================================================================
-
-/// Emitted when a squad's leader dies and the squad's configured
-/// on-leader-death behavior triggers a scatter. Games bridge this to
-/// their own UI / log system.
-#[derive(Message, Debug, Clone)]
-pub struct SquadScatteredEvent {
-    pub squad_id: SquadId,
-}
-
-// =====================================================================
 // Plugin
 // =====================================================================
 
-/// Bevy plugin that registers squad resources, messages, and systems.
+/// Bevy plugin that registers squad resources and systems.
 ///
 /// The plugin does NOT configure system ordering or `run_if`
 /// predicates — that's the game's responsibility via
@@ -216,12 +175,10 @@ impl Plugin for SquadPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SquadIdCounter>()
             .init_resource::<SquadTarget>()
-            .add_message::<SquadScatteredEvent>()
             .add_systems(Update, squad_alert_system.in_set(SquadAlertSet))
             .add_systems(
                 Update,
-                (squad_damage_alert_system, squad_leader_death_system)
-                    .in_set(SquadReactionSet),
+                squad_damage_alert_system.in_set(SquadReactionSet),
             );
     }
 }
@@ -308,50 +265,6 @@ pub fn squad_damage_alert_system(
         });
         if should_alert {
             ai.alert_to_position(target_point);
-        }
-    }
-}
-
-/// When a squad leader dies, apply morale effects and promote a new
-/// leader. Emits [`SquadScatteredEvent`] when
-/// [`LeaderDeathBehavior::Scatter`] fires so games can log it.
-pub fn squad_leader_death_system(
-    dead_leaders: Query<(Entity, &SquadId, &SquadConfig, &Health), With<SquadLeader>>,
-    mut members: Query<(Entity, &SquadId, &mut MonsterAI), Without<SquadLeader>>,
-    mut commands: Commands,
-    mut scatter_events: MessageWriter<SquadScatteredEvent>,
-) {
-    for (leader_entity, squad_id, config, health) in dead_leaders.iter() {
-        // Only trigger when leader is actually dead (HP <= 0)
-        if health.current > 0 {
-            continue;
-        }
-
-        match &config.on_leader_death {
-            LeaderDeathBehavior::Scatter => {
-                for (entity, sid, mut ai) in members.iter_mut() {
-                    if sid == squad_id && entity != leader_entity {
-                        ai.scatter();
-                    }
-                }
-                scatter_events.write(SquadScatteredEvent {
-                    squad_id: *squad_id,
-                });
-            }
-            LeaderDeathBehavior::Nothing => {}
-            // `#[non_exhaustive]`: future engine variants fall through
-            // to no-op until the game updates its handling.
-            _ => {}
-        }
-
-        // Promote a new leader from surviving members, transferring the blackboard.
-        for (entity, sid, _ai) in members.iter() {
-            if sid == squad_id && entity != leader_entity {
-                commands
-                    .entity(entity)
-                    .insert((SquadLeader, SquadBlackboard::default()));
-                break;
-            }
         }
     }
 }
@@ -635,34 +548,9 @@ mod tests {
     }
 
     #[test]
-    fn leader_death_from_str_accepts_scatter() {
-        assert_eq!(
-            LeaderDeathBehavior::from_str("scatter"),
-            LeaderDeathBehavior::Scatter
-        );
-        assert_eq!(
-            LeaderDeathBehavior::from_str("SCATTER"),
-            LeaderDeathBehavior::Scatter
-        );
-    }
-
-    #[test]
-    fn leader_death_from_str_unknown_is_nothing() {
-        assert_eq!(
-            LeaderDeathBehavior::from_str("unknown"),
-            LeaderDeathBehavior::Nothing
-        );
-        assert_eq!(
-            LeaderDeathBehavior::from_str(""),
-            LeaderDeathBehavior::Nothing
-        );
-    }
-
-    #[test]
     fn squad_config_default_threshold_is_half() {
         let c = SquadConfig::default();
         assert_eq!(c.flee_threshold, 0.5);
-        assert_eq!(c.on_leader_death, LeaderDeathBehavior::Nothing);
     }
 
     #[test]

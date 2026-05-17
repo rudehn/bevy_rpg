@@ -75,8 +75,8 @@ pub use crate::ai::{MonsterAI, MonsterAIMode, GUARD_PATROL_RADIUS};
 
 // ---- Squad ----
 pub use crate::squad::{
-    AlertLevel, LeaderDeathBehavior, Morale, SquadAlertSet, SquadBlackboard, SquadConfig, SquadId,
-    SquadIdCounter, SquadLeader, SquadPlugin, SquadReactionSet, SquadRole, SquadScatteredEvent,
+    AlertLevel, Morale, SquadAlertSet, SquadBlackboard, SquadConfig, SquadId,
+    SquadIdCounter, SquadLeader, SquadPlugin, SquadReactionSet, SquadRole,
     SquadTarget,
 };
 
