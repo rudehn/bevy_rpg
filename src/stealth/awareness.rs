@@ -57,7 +57,8 @@ impl Awareness {
     }
 
     /// Returns the highest-ranked state across all records; defaults to
-    /// Hidden if the map is empty.
+    /// Hidden if the map is empty. Caller decides which records count
+    /// as "hostile" (faction filter applied externally).
     pub fn highest(&self) -> AwarenessState {
         self.records
             .values()
