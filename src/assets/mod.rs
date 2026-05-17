@@ -877,6 +877,12 @@ pub struct ItemAsset {
     #[serde(default)]
     pub resistances: HashMap<String, i32>,
 
+    /// Stealth penalty for the wearer (Phase 4 stealth system). Subtracted
+    /// from the d20 stealth roll. 0 = silent (cloth, robe), 5 = plate.
+    /// Defaults to 0 so non-armor items don't carry a phantom penalty.
+    #[serde(default)]
+    pub armor_stealth_penalty: i32,
+
     /// Whether this item is a quest item required to win the game.
     #[serde(default)]
     pub is_quest_item: bool,
