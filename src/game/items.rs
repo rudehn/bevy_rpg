@@ -775,6 +775,160 @@ pub fn handle_weapon_on_hit_effects(
     }
 }
 
+// --- Monster Loadout (deferred equip) ---
+
+/// Marker placed by the monster spawner on entities whose `MonsterAsset`
+/// declares `equipped: [..]`. A follow-up system reads the list, spawns
+/// each item entity, and attaches them to the monster's `Equipment`.
+///
+/// The deferred design keeps `spawn_monster`'s signature small — the
+/// processing system pulls `ItemManifest` via `Res` instead of forcing
+/// every caller to thread it through.
+#[derive(Component, Debug, Clone)]
+pub struct UnequippedLoadout(pub Vec<String>);
+
+/// Build `ItemProperties` from an `ItemAsset` — pure data conversion,
+/// no entity spawning. Same shape the item spawner uses; extracted here
+/// so the monster loadout system doesn't depend on the world-placement
+/// half of `spawn_item`.
+pub fn item_properties_from_asset(asset: &crate::assets::ItemAsset) -> ItemProperties {
+    use crate::game::combat::DamageType;
+    let kind = asset.item_kind();
+    let armor_slot = asset.armor_data().map(|a| a.slot.clone());
+    let defense = asset.armor_data().map(|a| a.defense).unwrap_or(0);
+    let max_blocks = asset.armor_data().map(|a| a.max_blocks).unwrap_or(0);
+    let damage = asset.weapon_data().map(|w| w.damage.clone());
+    let weapon_range = asset.weapon_data().map(|w| w.weapon_range).unwrap_or(0);
+    let attack_speed = asset.weapon_data().map(|w| w.attack_speed).unwrap_or(1.0);
+    let weapon_ability = asset.weapon_data().and_then(|w| w.weapon_ability.clone());
+    let weapon_skill = asset.weapon_data().and_then(|w| w.weapon_skill);
+    let on_hit_effects = asset
+        .weapon_data()
+        .map(|w| w.on_hit_effects.clone())
+        .unwrap_or_default();
+    let staff_effect = asset.staff_data().map(|s| s.effect);
+    let staff_base_recharge = asset.staff_data().map(|s| s.base_recharge).unwrap_or(0);
+    let effect = asset.consumable_data().and_then(|c| c.effect.clone());
+    let resistances = asset
+        .resistances
+        .iter()
+        .map(|(k, v)| (DamageType::from_str(k), *v))
+        .collect();
+    ItemProperties {
+        kind,
+        armor_slot,
+        damage,
+        defense,
+        rarity: asset.rarity.clone(),
+        effect,
+        weapon_range,
+        attack_speed,
+        staff_effect,
+        base_recharge: staff_base_recharge,
+        dodge_bonus: asset.dodge_bonus,
+        hit_bonus: asset.hit_bonus,
+        damage_bonus: asset.damage_bonus,
+        regen_bonus: asset.regen_bonus,
+        max_hp_bonus: asset.max_hp_bonus,
+        delay_modifier: asset.delay_modifier,
+        vision_bonus: asset.vision_bonus,
+        resistances,
+        weapon_ability,
+        weapon_skill,
+        max_blocks,
+        on_hit_effects,
+    }
+}
+
+/// Processes `UnequippedLoadout` markers placed by the monster spawner.
+/// For each declared item name: look up the asset, spawn a minimal item
+/// entity (no world placement, no rendering, no inventory marker),
+/// attach to the monster's `Equipment` in the appropriate slot, and
+/// apply stat overrides (weapon damage dice replace the intrinsic
+/// `damage`; armor `defense` adds to the monster's flat `Armor`;
+/// shield `defense` adds to `Block`; armor `dodge_bonus` adds to
+/// `Dodge`). Removes the marker on success.
+///
+/// Runs every frame (cheap when no loadouts are pending). Items are
+/// tagged with `GameEntityMarker` so they're cleaned up on game-over.
+pub fn process_monster_loadout_system(
+    mut commands: Commands,
+    item_manifests: Res<bevy::asset::Assets<crate::assets::ItemManifest>>,
+    item_manifest_handle: Res<crate::assets::ItemManifestHandle>,
+    mut loadout_query: Query<
+        (
+            Entity,
+            &UnequippedLoadout,
+            &mut Equipment,
+            &mut Damage,
+            &mut Armor,
+            &mut crate::game::stats::Block,
+            &mut Dodge,
+            &mut crate::game::stats::MaxShieldBlocks,
+        ),
+    >,
+) {
+    let Some(manifest) = item_manifests.get(&item_manifest_handle.0) else { return; };
+
+    for (monster_entity, loadout, mut equipment, mut damage, mut armor, mut block, mut dodge, mut max_blocks) in loadout_query.iter_mut() {
+        for item_name in &loadout.0 {
+            let Some(asset) = manifest.items.get(item_name) else {
+                warn!("Monster loadout references unknown item '{}'", item_name);
+                continue;
+            };
+
+            let props = item_properties_from_asset(asset);
+
+            // Pick the destination slot.
+            let slot = match Equipment::slot_for(&props) {
+                Some(s) => s,
+                None => {
+                    warn!("Item '{}' has no equipment slot (kind: {:?}); skipping in monster loadout", item_name, props.kind);
+                    continue;
+                }
+            };
+
+            // Apply stat overrides BEFORE spawning the item entity so we
+            // don't depend on the entity existing.
+            match &props.kind {
+                ItemKind::Weapon => {
+                    if let Some(dmg) = &props.damage {
+                        damage.0 = dmg.clone();
+                    }
+                }
+                ItemKind::Armor => {
+                    if matches!(props.armor_slot, Some(ArmorSlot::OffHand)) {
+                        block.0 += props.defense;
+                        max_blocks.0 = props.max_blocks;
+                    } else {
+                        armor.0 += props.defense;
+                    }
+                    dodge.0 += props.dodge_bonus;
+                }
+                _ => {}
+            }
+
+            // Spawn the equipped item entity. Minimal — no Position,
+            // no FloorEntity, no Item marker (don't want it picked up).
+            // GameEntityMarker so game-over cleanup catches it.
+            let item_entity = commands
+                .spawn((
+                    crate::components::Name(asset.name.clone()),
+                    props,
+                    Equipped,
+                    crate::components::GameEntityMarker,
+                ))
+                .id();
+
+            // Attach to the monster's Equipment slot.
+            equipment.set_slot(slot, Some(item_entity));
+        }
+
+        // Done processing this loadout — drop the marker.
+        commands.entity(monster_entity).remove::<UnequippedLoadout>();
+    }
+}
+
 // --- Loot Table ---
 
 #[derive(Debug, Clone)]
@@ -821,6 +975,15 @@ impl Plugin for ItemsPlugin {
             .add_systems(
                 Update,
                 handle_weapon_on_hit_effects.in_set(CombatReactionSet),
+            )
+            // Phase B monster equipment: drains UnequippedLoadout markers
+            // placed by the spawner. Runs every Update — cheap when empty;
+            // monsters declaring `equipped:` resolve within 1-2 frames of
+            // spawn, before the turn queue advances to their slot.
+            .add_systems(
+                Update,
+                process_monster_loadout_system
+                    .run_if(in_state(crate::game::AppState::InGame)),
             );
     }
 }
@@ -1614,6 +1777,113 @@ mod tests {
     // ====================================================================
     // Tower Shield delay penalty
     // ====================================================================
+
+    // ====================================================================
+    // Phase B: monster equipment / loadout
+    // ====================================================================
+
+    /// `item_properties_from_asset` unpacks a tagged-union `ItemAsset`
+    /// into the flat runtime `ItemProperties` — same shape the spawner
+    /// produces. Verifies a weapon round-trips, including on_hit_effects.
+    #[test]
+    fn item_properties_from_asset_unpacks_weapon_with_on_hit() {
+        let asset: crate::assets::ItemAsset = ron::from_str(r#"(
+            name: "Test Dagger",
+            kind: Weapon((
+                damage: "1d4",
+                attack_speed: 0.5,
+                weapon_ability: Some("Backstab"),
+                on_hit_effects: [
+                    PoisonStrike(damage_per_turn: 1, duration: 3, chance: 30),
+                ],
+            )),
+        )"#).expect("parse");
+        let props = item_properties_from_asset(&asset);
+        assert_eq!(props.kind, ItemKind::Weapon);
+        assert_eq!(props.damage.as_deref(), Some("1d4"));
+        assert_eq!(props.attack_speed, 0.5);
+        assert_eq!(props.weapon_ability.as_deref(), Some("Backstab"));
+        assert_eq!(props.on_hit_effects.len(), 1);
+        assert!(matches!(
+            props.on_hit_effects[0],
+            OnHitEffect::PoisonStrike { chance: 30, .. }
+        ));
+    }
+
+    /// Armor asset → ItemProperties: slot, defense, and max_blocks land
+    /// in the flat fields the equip pipeline expects.
+    #[test]
+    fn item_properties_from_asset_unpacks_armor() {
+        let asset: crate::assets::ItemAsset = ron::from_str(r#"(
+            name: "Test Buckler",
+            kind: Armor((slot: OffHand, defense: 1, max_blocks: 1)),
+            dodge_bonus: -1,
+        )"#).expect("parse");
+        let props = item_properties_from_asset(&asset);
+        assert_eq!(props.kind, ItemKind::Armor);
+        assert_eq!(props.armor_slot, Some(ArmorSlot::OffHand));
+        assert_eq!(props.defense, 1);
+        assert_eq!(props.max_blocks, 1);
+        assert_eq!(props.dodge_bonus, -1);
+    }
+
+    /// A monster declaring `equipped: ["Item"]` parses with the new
+    /// field populated.
+    #[test]
+    fn monster_asset_parses_with_equipped_loadout() {
+        let ron = r#"(
+            name: "Test Cultist",
+            vision: 8,
+            damage: "1d2",
+            base_hp: 9,
+            species: Humanoid,
+            equipped: ["Ritual Dagger", "Cult Robes"],
+        )"#;
+        let asset: crate::assets::MonsterAsset = ron::from_str(ron).expect("parse");
+        assert_eq!(asset.equipped, vec!["Ritual Dagger".to_string(), "Cult Robes".to_string()]);
+    }
+
+    /// Default `equipped:` is empty — existing monsters without the
+    /// field keep working unchanged.
+    #[test]
+    fn monster_asset_default_equipped_is_empty() {
+        let ron = r#"(
+            name: "Test Goblin",
+            vision: 8,
+            damage: "1d4",
+            base_hp: 5,
+            species: Humanoid,
+        )"#;
+        let asset: crate::assets::MonsterAsset = ron::from_str(ron).expect("parse");
+        assert!(asset.equipped.is_empty());
+    }
+
+    /// `Equipment::slot_for` picks "weapon" for any weapon-kind item the
+    /// monster loadout system might encounter — verifies the slot lookup
+    /// the monster loadout path depends on. Smoke test against a typical
+    /// weapon asset's properties.
+    #[test]
+    fn weapon_asset_routes_to_weapon_slot() {
+        let asset: crate::assets::ItemAsset = ron::from_str(r#"(
+            name: "Sword",
+            kind: Weapon((damage: "1d6")),
+        )"#).expect("parse");
+        let props = item_properties_from_asset(&asset);
+        assert_eq!(Equipment::slot_for(&props), Some("weapon"));
+    }
+
+    /// An OffHand armor (shield) routes to the offhand slot — important
+    /// for the monster loadout path so shields end up in the right slot
+    /// and contribute to Block rather than Armor.
+    #[test]
+    fn shield_asset_routes_to_offhand_slot() {
+        let asset: crate::assets::ItemAsset = ron::from_str(r#"(
+            name: "Buckler",
+            kind: Armor((slot: OffHand, defense: 1, max_blocks: 1)),
+        )"#).expect("parse");
+        let props = item_properties_from_asset(&asset);
+        assert_eq!(Equipment::slot_for(&props), Some("offhand"));
+    }
 
     #[test]
     fn tower_shield_delay_penalty_increases_action_delay() {

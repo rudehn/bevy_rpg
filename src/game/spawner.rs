@@ -173,6 +173,17 @@ pub fn spawn_monster(
         .entity(monster_entity)
         .insert(crate::game::xp::MonsterTier(monster_asset.tier));
 
+    // Phase B: monsters with declared `equipped:` get an empty Equipment
+    // component immediately and an UnequippedLoadout marker for the
+    // deferred-equip system to process next frame. Keeps this function's
+    // signature small — the equip system pulls ItemManifest via Res.
+    if !monster_asset.equipped.is_empty() {
+        commands.entity(monster_entity).insert((
+            crate::game::items::Equipment::default(),
+            crate::game::items::UnequippedLoadout(monster_asset.equipped.clone()),
+        ));
+    }
+
     if let Some(regen_rate) = monster_asset.regen {
         commands.entity(monster_entity).insert(HealthRegen {
             regen_rate,

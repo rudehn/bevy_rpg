@@ -428,6 +428,20 @@ pub struct MonsterAsset {
     /// If true, the monster never moves — it only uses abilities/ranged attacks.
     #[serde(default)]
     pub stationary: bool,
+
+    /// Phase B loadout: item names this monster spawns wielding/wearing.
+    /// At spawn the items are looked up in `items.ron`, instantiated as
+    /// entities attached to the monster's `Equipment` component, and
+    /// their effects apply via the same paths as player equipment —
+    /// equipped weapon's `damage` dice override the monster's intrinsic
+    /// `damage:` field; weapon `on_hit_effects` proc through
+    /// `handle_weapon_on_hit_effects`; armor adds to base armor/dodge.
+    ///
+    /// Empty by default. Monsters with no `equipped:` fall back to the
+    /// intrinsic `damage:` / `base_armor:` / `base_dodge:` fields exactly
+    /// as before.
+    #[serde(default)]
+    pub equipped: Vec<String>,
 }
 
 /// Detonation effect for `ExplodeOnHit`, deserialized from RON.

@@ -79,6 +79,21 @@ Live list in `src/game/abilities.rs`. Parseable RON forms:
 - `Terrify(radius)` — fear aura
 - `MimicDisguise` — mimic-as-item
 
+### Equipped loadout (`equipped` array)
+
+```ron
+equipped: ["Ritual Dagger", "Cult Robes"],
+```
+
+Names look up `items.ron`. At spawn the monster gets an `Equipment`
+component with the items in the appropriate slots, each item spawned
+as a minimal entity (no world Position, no rendering). Stat overrides
+apply automatically: equipped weapon's `damage:` replaces the monster's
+intrinsic `damage:`; armor `defense` adds to Armor (Block for OffHand
+shields); armor `dodge_bonus` adds to Dodge. Weapon `on_hit_effects`
+proc through the same handler the player's weapon procs use. Defaults
+to empty; monsters without `equipped:` keep their intrinsic stats.
+
 ### Monster abilities (`monster_abilities` array) — cooldown casts
 ```ron
 monster_abilities: [(
