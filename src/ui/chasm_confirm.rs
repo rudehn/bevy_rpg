@@ -3,26 +3,33 @@
 
 use bevy::prelude::*;
 
-use crate::game::{AppState, InGameState};
+use crate::game::InGameState;
 use crate::game::actions::PendingChasmFall;
 use crate::game::combat::{DamageEvent, DamageSource, DamageType};
 use crate::map::dungeon::MapTransitionMessage;
 use crate::player::Player;
 use crate::ui::game_log::GameLogMessage;
 use crate::ui::modal::{despawn_screen, spawn_modal, ModalConfig, GOLD};
+use crate::ui::registry::UiScreen;
 
-pub struct ChasmConfirmPlugin;
+/// Registry entry for the chasm-fall confirmation dialog. Event-driven:
+/// entered when the player steps on a chasm tile (gameplay code sets
+/// `NextState<InGameState::ChasmConfirm>`); has no hotkey.
+pub struct ChasmConfirmScreen;
 
-impl Plugin for ChasmConfirmPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(InGameState::ChasmConfirm), spawn_chasm_confirm_ui)
+impl UiScreen for ChasmConfirmScreen {
+    const STATE: InGameState = InGameState::ChasmConfirm;
+    const OPEN_KEY: Option<KeyCode> = None;
+    // HELP is None — event-driven screens are not user-discoverable.
+
+    fn build(app: &mut App) {
+        app.add_systems(OnEnter(Self::STATE), spawn_chasm_confirm_ui)
             .add_systems(
                 Update,
-                chasm_confirm_input_system
-                    .run_if(in_state(AppState::InGame).and(in_state(InGameState::ChasmConfirm))),
+                chasm_confirm_input_system.run_if(in_state(Self::STATE)),
             )
             .add_systems(
-                OnExit(InGameState::ChasmConfirm),
+                OnExit(Self::STATE),
                 despawn_screen::<OnChasmConfirmScreen>,
             );
     }

@@ -13,47 +13,38 @@ use crate::game::xp::{Experience, Level, PLAYER_CHOICE_LEVELS, LEVEL_CAP, xp_to_
 use crate::game::{AppState, InGameState};
 use crate::player::Player;
 use crate::ui::modal::{spawn_modal, despawn_screen, ModalConfig, GOLD};
+use crate::ui::registry::{close_on_toggle_or_escape, open_gate_player_turn, HelpEntry, UiScreen};
 
-#[derive(Component)]
+#[derive(Component, Default)]
 struct OnCharacterInfoScreen;
 
 #[derive(Component)]
 struct CharInfoBodyText;
 
-pub struct CharacterInfoPlugin;
+/// Registry entry for the character info screen.
+pub struct CharacterInfoScreen;
 
-impl Plugin for CharacterInfoPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            character_info_input
-                .run_if(in_state(AppState::InGame))
-                .run_if(in_state(TurnState::PlayerInput).or(in_state(InGameState::CharacterInfo))),
-        )
-        .add_systems(OnEnter(InGameState::CharacterInfo), spawn_character_info_ui)
-        .add_systems(
-            Update,
-            update_character_info_ui.run_if(in_state(InGameState::CharacterInfo)),
-        )
-        .add_systems(
-            OnExit(InGameState::CharacterInfo),
-            despawn_screen::<OnCharacterInfoScreen>,
-        );
+impl UiScreen for CharacterInfoScreen {
+    const STATE: InGameState = InGameState::CharacterInfo;
+    const OPEN_KEY: Option<KeyCode> = Some(KeyCode::KeyC);
+    const OPEN_GATE: Option<fn(&World) -> bool> = Some(open_gate_player_turn);
+    const HELP: Option<HelpEntry> = Some(HelpEntry {
+        display: "C",
+        label: "Character info",
+    });
+
+    fn build(app: &mut App) {
+        app.add_systems(OnEnter(Self::STATE), spawn_character_info_ui)
+            .add_systems(OnExit(Self::STATE), despawn_screen::<OnCharacterInfoScreen>)
+            .add_systems(
+                Update,
+                (
+                    close_on_toggle_or_escape::<Self>,
+                    update_character_info_ui,
+                )
+                    .run_if(in_state(Self::STATE)),
+            );
     }
-}
-
-fn character_info_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    state: Res<State<InGameState>>,
-    mut next_state: ResMut<NextState<InGameState>>,
-) {
-    crate::ui::modal::toggle_screen(
-        &keys,
-        &state,
-        &mut next_state,
-        KeyCode::KeyC,
-        InGameState::CharacterInfo,
-    );
 }
 
 fn spawn_character_info_ui(mut commands: Commands, asset_server: Res<AssetServer>) {

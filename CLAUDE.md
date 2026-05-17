@@ -161,6 +161,7 @@ src/
     mod.rs               # Player plugin, input handling, movement
   ui/
     mod.rs               # UiPlugin, InGameState substates for UI screens
+    registry.rs          # UiScreen trait, ScreenRegistry, central hotkey dispatcher, key-collision detector
     game_log.rs          # GameLog resource, GameLogMessage
     inventory.rs         # Inventory screen (InGameState::Inventory)
     character_info.rs    # Character info screen (InGameState::CharacterInfo)
@@ -303,6 +304,7 @@ src/
 - Inventory and Character Info screens must never let keystrokes bleed through to the game world
 - Every new UI substate must be added to this gate
 - Inventory can only be opened when it is the player's turn (`TurnState::PlayerInput`)
+- **Modal screens go through [src/ui/registry.rs](src/ui/registry.rs).** Each screen implements `UiScreen` with const associated items (`STATE`, `OPEN_KEY`, optional `OPEN_MODIFIERS` / `OPEN_GATE` / `HELP`) and a `build(app)` method that registers the screen's own OnEnter / OnExit / Update systems. `App::register_screen::<T>()` in `UiPlugin::build` wires the systems and records the hotkey + help entry in the `ScreenRegistry` resource. A single exclusive `dispatch_screen_hotkeys` system (gated on `InGameState::Running`) reads the registry and transitions to the matching state when a hotkey + modifier combination is pressed and the optional gate predicate passes. `detect_screen_key_collisions` (Startup) panics if two screens share the same `(key, modifiers)`. Use `close_on_toggle_or_escape::<Self>` as the standard close handler; the `open_gate_player_turn` helper is the canonical `OPEN_GATE` for screens that should only open during the player's turn (Inventory, CharacterInfo, SkillScreen, LogHistory). Event-driven screens (AsiSelect, EnchantSelect, ChasmConfirm) set `OPEN_KEY: None` and `HELP: None`; gameplay code transitions them via `NextState`. **Adding a new modal screen is one file (the screen plugin with its `UiScreen` impl) plus one `.register_screen::<T>()` call in `UiPlugin::build` plus one `InGameState` variant.** The help screen's "Screens" section is derived from `ScreenRegistry::help_entries` automatically — no manual edits to `help.rs` when adding a screen.
 
 ## Conventions
 - Snake_case for files, modules, functions, variables; PascalCase for types

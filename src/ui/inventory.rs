@@ -15,29 +15,35 @@ use crate::game::turns::TurnState;
 use crate::game::{AppState, InGameState};
 use crate::player::Player;
 
-pub struct InventoryPlugin;
+use crate::ui::registry::{close_on_toggle_or_escape, open_gate_player_turn, HelpEntry, UiScreen};
 
-impl Plugin for InventoryPlugin {
-    fn build(&self, app: &mut App) {
+/// Registry entry for the inventory screen.
+pub struct InventoryScreen;
+
+impl UiScreen for InventoryScreen {
+    const STATE: InGameState = InGameState::Inventory;
+    const OPEN_KEY: Option<KeyCode> = Some(KeyCode::KeyI);
+    const OPEN_GATE: Option<fn(&World) -> bool> = Some(open_gate_player_turn);
+    const HELP: Option<HelpEntry> = Some(HelpEntry {
+        display: "I",
+        label: "Inventory",
+    });
+
+    fn build(app: &mut App) {
         app.add_systems(
-            Update,
-            // Only toggle inventory when it's the player's turn and the game is running.
-            // This prevents opening the bag mid-NPC-turn and avoids double-input on close.
-            inventory_input_system.run_if(
-                in_state(AppState::InGame)
-                    .and(in_state(TurnState::PlayerInput).or(in_state(InGameState::Inventory))),
-            ),
-        )
-        .add_systems(
-            OnEnter(InGameState::Inventory),
+            OnEnter(Self::STATE),
             (spawn_inventory_ui, reset_inventory_selection),
         )
         .add_systems(
             Update,
-            update_inventory_ui.run_if(in_state(InGameState::Inventory)),
+            (
+                close_on_toggle_or_escape::<Self>,
+                update_inventory_ui,
+            )
+                .run_if(in_state(Self::STATE)),
         )
         .add_systems(
-            OnExit(InGameState::Inventory),
+            OnExit(Self::STATE),
             crate::ui::modal::despawn_screen::<OnInventoryScreen>,
         );
     }
@@ -58,22 +64,6 @@ struct InventoryDetailText;
 struct EquipmentPaneText;
 
 // --- Systems ---
-
-fn inventory_input_system(
-    keys: Res<ButtonInput<KeyCode>>,
-    state: Res<State<InGameState>>,
-    mut next_state: ResMut<NextState<InGameState>>,
-) {
-    // I toggles inventory. C is reserved for the character info screen
-    // (Phase 2) and is handled in `src/ui/character_info.rs`.
-    crate::ui::modal::toggle_screen(
-        &keys,
-        &state,
-        &mut next_state,
-        KeyCode::KeyI,
-        InGameState::Inventory,
-    );
-}
 
 fn reset_inventory_selection(mut slot: ResMut<SelectedInventorySlot>) {
     slot.0 = 0;

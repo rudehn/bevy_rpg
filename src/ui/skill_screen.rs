@@ -35,27 +35,32 @@ struct SkillTargetInput {
     buffer: String,
 }
 
-pub struct SkillScreenPlugin;
+use crate::ui::registry::{open_gate_player_turn, HelpEntry, UiScreen};
 
-impl Plugin for SkillScreenPlugin {
-    fn build(&self, app: &mut App) {
+/// Registry entry for the skill training screen.
+pub struct SkillScreenScreen;
+
+impl UiScreen for SkillScreenScreen {
+    const STATE: InGameState = InGameState::SkillScreen;
+    const OPEN_KEY: Option<KeyCode> = Some(KeyCode::KeyM);
+    const OPEN_GATE: Option<fn(&World) -> bool> = Some(open_gate_player_turn);
+    const HELP: Option<HelpEntry> = Some(HelpEntry {
+        display: "M",
+        label: "Skill training",
+    });
+
+    fn build(app: &mut App) {
         app.init_resource::<SkillScreenFocus>()
             .init_resource::<SkillTargetInput>()
+            .add_systems(OnEnter(Self::STATE), spawn_skill_screen_ui)
             .add_systems(
                 Update,
-                skill_screen_open_close
-                    .run_if(in_state(AppState::InGame))
-                    .run_if(in_state(TurnState::PlayerInput).or(in_state(InGameState::SkillScreen))),
-            )
-            .add_systems(OnEnter(InGameState::SkillScreen), spawn_skill_screen_ui)
-            .add_systems(
-                Update,
-                (skill_screen_input, refresh_skill_screen)
+                (skill_screen_close_input, skill_screen_input, refresh_skill_screen)
                     .chain()
-                    .run_if(in_state(InGameState::SkillScreen)),
+                    .run_if(in_state(Self::STATE)),
             )
             .add_systems(
-                OnExit(InGameState::SkillScreen),
+                OnExit(Self::STATE),
                 (despawn_screen::<OnSkillScreen>, clear_target_input_on_exit),
             );
     }
@@ -66,25 +71,20 @@ fn clear_target_input_on_exit(mut input: ResMut<SkillTargetInput>) {
     input.buffer.clear();
 }
 
-fn skill_screen_open_close(
+/// Custom close handler for SkillScreen. Skips the close transition
+/// while the target-input mode is active (the digit-input handler in
+/// `skill_screen_input` owns Esc / Backspace in that mode).
+fn skill_screen_close_input(
     keys: Res<ButtonInput<KeyCode>>,
-    state: Res<State<InGameState>>,
     target_input: Res<SkillTargetInput>,
     mut next_state: ResMut<NextState<InGameState>>,
 ) {
-    // While the player is typing a target value, suppress the toggle
-    // keys — the digit keys, Enter, Esc, and Backspace are owned by
-    // the target-input handler in `skill_screen_input`.
     if target_input.skill.is_some() {
         return;
     }
-    crate::ui::modal::toggle_screen(
-        &keys,
-        &state,
-        &mut next_state,
-        KeyCode::KeyM,
-        InGameState::SkillScreen,
-    );
+    if keys.just_pressed(KeyCode::Escape) || keys.just_pressed(KeyCode::KeyM) {
+        next_state.set(InGameState::Running);
+    }
 }
 
 fn spawn_skill_screen_ui(mut commands: Commands, asset_server: Res<AssetServer>) {

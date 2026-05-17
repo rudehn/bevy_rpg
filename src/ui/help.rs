@@ -2,48 +2,56 @@
 
 use bevy::prelude::*;
 
-use crate::game::{AppState, InGameState};
-use crate::ui::modal::{ModalConfig, despawn_screen, spawn_modal, toggle_screen};
+use crate::game::InGameState;
+use crate::ui::modal::{despawn_screen, spawn_modal, ModalConfig};
+use crate::ui::registry::{close_on_toggle_or_escape, HelpEntry, Modifiers, UiScreen};
 
-pub struct HelpPlugin;
+/// Registry entry for the help screen.
+pub struct HelpScreen;
 
-impl Plugin for HelpPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            help_input_system.run_if(in_state(AppState::InGame)),
-        )
-        .add_systems(OnEnter(InGameState::Help), spawn_help_ui)
-        .add_systems(OnExit(InGameState::Help), despawn_screen::<OnHelpScreen>);
+impl UiScreen for HelpScreen {
+    const STATE: InGameState = InGameState::Help;
+    const OPEN_KEY: Option<KeyCode> = Some(KeyCode::Slash);
+    const OPEN_MODIFIERS: Modifiers = Modifiers::SHIFT;
+    // No PlayerInput gate — Help is reachable from any in-game moment
+    // (the legacy `help_input_system` had no gate either).
+    const HELP: Option<HelpEntry> = Some(HelpEntry {
+        display: "?",
+        label: "Help",
+    });
+
+    fn build(app: &mut App) {
+        app.add_systems(OnEnter(Self::STATE), spawn_help_ui)
+            .add_systems(OnExit(Self::STATE), despawn_screen::<OnHelpScreen>)
+            .add_systems(
+                Update,
+                close_on_toggle_or_escape::<Self>.run_if(in_state(Self::STATE)),
+            );
     }
 }
 
 #[derive(Component)]
 struct OnHelpScreen;
 
-fn help_input_system(
-    keys: Res<ButtonInput<KeyCode>>,
-    state: Res<State<InGameState>>,
-    mut next_state: ResMut<NextState<InGameState>>,
+fn spawn_help_ui(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    registry: Res<crate::ui::registry::ScreenRegistry>,
 ) {
-    // ? is Shift+/ on most keyboards
-    if keys.just_pressed(KeyCode::Slash) && keys.pressed(KeyCode::ShiftLeft)
-        || keys.just_pressed(KeyCode::Slash) && keys.pressed(KeyCode::ShiftRight)
-    {
-        if *state.get() == InGameState::Running {
-            next_state.set(InGameState::Help);
-        } else if *state.get() == InGameState::Help {
-            next_state.set(InGameState::Running);
-        }
-        return;
-    }
-    if keys.just_pressed(KeyCode::Escape) && *state.get() == InGameState::Help {
-        next_state.set(InGameState::Running);
-    }
-}
-
-fn spawn_help_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font = asset_server.load("fonts/SourceCodePro.ttf");
+
+    // The "Screens" section is derived from `ScreenRegistry` so adding
+    // a new modal screen automatically appears here. Other sections
+    // (Movement, Targeting, in-screen bindings) stay hand-written.
+    let screen_rows: Vec<(String, String)> = registry
+        .help_entries
+        .iter()
+        .map(|e| (e.display.to_string(), e.label.to_string()))
+        .chain(std::iter::once((
+            "Tab".to_string(),
+            "Cycle nearby entities".to_string(),
+        )))
+        .collect();
 
     spawn_modal(
         &mut commands,
@@ -56,7 +64,7 @@ fn spawn_help_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
             footer: "Press ? or Esc to close",
             ..default()
         },
-        |panel, font| {
+        move |panel, font| {
             let section = |panel: &mut ChildSpawnerCommands, heading: &str, bindings: &[(&str, &str)]| {
                 // Heading
                 panel.spawn((
@@ -87,14 +95,11 @@ fn spawn_help_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                 (".", ">  Descend stairs"),
             ]);
 
-            section(panel, "Screens", &[
-                ("I", "Inventory & Equipment"),
-                ("C", "Character info (race / class / level / attributes)"),
-                ("M", "Skills (training screen)"),
-                ("L", "Log history"),
-                ("Tab", "Cycle nearby entities"),
-                ("?", "This help screen"),
-            ]);
+            let screen_rows_refs: Vec<(&str, &str)> = screen_rows
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            section(panel, "Screens", &screen_rows_refs);
 
             section(panel, "Level-Up (when prompted)", &[
                 ("S", "Spend a point into Strength"),

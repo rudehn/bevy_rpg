@@ -26,10 +26,9 @@ pub mod menu;
 pub mod modal;
 pub mod monster_info;
 pub mod nearby;
+pub mod registry;
 
 use cheat_menu::CheatMenuPlugin;
-use inventory::InventoryPlugin;
-use log_history::LogHistoryPlugin;
 use menu::MenuPlugin;
 use nearby::{NearbyListRoot, NearbyPlugin};
 use game_log::{
@@ -567,19 +566,26 @@ pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
+        use crate::ui::registry::{RegisterScreen, ScreenRegistryPlugin};
+
         app.init_resource::<GameLog>()
             .init_resource::<GameLogSettings>()
             .add_message::<GameLogMessage>()
             .add_plugins((
-                CheatMenuPlugin, InventoryPlugin, LogHistoryPlugin,
+                ScreenRegistryPlugin,
+                CheatMenuPlugin,
                 MenuPlugin, NearbyPlugin, monster_info::MonsterInfoPlugin,
-                hover_info::HoverInfoPlugin, enchant_select::EnchantSelectPlugin,
-                help::HelpPlugin, chasm_confirm::ChasmConfirmPlugin,
+                hover_info::HoverInfoPlugin,
                 character_creation::CharacterCreationPlugin,
-                asi_modal::AsiModalPlugin,
-                character_info::CharacterInfoPlugin,
-                skill_screen::SkillScreenPlugin,
             ))
+            .register_screen::<character_info::CharacterInfoScreen>()
+            .register_screen::<skill_screen::SkillScreenScreen>()
+            .register_screen::<log_history::LogHistoryScreen>()
+            .register_screen::<inventory::InventoryScreen>()
+            .register_screen::<help::HelpScreen>()
+            .register_screen::<chasm_confirm::ChasmConfirmScreen>()
+            .register_screen::<enchant_select::EnchantSelectScreen>()
+            .register_screen::<asi_modal::AsiSelectScreen>()
             .add_systems(
                 OnEnter(AppState::InGame),
                 (

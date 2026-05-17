@@ -33,22 +33,31 @@ struct AsiRemainingText;
 #[derive(Component, Debug, Clone, Copy)]
 struct AsiLetterText(Attribute);
 
-pub struct AsiModalPlugin;
+use crate::ui::registry::UiScreen;
 
-impl Plugin for AsiModalPlugin {
-    fn build(&self, app: &mut App) {
+/// Registry entry for the DCSS-style attribute-gain prompt. Event-driven:
+/// the `transition_to_modal` system enters this state whenever the
+/// player has a `PendingAsi`; `handle_keypress` exits when points reach
+/// 0. No hotkey.
+pub struct AsiSelectScreen;
+
+impl UiScreen for AsiSelectScreen {
+    const STATE: InGameState = InGameState::AsiSelect;
+    const OPEN_KEY: Option<KeyCode> = None;
+
+    fn build(app: &mut App) {
         app.add_systems(
             Update,
             transition_to_modal.run_if(in_state(InGameState::Running)),
         )
-        .add_systems(OnEnter(InGameState::AsiSelect), spawn_modal)
+        .add_systems(OnEnter(Self::STATE), spawn_modal)
         .add_systems(
             Update,
             (refresh_modal, handle_keypress)
                 .chain()
-                .run_if(in_state(InGameState::AsiSelect)),
+                .run_if(in_state(Self::STATE)),
         )
-        .add_systems(OnExit(InGameState::AsiSelect), despawn_modal);
+        .add_systems(OnExit(Self::STATE), despawn_modal);
     }
 }
 

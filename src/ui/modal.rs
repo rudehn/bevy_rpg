@@ -1,45 +1,11 @@
 use bevy::prelude::*;
 
-use crate::game::InGameState;
-
 /// Standard opacity for modal overlay backgrounds.
 pub const MODAL_OVERLAY_OPACITY: f32 = 0.85;
 /// Gold color used for modal titles and section headers.
 pub const GOLD: Color = Color::srgb(1.0, 0.84, 0.0);
 /// Dim gray for disabled/empty UI elements.
 pub const DIM_GRAY: Color = Color::srgb(0.3, 0.3, 0.3);
-
-// ---------------------------------------------------------------------------
-// Toggle input helper
-// ---------------------------------------------------------------------------
-
-/// Shared screen toggle logic. Call from each screen's input system.
-///
-/// - `toggle_key` opens/closes the screen (toggles Running ↔ `screen_state`).
-/// - Escape always closes when the screen is active.
-/// - Returns `true` if a transition was triggered (caller should return early).
-pub fn toggle_screen(
-    keys: &ButtonInput<KeyCode>,
-    state: &State<InGameState>,
-    next_state: &mut NextState<InGameState>,
-    toggle_key: KeyCode,
-    screen_state: InGameState,
-) -> bool {
-    if keys.just_pressed(toggle_key) {
-        if *state.get() == InGameState::Running {
-            next_state.set(screen_state);
-            return true;
-        } else if *state.get() == screen_state {
-            next_state.set(InGameState::Running);
-            return true;
-        }
-    }
-    if keys.just_pressed(KeyCode::Escape) && *state.get() == screen_state {
-        next_state.set(InGameState::Running);
-        return true;
-    }
-    false
-}
 
 // ---------------------------------------------------------------------------
 // Modal overlay spawn helper

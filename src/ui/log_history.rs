@@ -1,28 +1,42 @@
 use bevy::prelude::*;
 
-use crate::game::{AppState, InGameState};
-use crate::game::turns::TurnState;
+use crate::game::InGameState;
 use crate::ui::game_log::GameLog;
+use crate::ui::registry::{close_on_toggle_or_escape, open_gate_player_turn, HelpEntry, UiScreen};
 
-pub struct LogHistoryPlugin;
+/// Registry entry for the log-history scrollback screen.
+pub struct LogHistoryScreen;
 
-impl Plugin for LogHistoryPlugin {
-    fn build(&self, app: &mut App) {
+impl UiScreen for LogHistoryScreen {
+    const STATE: InGameState = InGameState::LogHistory;
+    const OPEN_KEY: Option<KeyCode> = Some(KeyCode::KeyL);
+    const OPEN_GATE: Option<fn(&World) -> bool> = Some(open_gate_player_turn);
+    const HELP: Option<HelpEntry> = Some(HelpEntry {
+        display: "L",
+        label: "Log history",
+    });
+
+    fn build(app: &mut App) {
         app.init_resource::<LogScrollOffset>()
             .insert_resource(LogScrollTimer(Timer::from_seconds(0.05, TimerMode::Repeating)))
             .add_systems(
-                Update,
-                log_history_input.run_if(
-                    in_state(AppState::InGame)
-                        .and(in_state(TurnState::PlayerInput).or(in_state(InGameState::LogHistory))),
-                ),
+                OnEnter(Self::STATE),
+                (reset_scroll_offset, spawn_log_history_ui).chain(),
             )
-            .add_systems(OnEnter(InGameState::LogHistory), (reset_scroll_offset, spawn_log_history_ui).chain())
             .add_systems(
                 Update,
-                update_log_history_ui.run_if(in_state(InGameState::LogHistory)),
+                (
+                    close_on_toggle_or_escape::<Self>,
+                    log_history_scroll_input,
+                    update_log_history_ui,
+                )
+                    .chain()
+                    .run_if(in_state(Self::STATE)),
             )
-            .add_systems(OnExit(InGameState::LogHistory), crate::ui::modal::despawn_screen::<OnLogHistoryScreen>);
+            .add_systems(
+                OnExit(Self::STATE),
+                crate::ui::modal::despawn_screen::<OnLogHistoryScreen>,
+            );
     }
 }
 
@@ -49,24 +63,18 @@ fn reset_scroll_offset(mut offset: ResMut<LogScrollOffset>) {
     offset.0 = 0;
 }
 
-fn log_history_input(
+/// In-screen scroll input. Open/close is handled by the registry +
+/// `close_on_toggle_or_escape`. This system runs gated on
+/// `InGameState::LogHistory` so the state check above is unnecessary
+/// here — but the early `return` after each branch keeps the timer +
+/// jump-key behavior identical to the pre-migration logic.
+fn log_history_scroll_input(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
-    state: Res<State<InGameState>>,
-    mut next_state: ResMut<NextState<InGameState>>,
     mut offset: ResMut<LogScrollOffset>,
     mut scroll_timer: ResMut<LogScrollTimer>,
     game_log: Res<GameLog>,
 ) {
-    // Toggle open/close.
-    if crate::ui::modal::toggle_screen(&keys, &state, &mut next_state, KeyCode::KeyL, InGameState::LogHistory) {
-        return;
-    }
-
-    if *state.get() != InGameState::LogHistory {
-        return;
-    }
-
     let count = game_log.entries.len();
     let max_offset = count.saturating_sub(VISIBLE_LINES);
 

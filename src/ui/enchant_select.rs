@@ -11,21 +11,31 @@ use crate::game::items::{ItemKind, ItemProperties};
 use crate::game::staves::{Rechargeable, StaffData};
 use crate::game::stats::{Armor, DamageBonus};
 use crate::game::turns::TurnState;
-use crate::game::{AppState, InGameState};
+use crate::game::InGameState;
 use crate::player::Player;
 use crate::ui::game_log::GameLogMessage;
+use crate::ui::registry::UiScreen;
 
-pub struct EnchantSelectPlugin;
+/// Registry entry for the enchant-target selection screen. Event-driven:
+/// entered when the player uses a Scroll of Enchanting (gameplay code
+/// sets `NextState`); has no hotkey.
+pub struct EnchantSelectScreen;
 
-impl Plugin for EnchantSelectPlugin {
-    fn build(&self, app: &mut App) {
+impl UiScreen for EnchantSelectScreen {
+    const STATE: InGameState = InGameState::EnchantSelect;
+    const OPEN_KEY: Option<KeyCode> = None;
+
+    fn build(app: &mut App) {
         app.init_resource::<EnchantSelection>()
-            .add_systems(OnEnter(InGameState::EnchantSelect), spawn_enchant_ui)
+            .add_systems(OnEnter(Self::STATE), spawn_enchant_ui)
             .add_systems(
                 Update,
-                update_enchant_ui.run_if(in_state(InGameState::EnchantSelect)),
+                update_enchant_ui.run_if(in_state(Self::STATE)),
             )
-            .add_systems(OnExit(InGameState::EnchantSelect), crate::ui::modal::despawn_screen::<OnEnchantScreen>);
+            .add_systems(
+                OnExit(Self::STATE),
+                crate::ui::modal::despawn_screen::<OnEnchantScreen>,
+            );
     }
 }
 
