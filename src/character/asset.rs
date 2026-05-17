@@ -108,6 +108,9 @@ impl SkillAptitudes {
             Skill::Dodging => self.dodging,
             Skill::Shields => self.shields,
             Skill::Evocations => self.evocations,
+            // Stealth field added in Phase D2 — defaults to 0 here so
+            // D1 compiles cleanly before the field exists.
+            Skill::Stealth => 0,
         }
     }
 }

@@ -24,10 +24,11 @@ pub enum Skill {
     Dodging,
     Shields,
     Evocations,
+    Stealth,
 }
 
 impl Skill {
-    pub const ALL: [Skill; 9] = [
+    pub const ALL: [Skill; 10] = [
         Skill::Fighting,
         Skill::Axes,
         Skill::ShortBlades,
@@ -37,6 +38,7 @@ impl Skill {
         Skill::Dodging,
         Skill::Shields,
         Skill::Evocations,
+        Skill::Stealth,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -50,7 +52,15 @@ impl Skill {
             Skill::Dodging => "Dodging",
             Skill::Shields => "Shields",
             Skill::Evocations => "Evocations",
+            Skill::Stealth => "Stealth",
         }
+    }
+
+    /// `Skill::ALL` as a borrowing iterator yielding `Skill` by value.
+    /// Convenience used by tests and downstream code that prefers an
+    /// `Iterator` over a `for` loop on a `const` array.
+    pub fn all() -> impl Iterator<Item = Skill> {
+        Self::ALL.iter().copied()
     }
 }
 
@@ -501,7 +511,7 @@ mod tests {
     fn all_skills_have_unique_names() {
         let names: std::collections::HashSet<_> =
             Skill::ALL.iter().map(|s| s.name()).collect();
-        assert_eq!(names.len(), 9);
+        assert_eq!(names.len(), 10);
     }
 
     #[test]
@@ -536,7 +546,7 @@ mod tests {
     #[test]
     fn skills_new_initializes_all_to_zero() {
         let s = Skills::new();
-        assert_eq!(s.levels.len(), 9);
+        assert_eq!(s.levels.len(), 10);
         for skill in Skill::ALL {
             assert_eq!(s.get(skill), 0.0);
         }
@@ -742,5 +752,35 @@ mod tests {
         assert_eq!(shields_skill_bonus(Some(&s)), 1);
         s.set(Skill::Shields, 27.0);
         assert_eq!(shields_skill_bonus(Some(&s)), 6);
+    }
+}
+
+#[cfg(test)]
+mod stealth_skill_tests {
+    use super::*;
+
+    #[test]
+    fn stealth_in_skill_all() {
+        let names: Vec<&str> = Skill::all().map(|s| s.name()).collect();
+        assert!(names.contains(&"Stealth"));
+    }
+
+    #[test]
+    fn skill_count_is_ten() {
+        assert_eq!(Skill::all().count(), 10);
+    }
+
+    #[test]
+    fn skills_struct_round_trips_stealth() {
+        let mut s = Skills::new();
+        s.set(Skill::Stealth, 7.0);
+        assert!((s.get(Skill::Stealth) - 7.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn skill_xp_round_trips_stealth() {
+        let mut x = SkillXp::new();
+        x.add(Skill::Stealth, 100);
+        assert_eq!(x.get(Skill::Stealth), 100);
     }
 }
