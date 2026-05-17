@@ -67,6 +67,7 @@ pub mod spawner;
 pub mod squad;
 pub mod staves;
 pub mod stats;
+pub mod stealth;
 pub mod systems;
 pub mod skills;
 pub mod targeting;
