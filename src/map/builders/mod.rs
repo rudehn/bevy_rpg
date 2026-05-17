@@ -44,7 +44,6 @@ mod finish_doors;
 mod isolated_area_culler;
 pub mod item_spawner;
 mod lake_builder;
-pub mod machine_builder;
 pub mod amulet_placer;
 pub mod forest;
 pub mod temple;
@@ -55,6 +54,19 @@ pub mod prefab_placer;
 mod room_drawer;
 mod start_point;
 mod unseen_culler;
+
+/// A machine-trigger placement recorded by the builder. The materializer
+/// stamps the named prop at `pos` (or an invisible entity when
+/// `prop_name` is empty) and attaches the `Machine` bundle with the
+/// supplied trigger + effect.
+#[derive(Debug, Clone)]
+pub struct MachineSpawn {
+    pub pos: Point,
+    pub prop_name: String,
+    pub trigger: crate::game::machines::MachineTrigger,
+    pub effect: crate::game::machines::MachineEffect,
+    pub consume_on_use: bool,
+}
 
 /// A single monster spawn entry, optionally linked to a squad.
 pub struct SpawnEntry {
@@ -115,7 +127,7 @@ pub struct BuilderMap {
     pub spawn_list: Vec<SpawnEntry>,
     pub item_spawn_list: Vec<(Point, String, u32)>, // (pos, item_name, count)
     pub prop_spawn_list: Vec<(Point, String)>,      // (pos, prop_name)
-    pub machine_spawn_list: Vec<machine_builder::MachineSpawn>,
+    pub machine_spawn_list: Vec<MachineSpawn>,
     /// Tiles to mark with a [`crate::map::world::MapExitTile`] component
     /// in the materializer. Used by overworld edge builders + the temple
     /// entrance/exit so transitions don't require a custom terrain type.
@@ -189,6 +201,13 @@ impl BuilderMap {
 
     pub fn add_prop_spawn(&mut self, pos: Point, name: String) {
         self.prop_spawn_list.push((pos, name));
+    }
+
+    /// Record a machine-trigger placement. The materializer spawns the
+    /// prop + attaches the `Machine` bundle (trigger, effect,
+    /// consume-on-use).
+    pub fn add_machine_spawn(&mut self, spawn: MachineSpawn) {
+        self.machine_spawn_list.push(spawn);
     }
 
     /// Mark a tile to receive a `MapExitTile` component when entities
@@ -547,7 +566,6 @@ pub fn floor_builder(
     // builder.with_named("PillarCuller", PillarCuller::new());
     // builder.with_named("FinishDoors", FinishDoors::new());
     // builder.with_named("PrefabPlacer", PrefabPlacer::new(prefabs));
-    // builder.with_named("MachineBuilder", machine_builder::MachineBuilder::new());
     // builder.with_named("IsolatedAreaCuller", IsolatedAreaCuller::new());
     // --- Spawners run after IsolatedAreaCuller so entities are never placed in walled-off regions ---
     // builder.with_named("CandleSpawner", CandleSpawner::new());

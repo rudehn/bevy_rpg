@@ -240,6 +240,39 @@ pub struct PrefabItemSpawn {
     pub item: Option<String>,
 }
 
+/// A machine-trigger embedded inside a prefab. Spawned by the prefab
+/// placer into `BuilderMap.machine_spawn_list`, the materializer
+/// stamps the prop + attaches `Machine` / `MachineTrigger` /
+/// `MachineEffect` components. This is the prefab system's runtime
+/// interactivity hook (shrines, traps, levers, etc.).
+#[derive(Deserialize, Debug, Clone)]
+pub struct PrefabTrigger {
+    pub x: i32,
+    pub y: i32,
+    /// Prop manifest key for the visible entity (e.g. `"altar"`).
+    /// Use `""` for invisible triggers (step-activated traps).
+    #[serde(default)]
+    pub prop_name: String,
+    pub trigger: crate::game::machines::MachineTrigger,
+    pub effect: crate::game::machines::MachineEffect,
+    #[serde(default)]
+    pub consume_on_use: bool,
+}
+
+/// Area decoration embedded inside a prefab. The placer stamps
+/// `decoration` onto every walkable tile within `radius` Chebyshev
+/// distance of `(x, y)` that doesn't already carry a decoration.
+#[derive(Deserialize, Debug, Clone)]
+pub struct PrefabDecoration {
+    pub x: i32,
+    pub y: i32,
+    pub decoration: crate::map::tile::Decoration,
+    #[serde(default = "default_decoration_radius")]
+    pub radius: i32,
+}
+
+fn default_decoration_radius() -> i32 { 1 }
+
 #[allow(dead_code)]
 #[derive(Deserialize, Debug, Clone)]
 pub struct PrefabTemplate {
@@ -255,6 +288,14 @@ pub struct PrefabTemplate {
     pub monster_spawns: Vec<PrefabMonsterSpawn>,
     #[serde(default)]
     pub item_spawns: Vec<PrefabItemSpawn>,
+    /// Machine triggers embedded in this prefab — shrines, traps,
+    /// levers. The placer pushes each onto `machine_spawn_list`,
+    /// where the materializer attaches `Machine` components.
+    #[serde(default)]
+    pub triggers: Vec<PrefabTrigger>,
+    /// Area decorations (e.g. moss radius around a shrine altar).
+    #[serde(default)]
+    pub decorations: Vec<PrefabDecoration>,
     #[serde(default = "default_flee_threshold")]
     pub flee_threshold: f32,
     /// Placement mode: "room" (overlay on existing rooms), "wall" (carve into walls), "any" (try both).

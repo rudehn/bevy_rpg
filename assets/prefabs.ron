@@ -364,7 +364,81 @@ flee_threshold: 0.4,
                 (x: 7, y: 4, behavior: Roam(min: (0, 0), max: (10, 5))),
             ],
             item_spawns: [],
-flee_threshold: 0.5,
+            flee_threshold: 0.5,
+        ),
+
+        // --- Shrine: heal-and-reward altar with mossy floor ---
+        // Bumping the altar heals to full HP and spawns a Scroll of
+        // Enchanting. `consume_on_use: false` lets repeated bumps fire;
+        // the per-instance MachineUsed flag still tracks activation.
+        PrefabTemplate(
+            name: "Shrine",
+            width: 5,
+            height: 5,
+            min_floor: 1,
+            max_floor: 20,
+            tiles: [
+                ".....",
+                ".....",
+                ".....",
+                ".....",
+                ".....",
+            ],
+            props: [],
+            monster_spawns: [],
+            item_spawns: [],
+            triggers: [
+                (
+                    x: 2, y: 2,
+                    prop_name: "altar",
+                    trigger: BumpActivate,
+                    effect: Multi([
+                        HealFull,
+                        SpawnItem(item_name: "Scroll of Enchanting"),
+                    ]),
+                    consume_on_use: false,
+                ),
+            ],
+            decorations: [
+                (x: 2, y: 2, decoration: Moss, radius: 2),
+            ],
+        ),
+
+        // --- Trapped Vault: chest + hidden step-trigger ambush ---
+        // Player opens the chest normally. When they step on the same
+        // tile after the chest despawns, the invisible step-trigger
+        // fires once and spawns 2 level-appropriate monsters at
+        // adjacent walkable tiles.
+        PrefabTemplate(
+            name: "Trapped Vault",
+            width: 5,
+            height: 5,
+            min_floor: 3,
+            max_floor: 20,
+            tiles: [
+                ".....",
+                ".....",
+                ".....",
+                ".....",
+                ".....",
+            ],
+            props: [
+                (x: 2, y: 2, prop: "chest"),
+            ],
+            monster_spawns: [],
+            item_spawns: [],
+            triggers: [
+                (
+                    x: 2, y: 2,
+                    prop_name: "",
+                    trigger: StepActivate,
+                    effect: SpawnMonsters(monster_name: "", count: 2),
+                    consume_on_use: true,
+                ),
+            ],
+            decorations: [
+                (x: 2, y: 2, decoration: Cobweb, radius: 2),
+            ],
         ),
     ],
 )
