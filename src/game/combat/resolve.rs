@@ -32,9 +32,7 @@
 //! [`GAME.md`]: ../../../../docs/design/GAME.md
 
 use bracket_lib::random::RandomNumberGenerator;
-use roguelike_engine::combat::{
-    apply_damage_multipliers, apply_resistance, compute_after_armor, DamageSource, DamageType,
-};
+use roguelike_engine::combat::{apply_damage_multipliers, DamageSource, DamageType};
 use roguelike_engine::dice::roll_dice_string;
 
 use crate::character::Attributes;
@@ -56,39 +54,12 @@ pub enum HitResult {
     Crit,
 }
 
-/// Shield kind worn by the defender. Determines block bonus and per-turn
-/// block budget; `None` short-circuits the shield check.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum ShieldKind {
-    None,
-    Buckler,
-    Kite,
-    Tower,
-}
-
-impl ShieldKind {
-    /// SH bonus added to the shield-block d20 (matches the values
-    /// declared on shield items in `items.ron`).
-    pub const fn block_bonus(self) -> i32 {
-        match self {
-            ShieldKind::None => 0,
-            ShieldKind::Buckler => 3,
-            ShieldKind::Kite => 8,
-            ShieldKind::Tower => 13,
-        }
-    }
-
-    /// Max successful blocks per turn before the shield is "used up"
-    /// until the wearer's next action finishes.
-    pub const fn max_blocks_per_turn(self) -> u8 {
-        match self {
-            ShieldKind::None => 0,
-            ShieldKind::Buckler => 1,
-            ShieldKind::Kite => 2,
-            ShieldKind::Tower => 3,
-        }
-    }
-}
+// Note: shield block bonus and per-turn budget are stored as raw i32 /
+// u8 on the defender snapshot. The values come from the defender's
+// `Block` + `MaxShieldBlocks` ECS components, which are populated from
+// `items.ron`. Buckler ships at SH+3/1 block, Kite at SH+8/2, Tower at
+// SH+13/3 — but the resolver doesn't know shield identities, only the
+// numbers the adapter passes in.
 
 /// Adapter-side view of the attacker. The adapter copies the relevant
 /// ECS components into this struct once at the boundary; the resolver
@@ -122,8 +93,12 @@ pub struct AttackerSnapshot {
 /// adapter writes the delta back to the ECS `ShieldBlocksUsed`
 /// component after the call.
 ///
-/// `resistance_pct` is pre-resolved by the adapter for the active
-/// damage type. The resolver does not carry a `Resistances` map.
+/// Resistance is **not** carried here — the engine's
+/// `damage_application_system` reads the defender's `Resistances`
+/// component when it processes the `DamageEvent` emitted by the
+/// adapter. The resolver stops at shield block + armor roll; armor
+/// subtraction and resistance are universal physics owned by the
+/// engine.
 #[derive(Clone, Debug)]
 pub struct DefenderSnapshot {
     /// Flat `Dodge` component value (DEX mod already baked in at spawn).
@@ -131,16 +106,14 @@ pub struct DefenderSnapshot {
     /// `None` for entities without skills (monsters today).
     pub skills: Option<Skills>,
     /// Upper bound of the armor roll **before** the Armor-skill bonus.
-    /// `0` = no armor; skipped for non-Physical damage types.
+    /// `0` = no armor; armor roll is `0` for non-Physical damage types.
     pub armor_max: i32,
-    /// Shield kind. `None` short-circuits the block check.
-    pub shield: ShieldKind,
+    /// SH bonus on the equipped shield (the `Block` component value).
+    /// `0` short-circuits the block check.
+    pub shield_block_bonus: i32,
     /// Remaining shield blocks this turn. Decremented on a successful
     /// block. Adapter passes the current value and writes back after.
     pub shield_budget_left: u8,
-    /// Pre-resolved resistance percentage for the active damage type.
-    /// `0` = normal, `50` = halved, `100` = immune, `<0` = vulnerable.
-    pub resistance_pct: i32,
 }
 
 /// Adapter-side view of the weapon being swung / fired / zapped. For
@@ -200,11 +173,23 @@ pub struct UseCounterBumps {
 }
 
 /// Outcome of a fully resolved attack against a single defender.
+///
+/// The adapter takes `amount` and `armor_roll` and writes a
+/// `DamageEvent { amount, armor: armor_roll, ... }`; the engine's
+/// `damage_application_system` subtracts armor and applies the
+/// defender's `Resistances` percentage downstream.
 #[derive(Clone, Debug)]
 pub struct AttackOutcome {
     pub result: HitResult,
     pub blocked: bool,
-    pub final_damage: i32,
+    /// Damage **after** attacker-side bonuses + multipliers + shield
+    /// block, but **before** armor subtraction and resistance. Goes
+    /// into `DamageEvent.amount`.
+    pub amount: i32,
+    /// Random armor value rolled by the resolver. Goes into
+    /// `DamageEvent.armor`; the engine subtracts it from `amount`.
+    /// `0` for non-Physical attacks or unarmored defenders.
+    pub armor_roll: i32,
     pub damage_type: DamageType,
     pub use_counters: UseCounterBumps,
 }
@@ -226,7 +211,13 @@ pub struct DamagePacket {
 #[derive(Clone, Debug)]
 pub struct AppliedOutcome {
     pub blocked: bool,
-    pub final_damage: i32,
+    /// Damage after shield block. The adapter writes this into
+    /// `DamageEvent.amount`; the engine subtracts `armor_roll` and
+    /// applies the defender's `Resistances` downstream.
+    pub amount: i32,
+    /// Random armor value the engine should subtract. `0` for non-
+    /// Physical attacks or unarmored defenders.
+    pub armor_roll: i32,
     pub use_counters: UseCounterBumps,
 }
 
@@ -354,7 +345,8 @@ pub fn resolve_attack(
         return AttackOutcome {
             result: hit,
             blocked: false,
-            final_damage: 0,
+            amount: 0,
+            armor_roll: 0,
             damage_type,
             use_counters: bumps,
         };
@@ -405,7 +397,8 @@ pub fn resolve_attack(
     AttackOutcome {
         result: hit,
         blocked: applied.blocked,
-        final_damage: applied.final_damage,
+        amount: applied.amount,
+        armor_roll: applied.armor_roll,
         damage_type,
         use_counters: bumps,
     }
@@ -474,17 +467,17 @@ fn apply_packet(
 ) -> AppliedOutcome {
     let mut amount = packet.amount;
     let mut blocked = false;
+    let mut armor_roll = 0;
     let mut bumps = UseCounterBumps::default();
 
     // ----- Shield block: full negation on pass. -----
     if !bypass_shield
-        && defender.shield != ShieldKind::None
+        && defender.shield_block_bonus > 0
         && defender.shield_budget_left > 0
     {
         let d20 = rng.range(1, 21);
         let skill_bonus = shields_skill_bonus(defender.skills.as_ref());
-        let block_bonus = defender.shield.block_bonus();
-        if super::shield_check_passes(d20, skill_bonus, block_bonus) {
+        if super::shield_check_passes(d20, skill_bonus, defender.shield_block_bonus) {
             amount = 0;
             blocked = true;
             defender.shield_budget_left = defender.shield_budget_left.saturating_sub(1);
@@ -495,21 +488,25 @@ fn apply_packet(
     }
 
     // ----- Armor: random roll, Physical only. -----
+    //
+    // The roll happens here (the engine doesn't know the random
+    // distribution), but **subtraction** happens engine-side. We expose
+    // the rolled value via `AppliedOutcome.armor_roll` so the adapter
+    // can put it on `DamageEvent.armor`.
     if amount > 0 && packet.damage_type == DamageType::Physical && defender.armor_max > 0 {
         let armor_max = defender.armor_max + armor_skill_bonus(defender.skills.as_ref());
-        let armor_roll = rng.range(0, armor_max + 1);
-        amount = compute_after_armor(amount, armor_roll);
+        armor_roll = rng.range(0, armor_max + 1);
         if defender.skills.is_some() {
             bumps.armor = true;
         }
     }
 
-    // ----- Resistance: percentage reduction. -----
-    let final_damage = apply_resistance(amount, defender.resistance_pct);
-
+    // Resistance is applied engine-side from the defender's
+    // `Resistances` component when the adapter writes the DamageEvent.
     AppliedOutcome {
         blocked,
-        final_damage,
+        amount,
+        armor_roll,
         use_counters: bumps,
     }
 }
@@ -557,11 +554,17 @@ mod tests {
             dodge: 0,
             skills: None,
             armor_max: 0,
-            shield: ShieldKind::None,
+            shield_block_bonus: 0,
             shield_budget_left: 0,
-            resistance_pct: 0,
         }
     }
+
+    // Convenience constants for the three shipping shields (mirrors
+    // items.ron). Used only in tests to make snapshot construction read
+    // naturally; the resolver itself doesn't know shield names.
+    const BUCKLER_BLOCK: i32 = 3;
+    const KITE_BLOCK: i32 = 8;
+    const TOWER_BLOCK: i32 = 13;
 
     fn fists() -> WeaponSnapshot {
         WeaponSnapshot {
@@ -593,24 +596,6 @@ mod tests {
             damage_type: DamageType::Physical,
             weapon_skill: Some(WeaponSkill::Ranged),
         }
-    }
-
-    // ----- ShieldKind constants -----
-
-    #[test]
-    fn shield_block_bonuses_match_items_ron() {
-        assert_eq!(ShieldKind::None.block_bonus(), 0);
-        assert_eq!(ShieldKind::Buckler.block_bonus(), 3);
-        assert_eq!(ShieldKind::Kite.block_bonus(), 8);
-        assert_eq!(ShieldKind::Tower.block_bonus(), 13);
-    }
-
-    #[test]
-    fn shield_max_blocks_per_turn_match_spec() {
-        assert_eq!(ShieldKind::None.max_blocks_per_turn(), 0);
-        assert_eq!(ShieldKind::Buckler.max_blocks_per_turn(), 1);
-        assert_eq!(ShieldKind::Kite.max_blocks_per_turn(), 2);
-        assert_eq!(ShieldKind::Tower.max_blocks_per_turn(), 3);
     }
 
     // ----- Finesse detection -----
@@ -871,10 +856,10 @@ mod tests {
 
     #[test]
     fn shield_block_negates_physical_when_check_passes() {
-        // Seed RNG and use Tower shield (+13). With Shields 0, DC 17
-        // requires d20 ≥ 4 — overwhelmingly likely to pass.
+        // Tower shield (+13). With Shields 0, DC 17 requires d20 ≥ 4 —
+        // overwhelmingly likely to pass on any seed.
         let mut d = bare_defender();
-        d.shield = ShieldKind::Tower;
+        d.shield_block_bonus = TOWER_BLOCK;
         d.shield_budget_left = 3;
         d.armor_max = 5;
         let mut rng = RandomNumberGenerator::seeded(42);
@@ -885,30 +870,25 @@ mod tests {
             crit: false,
         };
         let out = apply_packet(packet, &mut d, false, &mut rng);
-        // With Tower + seeded rng, the first roll will land in the
-        // d20 ≥ 4 range with overwhelming probability. If it doesn't on
-        // this specific seed, the seed below would be tweaked. Test the
-        // contract: block produces final_damage 0, decrements budget.
         if out.blocked {
-            assert_eq!(out.final_damage, 0);
+            assert_eq!(out.amount, 0);
+            assert_eq!(out.armor_roll, 0); // armor not rolled when shield blocked
             assert_eq!(d.shield_budget_left, 2);
         } else {
-            // Even if this seed missed, the rest of the pipeline
-            // applied armor and resistance. Final damage must be
-            // non-negative.
-            assert!(out.final_damage >= 0);
+            // Even if this seed missed the block, the pipeline still
+            // rolled armor. amount stays at the packet value (engine
+            // does the subtraction).
+            assert_eq!(out.amount, 50);
+            assert!(out.armor_roll >= 0);
         }
     }
 
     #[test]
     fn shield_block_negates_non_physical_when_check_passes() {
         // Shields beat fire/poison/lightning equally — the rare defence
-        // vs magical damage. Verified by setting armor_max 0 (which
-        // wouldn't help non-Physical anyway) and a guaranteed-block
-        // shield setup, then asserting that the final damage is 0
-        // **only** if a block actually fired.
+        // vs magical damage.
         let mut d = bare_defender();
-        d.shield = ShieldKind::Tower;
+        d.shield_block_bonus = TOWER_BLOCK;
         d.shield_budget_left = 3;
         let mut rng = RandomNumberGenerator::seeded(7);
         let packet = DamagePacket {
@@ -918,18 +898,18 @@ mod tests {
         };
         let out = apply_packet(packet, &mut d, false, &mut rng);
         if out.blocked {
-            assert_eq!(out.final_damage, 0);
+            assert_eq!(out.amount, 0);
         } else {
-            // No block: Fire skips armor too, so final = full damage
-            // (no resistance set).
-            assert_eq!(out.final_damage, 50);
+            // No block: Fire skips armor entirely. amount stays at 50.
+            assert_eq!(out.amount, 50);
+            assert_eq!(out.armor_roll, 0);
         }
     }
 
     #[test]
     fn shield_block_skipped_when_budget_zero() {
         let mut d = bare_defender();
-        d.shield = ShieldKind::Tower;
+        d.shield_block_bonus = TOWER_BLOCK;
         d.shield_budget_left = 0;
         let mut rng = RandomNumberGenerator::seeded(1);
         let packet = DamagePacket {
@@ -939,13 +919,13 @@ mod tests {
         };
         let out = apply_packet(packet, &mut d, false, &mut rng);
         assert!(!out.blocked);
-        assert_eq!(out.final_damage, 10);
+        assert_eq!(out.amount, 10);
     }
 
     #[test]
     fn shield_block_skipped_when_no_shield() {
         let mut d = bare_defender();
-        d.shield = ShieldKind::None;
+        d.shield_block_bonus = 0; // no shield
         d.shield_budget_left = 99;
         let mut rng = RandomNumberGenerator::seeded(1);
         let packet = DamagePacket {
@@ -960,7 +940,7 @@ mod tests {
     #[test]
     fn shield_block_skipped_when_bypass_flag_set() {
         let mut d = bare_defender();
-        d.shield = ShieldKind::Tower;
+        d.shield_block_bonus = TOWER_BLOCK;
         d.shield_budget_left = 3;
         let mut rng = RandomNumberGenerator::seeded(1);
         let packet = DamagePacket {
@@ -975,9 +955,13 @@ mod tests {
     }
 
     // ----- apply_packet: armor -----
+    //
+    // Resistance tests live in `roguelike_engine::combat::tests` — the
+    // engine owns the `Resistances` component and the apply_resistance
+    // step that runs downstream of the resolver.
 
     #[test]
-    fn armor_skipped_for_non_physical() {
+    fn armor_roll_zero_for_non_physical() {
         let mut d = bare_defender();
         d.armor_max = 100;
         let mut rng = RandomNumberGenerator::seeded(1);
@@ -987,12 +971,13 @@ mod tests {
             crit: false,
         };
         let out = apply_packet(packet, &mut d, false, &mut rng);
-        assert_eq!(out.final_damage, 50);
+        // Fire skips armor entirely.
+        assert_eq!(out.amount, 50);
+        assert_eq!(out.armor_roll, 0);
     }
 
     #[test]
-    fn armor_applied_to_physical() {
-        // armor_max = 0 means no roll (skip armor entirely).
+    fn armor_roll_zero_when_armor_max_zero() {
         let mut d = bare_defender();
         d.armor_max = 0;
         let mut rng = RandomNumberGenerator::seeded(1);
@@ -1002,12 +987,16 @@ mod tests {
             crit: false,
         };
         let out = apply_packet(packet, &mut d, false, &mut rng);
-        assert_eq!(out.final_damage, 10); // no armor
+        // Amount passes through unmodified; armor_roll 0 (engine does nothing).
+        assert_eq!(out.amount, 10);
+        assert_eq!(out.armor_roll, 0);
     }
 
     #[test]
     fn armor_roll_bounded_by_armor_max_plus_skill() {
-        // armor_max 4, skill +1 → max roll 5. Hit damage 10 → final ∈ [5, 10].
+        // armor_max 4, skill +1 → armor_roll ∈ [0, 5]. The amount the
+        // resolver returns is the post-shield value (10) unchanged; the
+        // engine subtracts the armor_roll later.
         let mut d = bare_defender();
         d.armor_max = 4;
         d.skills = Some(skills_with(&[(Skill::Armor, 4.0)])); // +1
@@ -1018,65 +1007,8 @@ mod tests {
             crit: false,
         };
         let out = apply_packet(packet, &mut d, false, &mut rng);
-        assert!(out.final_damage >= 5 && out.final_damage <= 10);
-    }
-
-    // ----- apply_packet: resistance -----
-
-    #[test]
-    fn resistance_zero_means_full_damage() {
-        let mut d = bare_defender();
-        d.resistance_pct = 0;
-        let mut rng = RandomNumberGenerator::seeded(1);
-        let packet = DamagePacket {
-            amount: 10,
-            damage_type: DamageType::Fire,
-            crit: false,
-        };
-        let out = apply_packet(packet, &mut d, false, &mut rng);
-        assert_eq!(out.final_damage, 10);
-    }
-
-    #[test]
-    fn resistance_fifty_means_half_damage() {
-        let mut d = bare_defender();
-        d.resistance_pct = 50;
-        let mut rng = RandomNumberGenerator::seeded(1);
-        let packet = DamagePacket {
-            amount: 10,
-            damage_type: DamageType::Fire,
-            crit: false,
-        };
-        let out = apply_packet(packet, &mut d, false, &mut rng);
-        assert_eq!(out.final_damage, 5);
-    }
-
-    #[test]
-    fn resistance_hundred_means_zero_damage() {
-        let mut d = bare_defender();
-        d.resistance_pct = 100;
-        let mut rng = RandomNumberGenerator::seeded(1);
-        let packet = DamagePacket {
-            amount: 50,
-            damage_type: DamageType::Fire,
-            crit: false,
-        };
-        let out = apply_packet(packet, &mut d, false, &mut rng);
-        assert_eq!(out.final_damage, 0);
-    }
-
-    #[test]
-    fn resistance_negative_means_extra_damage() {
-        let mut d = bare_defender();
-        d.resistance_pct = -50;
-        let mut rng = RandomNumberGenerator::seeded(1);
-        let packet = DamagePacket {
-            amount: 10,
-            damage_type: DamageType::Fire,
-            crit: false,
-        };
-        let out = apply_packet(packet, &mut d, false, &mut rng);
-        assert_eq!(out.final_damage, 15);
+        assert_eq!(out.amount, 10); // resolver doesn't subtract armor
+        assert!(out.armor_roll >= 0 && out.armor_roll <= 5);
     }
 
     // ----- resolve_attack: integration -----
@@ -1277,10 +1209,8 @@ mod tests {
     }
 
     #[test]
-    fn apply_damage_runs_full_defense_pipeline() {
-        // Resistance 50% to Fire: 20 → 10.
+    fn apply_damage_passes_amount_through_when_no_defenses() {
         let mut d = bare_defender();
-        d.resistance_pct = 50;
         let mut rng = RandomNumberGenerator::seeded(1);
         let packet = DamagePacket {
             amount: 20,
@@ -1288,16 +1218,18 @@ mod tests {
             crit: false,
         };
         let out = apply_damage(packet, &mut d, &mut rng);
-        assert_eq!(out.final_damage, 10);
+        assert_eq!(out.amount, 20);
+        assert_eq!(out.armor_roll, 0);
     }
 
     #[test]
     fn apply_damage_can_be_called_repeatedly_for_cleave_splash() {
-        // The Cleave path: roll once, apply to many. Verify that two
-        // independent defenders take the same packet damage.
+        // The Cleave path: roll once, apply to many. Verify two
+        // defenders return the same packet amount, with armor rolled
+        // independently per target.
         let mut d1 = bare_defender();
         let mut d2 = bare_defender();
-        d2.resistance_pct = 50;
+        d2.armor_max = 4;
         let mut rng = RandomNumberGenerator::seeded(1);
 
         let packet = DamagePacket {
@@ -1307,8 +1239,10 @@ mod tests {
         };
         let r1 = apply_damage(packet.clone(), &mut d1, &mut rng);
         let r2 = apply_damage(packet, &mut d2, &mut rng);
-        assert_eq!(r1.final_damage, 8);
-        assert_eq!(r2.final_damage, 4); // 50% resistance
+        assert_eq!(r1.amount, 8);
+        assert_eq!(r1.armor_roll, 0);
+        assert_eq!(r2.amount, 8); // amount unchanged; engine subtracts armor
+        assert!(r2.armor_roll >= 0 && r2.armor_roll <= 4);
     }
 
     // ----- Sanity check on use_counter bookkeeping helper -----
@@ -1316,7 +1250,7 @@ mod tests {
     #[test]
     fn shield_block_bumps_shields_counter_when_target_has_skills() {
         let mut d = bare_defender();
-        d.shield = ShieldKind::Tower;
+        d.shield_block_bonus = TOWER_BLOCK;
         d.shield_budget_left = 3;
         d.skills = Some(Skills::new());
         // Use a seed where d20 lands ≥ 4 (almost any seed; Tower needs

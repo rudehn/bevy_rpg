@@ -54,16 +54,11 @@ pub struct AttackIntentMessage {
     pub source: DamageSource,
 }
 
-/// Message sent after a successful hit to trigger damage rolling.
-#[derive(Message, Debug)]
-pub struct DamageRollMessage {
-    pub attacker: Entity,
-    pub target: Entity,
-    pub damage_type: DamageType,
-    pub source: DamageSource,
-    pub is_crit: bool,
-}
-
+// DamageRollMessage was the internal handoff between the old
+// `hit_check_system` and `damage_roll_system`. The unified
+// `attack_resolution_system` does both phases in one call to
+// `resolve::resolve_attack`, so this message no longer exists.
+//
 // DamageReductionMessage, ApplyDamageMessage, HealMessage, and DeathEvent
 // are replaced by engine types: DamageEvent, HealEvent, DeathEvent
 // (re-exported above from roguelike_engine::combat::events).
@@ -92,14 +87,6 @@ pub struct ToggleGodModeMessage {
 pub struct GameRng(pub RandomNumberGenerator);
 
 // --- Utility Functions ---
-
-/// Rolls dice based on a dice notation string (e.g., "1d6").
-///
-/// Re-export of the engine's [`roguelike_engine::dice::roll_dice_string`].
-/// Parse errors fall back to a damage roll of 1 (the engine default),
-/// which shows up as a consistently-weak attack if a dice string is
-/// malformed — an observable dev-time symptom.
-use roguelike_engine::dice::roll_dice_string as roll_dice;
 
 // --- Pure computation helpers ---
 //
@@ -169,99 +156,154 @@ fn regen_system(
     }
 }
 
-/// 1. Hit Chance: d20 + hit_bonus >= 4 + dodge_bonus (natural 20 always hits)
-fn hit_check_system(
+/// Unified attack resolver adapter. Builds snapshots from ECS state,
+/// delegates the full hit/damage pipeline to
+/// [`resolve::resolve_attack`], and writes [`DamageEvent`] /
+/// [`MissMessage`] / log messages from the outcome.
+///
+/// Replaces the old `hit_check_system` + `damage_roll_system` pair.
+/// The resolver owns: d20 hit math, attribute / weapon-skill /
+/// Fighting bonus stacking, damage roll with crit double-roll,
+/// Enraged / Terrified multipliers, Backstab multiplier (via
+/// `damage_multiplier_bp`), shield block, and armor roll. The adapter
+/// owns: ECS reads, ECS writes (shield budget, use counters),
+/// Backstab proc detection, Cleave splash (step 3 will migrate that
+/// to `resolve::apply_damage`), and combat log lines.
+fn attack_resolution_system(
     mut intents: MessageReader<AttackIntentMessage>,
-    mut roll_writer: MessageWriter<DamageRollMessage>,
+    mut damage_writer: MessageWriter<DamageEvent>,
     mut miss_writer: MessageWriter<MissMessage>,
     mut log_writer: MessageWriter<GameLogMessage>,
     mut game_rng: ResMut<GameRng>,
-    query: Query<(&Name, Option<&Dodge>, Option<&HitBonus>, Has<Player>)>,
-    race_query: Query<&crate::character::Race>,
-    attrs_query: Query<&crate::character::Attributes>,
-    skills_query: Query<&crate::game::skills::Skills>,
-    equipment_query: Query<&crate::game::items::Equipment>,
+    attacker_query: Query<(
+        &Name,
+        &Damage,
+        Option<&HitBonus>,
+        Option<&DamageBonus>,
+        Option<&crate::character::Attributes>,
+        Option<&crate::game::skills::Skills>,
+        Option<&crate::game::magic::StatusEffects>,
+        Has<crate::game::abilities::Terrified>,
+        Has<Player>,
+    )>,
+    defender_query: Query<(
+        &Name,
+        Option<&Dodge>,
+        Option<&Armor>,
+        Option<&crate::game::stats::Block>,
+        Option<&crate::game::stats::MaxShieldBlocks>,
+        Option<&crate::game::abilities::RallyBuff>,
+        Option<&crate::game::skills::Skills>,
+    )>,
+    mut shield_blocks_used_query: Query<&mut crate::game::stats::ShieldBlocksUsed>,
+    target_ai_query: Query<&crate::game::MonsterAI>,
+    player_equipment_query: Query<&crate::game::items::Equipment, With<Player>>,
     weapon_props_query: Query<&crate::game::items::ItemProperties>,
+    monster_position_query: Query<(Entity, &Position), With<Monster>>,
+    position_query: Query<&Position>,
     mut use_counters: ResMut<crate::game::skills::SkillUseCounters>,
 ) {
     for intent in intents.read() {
-        let Ok((attacker_name, _, attacker_hit_bonus, is_player)) = query.get(intent.attacker) else {
+        let Ok((
+            attacker_name,
+            damage_dice,
+            hit_bonus_comp,
+            damage_bonus_comp,
+            attacker_attrs,
+            attacker_skills,
+            attacker_status,
+            is_terrified,
+            is_player,
+        )) = attacker_query.get(intent.attacker)
+        else {
             continue;
         };
-        let Ok((target_name, target_dodge, _, _)) = query.get(intent.target) else {
+        let Ok((
+            target_name,
+            target_dodge,
+            target_armor,
+            target_block,
+            target_max_blocks,
+            target_rally,
+            target_skills,
+        )) = defender_query.get(intent.target)
+        else {
             continue;
         };
 
-        // d20 routed through the canonical helper. In Phase 1 this handled
-        // Halfling Lucky; Halfling was removed in Phase 2, so the helper is
-        // currently a thin `roll_dice(1, 20)` wrapper. Future race / class /
-        // skill d20 effects plug in here.
-        let attacker_race = race_query.get(intent.attacker).ok().copied();
-        let hit_roll = crate::character::roll_d20_with_race(&mut game_rng.0, attacker_race);
-
-        let hit_bonus = attacker_hit_bonus.map(|h| h.0).unwrap_or(0);
-
-        // Phase 3 skill bonuses: weapon-family + Fighting for melee.
-        // Look up the equipped weapon's skill tag (only meaningful for
-        // the player; monsters have no Equipment).
-        let attacker_skills = skills_query.get(intent.attacker).ok();
-        let weapon_skill_tag = equipment_query
+        // Look up the equipped weapon for the player (monsters have no
+        // Equipment); used for the weapon-skill tag, Backstab proc, and
+        // Cleave splash detection.
+        let player_weapon_props = player_equipment_query
             .get(intent.attacker)
             .ok()
             .and_then(|eq| eq.weapon)
-            .and_then(|w| weapon_props_query.get(w).ok())
-            .and_then(|props| props.weapon_skill);
+            .and_then(|w| weapon_props_query.get(w).ok());
+        let weapon_skill_tag = player_weapon_props.and_then(|p| p.weapon_skill);
+        let weapon_ability = player_weapon_props.and_then(|p| p.weapon_ability.as_deref());
 
-        // Branch the attribute contribution by weapon type: finesse blades
-        // (Short/Long) use DEX in melee, everything else uses STR; ranged
-        // is always DEX. Monsters lack `Attributes` and contribute 0.
-        let attacker_attrs = attrs_query.get(intent.attacker).ok();
-        let finesse = matches!(
-            weapon_skill_tag,
-            Some(crate::game::skills::WeaponSkill::ShortBlades)
-                | Some(crate::game::skills::WeaponSkill::LongBlades)
-        );
-        let attr_bonus =
-            crate::character::attack_attribute_bonus(intent.source, finesse, attacker_attrs);
+        // Backstab: player + Melee + Backstab weapon + sleeping target.
+        // The ×3 multiplier flows through `damage_multiplier_bp` so the
+        // resolver applies it after Enraged / Terrified.
+        let backstab_proc = is_player
+            && intent.source == DamageSource::Melee
+            && weapon_ability == Some("Backstab")
+            && target_ai_query
+                .get(intent.target)
+                .map(|ai| ai.is_asleep())
+                .unwrap_or(false);
+        if backstab_proc {
+            log_writer.write(GameLogMessage("Backstab! Triple damage!".to_string()));
+        }
 
-        let weapon_bonus = crate::game::skills::weapon_skill_bonus(
-            weapon_skill_tag,
+        // ----- Build attacker snapshot. -----
+        let attacker_snap = resolve::AttackerSnapshot {
+            hit_bonus: hit_bonus_comp.map(|h| h.0).unwrap_or(0),
+            damage_bonus: damage_bonus_comp.map(|d| d.0).unwrap_or(0),
+            attributes: attacker_attrs.copied(),
+            skills: attacker_skills.cloned(),
+            enraged: attacker_status.map(|e| e.is_enraged()).unwrap_or(false),
+            terrified: is_terrified,
+            damage_multiplier_bp: if backstab_proc { 300 } else { 100 },
+        };
+
+        // ----- Build defender snapshot. -----
+        let armor_base =
+            target_armor.map(|a| a.0).unwrap_or(0) + target_rally.map(|r| r.armor_bonus).unwrap_or(0);
+        let block_base = target_block.map(|b| b.0).unwrap_or(0);
+        let max_blocks = target_max_blocks.map(|m| m.0).unwrap_or(0);
+        let blocks_used_now = shield_blocks_used_query
+            .get(intent.target)
+            .map(|b| b.0)
+            .unwrap_or(0);
+        let shield_budget_left = max_blocks.saturating_sub(blocks_used_now).min(u8::MAX as u32) as u8;
+        let mut defender_snap = resolve::DefenderSnapshot {
+            dodge: target_dodge.map(|d| d.0).unwrap_or(0),
+            skills: target_skills.cloned(),
+            armor_max: armor_base,
+            shield_block_bonus: block_base,
+            shield_budget_left,
+        };
+
+        // ----- Build weapon snapshot. -----
+        let weapon_snap = resolve::WeaponSnapshot {
+            damage_dice: damage_dice.0.clone(),
+            damage_type: intent.damage_type,
+            weapon_skill: weapon_skill_tag,
+        };
+
+        // ----- Resolve. -----
+        let outcome = resolve::resolve_attack(
             intent.source,
-            attacker_skills,
+            &attacker_snap,
+            &mut defender_snap,
+            &weapon_snap,
+            resolve::AttackOverrides::default(),
+            &mut game_rng.0,
         );
-        let fighting_bonus =
-            crate::game::skills::fighting_melee_bonus(intent.source, attacker_skills);
 
-        // Target dodge: flat Dodge component + Dodging skill bonus
-        // (only meaningful for the player; monsters lack Skills).
-        let target_skills = skills_query.get(intent.target).ok();
-        let dodge_val = target_dodge.map(|d| d.0).unwrap_or(0);
-        let dodging_bonus = crate::game::skills::dodging_skill_bonus(target_skills);
-        let dodge_target = 4 + dodge_val + dodging_bonus;
-        let is_natural_20 = hit_roll == 20;
-
-        if is_natural_20
-            || (hit_roll + hit_bonus + attr_bonus + weapon_bonus + fighting_bonus >= dodge_target)
-        {
-            roll_writer.write(DamageRollMessage {
-                attacker: intent.attacker,
-                target: intent.target,
-                damage_type: intent.damage_type,
-                source: intent.source,
-                is_crit: is_natural_20,
-            });
-            // Bump attacker-side counters on a successful hit. Monsters
-            // lack Skills so weapon_skill_tag would be None anyway, but
-            // the is_player guard documents intent.
-            if is_player {
-                if let Some(ws) = weapon_skill_tag {
-                    use_counters.bump(ws.as_skill());
-                }
-                if intent.source == roguelike_engine::combat::DamageSource::Melee {
-                    use_counters.bump(crate::game::skills::Skill::Fighting);
-                }
-            }
-        } else {
+        // ----- Apply outcome. -----
+        if outcome.result == resolve::HitResult::Miss {
             let verb = if is_player { "miss" } else { "misses" };
             log_writer.write(GameLogMessage(format!(
                 "{} {} {}.",
@@ -271,249 +313,56 @@ fn hit_check_system(
                 attacker: intent.attacker,
                 target: intent.target,
             });
-            // Bump Dodging use counter on every miss against a Skills-
-            // having target (the player). Per SKILLS.md §5: "Successful
-            // dodge (the d20 miss condition)."
-            if target_skills.is_some() {
-                use_counters.bump(crate::game::skills::Skill::Dodging);
-            }
-        }
-    }
-}
-
-/// 2. Damage Calculation: Roll attacker damage dice. Crits (nat 20) double the dice.
-///
-/// Emits [`DamageEvent`] with the raw damage and the target's armor value.
-/// The engine's `damage_application_system` handles armor reduction,
-/// resistance, HP mutation, and death detection.
-fn damage_roll_system(
-    mut roll_messages: MessageReader<DamageRollMessage>,
-    mut damage_writer: MessageWriter<DamageEvent>,
-    mut log_writer: MessageWriter<GameLogMessage>,
-    mut game_rng: ResMut<GameRng>,
-    attacker_query: Query<(
-        &Damage,
-        Option<&crate::game::magic::StatusEffects>,
-        Has<crate::game::abilities::Terrified>,
-        Option<&DamageBonus>,
-        Has<Player>,
-        Option<&crate::character::Attributes>,
-        Option<&crate::game::skills::Skills>,
-    )>,
-    target_query: Query<(
-        Option<&Armor>,
-        Option<&crate::game::stats::Block>,
-        Option<&crate::game::abilities::RallyBuff>,
-        Option<&crate::game::skills::Skills>,
-        Option<&crate::game::stats::MaxShieldBlocks>,
-    )>,
-    mut shield_blocks_used_query: Query<&mut crate::game::stats::ShieldBlocksUsed>,
-    player_equipment_query: Query<&crate::game::items::Equipment, With<Player>>,
-    weapon_props_query: Query<&crate::game::items::ItemProperties>,
-    target_ai_query: Query<&crate::game::MonsterAI>,
-    monster_position_query: Query<(Entity, &Position), With<Monster>>,
-    position_query: Query<&Position>,
-    mut use_counters: ResMut<crate::game::skills::SkillUseCounters>,
-) {
-    for message in roll_messages.read() {
-        let Ok((
-            damage_dice,
-            status_effects,
-            is_terrified,
-            damage_bonus,
-            attacker_is_player,
-            attacker_attrs,
-            attacker_skills,
-        )) = attacker_query.get(message.attacker)
-        else {
-            continue;
-        };
-
-        let base_roll = roll_dice(&mut game_rng.0, &damage_dice.0);
-        let rolled_damage = if message.is_crit {
-            base_roll + roll_dice(&mut game_rng.0, &damage_dice.0)
         } else {
-            base_roll
-        };
-
-        let bonus = damage_bonus.map(|d| d.0).unwrap_or(0);
-
-        // Phase 3 skill damage bonuses: weapon-family + Fighting (melee only).
-        let weapon_skill_tag = player_equipment_query
-            .get(message.attacker)
-            .ok()
-            .and_then(|eq| eq.weapon)
-            .and_then(|w| weapon_props_query.get(w).ok())
-            .and_then(|props| props.weapon_skill);
-
-        // Branch the attribute contribution by weapon type: finesse blades
-        // (Short/Long) use DEX in melee, everything else uses STR; ranged
-        // is always DEX. Mirrors hit_check_system so an attribute's hit
-        // and damage scaling always travel together.
-        let finesse = matches!(
-            weapon_skill_tag,
-            Some(crate::game::skills::WeaponSkill::ShortBlades)
-                | Some(crate::game::skills::WeaponSkill::LongBlades)
-        );
-        let attr_bonus =
-            crate::character::attack_attribute_bonus(message.source, finesse, attacker_attrs);
-
-        let weapon_bonus = crate::game::skills::weapon_skill_bonus(
-            weapon_skill_tag,
-            message.source,
-            attacker_skills,
-        );
-        let fighting_bonus =
-            crate::game::skills::fighting_melee_bonus(message.source, attacker_skills);
-
-        let is_enraged = status_effects.map(|e| e.is_enraged()).unwrap_or(false);
-        let mut raw_damage = apply_damage_multipliers(
-            rolled_damage + bonus + attr_bonus + weapon_bonus + fighting_bonus,
-            is_enraged,
-            is_terrified,
-        );
-
-        // Backstab: player with Backstab weapon attacking a sleeping monster deals triple damage.
-        if attacker_is_player && message.source == DamageSource::Melee {
-            if let Ok(equipment) = player_equipment_query.get(message.attacker) {
-                if let Some(weapon_entity) = equipment.weapon {
-                    if let Ok(props) = weapon_props_query.get(weapon_entity) {
-                        if props.weapon_ability.as_deref() == Some("Backstab") {
-                            if let Ok(target_ai) = target_ai_query.get(message.target) {
-                                if target_ai.is_asleep() {
-                                    raw_damage *= 3;
-                                    log_writer.write(GameLogMessage("Backstab! Triple damage!".to_string()));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Pull target armor / block / rally / skills once.
-        let target_info = target_query.get(message.target).ok();
-        let target_skills = target_info.and_then(|(_, _, _, s, _)| s);
-
-        // ----- Shield block: per-attack check, full negation on pass -----
-        // Gated entirely on having a shield equipped (Block > 0). Roll
-        // d20 + floor(Shields/4) + Block vs DC 17. On pass, the entire
-        // hit is negated (any damage type — block is the only defense
-        // that touches magical damage). Successful blocks consume one
-        // slot from the per-turn ShieldBlocksUsed budget; failed checks
-        // leave it untouched.
-        let block_base = target_info
-            .and_then(|(_, b, _, _, _)| b)
-            .map(|b| b.0)
-            .unwrap_or(0);
-        let max_blocks = target_info
-            .and_then(|(_, _, _, _, m)| m)
-            .map(|m| m.0)
-            .unwrap_or(0);
-        let blocks_used_now = shield_blocks_used_query
-            .get(message.target)
-            .map(|b| b.0)
-            .unwrap_or(0);
-        let can_attempt_block = block_base > 0 && blocks_used_now < max_blocks;
-        if can_attempt_block {
-            let skill_bonus = crate::game::skills::shields_skill_bonus(target_skills);
-            let d20 = game_rng.0.range(1, 21);
-            if shield_check_passes(d20, skill_bonus, block_base) {
-                raw_damage = 0;
-                if let Ok(mut used) = shield_blocks_used_query.get_mut(message.target) {
+            // Shield block log line. Wording mirrors the legacy adapter.
+            if outcome.blocked {
+                log_writer.write(GameLogMessage(if is_player {
+                    "Your blow is blocked!".to_string()
+                } else {
+                    "You block the attack!".to_string()
+                }));
+                // Write back the shield-budget decrement that the
+                // resolver tracked on `defender_snap.shield_budget_left`.
+                if let Ok(mut used) = shield_blocks_used_query.get_mut(intent.target) {
                     used.0 = used.0.saturating_add(1);
                 }
-                if target_skills.is_some() {
-                    use_counters.bump(crate::game::skills::Skill::Shields);
-                }
-                log_writer.write(GameLogMessage(
-                    if attacker_is_player {
-                        "Your blow is blocked!".to_string()
-                    } else {
-                        "You block the attack!".to_string()
-                    }
-                ));
             }
-        }
 
-        // ----- Armor: random roll [0, armor_max], physical only -----
-        // The Armor component value is the *upper bound* of a uniform
-        // roll. Armor skill adds to that ceiling. Non-physical damage
-        // skips armor entirely.
-        let armor_val = if message.damage_type == DamageType::Physical {
-            let (armor_base, skill_bonus) = target_info
-                .map(|(armor, _, rally, skills, _)| {
-                    let base = armor.map(|a| a.0).unwrap_or(0)
-                        + rally.map(|r| r.armor_bonus).unwrap_or(0);
-                    let sb = crate::game::skills::armor_skill_bonus(skills);
-                    (base, sb)
-                })
-                .unwrap_or((0, 0));
-            // Skill bonus only applies if you actually have armor (or a
-            // Rally buff). Naked-with-skill produces 0.
-            let armor_max = if armor_base > 0 {
-                armor_base + skill_bonus
-            } else {
-                0
-            };
-            if armor_max > 0 {
-                if target_skills.is_some() {
-                    use_counters.bump(crate::game::skills::Skill::Armor);
-                }
-                game_rng.0.range(0, armor_max + 1)
-            } else {
-                0
-            }
-        } else {
-            0 // Non-physical damage bypasses armor
-        };
+            damage_writer.write(DamageEvent {
+                target: intent.target,
+                amount: outcome.amount,
+                damage_type: outcome.damage_type,
+                source: intent.source,
+                attacker: Some(intent.attacker),
+                armor: outcome.armor_roll,
+            });
 
-        damage_writer.write(DamageEvent {
-            target: message.target,
-            amount: raw_damage,
-            damage_type: message.damage_type,
-            source: message.source,
-            attacker: Some(message.attacker),
-            armor: armor_val,
-        });
-
-        // Cleave: after the primary melee hit, the Axe's swing damages
-        // every monster in the 8 tiles surrounding the *attacker*. The
-        // primary target is excluded (they already took the main hit).
-        // Splash damage equals the rolled damage — the Axe trades a
-        // smaller damage die for area coverage. `DamageSource::Environment`
-        // is used so the splash never recursively re-triggers Cleave or
-        // on-hit procs.
-        if attacker_is_player && message.source == DamageSource::Melee {
-            let has_cleave = player_equipment_query
-                .get(message.attacker)
-                .ok()
-                .and_then(|eq| eq.weapon)
-                .and_then(|w| weapon_props_query.get(w).ok())
-                .map(|p| p.weapon_ability.as_deref() == Some("Cleave"))
-                .unwrap_or(false);
-
-            if has_cleave {
-                let attacker_pos = position_query
-                    .get(message.attacker)
-                    .ok()
-                    .map(|p| (p.x, p.y));
-                if let Some((ax, ay)) = attacker_pos {
+            // Cleave splash. Kept inline through step 2; step 3 will
+            // migrate this loop to `resolve::apply_damage`. Note: the
+            // splash uses `outcome.amount` (post-shield-block, post-
+            // multipliers) as the per-tile damage and `armor: 0` so
+            // each victim's own armor / resistance still applies via
+            // the engine's `damage_application_system`.
+            if is_player
+                && intent.source == DamageSource::Melee
+                && weapon_ability == Some("Cleave")
+            {
+                if let Ok(attacker_pos) = position_query.get(intent.attacker) {
+                    let (ax, ay) = (attacker_pos.x, attacker_pos.y);
                     let mut hit = 0;
                     for (other_entity, other_pos) in monster_position_query.iter() {
-                        if other_entity == message.target { continue; }
+                        if other_entity == intent.target {
+                            continue;
+                        }
                         let dx = (other_pos.x - ax).abs();
                         let dy = (other_pos.y - ay).abs();
-                        // Chebyshev <= 1 = the 8 surrounding tiles; (dx+dy) > 0
-                        // excludes the attacker's own tile (a Cleave-wielding
-                        // monster wouldn't damage itself).
                         if dx <= 1 && dy <= 1 && (dx + dy) > 0 {
                             damage_writer.write(DamageEvent {
                                 target: other_entity,
-                                amount: raw_damage,
+                                amount: outcome.amount,
                                 damage_type: DamageType::Physical,
                                 source: DamageSource::Environment,
-                                attacker: Some(message.attacker),
+                                attacker: Some(intent.attacker),
                                 armor: 0,
                             });
                             hit += 1;
@@ -528,6 +377,23 @@ fn damage_roll_system(
                     }
                 }
             }
+        }
+
+        // ----- Bump use-counters. -----
+        if outcome.use_counters.fighting {
+            use_counters.bump(crate::game::skills::Skill::Fighting);
+        }
+        if let Some(ws) = outcome.use_counters.weapon_skill {
+            use_counters.bump(ws);
+        }
+        if outcome.use_counters.dodging {
+            use_counters.bump(crate::game::skills::Skill::Dodging);
+        }
+        if outcome.use_counters.armor {
+            use_counters.bump(crate::game::skills::Skill::Armor);
+        }
+        if outcome.use_counters.shields {
+            use_counters.bump(crate::game::skills::Skill::Shields);
         }
     }
 }
@@ -803,7 +669,6 @@ impl Plugin for GameCombatPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(GameRng(RandomNumberGenerator::new()))
             .add_message::<AttackIntentMessage>()
-            .add_message::<DamageRollMessage>()
             .add_message::<MissMessage>()
             .add_message::<ToggleGodModeMessage>()
             .register_type::<Health>()
@@ -822,10 +687,8 @@ impl Plugin for GameCombatPlugin {
             .add_systems(
                 Update,
                 (
-                    // Game's hit check → damage roll pipeline (emits DamageEvent)
-                    (hit_check_system, damage_roll_system)
-                        .chain()
-                        .in_set(CombatDamageSet),
+                    // Game's unified attack resolver (emits DamageEvent / MissMessage)
+                    attack_resolution_system.in_set(CombatDamageSet),
                     // Reaction systems run after the engine processes damage
                     (
                         combat_trigger_system,
