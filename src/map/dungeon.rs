@@ -230,10 +230,16 @@ fn find_up_stairs(map: &Map) -> Option<Point> {
 /// under Bevy's 16-param system limit.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct SnapshotQueries<'w, 's> {
-    pub monsters: Query<'w, 's, (&'static Position, &'static Name, &'static crate::game::combat::Health, Option<&'static crate::game::squad::SquadId>, Option<&'static crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&'static crate::game::ai::PatrolRoute>, Has<crate::components::Submerged>), With<Monster>>,
+    pub monsters: Query<'w, 's, (&'static Position, &'static Name, &'static crate::game::combat::Health, Option<&'static crate::game::squad::SquadId>, Option<&'static crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&'static crate::game::ai::PatrolRoute>, Has<crate::components::Submerged>, Option<&'static roguelike_engine::stealth::Awareness>), With<Monster>>,
     pub items: Query<'w, 's, (&'static Position, &'static Name, Option<&'static ItemStack>, Option<&'static Enchantment>, Option<&'static ItemWeaponRunic>, Option<&'static ItemArmorRunic>, Option<&'static RunicIdentified>, Option<&'static StaffData>, Option<&'static Rechargeable>, Has<crate::components::Drifting>), (With<Item>, Without<InInventory>)>,
     pub props: Query<'w, 's, (&'static Position, &'static Name, Option<&'static crate::components::PropKey>), With<Prop>>,
     pub exit_tiles: Query<'w, 's, (&'static Position, &'static crate::map::world::MapExitTile)>,
+    /// Stealth Phase I: snapshot the player's entity + position so the
+    /// floor-leave path can degrade per-monster awareness alongside the
+    /// disk-save path. Awareness without an active player collapses to
+    /// `Hidden` (safe default).
+    pub player: Query<'w, 's, (Entity, &'static Position), With<Player>>,
+    pub turn_manager: Res<'w, crate::game::TurnManager>,
 }
 
 /// Snapshot the current floor's surviving entities into a `CachedFloor`.
@@ -247,18 +253,29 @@ fn snapshot_floor(
     let exit_query = &snap.exit_tiles;
     use crate::save::{SavedMonster, SavedItem, SavedProp};
 
+    let now = snap.turn_manager.current_time;
+    let player_snapshot = snap.player.single().ok().map(|(e, p)| (e, Point::new(p.x, p.y)));
     let monsters = monster_query
         .iter()
-        .map(|(pos, name, health, squad_id, squad_config, is_leader, patrol_route, is_submerged)| SavedMonster {
-            x: pos.x,
-            y: pos.y,
-            name: name.0.clone(),
-            hp_current: health.current,
-            squad_id: squad_id.map(|s| s.0),
-            is_leader,
-            squad_config: squad_config.cloned(),
-            patrol_route: patrol_route.cloned(),
-            submerged: is_submerged,
+        .map(|(pos, name, health, squad_id, squad_config, is_leader, patrol_route, is_submerged, awareness)| {
+            let awareness_save = match (awareness, player_snapshot) {
+                (Some(a), Some((pe, ppos))) => {
+                    crate::save::degrade_awareness_for_save(a, pe, ppos, now)
+                }
+                _ => crate::save::MonsterAwarenessSave::default(),
+            };
+            SavedMonster {
+                x: pos.x,
+                y: pos.y,
+                name: name.0.clone(),
+                hp_current: health.current,
+                squad_id: squad_id.map(|s| s.0),
+                is_leader,
+                squad_config: squad_config.cloned(),
+                patrol_route: patrol_route.cloned(),
+                submerged: is_submerged,
+                awareness: awareness_save,
+            }
         })
         .collect();
 
@@ -950,6 +967,7 @@ mod tests {
             x: 0, y: 0, name: "Kobold Hoarder".to_string(), hp_current: 5,
             squad_id: None, is_leader: false, squad_config: None,
             patrol_route: None, submerged: false,
+            awareness: Default::default(),
         });
         fallen.items.entry(3).or_default().push(SavedItem {
             x: 0, y: 0, name: "Healing Potion".to_string(),

@@ -165,6 +165,15 @@ pub fn spawn_monster(
             Visibility::Hidden,
             RenderLayers::layer(1),
         ))
+        // Phase 4 (stealth): every monster carries an empty Awareness
+        // map plus its species `perception` modifier. The
+        // perception_tick_system iterates over (Awareness,
+        // MonsterPerception, Viewshed, MonsterAI, Position) so this is
+        // what subscribes a monster to the perception pipeline.
+        .insert((
+            roguelike_engine::stealth::Awareness::default(),
+            crate::game::stealth::MonsterPerception(monster_asset.perception),
+        ))
         .id();
 
     // Phase 2: every monster carries its tier so XP-on-kill can scale
@@ -524,6 +533,7 @@ pub fn spawn_item(
         weapon_skill,
         max_blocks,
         on_hit_effects,
+        armor_stealth_penalty: asset.armor_stealth_penalty,
     });
 
     entity.insert(ItemStack { count: 1, max_stack });

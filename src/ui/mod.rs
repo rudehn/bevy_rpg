@@ -27,6 +27,7 @@ pub mod modal;
 pub mod monster_info;
 pub mod nearby;
 pub mod registry;
+pub mod stealth_display;
 
 use cheat_menu::CheatMenuPlugin;
 use menu::MenuPlugin;

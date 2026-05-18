@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::components::{Chest, GameEntityMarker, InInventory, Item, Monster, Name, Position, Prop, Viewshed};
-use crate::game::ai::MonsterAI;
+use crate::game::ai::{MonsterAI, MonsterAIMode};
 use crate::game::combat::Health;
 use crate::game::enchantment::{display_item_name, Enchantment, ItemArmorRunic, ItemWeaponRunic, RunicIdentified};
 use crate::game::goap::GoapAI;
@@ -18,6 +18,7 @@ use crate::map::map::GRID_SIZE;
 use crate::map::tile::TerrainType;
 use crate::player::Player;
 use crate::ui::{collect_status_effects_with_duration, spawn_status_badge};
+use roguelike_engine::stealth::{Awareness, AwarenessState};
 
 // --- Resources ---
 
@@ -90,6 +91,30 @@ fn tile_distance(a: &Position, b: &Position) -> i32 {
     (dx * dx + dy * dy).sqrt().round() as i32
 }
 
+/// Awareness pill text + colour for a monster row.
+///
+/// `mode == Asleep` short-circuits to "Sleeping" regardless of any
+/// stale awareness record left over from before the monster was put
+/// to sleep. Otherwise the pill reflects the monster's current
+/// `AwarenessState` of the player — Aware → "Hunting", Searching or
+/// Suspicious → "Searching" / "Suspicious", and an absent or Hidden
+/// record means the monster is just "Wandering".
+pub(super) fn awareness_pill(
+    mode: MonsterAIMode,
+    awareness: &Awareness,
+    player_entity: Entity,
+) -> (&'static str, Color) {
+    if mode == MonsterAIMode::Asleep {
+        return ("Sleeping", Color::srgb(0.45, 0.45, 0.45));
+    }
+    match awareness.get(player_entity).map(|r| r.state) {
+        Some(AwarenessState::Aware) => ("Hunting", Color::srgb(0.85, 0.20, 0.20)),
+        Some(AwarenessState::Searching { .. }) => ("Searching", Color::srgb(0.95, 0.78, 0.20)),
+        Some(AwarenessState::Suspicious { .. }) => ("Suspicious", Color::srgb(0.95, 0.78, 0.20)),
+        None | Some(AwarenessState::Hidden) => ("Wandering", Color::srgb(0.55, 0.55, 0.55)),
+    }
+}
+
 // --- Systems ---
 
 fn update_nearby_panel(
@@ -97,8 +122,21 @@ fn update_nearby_panel(
     asset_server: Res<AssetServer>,
     ascii_font_res: Option<Res<crate::game::ascii_mode::AsciiFont>>,
     map: Res<Map>,
-    player_query: Query<(&Viewshed, &Position), (With<Player>, Changed<Viewshed>)>,
-    monster_query: Query<(Entity, &Position, &Name, Option<&Children>, &Health, Option<&MonsterAI>, Option<&GoapAI>, Option<&StatusEffects>), With<Monster>>,
+    player_query: Query<(Entity, &Viewshed, &Position), (With<Player>, Changed<Viewshed>)>,
+    monster_query: Query<
+        (
+            Entity,
+            &Position,
+            &Name,
+            Option<&Children>,
+            &Health,
+            Option<&MonsterAI>,
+            Option<&GoapAI>,
+            Option<&StatusEffects>,
+            Option<&Awareness>,
+        ),
+        With<Monster>,
+    >,
     item_query: Query<
         (Entity, &Position, &Name, &ItemProperties, Option<&Children>,
          Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>),
@@ -113,7 +151,7 @@ fn update_nearby_panel(
     row_query: Query<Entity, With<NearbyRow>>,
     mut nearby_state: ResMut<NearbyState>,
 ) {
-    let Ok((viewshed, player_pos)) = player_query.single() else {
+    let Ok((player_entity, viewshed, player_pos)) = player_query.single() else {
         return;
     };
 
@@ -144,6 +182,8 @@ fn update_nearby_panel(
         health_pct: f32,
         ai_state: &'static str,
         ai_color: Color,
+        awareness_label: &'static str,
+        awareness_color: Color,
         status_effects: Vec<(String, Color, u32, u32, String)>,
     }
 
@@ -159,11 +199,12 @@ fn update_nearby_panel(
     }
 
     // Collect visible monsters
+    let empty_awareness = Awareness::default();
     let mut monsters: Vec<MonsterEntry> =
         monster_query
             .iter()
             .filter(|(_, pos, ..)| visible.contains(&(pos.x, pos.y)))
-            .map(|(entity, pos, name, children, health, monster_ai, goap_ai, status)| {
+            .map(|(entity, pos, name, children, health, monster_ai, goap_ai, status, awareness)| {
                 let dist = tile_distance(player_pos, pos);
                 let (ac, acol) = get_ascii_info(children).unzip();
                 let health_pct = if health.max > 0 { health.current as f32 / health.max as f32 } else { 1.0 };
@@ -175,12 +216,17 @@ fn update_nearby_panel(
                     "Unknown"
                 };
                 let ai_color = ai_state_color(ai_state);
+                let mode = monster_ai.map(|a| a.mode).unwrap_or(MonsterAIMode::Idle);
+                let aw = awareness.unwrap_or(&empty_awareness);
+                let (awareness_label, awareness_color) = awareness_pill(mode, aw, player_entity);
                 let status_effects = collect_status_effects_with_duration(status);
                 MonsterEntry {
                     base: (entity, dist, name.0.clone(), ac, acol),
                     health_pct,
                     ai_state,
                     ai_color,
+                    awareness_label,
+                    awareness_color,
                     status_effects,
                 }
             })
@@ -366,6 +412,13 @@ fn update_nearby_panel(
                                 Text::new(format!("({})", monster.ai_state)),
                                 TextFont { font: font.clone(), font_size: 10.0, ..default() },
                                 TextColor(monster.ai_color),
+                                Node { margin: UiRect::left(Val::Px(4.0)), ..default() },
+                            ));
+                            // Awareness pill
+                            row.spawn((
+                                Text::new(monster.awareness_label),
+                                TextFont { font: font.clone(), font_size: 11.0, ..default() },
+                                TextColor(monster.awareness_color),
                                 Node { margin: UiRect::left(Val::Px(4.0)), ..default() },
                             ));
                         });
@@ -696,5 +749,76 @@ fn update_nearby_highlight(
         for entity in &overlay_entities {
             commands.entity(entity).despawn();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bracket_lib::prelude::Point;
+
+    fn pe() -> Entity {
+        Entity::from_raw_u32(1).expect("valid test entity index")
+    }
+
+    #[test]
+    fn asleep_overrides_awareness() {
+        let mut a = Awareness::default();
+        a.set(pe(), AwarenessState::Aware, 0);
+        let (text, _) = awareness_pill(MonsterAIMode::Asleep, &a, pe());
+        assert_eq!(text, "Sleeping");
+    }
+
+    #[test]
+    fn aware_yields_hunting() {
+        let mut a = Awareness::default();
+        a.set(pe(), AwarenessState::Aware, 0);
+        let (text, _) = awareness_pill(MonsterAIMode::Hunting, &a, pe());
+        assert_eq!(text, "Hunting");
+    }
+
+    #[test]
+    fn no_record_yields_wandering() {
+        let a = Awareness::default();
+        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe());
+        assert_eq!(text, "Wandering");
+    }
+
+    #[test]
+    fn searching_yields_searching() {
+        let mut a = Awareness::default();
+        a.set(
+            pe(),
+            AwarenessState::Searching {
+                last_known_pos: Point::new(0, 0),
+                giveup_at_turn: 10,
+            },
+            0,
+        );
+        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe());
+        assert_eq!(text, "Searching");
+    }
+
+    #[test]
+    fn suspicious_yields_suspicious() {
+        let mut a = Awareness::default();
+        a.set(
+            pe(),
+            AwarenessState::Suspicious {
+                suspect_pos: Point::new(0, 0),
+                decay_at_turn: 10,
+            },
+            0,
+        );
+        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe());
+        assert_eq!(text, "Suspicious");
+    }
+
+    #[test]
+    fn hidden_record_yields_wandering() {
+        let mut a = Awareness::default();
+        a.set(pe(), AwarenessState::Hidden, 0);
+        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe());
+        assert_eq!(text, "Wandering");
     }
 }

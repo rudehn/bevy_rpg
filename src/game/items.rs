@@ -202,6 +202,13 @@ pub struct ItemProperties {
     /// Dagger with `PoisonStrike`).
     #[serde(default)]
     pub on_hit_effects: Vec<OnHitEffect>,
+    /// Phase 4 stealth penalty applied while equipped. Subtracted from
+    /// the wearer's d20 stealth roll. 0 for non-armor + cloth/robe; up
+    /// to ~5 for plate. Mirrors `ItemAsset.armor_stealth_penalty` and
+    /// is summed across equipped armor slots by
+    /// `crate::game::stealth::equipped_armor_stealth_penalty`.
+    #[serde(default)]
+    pub armor_stealth_penalty: i32,
 }
 
 fn default_attack_speed() -> f32 { 1.0 }
@@ -837,6 +844,7 @@ pub fn item_properties_from_asset(asset: &crate::assets::ItemAsset) -> ItemPrope
         weapon_skill,
         max_blocks,
         on_hit_effects,
+        armor_stealth_penalty: asset.armor_stealth_penalty,
     }
 }
 

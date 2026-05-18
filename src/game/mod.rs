@@ -67,6 +67,7 @@ pub mod spawner;
 pub mod squad;
 pub mod staves;
 pub mod stats;
+pub mod stealth;
 pub mod systems;
 pub mod skills;
 pub mod targeting;
@@ -152,6 +153,7 @@ impl Plugin for GamePlugin {
                 ascii_mode::AsciiModePlugin,
                 crate::game::xp::XpPlugin,
                 crate::game::skills::SkillsPlugin,
+                crate::game::stealth::StealthPlugin,
             ))
             // Position→Transform sync and camera run whenever in-game, including Targeting state.
             //

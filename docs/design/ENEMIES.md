@@ -55,11 +55,35 @@ charm/polymorph restrictions, and UI labels. Faction-based effects
     name: "Thing",
     faction: "Goblin",   // politics
     species: Humanoid,   // biology — required
+    perception: 0,       // Phase 4 stealth perception modifier (optional, default 0)
     ...
 ),
 ```
 
-Missing the field defaults to `Unknown` and logs a warning on game load.
+Missing the species field defaults to `Unknown` and logs a warning on game load.
+
+### `perception` (Phase 4 stealth)
+
+Per-species perception modifier added to the d20 perception roll
+during opposed-stealth checks (see [STEALTH.md](STEALTH.md)).
+
+- **Default:** `0`
+- **Range:** roughly `−3..=+5` across the shipping roster
+- **Author guidance:** keen-sensed predators get a positive value;
+  blundering brutes go negative.
+
+Shipping values (representative sample):
+
+| Monster | `perception` |
+|---|---|
+| Goblin (grunt) | `0` |
+| Goblin Commander / Warchief | `+3` |
+| Goblin Brute | `−1` |
+| Hound / Wolf | `+5` |
+| Rat (Sewer/Plague) | `+2` |
+| Most other monsters | `0` |
+
+Omitting the field is fine — `#[serde(default)]` yields `0`.
 
 ---
 

@@ -407,6 +407,12 @@ pub struct MonsterAsset {
     #[serde(default = "default_monster_tier")]
     pub tier: u32,
 
+    /// Base perception score (Phase 4 stealth system). Modifier to the
+    /// d20 perception roll vs. a target's stealth. Defaults to 0; range
+    /// roughly -3..=+5 across the shipping monster roster.
+    #[serde(default)]
+    pub perception: i32,
+
     #[serde(default, deserialize_with = "serde_helpers::deserialize_i32_as_option")]
     pub regen: Option<i32>,
 
@@ -870,6 +876,12 @@ pub struct ItemAsset {
     /// Keys are damage-type names ("fire", "lightning", "poison", "physical").
     #[serde(default)]
     pub resistances: HashMap<String, i32>,
+
+    /// Stealth penalty for the wearer (Phase 4 stealth system). Subtracted
+    /// from the d20 stealth roll. 0 = silent (cloth, robe), 5 = plate.
+    /// Defaults to 0 so non-armor items don't carry a phantom penalty.
+    #[serde(default)]
+    pub armor_stealth_penalty: i32,
 
     /// Whether this item is a quest item required to win the game.
     #[serde(default)]

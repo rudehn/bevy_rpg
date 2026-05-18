@@ -312,6 +312,9 @@ impl FloorPlan {
                 squad_config: entry.squad_config,
                 patrol_route: entry.patrol_route,
                 submerged: false,
+                // Fresh spawns default to Hidden — perception fills in
+                // on the next tick.
+                awareness: crate::save::MonsterAwarenessSave::default(),
             })
             .collect();
 
@@ -527,6 +530,13 @@ pub fn materialize_floor(
             }
             if m.submerged {
                 commands.entity(entity).insert(crate::components::Submerged);
+            }
+            // Defer awareness restore until the player entity exists.
+            // `apply_saved_awareness_system` resolves this marker.
+            if !matches!(m.awareness.state, crate::save::SavedAwarenessState::Hidden) {
+                commands
+                    .entity(entity)
+                    .insert(crate::save::PendingAwarenessRestore(m.awareness.clone()));
             }
         } else {
             warnings.push(format!("Failed to spawn monster '{}'", m.name));
@@ -798,6 +808,7 @@ mod tests {
             squad_config: None,
             patrol_route: None,
             submerged: false,
+            awareness: Default::default(),
         });
         cached.items.push(SavedItem {
             x: 9,
@@ -926,6 +937,7 @@ mod tests {
             squad_config: Some(SquadConfig { flee_threshold: 0.3 }),
             patrol_route: None,
             submerged: true,
+            awareness: Default::default(),
         };
         cached.monsters.push(monster.clone());
         let plan = plan_floor(FloorSource::Restore { cached, ascending: true });

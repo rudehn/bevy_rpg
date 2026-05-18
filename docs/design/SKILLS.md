@@ -18,6 +18,9 @@ from Phase 2.
 
 - 9 skills: Fighting / Axes / Short Blades / Long Blades / Ranged Weapons
   / Armor / Dodging / Shields / Evocations
+- Phase 4 adds **Stealth** as a 10th trainable skill — see
+  [STEALTH.md](STEALTH.md) for the per-perceiver awareness model it
+  feeds into.
 - Float levels 0.0–27.0; integer breakpoints drive combat math
 - DCSS shared-pool XP with a training screen on key `M`
 - Class starting-skill distributions (10 points each, negatives allowed
@@ -41,13 +44,14 @@ from Phase 2.
   Phase 4 mana / spells
 - Attack-speed scaling from weapon skills (DCSS's "minimum delay"
   mechanic) — first pass uses hit/damage only
-- Stealth, Unarmed — not in the initial roster
+- ~~Stealth~~ — **shipped in Phase 4** as the 10th skill; see
+  [STEALTH.md](STEALTH.md). Unarmed remains deferred.
 
 ## Locked Decisions
 
 | Decision | Choice |
 |---|---|
-| Skill list | 9 — Fighting, Axes, Short Blades, Long Blades, Ranged Weapons, Armor, Dodging, Shields, Evocations |
+| Skill list | 10 — Fighting, Axes, Short Blades, Long Blades, Ranged Weapons, Armor, Dodging, Shields, Evocations, **Stealth** (Phase 4) |
 | Skill scale | float `[0.0, 27.0]` |
 | XP mechanism | DCSS shared-pool with training screen (Auto / Manual modes) |
 | Per-skill state | Normal / Focused / Disabled |
@@ -77,6 +81,7 @@ from Phase 2.
 | **Dodging** | flat dodge bonus | `+ floor(Dodging/4)` added to `Dodge.0` |
 | **Shields** | per-attack block-check bonus | `+ floor(Shields/4)` added to the shield-block roll: `d20 + skill_bonus + Block.0 >= 17` (DC). On pass, the **entire incoming hit is negated** (any damage type — block is the only defense that touches magical damage). Each shield has a `max_blocks` budget (1 buckler / 2 kite / 3 tower) that caps successful blocks per turn; failed checks don't consume the budget. The budget resets when the wearer finishes their own action (`ActionFinishedEvent`). |
 | **Evocations** | staff zap damage | Replaces the existing inline `int_mod.max(0)` add in `handle_zap_staff`. New formula: `staff_damage += (int_mod + floor(evocations/4)).max(0)`. Applies to all damage-dealing staff effects (Lightning, Fire, Force; not Healing/Blinking). |
+| **Stealth** (Phase 4) | the stealth roll's `target_total` in opposed-perception checks | Feeds `compute_stealth_mod` via `+ floor(Stealth / 2)` (scales twice as fast as the standard `floor(skill/4)`). Trains via a per-turn check: `SkillUseCounters.stealth += 1` once per turn when ≥1 hostile is in the player's viewshed AND ≥1 such hostile's `Awareness.get(player).state != Aware`. No weapon binding. See [STEALTH.md](STEALTH.md) for the full detection formula. |
 
 **Why `floor(skill/4)`:** keeps integer breakpoints meaningful, matches
 the DCSS rhythm of "every 4 levels = +1 mechanical step", and avoids
@@ -106,14 +111,19 @@ Tower shield refreshes 3 blocks every time you act.
 |---|---|---|---|---|
 | Fighting | 3 | 1 | 0 | 2 |
 | Axes | 2 | 0 | 0 | 0 |
-| Short Blades | 0 | 4 | 1 | 0 |
+| Short Blades | 0 | 3 | 1 | 0 |
 | Long Blades | 2 | 0 | 0 | 1 |
 | Ranged Weapons | 0 | 1 | 0 | 4 |
 | Armor | 2 | 0 | 0 | 1 |
-| Dodging | 0 | 3 | 2 | 2 |
+| Dodging | 0 | 2 | 2 | 1 |
 | Shields | 1 | 0 | 0 | 0 |
 | Evocations | 0 | 1 | 7 | 0 |
+| Stealth | 0 | **2** | 0 | **1** |
 | **Total** | **10** | **10** | **10** | **10** |
+
+**Phase 4 redistribution:** Rogue gains 2 ranks of Stealth (drops 1
+ShortBlades + 1 Dodging). Ranger gains 1 rank of Stealth (drops 1
+Dodging). Warrior and Mage are unchanged.
 
 Authored in `assets/classes.ron` as a new `starting_skills` field of
 type `SkillDistribution` (i32 per skill, schema allows negatives).
@@ -129,15 +139,20 @@ DCSS-style XP-cost multipliers: `xp_multiplier(apt) = 2^(-apt/4)`.
 
 | Skill | Human | Dwarf | Elf |
 |---|---|---|---|
-| Fighting | 0 | +2 | −1 |
+| Fighting | +1 | +2 | −1 |
 | Axes | 0 | +3 | −2 |
 | Short Blades | 0 | 0 | +1 |
 | Long Blades | 0 | +1 | +2 |
 | Ranged Weapons | 0 | −2 | +3 |
-| Armor | 0 | +3 | −2 |
+| Armor | +1 | +3 | −2 |
 | Dodging | 0 | −2 | +2 |
-| Shields | 0 | +2 | −2 |
+| Shields | +1 | +2 | −2 |
 | Evocations | 0 | −1 | +2 |
+| Stealth (Phase 4) | 0 | −2 | +2 |
+
+(Human's small +1 cluster in Fighting / Armor / Shields shipped with
+the race aptitudes pass — the original "all zeros" was a deliberate
+baseline that later got a "disciplined soldier" identity bump.)
 
 Authored in `assets/races.ron` as a new `aptitudes` field (i32 per skill).
 
@@ -451,9 +466,18 @@ Tests in `src/game/skills.rs` (or `src/character/asset.rs`) assert:
 
 - Every class's `starting_skills` sums to exactly 10
 - Every race's `aptitudes` has an entry for every `Skill` variant
+  (range −5..=+5)
 - Every weapon in `items.ron` either has `weapon_skill` declared or
   is explicitly noted as skill-less (staves)
 - This doc mentions every shipping skill name
+
+The `SkillDistribution` and `SkillAptitudes` helpers in
+[src/character/asset.rs](../../src/character/asset.rs) carry a
+`stealth: i32` field, so `every_class_starting_skills_sums_to_ten`
+and `every_race_aptitude_value_is_in_range` automatically cover
+`Skill::Stealth` without any new test code. Adding a future skill
+follows the same shape: extend the helpers, then the existing
+maintenance tests pick it up for free.
 
 A `.claude/rules/skill-writeup-required.md` rule formalizes the convention.
 

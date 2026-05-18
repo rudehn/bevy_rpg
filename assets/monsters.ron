@@ -6,6 +6,7 @@
         "Sewer Rat": (
             name: "Sewer Rat",
             vision: 12,
+            perception: 2,
             damage: "1d3",
             base_hp: 5,
             movement_delay: 0.9,
@@ -19,6 +20,7 @@
         "Plague Rat": (
             name: "Plague Rat",
             vision: 12,
+            perception: 2,
             damage: "1d2",
             damage_type: "poison",
             base_hp: 5,
@@ -55,6 +57,7 @@
         "Kobold Hoarder": (
             name: "Kobold Hoarder",
             vision: 8,
+            perception: 1,
             damage: "1d4",
             base_hp: 7,
             movement_delay: 0.8,
@@ -172,6 +175,7 @@
         "Goblin Conjurer": (
             name: "Goblin Conjurer",
             vision: 10,
+            perception: 1,
             damage: "1d4",
             base_hp: 8,
             ai: Goap(traits: [Cowardly, Intelligent, Support], base_morale: 0.55),
@@ -193,6 +197,7 @@
         "Goblin Shaman": (
             name: "Goblin Shaman",
             vision: 10,
+            perception: 1,
             damage: "1d4",
             base_hp: 12,
             species: Humanoid,
@@ -211,6 +216,7 @@
         "Goblin Brute": (
             name: "Goblin Brute",
             vision: 7,
+            perception: -1,
             damage: "1d8",
             base_hp: 14,
             base_armor: 2,
@@ -247,6 +253,7 @@
         "Goblin Warchief": (
             name: "Goblin Warchief",
             vision: 12,
+            perception: 3,
             damage: "1d6+1",
             base_hp: 22,
             base_armor: 1,
@@ -764,6 +771,7 @@
         "Giant Rat": (
             name: "Giant Rat",
             vision: 6,
+            perception: 2,
             damage: "1d3",
             base_hp: 5,
             movement_delay: 0.9,
@@ -788,6 +796,7 @@
         "Wolf": (
             name: "Wolf",
             vision: 12,
+            perception: 5,
             damage: "1d6",
             base_hp: 10,
             base_dodge: 1,
