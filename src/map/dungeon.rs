@@ -702,6 +702,17 @@ pub fn spawn_dungeon(
     // ---------------------------------------------------------------
     // Determine floor source + handle resource-level side effects
     // ---------------------------------------------------------------
+    //
+    // Set NeedsExploredInit BEFORE picking a source so that every floor
+    // swap (load, restore, AND generate) skips `update_tile_visibility`
+    // on the transition frame. Without this guard, stale tile entities
+    // from the outgoing floor get iterated with the player's leftover
+    // `visible_tiles` set, which marks wrong tiles in the NEW map's
+    // `explored_tiles` (root cause of the "trees in memory that should
+    // be unreachable" symptom — it was only protected on load/restore,
+    // not on generate).
+    extras.needs_explored_init.0 = true;
+
     let source = if let Some(mut save_data) = pending_game_load.0.take() {
         // Load path: extract resource-level state before materialization
         use crate::save::SavedFloorCache;
@@ -740,13 +751,10 @@ pub fn spawn_dungeon(
             items: fallen_items,
         });
 
-        extras.needs_explored_init.0 = true;
-
         FloorSource::Load(save_data)
     } else if let Some(cached) = pending_restore.floor.take() {
         // Restore path
         let ascending = pending_restore.ascending;
-        extras.needs_explored_init.0 = true;
 
         FloorSource::Restore { cached, ascending }
     } else {
@@ -910,6 +918,18 @@ pub fn spawn_dungeon(
     info!(
         "spawn_dungeon: turn_queue has {} entities, current_time={}",
         turn_manager.len(), turn_manager.current_time
+    );
+
+    // Invariant: every floor swap must leave NeedsExploredInit set so
+    // `update_tile_visibility` is skipped on the transition frame. If we
+    // don't, the player's leftover `visible_tiles` (computed against the
+    // OLD floor's map) gets re-applied to tile entities at the same
+    // (x, y), marking ~hundreds of wrong tiles in the NEW map's
+    // `explored_tiles`. See the assignment near the top of this fn.
+    debug_assert!(
+        extras.needs_explored_init.0,
+        "spawn_dungeon must leave NeedsExploredInit.0 = true so update_tile_visibility \
+         skips the transition frame and stale FOV doesn't bleed into the new map",
     );
 
     // Floor-kind aware welcome line + theme — both are pure functions

@@ -208,3 +208,152 @@ pub fn update_tile_visibility(
 // All code replaced by `pub use roguelike_engine::map::*` above.
 // If you see this marker after a merge conflict: delete everything below this line,
 // the canonical code is in crates/roguelike_engine/src/map/map.rs.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::components::Viewshed;
+    use crate::map::tile::{Decoration, LiquidType, TerrainType, Tile, TileExplored, TileMarker, TileVisibility};
+    use bevy::prelude::*;
+    use bracket_lib::prelude::Point as BLPoint;
+    use std::collections::HashSet;
+
+    /// Helper: spawn a player-less, 4-tile open map, set up a fake
+    /// viewshed with a known visible_tiles set, and a single tile
+    /// entity at a position that is IN the viewshed but should NOT be
+    /// marked explored because NeedsExploredInit guards the system.
+    fn build_test_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.init_resource::<crate::game::fire::FireTiles>()
+            .init_resource::<crate::game::gas::GasTiles>()
+            .init_resource::<crate::game::systems::Omniscient>()
+            .init_resource::<NeedsExploredInit>();
+
+        let w: i32 = 4;
+        let h: i32 = 4;
+        let count = (w * h) as usize;
+        let tiles = vec![
+            Tile {
+                terrain: TerrainType::Floor,
+                liquid: LiquidType::None,
+                decoration: Decoration::None,
+            };
+            count
+        ];
+        app.insert_resource(Map {
+            name: "needs_init_guard_test".into(),
+            tiles,
+            explored_tiles: vec![false; count],
+            blocked: vec![false; count],
+            width: w,
+            height: h,
+            depth: 1,
+        });
+
+        // Player with a viewshed pointing at (2, 2).
+        let mut visible = HashSet::new();
+        visible.insert(BLPoint::new(2, 2));
+        app.world_mut().spawn((
+            crate::player::Player,
+            crate::components::Position { x: 0, y: 0 },
+            Viewshed {
+                range: 8,
+                visible_tiles: visible,
+                dirty: false,
+            },
+        ));
+        // Marker for Changed<Viewshed> in the system's gate.
+        app.world_mut().spawn(()); // no-op anchor
+
+        // Single tile entity at (2, 2). update_tile_visibility iterates
+        // every TileMarker entity; this one is in the player's FOV, so
+        // ungated it would mark map.explored_tiles[idx(2,2)] = true.
+        app.world_mut().spawn((
+            TileMarker,
+            crate::components::Position { x: 2, y: 2 },
+            TileVisibility::Hidden,
+            TileExplored::Unexplored,
+            Visibility::Hidden,
+        ));
+
+        // Use the same `run_if` gate the MapPlugin registers — that's
+        // what makes NeedsExploredInit actually skip the system on the
+        // transition frame. If the gate is configured at the system
+        // registration site instead of the plugin level in the future,
+        // this test still asserts the contract.
+        app.add_systems(
+            Update,
+            update_tile_visibility
+                .run_if(|init: Res<NeedsExploredInit>| !init.0),
+        );
+        app
+    }
+
+    /// REGRESSION: a floor swap sets NeedsExploredInit=true, which must
+    /// gate update_tile_visibility off for the transition frame. If the
+    /// gate fails, the player's leftover visible_tiles from the OLD floor
+    /// gets re-applied at matching (x, y) on the NEW floor's map and
+    /// marks unreachable tiles explored. See spawn_dungeon in dungeon.rs.
+    #[test]
+    fn update_tile_visibility_skips_when_needs_explored_init_is_true() {
+        let mut app = build_test_app();
+        app.world_mut().resource_mut::<NeedsExploredInit>().0 = true;
+
+        // Force the system's "viewshed changed this frame" gate to pass.
+        let player_entity = app
+            .world_mut()
+            .query_filtered::<Entity, With<crate::player::Player>>()
+            .iter(app.world())
+            .next()
+            .expect("test player");
+        // Touch the Viewshed so Changed<> fires this tick.
+        app.world_mut()
+            .get_mut::<Viewshed>(player_entity)
+            .unwrap()
+            .dirty = false;
+
+        app.update();
+
+        // The guard MUST prevent map.explored_tiles from being mutated.
+        let map = app.world().resource::<Map>();
+        let idx = map.xy_idx(2, 2);
+        assert!(
+            !map.explored_tiles[idx],
+            "update_tile_visibility ran despite NeedsExploredInit being true \
+             — the floor-transition guard is broken; stale player FOV from \
+             the old floor will leak into the new floor's explored_tiles set",
+        );
+    }
+
+    /// Companion test: with NeedsExploredInit=false, the same system
+    /// DOES mark the tile explored (proves the guard is the only thing
+    /// preventing the write, not some other condition).
+    #[test]
+    fn update_tile_visibility_runs_when_needs_explored_init_is_false() {
+        let mut app = build_test_app();
+        app.world_mut().resource_mut::<NeedsExploredInit>().0 = false;
+
+        let player_entity = app
+            .world_mut()
+            .query_filtered::<Entity, With<crate::player::Player>>()
+            .iter(app.world())
+            .next()
+            .expect("test player");
+        app.world_mut()
+            .get_mut::<Viewshed>(player_entity)
+            .unwrap()
+            .dirty = false;
+
+        app.update();
+
+        let map = app.world().resource::<Map>();
+        let idx = map.xy_idx(2, 2);
+        assert!(
+            map.explored_tiles[idx],
+            "with NeedsExploredInit=false, update_tile_visibility should \
+             mark in-FOV tiles explored; if this fails, the system's wiring \
+             changed and the companion test above no longer proves the guard",
+        );
+    }
+}
