@@ -4,14 +4,13 @@ use bevy::prelude::{Resource, Visibility};
 use bevy::{
     ecs::{
         query::{Changed, Has, With, Without},
-        system::{Query, Res, ResMut},
+        system::{Query, Res},
     },
     transform::components::Transform,
 };
 use bracket_lib::prelude::{Algorithm2D, Point, field_of_view};
 
 use crate::map::map::GRID_SIZE;
-use crate::map::tile::is_opaque;
 use crate::{
     components::{InInventory, Item, Monster, Position, Prop, Submerged, Viewshed},
     map::Map,
@@ -142,69 +141,6 @@ pub fn mark_moved_viewsheds_dirty(
 ) {
     for mut viewshed in query.iter_mut() {
         viewshed.dirty = true;
-    }
-}
-
-/// Returns true if `(x, y)` is an opaque tile with **no** transparent
-/// 8-neighbor — i.e. a wall buried inside a wall cluster. Out-of-bounds
-/// neighbors count as opaque (so walls on the map border are also
-/// considered interior). bracket-lib's shadowcasting marks every tile
-/// it scans, including opaque ones used to cast shadows; this helper
-/// lets us cull tiles that no FOV ray can geometrically reach.
-fn is_interior_opaque(map: &Map, x: i32, y: i32) -> bool {
-    let idx = map.xy_idx(x, y);
-    if idx >= map.tiles.len() || !is_opaque(map.tiles[idx]) {
-        return false;
-    }
-    for dy in -1..=1 {
-        for dx in -1..=1 {
-            if dx == 0 && dy == 0 {
-                continue;
-            }
-            let nx = x + dx;
-            let ny = y + dy;
-            if nx < 0 || ny < 0 || nx >= map.width || ny >= map.height {
-                continue;
-            }
-            let nidx = map.xy_idx(nx, ny);
-            if nidx < map.tiles.len() && !is_opaque(map.tiles[nidx]) {
-                return false;
-            }
-        }
-    }
-    true
-}
-
-/// Runs after the engine's FOV system to drop tiles that no ray can
-/// geometrically reach — opaque tiles surrounded entirely by other
-/// opaque tiles. bracket-lib's shadowcasting marks these along its
-/// scan even though they should never be visible, so we post-filter:
-///
-/// 1. Remove them from each viewshed's `visible_tiles`.
-/// 2. Roll back `Map::explored_tiles[idx] = true` writes (the engine's
-///    fov_update_system sets these for every visible tile when the
-///    perceiver carries `FovRevealsMap`).
-///
-/// Without this, the player sees dim "memory" glyphs deep inside
-/// dense tree clusters they could never actually have observed.
-pub fn cull_interior_opaque_from_fov(
-    mut map: ResMut<Map>,
-    mut viewsheds: Query<&mut Viewshed, Changed<Viewshed>>,
-) {
-    for mut vs in &mut viewsheds {
-        let removed: Vec<Point> = vs
-            .visible_tiles
-            .iter()
-            .copied()
-            .filter(|p| is_interior_opaque(&map, p.x, p.y))
-            .collect();
-        for p in removed {
-            vs.visible_tiles.remove(&p);
-            let idx = map.xy_idx(p.x, p.y);
-            if idx < map.explored_tiles.len() {
-                map.explored_tiles[idx] = false;
-            }
-        }
     }
 }
 
@@ -368,75 +304,5 @@ mod tests {
             visible_b, visible_c,
             "third consecutive move must also recompute FOV"
         );
-    }
-
-    fn open_map(w: i32, h: i32) -> Map {
-        use crate::map::tile::{Decoration, LiquidType, TerrainType, Tile};
-        let tiles = vec![
-            Tile {
-                terrain: TerrainType::Floor,
-                liquid: LiquidType::None,
-                decoration: Decoration::None,
-            };
-            (w * h) as usize
-        ];
-        Map {
-            name: "interior_opaque_test".into(),
-            tiles,
-            explored_tiles: vec![false; (w * h) as usize],
-            blocked: vec![false; (w * h) as usize],
-            width: w,
-            height: h,
-            depth: 1,
-        }
-    }
-
-    fn set_wall(map: &mut Map, x: i32, y: i32) {
-        use crate::map::tile::TerrainType;
-        let idx = map.xy_idx(x, y);
-        map.tiles[idx].terrain = TerrainType::Wall;
-    }
-
-    #[test]
-    fn floor_tile_is_not_interior_opaque() {
-        let map = open_map(5, 5);
-        assert!(!is_interior_opaque(&map, 2, 2));
-    }
-
-    #[test]
-    fn boundary_wall_with_floor_neighbor_is_not_interior() {
-        let mut map = open_map(5, 5);
-        // Single wall at (2, 2) — surrounded by floor → boundary, not interior.
-        set_wall(&mut map, 2, 2);
-        assert!(!is_interior_opaque(&map, 2, 2));
-    }
-
-    #[test]
-    fn wall_fully_surrounded_by_walls_is_interior() {
-        let mut map = open_map(5, 5);
-        // 3x3 block of walls at center; (2, 2) is buried inside.
-        for x in 1..=3 {
-            for y in 1..=3 {
-                set_wall(&mut map, x, y);
-            }
-        }
-        assert!(is_interior_opaque(&map, 2, 2));
-        // The 8 boundary walls still have a floor neighbor → not interior.
-        assert!(!is_interior_opaque(&map, 1, 1));
-        assert!(!is_interior_opaque(&map, 3, 3));
-        assert!(!is_interior_opaque(&map, 2, 1));
-    }
-
-    #[test]
-    fn off_map_neighbors_count_as_opaque() {
-        let mut map = open_map(3, 3);
-        // Wall at (0, 0) — corner of map. Its only in-bounds neighbors are
-        // (1, 0), (0, 1), (1, 1). If those are ALL walls too, the corner
-        // wall is interior (off-map neighbors don't disqualify it).
-        set_wall(&mut map, 0, 0);
-        set_wall(&mut map, 1, 0);
-        set_wall(&mut map, 0, 1);
-        set_wall(&mut map, 1, 1);
-        assert!(is_interior_opaque(&map, 0, 0));
     }
 }
