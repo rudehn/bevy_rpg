@@ -241,6 +241,40 @@ fn regen_system(
     }
 }
 
+/// Pure helper: does `target`'s Awareness component leave `attacker`
+/// effectively Hidden? Used as the Backstab gate (Phase 4 stealth).
+///
+/// "Hidden" means either no record of the attacker exists (default for
+/// freshly spawned and Asleep monsters) or the record is
+/// `AwarenessState::Hidden`. Any of Suspicious / Searching / Aware
+/// rejects.
+pub fn target_is_hidden_to(
+    awareness_query: &Query<&roguelike_engine::stealth::Awareness>,
+    target: Entity,
+    attacker: Entity,
+) -> bool {
+    let Ok(awareness) = awareness_query.get(target) else {
+        // No Awareness component → behave as Hidden (legacy fallback).
+        return true;
+    };
+    awareness_is_hidden(awareness, attacker)
+}
+
+/// Pure-data variant of [`target_is_hidden_to`] — takes a borrowed
+/// `Awareness` directly so unit tests don't need to spin up a Bevy
+/// world. The live system goes through `target_is_hidden_to`; both
+/// paths share this logic.
+pub fn awareness_is_hidden(
+    awareness: &roguelike_engine::stealth::Awareness,
+    attacker: Entity,
+) -> bool {
+    use roguelike_engine::stealth::AwarenessState;
+    matches!(
+        awareness.get(attacker).map(|r| r.state),
+        None | Some(AwarenessState::Hidden)
+    )
+}
+
 /// Unified attack resolver adapter. Builds snapshots from ECS state,
 /// delegates the full hit/damage pipeline to
 /// [`resolve::resolve_attack`], and writes [`DamageEvent`] /
@@ -281,7 +315,7 @@ fn attack_resolution_system(
         Option<&crate::game::skills::Skills>,
     )>,
     mut shield_blocks_used_query: Query<&mut crate::game::stats::ShieldBlocksUsed>,
-    target_ai_query: Query<&crate::game::MonsterAI>,
+    target_awareness_query: Query<&roguelike_engine::stealth::Awareness>,
     player_equipment_query: Query<&crate::game::items::Equipment, With<Player>>,
     weapon_props_query: Query<&crate::game::items::ItemProperties>,
     monster_position_query: Query<(Entity, &Position), With<Monster>>,
@@ -327,16 +361,19 @@ fn attack_resolution_system(
         let weapon_skill_tag = player_weapon_props.and_then(|p| p.weapon_skill);
         let weapon_ability = player_weapon_props.and_then(|p| p.weapon_ability.as_deref());
 
-        // Backstab: player + Melee + Backstab weapon + sleeping target.
+        // Backstab: player + Melee + Backstab weapon + target unaware
+        // of attacker. Awareness drives this now (Phase 4 stealth) —
+        // an Asleep monster has no awareness record of the player and
+        // so resolves to Hidden by default, preserving the original
+        // "first-hit power spike on sleeping foes". A Searching /
+        // Suspicious / Aware target rejects: stealthed-ambush play
+        // must re-stealth between hits.
         // The ×3 multiplier flows through `damage_multiplier_bp` so the
         // resolver applies it after Enraged / Terrified.
         let backstab_proc = is_player
             && intent.source == DamageSource::Melee
             && weapon_ability == Some("Backstab")
-            && target_ai_query
-                .get(intent.target)
-                .map(|ai| ai.is_asleep())
-                .unwrap_or(false);
+            && target_is_hidden_to(&target_awareness_query, intent.target, intent.attacker);
         if backstab_proc {
             log_writer.write(GameLogMessage("Backstab! Triple damage!".to_string()));
         }
@@ -933,6 +970,61 @@ mod tests {
         let skill_bonus = 6;
         for d in 1..=20 {
             assert!(shield_check_passes(d, skill_bonus, tower), "d20={} should pass", d);
+        }
+    }
+
+    // --- Backstab gate (Phase 4 stealth) ---
+
+    mod stealth_backstab_tests {
+        use super::*;
+        use bracket_lib::prelude::Point;
+        use roguelike_engine::stealth::{Awareness, AwarenessState};
+
+        fn player_entity() -> Entity {
+            Entity::from_raw_u32(1).expect("valid test entity")
+        }
+
+        #[test]
+        fn backstab_applies_when_target_is_hidden() {
+            // Default Awareness has no record → treated as Hidden.
+            // This is the Asleep / freshly-spawned monster case.
+            let awareness = Awareness::default();
+            assert!(awareness_is_hidden(&awareness, player_entity()));
+        }
+
+        #[test]
+        fn backstab_rejected_when_target_is_aware() {
+            let mut awareness = Awareness::default();
+            awareness.set(player_entity(), AwarenessState::Aware, 0);
+            assert!(!awareness_is_hidden(&awareness, player_entity()));
+        }
+
+        #[test]
+        fn backstab_rejected_when_target_is_searching() {
+            let mut awareness = Awareness::default();
+            awareness.set(
+                player_entity(),
+                AwarenessState::Searching {
+                    last_known_pos: Point::new(0, 0),
+                    giveup_at_turn: 100,
+                },
+                0,
+            );
+            assert!(!awareness_is_hidden(&awareness, player_entity()));
+        }
+
+        #[test]
+        fn backstab_rejected_when_target_is_suspicious() {
+            let mut awareness = Awareness::default();
+            awareness.set(
+                player_entity(),
+                AwarenessState::Suspicious {
+                    suspect_pos: Point::new(0, 0),
+                    decay_at_turn: 100,
+                },
+                0,
+            );
+            assert!(!awareness_is_hidden(&awareness, player_entity()));
         }
     }
 }
