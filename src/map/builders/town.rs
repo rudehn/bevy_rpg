@@ -65,8 +65,10 @@ const CENTER_KEEPOUT: i32 = 3;
 const EAST_STAIR_KEEPOUT_WIDTH: i32 = 6;
 const EAST_STAIR_KEEPOUT_HEIGHT: i32 = 5;
 /// Tiles west of (and including) this column are water. Buildings and
-/// roads stay east of `WATER_EAST_EDGE`.
-const WATER_EAST_EDGE: i32 = 12;
+/// roads stay east of `WATER_EAST_EDGE`. Public so the NPC placement
+/// builder (`town_npcs.rs`) can use it to bound roam areas to the
+/// land side of the map.
+pub(crate) const WATER_EAST_EDGE: i32 = 12;
 /// Pier configuration — three piers spread vertically along the
 /// shore. Each is `(y, length, thickness)` where `length` is how many
 /// tiles the pier extends westward from the shore and `thickness` is

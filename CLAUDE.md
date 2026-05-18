@@ -51,6 +51,7 @@ Design docs live in `docs/design/`. Read these before making gameplay changes.
 | [ABILITIES.md](docs/design/ABILITIES.md) | Monster ability triggers (on-hit/on-being-hit/on-death/passive), cooldown family, ExplodeEffect variants |
 | [STATUS_EFFECTS.md](docs/design/STATUS_EFFECTS.md) | Burning, Poisoned, Slowed, Stunned, Hasted, Enraged, Entangled, Custom IDs, tick model, refresh policy |
 | [FACTIONS.md](docs/design/FACTIONS.md) | Faction component, FactionMatrix, hostility lookup, cross-faction combat, default-Hostile gotcha |
+| [NPCS.md](docs/design/NPCS.md) | Peaceful Townsfolk reuse the monster pipeline; faction-gated Idle→Hunting; town_npcs.ron placement contract; AreaRoam / Sentry patrol routes |
 | [RANGED.md](docs/design/RANGED.md) | Ranged attack pipeline, F-key targeting, weapon range, ammo, LOS gating |
 | [SQUAD_AI.md](docs/design/SQUAD_AI.md) | Squad system, shared alerting, leader mechanics, morale-based fleeing |
 | [STEALTH.md](docs/design/STEALTH.md) | Per-perceiver awareness model, opposed d20 detection, Stealth skill, Backstab gate, noise map V2 hook |
@@ -136,6 +137,7 @@ src/
       mod.rs             # BuilderChain, BuilderMap, floor_builder dispatch (town | forest | temple | dungeon)
       town.rs            # TownLayoutBuilder (water + piers + scattered themed buildings + roles + interior props + Pub-door spawn + quest-board) + TownPortalBuilder + TownDownStairsBuilder (east border) + TownPathBuilder (A* organic road network)
       forest.rs          # ForestTerrainBuilder (depth-tuned CA + west/east end-clearings + spine corridor) + ForestStairsBuilder (west `<`, east `>` or Amulet)
+      town_npcs.rs       # TownNpcBuilder + TownNpcManifest + Placement enum — reads assets/town_npcs.ron, queues SpawnEntry with PatrolRoute per NPC count
       brogelike.rs       # BrogueLikeBuilder — primary map generator (room types + corridors)
       algorithms.rs      # BlobGenConfig, Grid, cellular automata helpers
       choke_map.rs       # Topology analysis via petgraph (chokepoints for machines)
@@ -255,6 +257,14 @@ src/
 - **Town paths** are marked with `Decoration::Custom { id: TOWN_PATH_DECO_ID }` (defined in [src/map/world.rs](src/map/world.rs)); `themed_tile_display` / `themed_tile_bg` substitute a packed-dirt glyph + colour. The underlying terrain stays `Floor` so movement is unaffected.
 - **`FloorTheme` resource** (`Dungeon | Town | Forest`) is set by `spawn_dungeon` on every materialisation and read by the ASCII renderer ([src/map/ascii_renderer.rs](src/map/ascii_renderer.rs)) to override Wall/Floor glyphs and colours per biome (e.g. forest walls render as `♣`). No new `TerrainType` variants needed.
 - **`OverworldState` resource** is currently an empty struct — kept as a home for future per-run state (faction influence, NPC progress, quest flags). The 3×3 overworld grid (`GridDir`, `CardinalDir`, `temple_entrance_*`, border stair clusters) was removed when the game pivoted back to traditional linear floors.
+
+### NPCs (Phase 1, see [NPCS.md](docs/design/NPCS.md))
+- **Reuse, don't fork.** NPCs are monsters with a non-hostile faction — same `MonsterAsset` shape in `monsters.ron`, same `MonsterAI` / `Position` / `Faction` / save snapshot path. The only thing distinguishing them is `faction: "Townsfolk"`.
+- **`Townsfolk` faction** is Allied to Player + Neutral to all monster factions. Player bumps fall through `resolve_bump`'s hostility check to `BumpResult::BlockedByCollider` — no melee swing.
+- **`is_player_hostile_target` gate** in [src/game/ai.rs](src/game/ai.rs) blocks the `Asleep`/`Idle → Hunting` transition for non-Hostile actors. Allied NPCs see the player but stay put.
+- **Placement is separated from NPC identity.** [`assets/town_npcs.ron`](assets/town_npcs.ron) declares `(npc, count, placement)` triples; [`TownNpcBuilder`](src/map/builders/town_npcs.rs) consumes them and queues `SpawnEntry`s with the appropriate `PatrolRoute` (`AreaRoam` for drunks, future `Sentry` for vendors). The NPC asset has no notion of "pier" or "building interior" — placement lives in the town builder.
+- **Roaming** uses the existing `idle_movement` + `PatrolState::AreaRoam { min, max }` system. No new AI behaviour types; one new strategy enum on the placement side.
+- Adding a new NPC = one stat block in `monsters.ron` + one row in `town_npcs.ron`. Zero code change unless the placement strategy is new.
 
 ### Tile Mutation Pipeline (engine-owned)
 - Mutation messages (`TileMutationMessage`, `DecorationMutationMessage`, `LiquidMutationMessage`) and their apply systems live in `roguelike_engine::map::mutation`. The engine plugin `MapMutationPlugin` registers them; game configures `MapMutationSet` ordering inside `ProcessingPhase::Cleanup`.

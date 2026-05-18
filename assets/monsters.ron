@@ -984,5 +984,40 @@
             ascii_char: "W",
             ascii_fg: "#FFD700",
         ),
+
+        // ===== Townsfolk NPCs (Phase 1) ============================
+        //
+        // Townsfolk are reused via the monster pipeline but with the
+        // Allied/Neutral faction so they never become hostile and the
+        // player's bumps fall through to BlockedByCollider (no melee).
+        //
+        // Placement and patrol bounds are decided by the town builder
+        // (see assets/town_npcs.ron + src/map/builders/town_npcs.rs).
+        // The monster asset only declares stats + idle wander tendency
+        // via erratic_chance + FSM ai. PatrolRoute (AreaRoam bounds /
+        // Sentry anchor) is attached at spawn time by the builder.
+        // ============================================================
+
+        // Phase 1 sole NPC — wanders town at random.
+        "Drunken Sailor": (
+            name: "Drunken Sailor",
+            vision: 6,
+            damage: "1d2",
+            base_hp: 12,
+            // Fsm with high erratic + zero chase-leash gates wandering
+            // entirely through idle_movement reading the AreaRoam
+            // PatrolRoute the builder attaches.
+            ai: Fsm(
+                flee_at_hp_percent: 0.0,
+                erratic_chance: 0.8,
+                chase_leash: 0,
+                kites: false,
+            ),
+            faction: "Townsfolk",
+            species: Humanoid,
+            movement_delay: 1.2,
+            ascii_char: "d",
+            ascii_fg: "#A88040",
+        ),
     }
 )
