@@ -423,6 +423,52 @@ pub fn bump_stealth_use_counter(
     }
 }
 
+/// Game-side stealth plugin. Wires the perception/awareness pipeline
+/// into the turn loop:
+///
+/// - `ProcessingPhase::Brain` runs `perception_tick_system` before
+///   AI mode dispatch, so monsters see fresh awareness this turn.
+/// - `ProcessingPhase::ResolveActions` runs the propagation +
+///   attack-reveal handlers after damage events have landed.
+/// - `ProcessingPhase::Cleanup` ticks down timers, decays noise, and
+///   bumps the stealth use counter.
+///
+/// Also adds the engine's `StealthPlugin` (registers
+/// `AwarenessAlertEvent`) and inserts a default-sized `NoiseMap`
+/// matching the game's 80×60 `MAP_SIZE`. Future floor-materialization
+/// work may replace this with a per-floor resized map.
+pub struct StealthPlugin;
+
+impl Plugin for StealthPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(roguelike_engine::stealth::StealthPlugin)
+            // 80x60 matches MAP_SIZE — keep in sync if MAP_SIZE moves.
+            .insert_resource(NoiseMap::new(80, 60))
+            .add_systems(
+                Update,
+                perception_tick_system
+                    .in_set(crate::game::turns::ProcessingPhase::Brain)
+                    .run_if(in_state(crate::game::AppState::InGame)),
+            )
+            .add_systems(
+                Update,
+                (squad_propagate_awareness, attack_reveals_attacker)
+                    .in_set(crate::game::turns::ProcessingPhase::ResolveActions)
+                    .run_if(in_state(crate::game::AppState::InGame)),
+            )
+            .add_systems(
+                Update,
+                (
+                    roguelike_engine::stealth::awareness_tick_system,
+                    roguelike_engine::stealth::noise_decay_system,
+                    bump_stealth_use_counter,
+                )
+                    .in_set(crate::game::turns::ProcessingPhase::Cleanup)
+                    .run_if(in_state(crate::game::AppState::InGame)),
+            );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

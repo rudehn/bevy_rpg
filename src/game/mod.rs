@@ -153,6 +153,7 @@ impl Plugin for GamePlugin {
                 ascii_mode::AsciiModePlugin,
                 crate::game::xp::XpPlugin,
                 crate::game::skills::SkillsPlugin,
+                crate::game::stealth::StealthPlugin,
             ))
             // Position→Transform sync and camera run whenever in-game, including Targeting state.
             // move_camera runs after player_spawn_or_move_system so the camera snaps to the new
