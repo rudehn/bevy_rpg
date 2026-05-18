@@ -254,7 +254,14 @@ pub fn resolve_tile_display(tile: Tile, manifest: &TileManifest) -> (String, bev
     if tile.decoration != Decoration::None && tile.liquid == LiquidType::None {
         if let Some(da) = manifest.tiles.get(tile.decoration.name()) {
             if !da.ascii_char.is_empty() {
-                return (da.ascii_char.clone(), da.ascii_fg, tile.terrain.name());
+                // Return the *decoration* name (matching the liquid branch
+                // below). themed_tile_display uses `name != terrain.name()`
+                // as the gate for "this tile isn't bare terrain — don't
+                // theme-override its glyph." Returning the terrain name
+                // here caused every forest decoration (Moss, TallGrass,
+                // PhosphorescentMoss, …) to be silently overwritten by
+                // the FloorTheme's `,` comma glyph.
+                return (da.ascii_char.clone(), da.ascii_fg, tile.decoration.name());
             }
         }
     }
