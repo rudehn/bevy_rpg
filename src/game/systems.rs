@@ -305,4 +305,79 @@ mod tests {
             "third consecutive move must also recompute FOV"
         );
     }
+
+    /// Probe bracket-lib's `field_of_view_set` directly against a small
+    /// hand-built map with a 3-tile-thick wall cluster. The player stands
+    /// in open floor to the west; we expect ONLY the western boundary
+    /// walls (the ones with a transparent neighbor on the player's side)
+    /// to land in `visible_tiles`. The interior walls of the cluster
+    /// should not — they're geometrically unreachable.
+    #[test]
+    fn fov_does_not_leak_into_solid_wall_interior() {
+        use bracket_lib::prelude::field_of_view_set;
+        use crate::map::tile::{Decoration, LiquidType, TerrainType, Tile};
+
+        let w: i32 = 20;
+        let h: i32 = 11;
+        let mut tiles = vec![
+            Tile {
+                terrain: TerrainType::Floor,
+                liquid: LiquidType::None,
+                decoration: Decoration::None,
+            };
+            (w * h) as usize
+        ];
+
+        // 5-wide × 7-tall wall block on the east half (x=10..=14, y=2..=8).
+        // The player will stand at (5, 5) — straight west of the block's
+        // centre. Western face of the block is x=10. Interior x=11..=13.
+        let xy_idx =
+            |x: i32, y: i32| -> usize { (y * w + x) as usize };
+        for y in 2..=8 {
+            for x in 10..=14 {
+                tiles[xy_idx(x, y)].terrain = TerrainType::Wall;
+            }
+        }
+
+        let map = Map {
+            name: "fov_interior_test".into(),
+            tiles,
+            explored_tiles: vec![false; (w * h) as usize],
+            blocked: vec![false; (w * h) as usize],
+            width: w,
+            height: h,
+            depth: 1,
+        };
+
+        let visible = field_of_view_set(Point::new(5, 5), 20, &map);
+
+        // Sanity: the player's own tile and adjacent floor should be visible.
+        assert!(visible.contains(&Point::new(6, 5)), "adjacent floor missing");
+        assert!(visible.contains(&Point::new(7, 5)), "near floor missing");
+
+        // The western face of the wall (x=10) should be visible — these
+        // are walls with a floor neighbor on the player's side.
+        assert!(
+            visible.contains(&Point::new(10, 5)),
+            "western face wall (10, 5) should be visible"
+        );
+
+        // INTERIOR walls (x=11..=13, y=3..=7) should NOT be visible. They
+        // sit behind the western face from the player's perspective and
+        // have no transparent neighbor that the player could see them
+        // through (the cluster is dense, no internal gaps).
+        for x in 11..=13 {
+            for y in 3..=7 {
+                let p = Point::new(x, y);
+                assert!(
+                    !visible.contains(&p),
+                    "interior wall {:?} leaked into visible_tiles — \
+                     bracket-lib's shadowcasting may be marking unreachable \
+                     opaque tiles, which would mean the cull system has more \
+                     work to do",
+                    p
+                );
+            }
+        }
+    }
 }
