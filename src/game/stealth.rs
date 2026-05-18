@@ -2,12 +2,19 @@
 //! See docs/design/STEALTH.md for the canonical writeup.
 
 use bevy::prelude::*;
-use bracket_lib::prelude::Point;
+use bracket_lib::prelude::{Point, RandomNumberGenerator};
 
 use crate::character::Attributes;
+use crate::components::{Position, Viewshed};
+use crate::game::ai::{MonsterAI, MonsterAIMode};
 use crate::game::items::{Equipment, ItemProperties};
 use crate::game::skills::{Skill, Skills};
-use roguelike_engine::stealth::{noise_modifier, NoiseMap};
+use crate::map::Map;
+use crate::map::light::LightMap;
+use roguelike_engine::stealth::{
+    noise_modifier, Awareness, AwarenessAlertEvent, AwarenessRecord, AwarenessState, NoiseMap,
+};
+use roguelike_engine::turn::TurnManager;
 
 /// Per-monster species perception modifier, copied from MonsterAsset
 /// at spawn time. Read by perception_tick_system to build
@@ -158,6 +165,129 @@ pub fn equipped_armor_stealth_penalty(
     .filter_map(|e| item_query.get(e).ok())
     .map(|props| props.armor_stealth_penalty)
     .sum()
+}
+
+/// Read the tile light intensity at `pos` out of [`LightMap`].
+///
+/// The engine `LightMap` exposes `values: Vec<f32>` but no width/height
+/// of its own — the buffer is sized by the active [`Map`], so the
+/// caller has to do the indexing. Out-of-bounds positions return 0.0
+/// (treated as fully dark by [`light_modifier`]).
+fn light_intensity_at(light_map: &LightMap, map: &Map, pos: Point) -> f32 {
+    if pos.x < 0 || pos.y < 0 || pos.x >= map.width || pos.y >= map.height {
+        return 0.0;
+    }
+    let idx = map.xy_idx(pos.x, pos.y);
+    light_map.values.get(idx).copied().unwrap_or(0.0)
+}
+
+/// Per-perceiver opposed roll system. Runs once per turn inside
+/// `ProcessingPhase::Brain` (scheduled by `StealthPlugin` in Task E8)
+/// before monster AI mode dispatch, so the AI sees fresh awareness
+/// when it picks a target.
+///
+/// For each perceiver with an [`Awareness`] component, for each entity
+/// in their viewshed, roll opposed d20s and transition non-Aware
+/// records to [`AwarenessState::Aware`] on a perception win. `Aware`
+/// is sticky — it's never demoted by this system (the
+/// `awareness_tick_system` handles `Searching`/`Suspicious` decay).
+/// Emits [`AwarenessAlertEvent`] for squad propagation (Task E5).
+///
+/// Targets without a [`Skills`]/[`Attributes`]/[`Equipment`] component
+/// fall back to a 0 contribution from that source — the system still
+/// runs, it just produces a (skill-less, attr-less, gear-less)
+/// stealth total. This keeps NPCs and other non-player entities legal
+/// targets without forcing them to be fully kitted out.
+pub fn perception_tick_system(
+    mut perceivers: Query<(
+        Entity,
+        &mut Awareness,
+        &Viewshed,
+        Option<&MonsterAI>,
+        &Position,
+        &MonsterPerception,
+    )>,
+    targets: Query<(
+        Entity,
+        &Position,
+        Option<&Skills>,
+        Option<&Attributes>,
+        Option<&Equipment>,
+    )>,
+    equipment_items: Query<&ItemProperties>,
+    light_map: Res<LightMap>,
+    map: Res<Map>,
+    noise_map: Res<NoiseMap>,
+    turn_manager: Res<TurnManager>,
+    mut alerts: MessageWriter<AwarenessAlertEvent>,
+) {
+    let now = turn_manager.current_time;
+    let mut rng = RandomNumberGenerator::new();
+
+    for (seeker, mut awareness, vs, ai, seeker_pos, monster_perception) in &mut perceivers {
+        let is_asleep = ai
+            .map(|a| a.mode == MonsterAIMode::Asleep)
+            .unwrap_or(false);
+        let monster_base_perception = monster_perception.0;
+        let seeker_point = seeker_pos.to_point();
+
+        for (target, target_pos, target_skills, target_attrs, target_equipment) in &targets {
+            if seeker == target {
+                continue;
+            }
+            let target_point = target_pos.to_point();
+            if !vs.visible_tiles.contains(&target_point) {
+                continue;
+            }
+
+            // Sticky Aware: skip the roll entirely.
+            if let Some(rec) = awareness.get(target) {
+                if matches!(rec.state, AwarenessState::Aware) {
+                    continue;
+                }
+            }
+
+            // Chebyshev distance — matches 8-way movement.
+            let dist = (seeker_point.x - target_point.x)
+                .abs()
+                .max((seeker_point.y - target_point.y).abs());
+
+            let perc_components =
+                compute_perception_components(monster_base_perception, is_asleep, dist);
+
+            let light_intensity = light_intensity_at(&light_map, &map, target_point);
+
+            let armor_pen = target_equipment
+                .map(|eq| equipped_armor_stealth_penalty(eq, &equipment_items))
+                .unwrap_or(0);
+
+            let stealth_components = compute_stealth_components(
+                target_skills,
+                target_attrs,
+                armor_pen,
+                target_point,
+                light_intensity,
+                &noise_map,
+            );
+
+            let perc_roll = rng.roll_dice(1, 20);
+            let stealth_roll = rng.roll_dice(1, 20);
+            let perc_total = perc_roll + perc_components.total();
+            let stealth_total = stealth_roll + stealth_components.total();
+
+            if perc_total > stealth_total {
+                let entry = awareness.records.entry(target).or_insert(AwarenessRecord {
+                    state: AwarenessState::Hidden,
+                    last_update_turn: now,
+                    last_seen_pos: None,
+                });
+                entry.state = AwarenessState::Aware;
+                entry.last_update_turn = now;
+                entry.last_seen_pos = Some(target_point);
+                alerts.write(AwarenessAlertEvent { seeker, target });
+            }
+        }
+    }
 }
 
 #[cfg(test)]
