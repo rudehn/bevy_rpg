@@ -208,6 +208,20 @@ impl Plugin for GamePlugin {
                     .before(roguelike_engine::components::FovSet)
                     .run_if(in_state(AppState::InGame)),
             )
+            // Brogue-style culling: drop opaque tiles with no transparent
+            // neighbor from each viewshed and from Map::explored_tiles.
+            // bracket-lib's shadowcasting marks every tile it scans
+            // (including buried-in-wall ones); without this filter the
+            // player sees memory glyphs for interior trees deep in dense
+            // clusters they could never have observed. Runs after FOV
+            // computes, before any visibility-update system reads the
+            // viewshed.
+            .add_systems(
+                Update,
+                crate::game::systems::cull_interior_opaque_from_fov
+                    .after(roguelike_engine::components::FovSet)
+                    .run_if(in_state(AppState::InGame)),
+            )
             .add_systems(
                 Update,
                 (

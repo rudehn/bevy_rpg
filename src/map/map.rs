@@ -53,7 +53,11 @@ impl Plugin for MapPlugin {
                         // would be processed with new-floor FOV, marking wrong tiles explored.
                         // init_explored_tiles_system clears this flag once new tiles are ready.
                         .run_if(|init: Res<NeedsExploredInit>| !init.0)
-                        .after(init_explored_tiles_system),
+                        .after(init_explored_tiles_system)
+                        // Run after the interior-opaque cull so the
+                        // viewshed reflects the post-filter set when
+                        // tiles get marked Visible/Explored.
+                        .after(crate::game::systems::cull_interior_opaque_from_fov),
                     crate::map::ascii_renderer::render_tile_ascii
                         .after(update_tile_visibility)
                         .after(crate::game::systems::fov_update_system)
