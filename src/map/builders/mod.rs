@@ -22,8 +22,8 @@ use crate::{
             isolated_area_culler::IsolatedAreaCuller,
             item_spawner::ItemSpawner,
             lake_builder::LakeBuilder,
-            monster_spawner::MonsterSpawner,
             pillar_culler::PillarCuller,
+            voronoi_spawner::VoronoiSpawner,
             prefab_placer::PrefabPlacer,
             start_point::{StartPointBuilder, XStart, YStart},
         },
@@ -46,7 +46,7 @@ pub mod item_spawner;
 mod lake_builder;
 pub mod forest;
 pub mod town;
-pub mod monster_spawner;
+pub mod voronoi_spawner;
 mod pillar_culler;
 pub mod prefab_placer;
 mod room_drawer;
@@ -508,7 +508,9 @@ fn random_start_position() -> (XStart, YStart) {
 ///
 /// Phase: Spawning (must run AFTER ConnectivityCull)
 ///   CandleSpawner            → reads: rooms          → sets: prop_spawn_list
-///   MonsterSpawner           → reads: rooms, starting_position → sets: spawn_list
+///   VoronoiSpawner           → reads: walkable map, starting_position → sets: spawn_list
+///                              (replaces the old room-based MonsterSpawner;
+///                              see docs/design/SPAWNING.md)
 ///   ItemSpawner              → reads: rooms          → sets: prop_spawn_list
 ///
 /// Phase: Finalization
@@ -519,7 +521,7 @@ pub fn floor_builder(
     new_depth: i32,
     width: i32,
     height: i32,
-    _spawn_table: &[MonsterSpawnInfo],
+    spawn_table: &[MonsterSpawnInfo],
     _item_spawn_table: &[ItemSpawnInfo],
     squad_counter: SquadIdCounter,
     _prefabs: Vec<PrefabTemplate>,
@@ -531,7 +533,7 @@ pub fn floor_builder(
     match floor_kind(new_depth as u32) {
         FloorKind::Town => town_builder(new_depth, width, height, squad_counter),
         FloorKind::Forest { .. } => {
-            forest_builder(new_depth, width, height, squad_counter, decoration_rules)
+            forest_builder(new_depth, width, height, squad_counter, spawn_table, decoration_rules)
         }
     }
 }
@@ -567,6 +569,7 @@ pub fn forest_builder(
     width: i32,
     height: i32,
     squad_counter: SquadIdCounter,
+    spawn_table: &[MonsterSpawnInfo],
     decoration_rules: Vec<crate::assets::DecorationRule>,
 ) -> BuilderChain {
     let map_name = format!("Forest {new_depth}");
@@ -574,8 +577,15 @@ pub fn forest_builder(
     builder.start_with(forest::ForestTerrainBuilder::new());
     // Stairs are placed before decoration propagation so the seed
     // points don't accidentally land on the UpStairs / DownStairs
-    // tile (decorations are skipped on non-Floor terrain).
+    // tile (decorations are skipped on non-Floor terrain). Stairs also
+    // run before VoronoiSpawner so the spawner sees the stair tiles
+    // and skips them. See docs/design/SPAWNING.md.
     builder.with_named("ForestStairsBuilder", forest::ForestStairsBuilder::new());
+    // Voronoi-cell monster spawner — drops one pack per chosen cell,
+    // weighted by cell size, excluding a buffer around the player's
+    // starting clearing. Currently active for forest only; town has
+    // no spawn entries so plugging it in would be a no-op.
+    builder.with_named("VoronoiSpawner", VoronoiSpawner::new(spawn_table));
     // Decoration density scales with depth: Forest 2 (deep woods) gets
     // more rubble + dead grass than Forest 1 (outer woods).
     let density = match new_depth {

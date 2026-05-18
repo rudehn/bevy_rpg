@@ -565,6 +565,13 @@ pub struct MonsterSpawnInfo {
     /// When true, this monster spawns on liquid tiles instead of dry land.
     #[serde(default)]
     pub spawn_on_liquid: bool,
+
+    /// Relative spawn rarity. Higher = more common. Default 100. Entries
+    /// with `weight: 5` against a default 100 backdrop spawn ~5% as often
+    /// as default entries when both are eligible. Used by VoronoiSpawner
+    /// to weight per-cell entry selection.
+    #[serde(default = "default_spawn_weight")]
+    pub weight: u32,
 }
 
 /// A single species entry within a mixed group spawn.
@@ -583,6 +590,10 @@ fn default_group_one() -> i32 {
 
 fn default_flee_threshold() -> f32 {
     0.5
+}
+
+fn default_spawn_weight() -> u32 {
+    100
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
@@ -1216,24 +1227,27 @@ mod species_tests {
         );
     }
 
-    /// Every floor 1..=26 has at least 3 eligible spawn entries so floors are never empty.
+    /// Every active forest floor (1..=MAX_FLOOR) has at least one eligible
+    /// spawn entry — no silent "empty floor" regressions when the table
+    /// is pruned. Threshold is 1 (not 3 like the 26-floor era) because the
+    /// linear-floor world is mid-rebuild; raise the floor as the roster
+    /// grows. See docs/design/SPAWNING.md.
     #[test]
-    fn every_floor_has_a_spawn_entry() {
+    fn every_active_floor_has_a_spawn_entry() {
         let spawns_src = include_str!("../../assets/monster_spawns.ron");
         let table: MonsterSpawnTable =
             ron::from_str(spawns_src).expect("assets/monster_spawns.ron must parse");
 
-        for floor in 1..=26 {
+        for floor in 1..=crate::constants::MAX_FLOOR {
             let count = table
                 .spawns
                 .iter()
                 .filter(|s| floor >= s.min_floor && floor <= s.max_floor)
                 .count();
             assert!(
-                count >= 3,
-                "floor {} has only {} eligible spawn entries (need \u{2265} 3)",
+                count >= 1,
+                "active forest floor {} has no eligible spawn entries — add at least one to assets/monster_spawns.ron",
                 floor,
-                count
             );
         }
     }

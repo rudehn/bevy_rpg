@@ -125,7 +125,14 @@ Group entry (mixed pack with leader semantics):
 ], min_floor: 5, max_floor: 10, on_leader_death: "scatter", flee_threshold: 0.5),
 ```
 
-Optional: `spawn_on_liquid: true` for aquatic monsters.
+Optional fields:
+- `spawn_on_liquid: true` — aquatic monsters spawn on water/lava instead
+  of dry tiles.
+- `weight: u32` (default 100) — relative rarity. Lower values spawn
+  proportionally less often when multiple entries are eligible on the
+  same floor. A `weight: 5` entry against a default-100 backdrop spawns
+  ~5% as often as a default entry per Voronoi cell. Use for mini-bosses
+  or set-piece encounters (e.g. Treant on floors 2-3).
 
 ## Items
 

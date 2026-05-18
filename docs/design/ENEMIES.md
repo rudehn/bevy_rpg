@@ -180,6 +180,47 @@ monster has direct stats — no attribute derivation.
 - **Group size by floor:** 1-2 (floors 1-2), 2-3 (floor 3), 3-4 (floor 4)
 - **Behavior:** Aggressive when in a group, flees when alone and wounded
 
+### Jackal
+**Forest 1-2 | Fast harasser**
+
+| HP | Damage | Hit | Dodge | Armor | Delay (move / attack) | Vision |
+|----|--------|-----|-------|-------|-----------------------|--------|
+| 5  | 1d3    | 0   | 0     | 0     | **0.5x / 1.0x**       | 10     |
+
+- **Identity:** Same fragile chassis as the Giant Rat, but **moves at
+  twice default speed**. The player can out-walk rats; they cannot
+  out-walk jackals.
+- **Mechanic:** Introduces **speed-as-threat**. Forces the player to use
+  terrain (tree-walls, corridors, the spine) to deny adjacency rather
+  than rely on backing away.
+- **Group size:** 1-2 (small packs; not a swarm)
+- **Behavior:** FSM — long chase leash (12), flees only at <25% HP.
+  Commits to engagements once spotted.
+
+### Treant
+**Forest 2-3 | Very rare mini-boss** (spawn `weight: 5` vs default 100 → ~2.4% per cell)
+
+| HP | Damage | Armor | Regen | Delay (move / attack) | Vision | Resistances | Tier |
+|----|--------|-------|-------|-----------------------|--------|-------------|------|
+| 50 | 2d6+2  | 3     | 1     | **5.0x / 1.5x**       | 6      | fire: -100% (2× damage) | 6 |
+
+- **Identity:** Animate tree the player should avoid in a straight fight.
+  The 5× movement delay means it's an obstacle more than a hunter —
+  engaging at range or just walking around is usually the smart play.
+- **Mechanic:** Introduces **fire vulnerability as counterplay**. The
+  Treant grinds down a starter dagger (50 HP + armor 3 + regen 1), but
+  a single burning-oil flask or a fire-runic weapon turns the encounter
+  on its head — fire deals 2× damage.
+- **Ability — Slam:** Base attack (2d6+2) plus 60% Knockback (distance 2)
+  and 30% StunningBlow (duration 1). Each connecting hit threatens to
+  reset the player's positioning and steal a turn.
+- **Tier:** 6 — high XP burst when killed, well above the floor-2-3
+  baseline (Giant Rat, Jackal default to tier 1). Killing one is a real
+  accomplishment at this depth.
+- **Group size:** 1 (solitary, always).
+- **Behavior:** FSM — chase leash 5 (won't pursue far). Low perception
+  (`-1`) means it's relatively easy to sneak past once spotted from afar.
+
 ### Rat Queen
 **Floors 3-6 | Swarm matriarch**
 
