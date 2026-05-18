@@ -32,6 +32,7 @@ each section — schemas drift faster than this doc.
     damage_type: "physical",      // "physical" | "fire" | "lightning" | "poison" | "necrotic"
     base_armor: 0,
     base_dodge: 0,
+    perception: 0,                // Phase-4 stealth — d20 perception modifier (range ~-3..=+5)
     movement_delay: 1.0,
     attack_delay: 1.0,
     movement_mode: Ground,        // Ground | RestrictedToLiquid
@@ -177,6 +178,7 @@ kind: Armor((
     slot: Chest,                                // REQUIRED — Helm|Chest|Gloves|Boots|OffHand
     defense: 3,                                 // default 0
     max_blocks: 0,                              // OffHand shields only (1/2/3)
+    armor_stealth_penalty: 1,                   // Phase-4 stealth — subtracted from stealth_mod (default 0)
 )),
 
 // Staff — effect required.
@@ -196,6 +198,13 @@ kind: Consumable((
 kind: Ring,
 kind: Amulet,
 ```
+
+### Phase-4 stealth fields (cross-cutting)
+
+| Field | Type | Where | Authoring guidance |
+|---|---|---|---|
+| `perception` | `i32` (default `0`) | `MonsterAsset` | Phase-4 stealth perception modifier. Range ~`-3..=+5` per shipping monster. Added to the d20 perception roll in opposed-stealth checks. Keen-sensed predators positive, blundering brutes negative. See [docs/design/STEALTH.md](../../../../docs/design/STEALTH.md). |
+| `armor_stealth_penalty` | `i32` (default `0`) | `kind: Armor` on `ItemAsset` | Per-armor stealth penalty subtracted from `stealth_mod`. Shipping curve: 0 cloth/robe, 1 padded/leather, 2 studded, 3 chain, 5 plate. |
 
 ### `OnHitEffect` variants (`src/game/items.rs::OnHitEffect`)
 
