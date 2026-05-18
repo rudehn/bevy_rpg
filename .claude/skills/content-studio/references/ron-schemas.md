@@ -19,13 +19,22 @@ each section — schemas drift faster than this doc.
     base_hp: 10,                  // required
     faction: "Goblin",            // required if faction logic applies
     species: Humanoid,            // required — see Species enum below
-    ai: Fsm(                      // required — see AI configs below
+    ai: TacticList(               // required — see AI configs below
+        tactics: [
+            "FleePanicked", "FleeAtLowHp",
+            "RangedAttack", "KiteRetreat",
+            "MeleeAdjacent", "SquadLeash",
+            "HuntVisibleTarget", "PursueLastKnownPosition",
+            "IdleMove",
+            "Wait",             // required terminal entry (enforced at boot)
+        ],
         flee_at_hp_percent: 0.25,
         chase_leash: 8,
-        erratic_chance: 0.0,
         kites: false,
-        kite_distance: 0,
+        kite_distance: 3,
         ranged_range: 0,
+        base_morale: 0.6,
+        idle_movement: PathToRandomTile,  // omit to use the default
     ),
 
     // Optional — all default sensibly
@@ -53,10 +62,47 @@ each section — schemas drift faster than this doc.
 
 Missing defaults to `Unknown` and logs a warning on load.
 
-### AI configs
-- `Fsm { flee_at_hp_percent, chase_leash, erratic_chance, kites, kite_distance, ranged_range }`
-- `Goap { traits: [Trait, ...], base_morale: f32 }`
-  - Traits: `Cowardly | Intelligent | Aggressive | Hoarder | Support | Commander | Ranged { range: i32 }`
+### AI config — `TacticList` is the only variant
+
+`TacticList { tactics: Vec<String>, flee_at_hp_percent, chase_leash,
+kites, kite_distance, ranged_range, base_morale, idle_movement }`
+
+**Tactic names** (alphabetized; every name in your `tactics:` list
+must appear here, and the list must end with `"Wait"`):
+
+| Name | Fires when |
+|------|------------|
+| `FleeAtLowHp` | `Hunting` mode + HP below `flee_at_hp_percent` + visible enemy |
+| `FleePanicked` | `Fleeing` mode (sticky; entered via `damage_triggers_flee`) |
+| `HuntVisibleTarget` | `Hunting` + visible enemy not adjacent |
+| `IdleMove` | `Idle` mode; dispatches on `idle_movement` enum |
+| `KiteRetreat` | `Hunting` + `kites: true` + threat inside `kite_distance` |
+| `MeleeAdjacent` | any active mode + visible enemy at Chebyshev 1 |
+| `PursueLastKnownPosition` | `Hunting` + no visible + `chase_leash` not exhausted |
+| `RangedAttack` | `Hunting` + `ranged_range > 0` + visible enemy in range, not adjacent |
+| `SquadLeash` | non-leader squad member strayed beyond leash range |
+| `SubmergeOrSurface` | aquatic/amphibious actor + tile/submerged state mismatch |
+| `UseAbility` | `Hunting` + visible enemy + any `monster_abilities` entry off cooldown |
+| `Wait` | unconditional fallback (required final entry) |
+
+**Knob defaults:** `flee_at_hp_percent: 0.0`, `chase_leash: 0`,
+`kites: false`, `kite_distance: 3`, `ranged_range: 0`,
+`base_morale: 0.6`, `idle_movement: PathToRandomTile`.
+
+**`idle_movement` enum:**
+- `PathToRandomTile` (default) — pick a random walkable tile, walk
+  there, repeat. Most monsters.
+- `Patrol` — walk a fixed waypoint loop. Requires
+  `PatrolRoute::Waypoint` attached at spawn time by a builder.
+- `Roam` — bounded random walk inside a rectangle. Requires
+  `PatrolRoute::AreaRoam` attached at spawn (NPCs use this; the
+  town builder supplies the bounds).
+- `Stationary` — never move when idle.
+
+**Adding a new tactic:** see `docs/design/TACTICS.md` §"TACTIC_REGISTRY".
+One new file in `src/game/tactics/library/`, one match arm in
+`lookup_tactic`, one entry in `ALL_TACTIC_NAMES`. Validate at boot
+catches typos.
 
 ### Abilities (`abilities` array)
 Live list in `src/game/abilities.rs`. Parseable RON forms:

@@ -56,7 +56,7 @@ Design docs live in `docs/design/`. Read these before making gameplay changes.
 | [NPCS.md](docs/design/NPCS.md) | Peaceful Townsfolk reuse the monster pipeline; faction-gated Idle→Hunting; town_npcs.ron placement contract; AreaRoam / Sentry patrol routes |
 | [RANGED.md](docs/design/RANGED.md) | Ranged attack pipeline, F-key targeting, weapon range, ammo, LOS gating |
 | [SQUAD_AI.md](docs/design/SQUAD_AI.md) | Squad system, shared alerting, leader mechanics, morale-based fleeing |
-| [TACTICS.md](docs/design/TACTICS.md) | **In-progress migration.** Per-monster tactic registry replacing FSM mega-dispatcher + GOAP planner; pure resolver + Bevy adapter pattern; sticky `Fleeing` mode addition |
+| [TACTICS.md](docs/design/TACTICS.md) | Per-monster tactic registry — pure resolver + Bevy adapter, ordered tactic list per monster, sticky `Fleeing` mode overlay, `IdleMove` with `PathToRandomTile`/`Patrol`/`Roam`/`Stationary` variants. Single AI path (replaced FSM + GOAP) |
 | [STEALTH.md](docs/design/STEALTH.md) | Per-perceiver awareness model, opposed d20 detection, Stealth skill, Backstab gate, noise map V2 hook |
 | [FIRE.md](docs/design/FIRE.md) | Fire entities, spread, ignition chance, burn duration, water/gas interactions |
 | [GAS.md](docs/design/GAS.md) | Gas types (Poison, Steam), volume, diffusion, decay, FOV blocking, ignition |
@@ -100,7 +100,7 @@ src/
     mod.rs               # GamePlugin, AppState (Loading/Menu/InGame/GameOver), InGameState
     actions.rs           # Action enum, intent messages (Movement/Melee/Wait/Door)
     abilities.rs         # Monster ability definitions and cooldown system
-    ai.rs                # MonsterAI component and logic
+    ai.rs                # MonsterAI re-exports + refresh_monster_modes_system (mode FSM tracking — chase, leash, waypoint snapback)
     ascii_mode.rs        # ASCII rendering mode toggle
     camera.rs            # Camera follow and visibility toggle
     combat/
@@ -109,8 +109,8 @@ src/
     effects.rs           # Effect application (item use, on-hit effects)
     enchantment.rs       # Enchant scroll system (+1 to any item)
     factions.rs          # Faction definitions and hostility matrix
+    fleeing.rs           # Sticky `Fleeing` overlay component + damage_triggers_flee + maybe_exit_fleeing (entry/exit transitions for the new FSM state)
     gas.rs               # Gas layer system (poison clouds, spread, decay, FOV blocking)
-    goap.rs              # Goal-Oriented Action Planning AI
     items.rs             # Item components, equip/unequip/drop handlers
     machines.rs          # Machine encounter runtime logic
     magic.rs             # Magical effect processing
@@ -127,6 +127,20 @@ src/
     xp.rs                # Level / Experience / MonsterTier / XP curve / level-up handler
     skills.rs            # Skill / WeaponSkill / Skills / SkillXp / SkillTraining / training-mode allocator
     stealth.rs           # Stealth system (Phase 4): compute_*_mod, perception_tick_system, squad propagation, Backstab gate, use-counter, StealthPlugin
+    tactics/
+      mod.rs             # TacticsPlugin re-exports
+      resolve.rs         # Pure tactic resolver (no Bevy, no ECS). TurnSnapshot / TacticAction / TacticStateDelta / Tactic trait / resolve_turn entry point. Mirrors combat/resolve.rs
+      dispatch.rs        # Bevy adapter: TacticBrain component, MapPathContext, BracketRngAdapter, build_snapshot, apply_state_delta, write_intent, tactic_dispatch_system, validate_tactic_names_system, TacticsPlugin
+      library/
+        mod.rs           # TACTIC_REGISTRY: name → &'static dyn Tactic lookup, ALL_TACTIC_NAMES, TERMINAL_TACTIC_NAME constant
+        wait.rs          # WaitTactic (unconditional fallback)
+        combat.rs        # MeleeAdjacent
+        flee.rs          # FleeAtLowHp, FleePanicked (sticky), KiteRetreat
+        movement.rs      # HuntVisibleTarget, PursueLastKnownPosition
+        ranged.rs        # RangedAttack, UseAbility (defers to try_use_ability_world)
+        squad.rs         # SquadLeash
+        aquatic.rs       # SubmergeOrSurface
+        idle.rs          # IdleMove — dispatches on IdleMovement enum (PathToRandomTile / Patrol / Roam / Stationary)
 
   map/
     mod.rs               # MapPlugin re-exports
@@ -241,6 +255,16 @@ src/
 - `NoiseMap` resource ships in V1 with decay-by-1 tick but no producer. V2 noise phase plugs in Dijkstra populator.
 - Save schema v7: degraded persistence (`Aware → Searching{last_known_pos}` on save, `Suspicious → Hidden`).
 
+### Tactic Registry ([TACTICS.md](docs/design/TACTICS.md))
+- **All monster AI runs through the tactic registry.** The legacy FSM mega-dispatcher (`execute_monster_ai`) and the GOAP planner were deleted; their behaviors live as discrete `Tactic` impls in `src/game/tactics/library/`.
+- **Three-layer architecture.** Layer 1: state lives in `MonsterAI` (mode, last-known position, tuning knobs) + game-side `Fleeing` overlay component. Layer 2: small transition systems (`refresh_monster_modes_system`, `damage_triggers_flee`, `maybe_exit_fleeing`) update the mode each turn. Layer 3: per-monster `TacticBrain.tactics` (a `&'static [&'static dyn Tactic]` slice) is evaluated top-to-bottom each turn; the first non-`None` wins.
+- **Pure resolver + Bevy adapter pattern** mirroring [src/game/combat/resolve.rs](src/game/combat/resolve.rs). `resolve.rs` is pure Rust (no Bevy, no ECS) — `TurnSnapshot` in, `TurnOutcome` (action + state delta) out. `dispatch.rs` is the adapter — builds the snapshot from ECS components, calls `resolve_turn`, writes the matching intent message, applies the state delta to live components. Snapshots have no `Default` to catch wiring bugs at compile time.
+- **Sticky Fleeing mode** (game-side). Inserted by `damage_triggers_flee` when an actor with `flee_at_hp_percent > 0` drops below threshold (fires from any reactive state, including Idle — wandering creatures struck from stealth panic without first transitioning through Hunting). Exit via `maybe_exit_fleeing` requires 10+ elapsed turns + no visible threat + HP recovered by 0.15 hysteresis margin. Synthesized as `AiMode::Fleeing` in the resolver's snapshot; the `FleePanicked` tactic gates on it and ignores HP (entry/exit transitions own the mode lifecycle).
+- **`IdleMove` tactic** handles non-combat movement via the per-monster `idle_movement: IdleMovement` knob (default `PathToRandomTile`). Variants: `PathToRandomTile` (pick random walkable tile, walk there, repeat), `Patrol` (waypoint loop from `PatrolRoute::Waypoint`), `Roam` (bounded random walk from `PatrolRoute::AreaRoam`), `Stationary` (never move when idle). The asset declares what kind of wander; the spawn-time builder attaches the `PatrolRoute` with the bounds/waypoints (separation of content-time and placement-time concerns).
+- **Startup name validation.** `validate_tactic_names_system` runs once after `MonsterManifest` loads. Panics if any `monsters.ron` entry references an unknown tactic name in `ALL_TACTIC_NAMES` or fails to terminate with `"Wait"`. Catches typos at boot rather than at first spawn — same loud-failure pattern as `detect_screen_key_collisions`.
+- **Run order each turn** (Brain phase, chained): `perception_tick_system` → `refresh_monster_modes_system` → `tactic_dispatch_system` → `marker_dispatch`. Damage-triggered flee fires in `ResolveActions` after combat application. Tactics always see a fresh mode.
+- **Adding a new tactic.** One new file in `library/` + one `const` reference + one `lookup_tactic` arm + one row in `ALL_TACTIC_NAMES`. The RON references it by name. Each tactic is a zero-sized struct implementing `Tactic { fn name, fn evaluate }`. Tests use hand-built snapshots via `test_support::test_actor` + `ToyPaths` / `BlockedPaths` — no Bevy `App` required.
+
 ### Turn System
 - `TurnState`: `Waiting → NextTurn → PlayerInput → Processing → NextTurn`
 - `TurnManager` resource holds a sorted `Vec<(Entity, u32)>` turn queue keyed by game time
@@ -263,11 +287,11 @@ src/
 - **`OverworldState` resource** is currently an empty struct — kept as a home for future per-run state (faction influence, NPC progress, quest flags). The 3×3 overworld grid (`GridDir`, `CardinalDir`, `temple_entrance_*`, border stair clusters) was removed when the game pivoted back to traditional linear floors.
 
 ### NPCs (Phase 1, see [NPCS.md](docs/design/NPCS.md))
-- **Reuse, don't fork.** NPCs are monsters with a non-hostile faction — same `MonsterAsset` shape in `monsters.ron`, same `MonsterAI` / `Position` / `Faction` / save snapshot path. The only thing distinguishing them is `faction: "Townsfolk"`.
+- **Reuse, don't fork.** NPCs are monsters with a non-hostile faction — same `MonsterAsset` shape in `monsters.ron`, same `MonsterAI` / `TacticBrain` / `Position` / `Faction` / save snapshot path. The only thing distinguishing them is `faction: "Townsfolk"`.
 - **`Townsfolk` faction** is Allied to Player + Neutral to all monster factions. Player bumps fall through `resolve_bump`'s hostility check to `BumpResult::BlockedByCollider` — no melee swing.
-- **`is_player_hostile_target` gate** in [src/game/ai.rs](src/game/ai.rs) blocks the `Asleep`/`Idle → Hunting` transition for non-Hostile actors. Allied NPCs see the player but stay put.
+- **Faction-filtered visibility.** The tactic snapshot builder filters `visible_enemies` through the `FactionMatrix`; non-hostile actors never appear in an NPC's enemy list, so `HuntVisibleTarget` / `MeleeAdjacent` / etc. all return `None` against the player. Allied NPCs see the player but stay in `Idle` mode.
 - **Placement is separated from NPC identity.** [`assets/town_npcs.ron`](assets/town_npcs.ron) declares `(npc, count, placement)` triples; [`TownNpcBuilder`](src/map/builders/town_npcs.rs) consumes them and queues `SpawnEntry`s with the appropriate `PatrolRoute` (`AreaRoam` for drunks, future `Sentry` for vendors). The NPC asset has no notion of "pier" or "building interior" — placement lives in the town builder.
-- **Roaming** uses the existing `idle_movement` + `PatrolState::AreaRoam { min, max }` system. No new AI behaviour types; one new strategy enum on the placement side.
+- **Roaming** uses the `IdleMove` tactic's `Roam` variant (`idle_movement: Roam` on the asset) plus the `PatrolRoute::AreaRoam { min, max }` component the builder attaches at spawn. The asset declares "I roam"; the builder declares "where". `IdleMove::Patrol` follows the same pattern for waypoint-based NPCs.
 - Adding a new NPC = one stat block in `monsters.ron` + one row in `town_npcs.ron`. Zero code change unless the placement strategy is new.
 
 ### Tile Mutation Pipeline (engine-owned)

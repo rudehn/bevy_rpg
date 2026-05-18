@@ -42,7 +42,7 @@ Cooldown abilities instead of melee DPS. Forces closing or interrupts.
 - HP: below brute, above glass cannon
 - Damage: low melee, primary threat is `monster_abilities` (Bolt, Heal, etc.)
 - Speed: standard
-- Behavior: `Cowardly, Intelligent, Support` GOAP; kites or flees at 0.5
+- Behavior: standard tactic list + `flee_at_hp_percent: 0.4`; `UseAbility` fires when any cooldown is up
 - Reference: Goblin Conjurer, Ogre Mage, Goblin Shaman
 
 ### Summoner
@@ -56,7 +56,7 @@ Cooldown produces minions. Priority target; summons overwhelm if ignored.
 ### Ambusher / Sleeper
 Invisible or disguised until triggered. Punishes inattention.
 
-- Starts asleep (AI FSM)
+- Starts asleep (`MonsterAIMode::Asleep` — wakes via `Awareness` transition)
 - Low HP, high first-strike damage
 - Reference: Mimic (disguised), Shade (stealth-flavored)
 
@@ -70,7 +70,7 @@ Buffs allies, doesn't fight alone. Makes trash dangerous.
 ### Kiter / Skirmisher
 Ranged damage, maintains distance. Frustrating to pin down.
 
-- `ai: Fsm(kites: true, kite_distance: 3, ranged_range: 6)`
+- Standard tactic list + `kites: true, kite_distance: 3, ranged_range: 6` knobs (`RangedAttack` fires before `KiteRetreat` so archers shoot-then-back-off)
 - Low HP, moderate ranged damage
 - Reference: Goblin Firebomber, Imp, Bone Archer
 
@@ -87,7 +87,7 @@ Commands a squad. Killing scatters the rest.
 
 - Low HP, 0 direct damage
 - Primary mechanic is an `ExplodeOnHit` / `GasOnDeath` / ability
-- Erratic movement (`erratic_chance: 0.4`) makes them unpredictable
+- Default `idle_movement: PathToRandomTile` gives them a meandering approach
 - Reference: Pit Bloat (chasms), Bloat (gas), Fungal Spore (poison AoE)
 
 ### Stationary threat
@@ -103,7 +103,7 @@ Slow, powerful, rare. Solo encounter.
 
 - HP: top of mini-boss column
 - Multiple abilities (on-hit + cooldown + passive)
-- `ai: Fsm(chase_leash: 12)` or unique AI
+- Standard tactic list + `chase_leash: 12, base_morale: 0.8+` (bosses resist routing)
 - Reference: Hill Giant, Elder Drake, Stone Sentinel, Amulet Guardian
 
 ## Item archetypes
