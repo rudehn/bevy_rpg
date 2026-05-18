@@ -10,8 +10,6 @@
 //! `GoapAI` component, the Bevy dispatch systems, and the action handlers
 //! that touch game-side types.
 
-use std::collections::BTreeMap;
-
 // Re-export the engine planner framework so existing game-side code can
 // keep using `crate::game::goap::{WorldState, Goal, ActionDef, plan, ...}`
 // unchanged.
@@ -877,7 +875,6 @@ fn gather_world_state(entity: Entity, ai: &GoapAI, world: &mut World) -> WorldSt
             }
         },
         ally_between_self_and_threat,
-        custom: BTreeMap::new(),
     }
 }
 

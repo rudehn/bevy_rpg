@@ -32,7 +32,6 @@ use crate::status::StatusEffectKind;
 // =====================================================================
 
 /// How an ability selects its targets.
-#[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TargetingRule {
     /// Affects the caster only (buffs, self-heals).
@@ -44,8 +43,6 @@ pub enum TargetingRule {
     Aoe { range: u32, radius: u32 },
     /// Line from caster in a direction, up to `range` tiles.
     Line { range: u32 },
-    /// Game-defined targeting mode.
-    Custom { id: u32 },
 }
 
 // =====================================================================

@@ -138,7 +138,7 @@ pub struct GasTiles(pub HashMap<(i32, i32), GasTileData>);
 // =====================================================================
 
 /// Chance per turn (out of 100) for each fungus tile to emit gas.
-pub const GAS_EMISSION_CHANCE: i32 = 12;
+pub const GAS_EMISSION_CHANCE: i32 = 30;
 
 // =====================================================================
 // Pure Helpers (testable without ECS)
@@ -276,7 +276,7 @@ pub fn gas_tick_system(
                 continue;
             }
             // Emit on the fungus tile itself — redistribution spreads it
-            emissions.push((x, y, GasType::Poison, 200));
+            emissions.push((x, y, GasType::Poison, 600));
         }
     }
 
@@ -546,7 +546,7 @@ mod tests {
         assert!(!GasType::Poison.is_immune(&effects));
 
         effects.add_effect(
-            StatusEffectKind::Custom { id: crate::game::magic::STATUS_POISON_RESISTANCE },
+            StatusEffectKind::PoisonResistance,
             5,
         );
         assert!(GasType::Poison.is_immune(&effects));
@@ -556,7 +556,7 @@ mod tests {
     fn poison_gas_immunity_ignores_fire_resistance() {
         let mut effects = StatusEffects::default();
         effects.add_effect(
-            StatusEffectKind::Custom { id: crate::game::magic::STATUS_FIRE_RESISTANCE },
+            StatusEffectKind::FireResistance,
             5,
         );
         assert!(!GasType::Poison.is_immune(&effects));
@@ -590,7 +590,7 @@ mod tests {
         assert!(!GasType::Steam.is_immune(&effects));
 
         effects.add_effect(
-            StatusEffectKind::Custom { id: crate::game::magic::STATUS_FIRE_RESISTANCE },
+            StatusEffectKind::FireResistance,
             5,
         );
         assert!(GasType::Steam.is_immune(&effects));
@@ -600,7 +600,7 @@ mod tests {
     fn steam_immunity_ignores_poison_resistance() {
         let mut effects = StatusEffects::default();
         effects.add_effect(
-            StatusEffectKind::Custom { id: crate::game::magic::STATUS_POISON_RESISTANCE },
+            StatusEffectKind::PoisonResistance,
             5,
         );
         assert!(!GasType::Steam.is_immune(&effects));

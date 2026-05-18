@@ -3,8 +3,8 @@
 //! This module provides a general-purpose status effect system for
 //! turn-based roguelikes:
 //!
-//! - [`StatusEffectKind`] — an extensible enum of built-in effect types
-//!   (burning, poisoned, stunned, etc.) with a `Custom { id }` variant.
+//! - [`StatusEffectKind`] — enum of supported effect types
+//!   (burning, poisoned, stunned, entangled, enraged, etc.).
 //! - [`StatusEffects`] — a per-entity component holding a stack of active
 //!   [`StatusEffectInstance`]s with duration, magnitude, and source tracking.
 //! - Pure helper functions ([`compute_speed_modifier`],
@@ -29,11 +29,6 @@ use crate::combat::{DamageSource, DamageType};
 // =====================================================================
 
 /// The kind of status effect active on an entity.
-///
-/// `#[non_exhaustive]` so games can match with a fallback arm and new
-/// variants can be added in patch releases. Use `Custom { id }` for
-/// game-specific effects without forking the engine.
-#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum StatusEffectKind {
     Burning,
@@ -43,7 +38,10 @@ pub enum StatusEffectKind {
     Slowed,
     Strengthened,
     Weakened,
-    Custom { id: u32 },
+    Entangled,
+    Enraged,
+    FireResistance,
+    PoisonResistance,
 }
 
 impl StatusEffectKind {
@@ -57,7 +55,10 @@ impl StatusEffectKind {
             Self::Slowed => "slowed",
             Self::Strengthened => "strengthened",
             Self::Weakened => "weakened",
-            _ => "unknown",
+            Self::Entangled => "entangled",
+            Self::Enraged => "enraged",
+            Self::FireResistance => "fire resistance",
+            Self::PoisonResistance => "poison resistance",
         }
     }
 }
@@ -486,16 +487,22 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Custom kind
+    // Named variants beyond the canonical buff/debuff set
     // -----------------------------------------------------------------
 
     #[test]
-    fn custom_kind_works() {
+    fn entangled_works() {
         let mut effects = empty_effects();
-        let custom = StatusEffectKind::Custom { id: 42 };
-        effects.add(make_effect(custom, 5, 7));
-        assert!(effects.has(custom));
-        assert_eq!(effects.magnitude_of(custom), 7);
-        assert_eq!(custom.name(), "unknown");
+        effects.add(make_effect(StatusEffectKind::Entangled, 5, 0));
+        assert!(effects.has(StatusEffectKind::Entangled));
+        assert_eq!(StatusEffectKind::Entangled.name(), "entangled");
+    }
+
+    #[test]
+    fn fire_resistance_distinct_from_poison_resistance() {
+        let mut effects = empty_effects();
+        effects.add(make_effect(StatusEffectKind::FireResistance, 5, 0));
+        assert!(effects.has(StatusEffectKind::FireResistance));
+        assert!(!effects.has(StatusEffectKind::PoisonResistance));
     }
 }

@@ -11,7 +11,7 @@ The damage system stays ignorant of *why* an entity is on fire; combat handlers 
 - **Intent in, bookkeeping out.** Combat and ability handlers never decrement durations or roll DoT damage themselves. They call `effects.add_effect(kind, turns)` and walk away. The engine's `status_effect_tick_system` does all per-turn arithmetic.
 - **Decoupled from damage.** DoT statuses (Burning, Poisoned) emit standard `DamageEvent`s. They flow through the *same* damage pipeline as a sword swing — armor (where applicable), resistances, and `is_burning()` guards on fire tiles all just work.
 - **Symmetric.** Player and monsters use the same `StatusEffects` component, the same kinds, and the same tick system. A player drinking a haste potion and a goblin warchief casting War Cry land in the same code path.
-- **Extensible without forking.** The engine ships a blessed set; the game adds its own statuses through `StatusEffectKind::Custom { id }` with stable u32 IDs (see `src/game/magic.rs:31-34`).
+- **Closed enum, named variants.** The engine ships every status the game can apply as a named variant. New statuses extend the enum directly rather than going through a runtime id.
 
 ---
 
@@ -38,23 +38,23 @@ pub struct StatusEffectInstance {
 
 ### `StatusEffectKind` variants
 
-`#[non_exhaustive]` so the game pattern-matches with a `_` arm. Engine ships seven blessed variants; the game adds the rest as `Custom { id }`.
+A closed enum defined in `crates/roguelike_engine/src/status/mod.rs`. Game-side display metadata (name, color, description) lives in `src/game/magic.rs` (`kind_name`, `kind_color`, `kind_description`).
 
-| Kind | Source | Behavior | Magnitude |
-|------|--------|----------|-----------|
-| `Burning` | Engine | DoT, fire damage each tick | dmg/turn |
-| `Poisoned` | Engine | DoT, poison damage each tick | dmg/turn |
-| `Stunned` | Engine | Speed × 100 (effectively skips turn) | unused |
-| `Hasted` | Engine | Speed × 0.5 | unused |
-| `Slowed` | Engine | Speed × 1.5 | unused |
-| `Strengthened` | Engine | Damage × 1.5 | unused |
-| `Weakened` | Engine | Damage × 0.75 | unused |
-| `Custom { id: STATUS_ENTANGLED }` | Game (id=1) | Cannot move; cobweb decoration cleanup on expiry | unused |
-| `Custom { id: STATUS_ENRAGED }` | Game (id=2) | +50% damage (separate from Strengthened) | unused |
-| `Custom { id: STATUS_FIRE_RESISTANCE }` | Game (id=3) | Immune to fire damage / Steam gas | unused |
-| `Custom { id: STATUS_POISON_RESISTANCE }` | Game (id=4) | Immune to poison / Poison gas | unused |
+| Kind | Behavior | Magnitude |
+|------|----------|-----------|
+| `Burning` | DoT, fire damage each tick | dmg/turn |
+| `Poisoned` | DoT, poison damage each tick | dmg/turn |
+| `Stunned` | Speed × 100 (effectively skips turn) | unused |
+| `Hasted` | Speed × 0.5 | unused |
+| `Slowed` | Speed × 1.5 | unused |
+| `Strengthened` | Damage × 1.5 | unused |
+| `Weakened` | Damage × 0.75 | unused |
+| `Entangled` | Cannot move; cobweb decoration cleanup on expiry | unused |
+| `Enraged` | +50% damage (separate from Strengthened) | unused |
+| `FireResistance` | Immune to fire damage / Steam gas | unused |
+| `PoisonResistance` | Immune to poison / Poison gas | unused |
 
-The four custom-id constants live in `src/game/magic.rs:31-34` and **must remain stable for save-file compatibility**. Adding a new custom status means picking the next free integer and registering display metadata via `StatusEffectRegistry`.
+Adding a new status is one variant in the engine plus the three display-metadata arms in `magic.rs`. Save schema bumps as the bincode representation of the enum changes (see `SAVE.md` v8).
 
 ---
 
@@ -83,9 +83,9 @@ These wrap the engine's `StatusEffects::add(StatusEffectInstance)` (`roguelike_e
 - **Poison Strike** — `handle_poison_strike` (`src/game/abilities.rs:248`) — chance on melee hit, applies `Poisoned`.
 - **Stunning Blow** — `handle_stunning_blow` (`src/game/abilities.rs:275`) — chance on melee hit, applies `Stunned`.
 - **Slow Strike** — `handle_slow_strike` (`src/game/abilities.rs:378`) — chance on melee hit, applies `Slowed`.
-- **Enrage (passive)** — `handle_enrage` (`src/game/abilities.rs:493`) — when HP drops below threshold, applies `Custom { STATUS_ENRAGED }` for 99 turns (effectively for the rest of combat).
+- **Enrage (passive)** — `handle_enrage` (`src/game/abilities.rs:493`) — when HP drops below threshold, applies `StatusEffectKind::Enraged` for 99 turns (effectively for the rest of combat).
 - **War Cry** — `handle_war_cry` (`src/game/abilities.rs:699`) — first attack triggers it; applies Enraged to nearby allies of the same faction.
-- **Cobweb tile entry** — `src/game/actions.rs:644` — entering a cobweb decoration applies `Custom { STATUS_ENTANGLED }`.
+- **Cobweb tile entry** — `src/game/actions.rs:644` — entering a cobweb decoration applies `StatusEffectKind::Entangled`.
 - **Fire tiles** — `src/game/fire.rs:154` — standing in fire applies `Burning` if not already burning.
 - **Gas exposure** — `src/game/gas.rs` — Poison gas applies `Poisoned`, Steam applies `Burning` (immunity check first).
 - **Potions** — `src/game/effects.rs` — `ApplyHaste`, `ApplyFireResistance`, `Antidote` all funnel through `add_effect`.
@@ -117,7 +117,7 @@ For every entity with `StatusEffects`, in this order:
 2. **Decrement** every effect's `remaining_turns` by 1.
 3. **Remove expired** effects (those that hit zero) and emit `StatusExpiredEvent` for each.
 
-The game's `status_expiry_log_system` (`src/game/magic.rs:295`) reads those events, writes log lines ("X is no longer burning"), and — for `STATUS_ENTANGLED` specifically — clears the cobweb decoration that entangled the entity.
+The game's `status_expiry_log_system` (`src/game/magic.rs:295`) reads those events, writes log lines ("X is no longer burning"), and — for `Entangled` specifically — clears the cobweb decoration that entangled the entity.
 
 ### Speed modifier
 
@@ -146,7 +146,7 @@ Both are tagged `DamageSource::Environment` so on-hit reactive abilities (RoughB
 
 ### Damage-modifier statuses
 
-`Strengthened` (+50%) and the game's `STATUS_ENRAGED` (also +50%) both ride the damage modifier path. `is_enraged()` is read explicitly in `src/game/combat.rs:245` via `apply_damage_multipliers(rolled, is_enraged, is_terrified)`. They are **separate buffs** — Strengthened is a generic engine kind, Enraged is the game's specific narrative buff with on-hit triggers (e.g., HP-threshold autocast, War Cry, faction-broadcast).
+`Strengthened` (+50%) and `Enraged` (also +50%) both ride the damage modifier path. `is_enraged()` is read explicitly in `src/game/combat.rs:245` via `apply_damage_multipliers(rolled, is_enraged, is_terrified)`. They are **separate buffs** — Strengthened is the generic damage buff, Enraged is the narrative buff with on-hit triggers (HP-threshold autocast, War Cry, faction-broadcast).
 
 ---
 

@@ -14,7 +14,7 @@ use crate::game::combat::{
     HealEvent,
 };
 use crate::game::factions::FactionMatrix;
-use crate::game::magic::{GameStatusEffectsExt, StatusEffectKind, StatusEffects, STATUS_ENRAGED, STATUS_ENTANGLED};
+use crate::game::magic::{GameStatusEffectsExt, StatusEffectKind, StatusEffects};
 use crate::game::gas::{self, GasTiles, GasType};
 use crate::map::map::Map;
 use crate::map::tile::is_walkable;
@@ -490,7 +490,7 @@ pub fn handle_enrage(
         let threshold_hp = health.max * enrage.threshold_percent as i32 / 100;
         if health.current <= threshold_hp && health.current > 0 {
             if let Ok(mut effects) = status_query.get_mut(msg.defender) {
-                effects.add_effect(StatusEffectKind::Custom { id: STATUS_ENRAGED }, 99);
+                effects.add_effect(StatusEffectKind::Enraged, 99);
             }
             log_writer.write(GameLogMessage(format!(
                 "{} flies into a rage!",
@@ -696,7 +696,7 @@ pub fn handle_war_cry(
             let dist = (ally_pos.x - pos.x).abs() + (ally_pos.y - pos.y).abs();
             if dist <= war_cry.radius
                 && let Ok(mut effects) = status_query.get_mut(ally_entity) {
-                    effects.add_effect(StatusEffectKind::Custom { id: STATUS_ENRAGED }, war_cry.duration);
+                    effects.add_effect(StatusEffectKind::Enraged, war_cry.duration);
                 }
         }
     }

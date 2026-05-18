@@ -56,13 +56,9 @@
 //!
 //! # Extension points
 //!
-//! All enums are `#[non_exhaustive]` with `Custom { id: u32 }` variants
-//! so games can extend the engine's blessed set without forking:
-//!
-//! - `TerrainType::Custom`, `LiquidType::Custom`, `Decoration::Custom`
-//! - `DamageType::Custom`, `DamageSource::Custom`
-//! - `WorldStateProp::Custom`, `MovementMode::Custom`
-//! - `StatusEffectKind::Custom`
+//! New gameplay shapes are added by extending the engine's named enums
+//! directly (terrain, liquid, decoration, status, etc.) — there is no
+//! runtime-id extension hook.
 //!
 //! Bevy plugins expose empty `SystemSet` markers (`SquadAlertSet`,
 //! `SquadReactionSet`, `CombatReactionSet`) that games configure with

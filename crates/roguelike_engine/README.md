@@ -45,7 +45,7 @@ let finished = chain.finish();
 
 ## Extension points
 
-All enums are `#[non_exhaustive]` with `Custom { id: u32 }` variants so games can extend without forking. Bevy plugins expose empty `SystemSet` markers that games configure with `.after()` / `.before()` / `.run_if()`.
+Type enums (`TerrainType`, `Decoration`, `StatusEffectKind`, ...) are closed and named — new gameplay shapes add a variant directly rather than going through a runtime id. Bevy plugins expose empty `SystemSet` markers that games configure with `.after()` / `.before()` / `.run_if()`.
 
 ## Dependencies
 

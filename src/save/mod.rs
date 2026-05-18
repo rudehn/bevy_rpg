@@ -86,7 +86,13 @@ const GAME_SAVE_KEY: &str = "ironveil_save";
 ///   `Aware` collapses to `Searching{ player.pos, +20 }` at save time;
 ///   `Suspicious` collapses to `Hidden`. `#[serde(default)]` keeps v6
 ///   saves loadable with all monsters defaulting to `Hidden`.
-pub const SAVE_SCHEMA_VERSION: u32 = 7;
+/// - **v8**: `StatusEffectKind::Custom { id }` variants replaced with
+///   named variants (`Entangled`, `Enraged`, `FireResistance`,
+///   `PoisonResistance`). The bincode representation of these kinds
+///   changes — **pre-v8 saves containing the old `Custom { id }` shape
+///   are unrecoverable** and will fail to deserialize. Acceptable in
+///   the permadeath dev cycle with no production save data.
+pub const SAVE_SCHEMA_VERSION: u32 = 8;
 
 // ---- Migration chain ----
 
@@ -1506,8 +1512,7 @@ mod tests {
     use crate::game::enchantment::{ArmorRunic, WeaponRunic};
     use crate::game::items::{ArmorSlot, ItemKind, Rarity};
     use crate::game::magic::{
-        GameStatusEffectsExt, STATUS_ENRAGED, STATUS_ENTANGLED, STATUS_FIRE_RESISTANCE,
-        STATUS_POISON_RESISTANCE, StatusEffectInstance, StatusEffectKind, StatusEffects,
+        GameStatusEffectsExt, StatusEffectInstance, StatusEffectKind, StatusEffects,
     };
     use crate::game::squad::SquadConfig;
     use crate::game::staves::StaffEffect;
@@ -2484,27 +2489,12 @@ mod tests {
             (StatusEffectKind::Hasted, 0),
             (StatusEffectKind::Slowed, 0),
             (StatusEffectKind::Stunned, 0),
-            (
-                StatusEffectKind::Custom {
-                    id: STATUS_ENTANGLED,
-                },
-                0,
-            ),
+            (StatusEffectKind::Entangled, 0),
             (StatusEffectKind::Burning, 5),
             (StatusEffectKind::Poisoned, 3),
-            (StatusEffectKind::Custom { id: STATUS_ENRAGED }, 0),
-            (
-                StatusEffectKind::Custom {
-                    id: STATUS_FIRE_RESISTANCE,
-                },
-                0,
-            ),
-            (
-                StatusEffectKind::Custom {
-                    id: STATUS_POISON_RESISTANCE,
-                },
-                0,
-            ),
+            (StatusEffectKind::Enraged, 0),
+            (StatusEffectKind::FireResistance, 0),
+            (StatusEffectKind::PoisonResistance, 0),
         ];
         let p = PlayerSaveData {
             x: 0,
@@ -2780,15 +2770,9 @@ mod tests {
                     mk(StatusEffectKind::Hasted, 1, 0),
                     mk(StatusEffectKind::Slowed, 2, 0),
                     mk(StatusEffectKind::Stunned, 3, 0),
-                    mk(
-                        StatusEffectKind::Custom {
-                            id: STATUS_ENTANGLED,
-                        },
-                        4,
-                        0,
-                    ),
+                    mk(StatusEffectKind::Entangled, 4, 0),
                     mk(StatusEffectKind::Burning, 5, 10),
-                    mk(StatusEffectKind::Custom { id: STATUS_ENRAGED }, 6, 0),
+                    mk(StatusEffectKind::Enraged, 6, 0),
                 ],
             },
             inventory: vec![],
@@ -2849,8 +2833,8 @@ mod tests {
     // =====================================================================
 
     #[test]
-    fn schema_version_is_seven() {
-        assert_eq!(SAVE_SCHEMA_VERSION, 7);
+    fn schema_version_is_eight() {
+        assert_eq!(SAVE_SCHEMA_VERSION, 8);
     }
 
     #[test]

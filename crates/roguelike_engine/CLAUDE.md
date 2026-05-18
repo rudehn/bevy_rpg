@@ -37,7 +37,7 @@ All public items re-exported through `roguelike_engine::prelude::*`.
 
 - **Engine/game boundary** — Engine provides infrastructure + pure algorithms. Games own content, balance, UI, rendering, and integration.
 - **Pure functions** — Combat math, geometry, AI decisions, turn scheduling are pure (no ECS, no Bevy World). Tested in isolation.
-- **`#[non_exhaustive]` + `Custom { id: u32 }`** — All type enums (`DamageType`, `TerrainType`, `StatusEffectKind`, `TargetingRule`, etc.) allow game-side extension without forking.
+- **Closed enums** — Type enums (`DamageType`, `TerrainType`, `LiquidType`, `Decoration`, `StatusEffectKind`, `TargetingRule`, `WorldStateProp`) are exhaustive and named. New gameplay shapes add a named variant rather than going through a runtime id.
 - **SystemSet markers** — Plugins expose empty `SystemSet`s (`SquadAlertSet`, `CombatEventSet`, `FovSet`, etc.) for games to configure with `.after()`/`.before()`/`.run_if()`.
 - **Bevy 0.17 events** — Use `#[derive(Message)]`, `MessageWriter<T>`, `MessageReader<T>` (NOT old `EventWriter`/`EventReader`).
 - **BuildContext trait** — Map builders are generic over `C: BuildContext`. Engine ships `EngineBuilderMap`; games wrap it with their own context.

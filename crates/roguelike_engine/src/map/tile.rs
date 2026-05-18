@@ -9,9 +9,9 @@
 //! - [`Decoration`] — a visual/interactable overlay (grass, rubble, moss,
 //!   cobweb, etc.). May affect FOV, movement cost, and promotions.
 //!
-//! All three enums are `#[non_exhaustive]` with a `Custom { id: u32 }`
-//! escape hatch so games can add new terrain/liquid/decoration types
-//! without editing the engine.
+//! All three enums are closed: terrain/liquid/decoration variants are
+//! defined in the engine and any new gameplay shape adds a named variant
+//! here rather than going through a runtime id.
 
 use crate::components::MovementMode;
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,6 @@ use serde::{Deserialize, Serialize};
 // TerrainType
 // =====================================================================
 
-#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, bevy::ecs::component::Component, Serialize, Deserialize)]
 pub enum TerrainType {
     #[default]
@@ -37,8 +36,6 @@ pub enum TerrainType {
     LockedDoor,
     /// Escape portal on the final floor. Walkable, non-opaque.
     Portal,
-    /// Game-defined custom terrain. Metadata via a game-side registry.
-    Custom { id: u32 },
 }
 
 impl TerrainType {
@@ -54,7 +51,6 @@ impl TerrainType {
             Self::HiddenDoor => "HiddenDoor",
             Self::LockedDoor => "LockedDoor",
             Self::Portal => "Portal",
-            Self::Custom { .. } => "Custom",
         }
     }
 
@@ -88,7 +84,6 @@ impl TerrainType {
 // LiquidType
 // =====================================================================
 
-#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, bevy::ecs::component::Component, Serialize, Deserialize)]
 pub enum LiquidType {
     #[default]
@@ -98,8 +93,6 @@ pub enum LiquidType {
     Lava,
     /// Impassable void — no wreath, blocks everything.
     Chasm,
-    /// Game-defined custom liquid.
-    Custom { id: u32 },
 }
 
 impl LiquidType {
@@ -110,7 +103,6 @@ impl LiquidType {
             Self::ShallowWater => "ShallowWater",
             Self::Lava => "Lava",
             Self::Chasm => "Chasm",
-            Self::Custom { .. } => "Custom",
         }
     }
 }
@@ -119,7 +111,6 @@ impl LiquidType {
 // Decoration
 // =====================================================================
 
-#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Decoration {
     #[default]
@@ -148,8 +139,10 @@ pub enum Decoration {
     /// intensity raises the stealth penalty for anyone standing in/near the
     /// patch via the game-side stealth pipeline.
     PhosphorescentMoss,
-    /// Game-defined custom decoration.
-    Custom { id: u32 },
+    /// Packed-dirt road tile. Underlying terrain stays `Floor`; only the
+    /// rendered glyph/color changes. Used by the town builder's organic
+    /// road network.
+    TownPath,
 }
 
 impl Decoration {
@@ -170,7 +163,7 @@ impl Decoration {
             Self::Ash => "Ash",
             Self::CrackedFloor => "CrackedFloor",
             Self::PhosphorescentMoss => "PhosphorescentMoss",
-            Self::Custom { .. } => "Custom",
+            Self::TownPath => "TownPath",
         }
     }
 
@@ -295,7 +288,6 @@ pub fn is_walkable(tile: Tile) -> bool {
         TerrainType::HiddenDoor => false,
         TerrainType::LockedDoor => false,
         TerrainType::Portal => true,
-        TerrainType::Custom { .. } => false, // conservative default
     };
 
     let liquid_walkable = match tile.liquid {
@@ -304,7 +296,6 @@ pub fn is_walkable(tile: Tile) -> bool {
         LiquidType::ShallowWater => true,
         LiquidType::Lava => false,
         LiquidType::Chasm => false,
-        LiquidType::Custom { .. } => false, // conservative default
     };
 
     terrain_walkable && liquid_walkable
@@ -330,7 +321,6 @@ pub fn is_passable(tile: Tile) -> bool {
     match tile.terrain {
         TerrainType::Wall => false,
         TerrainType::Empty => false,
-        TerrainType::Custom { .. } => false,
         _ => true,
     }
 }
@@ -572,23 +562,6 @@ mod tests {
             "CrackedFloor should promote to Chasm"
         );
         assert_eq!(rule.chance_per_turn, 3300);
-    }
-
-    // ---- Custom variant conservative defaults ----
-
-    #[test]
-    fn custom_terrain_not_walkable_by_default() {
-        assert!(!is_walkable(tile(TerrainType::Custom { id: 99 }, LiquidType::None)));
-    }
-
-    #[test]
-    fn custom_liquid_not_walkable_by_default() {
-        assert!(!is_walkable(tile(TerrainType::Floor, LiquidType::Custom { id: 1 })));
-    }
-
-    #[test]
-    fn custom_terrain_not_passable_by_default() {
-        assert!(!is_passable(tile(TerrainType::Custom { id: 1 }, LiquidType::None)));
     }
 
     // ---- Decoration::PhosphorescentMoss metadata ----

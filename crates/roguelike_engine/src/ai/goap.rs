@@ -10,11 +10,8 @@
 //! - [`WorldState`] is a bundle of boolean facts about an entity and its
 //!   environment. The engine ships a blessed set of fields commonly
 //!   useful across roguelikes (player visible, HP low, hostile nearby,
-//!   adjacent to threat, squad retreating, ...) plus a `custom` map
-//!   for game-defined predicates.
-//! - [`WorldStateProp`] is the named address of a field. It's
-//!   `#[non_exhaustive]` and has a `Custom { id }` variant so games can
-//!   extend the world state without touching the engine.
+//!   adjacent to threat, squad retreating, ...).
+//! - [`WorldStateProp`] is the named address of a field.
 //! - [`Goal`] is a priority and a list of `(prop, value)` pairs the
 //!   planner tries to satisfy.
 //! - [`ActionDef`] is a named action with preconditions (required
@@ -30,7 +27,6 @@
 //! planner algorithm.
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::collections::BinaryHeap;
 use std::collections::HashSet;
 
@@ -39,12 +35,6 @@ use std::collections::HashSet;
 // =====================================================================
 
 /// Boolean facts about an entity and its environment, gathered each turn.
-///
-/// The engine ships with a blessed set of named fields for commonly-useful
-/// predicates. Games can extend the world state with custom props via the
-/// `custom` map (keyed by game-assigned `u32` ids) without editing the
-/// struct. `BTreeMap` is used so `WorldState` stays `Hash + Eq` for planner
-/// caching.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct WorldState {
     // --- Core (all GOAP entities) ---
@@ -67,15 +57,10 @@ pub struct WorldState {
     pub self_morale_low: bool,
     pub can_cast_useful_spell: bool,
     pub ally_between_self_and_threat: bool,
-
-    // --- Extension point ---
-    /// Game-registered custom predicates keyed by game-assigned id.
-    pub custom: BTreeMap<u32, bool>,
 }
 
 /// Named property of the world state, used in goal conditions and action
 /// preconditions/effects.
-#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WorldStateProp {
     PlayerVisible,
@@ -93,9 +78,6 @@ pub enum WorldStateProp {
     SelfMoraleLow,
     CanCastUsefulSpell,
     AllyBetweenSelfAndThreat,
-    /// Game-defined custom predicate identified by `id`. Games read/write
-    /// these through the usual `(WorldStateProp, bool)` planner tuples.
-    Custom { id: u32 },
 }
 
 impl WorldState {
@@ -116,7 +98,6 @@ impl WorldState {
             WorldStateProp::SelfMoraleLow => self.self_morale_low,
             WorldStateProp::CanCastUsefulSpell => self.can_cast_useful_spell,
             WorldStateProp::AllyBetweenSelfAndThreat => self.ally_between_self_and_threat,
-            WorldStateProp::Custom { id } => self.custom.get(&id).copied().unwrap_or(false),
         }
     }
 
@@ -137,9 +118,6 @@ impl WorldState {
             WorldStateProp::SelfMoraleLow => self.self_morale_low = value,
             WorldStateProp::CanCastUsefulSpell => self.can_cast_useful_spell = value,
             WorldStateProp::AllyBetweenSelfAndThreat => self.ally_between_self_and_threat = value,
-            WorldStateProp::Custom { id } => {
-                self.custom.insert(id, value);
-            }
         }
     }
 }
@@ -333,67 +311,6 @@ pub fn plan_full<'a>(
 mod tests {
     use super::*;
 
-    // --- Extensibility: custom WorldStateProp (WorldStateProp::Custom) ---
-
-    const CUSTOM_ALERTED: u32 = 1;
-    const CUSTOM_TORCH_LIT: u32 = 2;
-
-    #[test]
-    fn custom_world_state_props_default_false() {
-        let state = WorldState::default();
-        assert!(!state.get(WorldStateProp::Custom { id: CUSTOM_ALERTED }));
-        assert!(!state.get(WorldStateProp::Custom { id: 999 }));
-    }
-
-    #[test]
-    fn custom_world_state_props_set_and_get() {
-        let mut state = WorldState::default();
-        state.set(WorldStateProp::Custom { id: CUSTOM_ALERTED }, true);
-        assert!(state.get(WorldStateProp::Custom { id: CUSTOM_ALERTED }));
-        assert!(!state.get(WorldStateProp::Custom { id: CUSTOM_TORCH_LIT }));
-    }
-
-    #[test]
-    fn planner_consumes_custom_preconditions_and_effects() {
-        // A single-step plan: light the torch → alerted becomes true.
-        let actions = vec![ActionDef {
-            name: "light_torch",
-            cost: 1,
-            preconditions: vec![(WorldStateProp::Custom { id: CUSTOM_TORCH_LIT }, false)],
-            effects: vec![
-                (WorldStateProp::Custom { id: CUSTOM_TORCH_LIT }, true),
-                (WorldStateProp::Custom { id: CUSTOM_ALERTED }, true),
-            ],
-        }];
-        let goal = Goal {
-            name: "rally",
-            priority: 1,
-            desired: vec![(WorldStateProp::Custom { id: CUSTOM_ALERTED }, true)],
-        };
-        let state = WorldState::default();
-        let selected = plan(&state, &[goal], &actions);
-        assert!(selected.is_some());
-        assert_eq!(selected.unwrap().name, "light_torch");
-    }
-
-    #[test]
-    fn planner_skips_custom_goal_already_satisfied() {
-        let mut state = WorldState::default();
-        state.set(WorldStateProp::Custom { id: CUSTOM_ALERTED }, true);
-        let actions = vec![ActionDef {
-            name: "shout_alarm",
-            cost: 1,
-            preconditions: vec![],
-            effects: vec![(WorldStateProp::Custom { id: CUSTOM_ALERTED }, true)],
-        }];
-        let goal = Goal {
-            name: "stay_alert",
-            priority: 1,
-            desired: vec![(WorldStateProp::Custom { id: CUSTOM_ALERTED }, true)],
-        };
-        assert!(plan(&state, &[goal], &actions).is_none());
-    }
-
     // --- Blessed prop tests ---
 
     #[test]
@@ -579,31 +496,6 @@ mod tests {
         };
         let result = plan(&WorldState::default(), &[goal], &actions);
         assert_eq!(result.unwrap().name, "cheap_engage");
-    }
-
-    #[test]
-    fn plan_mixed_blessed_and_custom_props() {
-        let actions = vec![
-            ActionDef {
-                name: "scout",
-                cost: 1,
-                preconditions: vec![],
-                effects: vec![
-                    (WorldStateProp::PlayerVisible, true),
-                    (WorldStateProp::Custom { id: 42 }, true),
-                ],
-            },
-        ];
-        let goal = Goal {
-            name: "find",
-            priority: 1,
-            desired: vec![
-                (WorldStateProp::PlayerVisible, true),
-                (WorldStateProp::Custom { id: 42 }, true),
-            ],
-        };
-        let result = plan(&WorldState::default(), &[goal], &actions);
-        assert_eq!(result.unwrap().name, "scout");
     }
 
     #[test]

@@ -11,7 +11,7 @@ use crate::{
 // Engine re-exports
 // =====================================================================
 //
-// Status effect types now live in the engine. We re-export them so the
+// Status effect types live in the engine. We re-export them so the
 // rest of the game crate can keep using `crate::game::magic::{...}`.
 pub use roguelike_engine::status::{
     compute_damage_modifier, compute_speed_modifier, status_effect_tick_system,
@@ -20,48 +20,10 @@ pub use roguelike_engine::status::{
 };
 
 // =====================================================================
-// Game-specific custom status IDs
-// =====================================================================
-//
-// The engine ships a blessed set (Burning, Poisoned, Stunned, Hasted,
-// Slowed, Strengthened, Weakened). Everything else the game needs is
-// modelled as `StatusEffectKind::Custom { id }`.
-//
-// These IDs must remain stable for save-file compatibility.
-pub const STATUS_ENTANGLED: u32 = 1;
-pub const STATUS_ENRAGED: u32 = 2;
-pub const STATUS_FIRE_RESISTANCE: u32 = 3;
-pub const STATUS_POISON_RESISTANCE: u32 = 4;
-
-// =====================================================================
 // Game-side status metadata (display / UI)
 // =====================================================================
 
-/// Registry for user-facing metadata on `StatusEffectKind::Custom` values.
-/// Games insert this as a resource and populate it at startup.
-#[derive(Resource, Default, Clone)]
-pub struct StatusEffectRegistry {
-    entries: std::collections::HashMap<u32, CustomStatusEntry>,
-}
-
-#[derive(Clone)]
-pub struct CustomStatusEntry {
-    pub name: &'static str,
-    pub color: Color,
-    pub describe: fn(turns_remaining: u32) -> String,
-}
-
-impl StatusEffectRegistry {
-    pub fn register(&mut self, id: u32, entry: CustomStatusEntry) {
-        self.entries.insert(id, entry);
-    }
-
-    pub fn get(&self, id: u32) -> Option<&CustomStatusEntry> {
-        self.entries.get(&id)
-    }
-}
-
-/// Human-readable name for a status kind (includes game-specific custom kinds).
+/// Human-readable name for a status kind.
 pub fn kind_name(kind: &StatusEffectKind) -> &'static str {
     match kind {
         StatusEffectKind::Burning => "Burning",
@@ -71,11 +33,10 @@ pub fn kind_name(kind: &StatusEffectKind) -> &'static str {
         StatusEffectKind::Slowed => "Slowed",
         StatusEffectKind::Strengthened => "Strengthened",
         StatusEffectKind::Weakened => "Weakened",
-        StatusEffectKind::Custom { id: STATUS_ENTANGLED } => "Entangled",
-        StatusEffectKind::Custom { id: STATUS_ENRAGED } => "Enraged",
-        StatusEffectKind::Custom { id: STATUS_FIRE_RESISTANCE } => "Fire Resistance",
-        StatusEffectKind::Custom { id: STATUS_POISON_RESISTANCE } => "Poison Resistance",
-        _ => "Custom",
+        StatusEffectKind::Entangled => "Entangled",
+        StatusEffectKind::Enraged => "Enraged",
+        StatusEffectKind::FireResistance => "Fire Resistance",
+        StatusEffectKind::PoisonResistance => "Poison Resistance",
     }
 }
 
@@ -89,11 +50,10 @@ pub fn kind_color(kind: &StatusEffectKind) -> Color {
         StatusEffectKind::Slowed => Color::srgb(0.5, 0.5, 0.9),
         StatusEffectKind::Strengthened => Color::srgb(1.0, 0.7, 0.7),
         StatusEffectKind::Weakened => Color::srgb(0.7, 0.7, 0.7),
-        StatusEffectKind::Custom { id: STATUS_ENTANGLED } => Color::srgb(0.8, 0.8, 0.8),
-        StatusEffectKind::Custom { id: STATUS_ENRAGED } => Color::srgb(0.9, 0.2, 0.2),
-        StatusEffectKind::Custom { id: STATUS_FIRE_RESISTANCE } => Color::srgb(1.0, 0.6, 0.2),
-        StatusEffectKind::Custom { id: STATUS_POISON_RESISTANCE } => Color::srgb(0.4, 1.0, 0.4),
-        _ => Color::srgb(0.8, 0.8, 0.8),
+        StatusEffectKind::Entangled => Color::srgb(0.8, 0.8, 0.8),
+        StatusEffectKind::Enraged => Color::srgb(0.9, 0.2, 0.2),
+        StatusEffectKind::FireResistance => Color::srgb(1.0, 0.6, 0.2),
+        StatusEffectKind::PoisonResistance => Color::srgb(0.4, 1.0, 0.4),
     }
 }
 
@@ -107,38 +67,11 @@ pub fn kind_description(kind: &StatusEffectKind, turns_remaining: u32, magnitude
         StatusEffectKind::Stunned => format!("Cannot act, {} turns", turns_remaining),
         StatusEffectKind::Strengthened => format!("+50% damage, {} turns", turns_remaining),
         StatusEffectKind::Weakened => format!("-25% damage, {} turns", turns_remaining),
-        StatusEffectKind::Custom { id: STATUS_ENTANGLED } => format!("Cannot move, {} turns", turns_remaining),
-        StatusEffectKind::Custom { id: STATUS_ENRAGED } => format!("+50% damage, {} turns", turns_remaining),
-        StatusEffectKind::Custom { id: STATUS_FIRE_RESISTANCE } => format!("Immune to fire, {} turns", turns_remaining),
-        StatusEffectKind::Custom { id: STATUS_POISON_RESISTANCE } => format!("Immune to poison, {} turns", turns_remaining),
-        _ => format!("{} turns", turns_remaining),
+        StatusEffectKind::Entangled => format!("Cannot move, {} turns", turns_remaining),
+        StatusEffectKind::Enraged => format!("+50% damage, {} turns", turns_remaining),
+        StatusEffectKind::FireResistance => format!("Immune to fire, {} turns", turns_remaining),
+        StatusEffectKind::PoisonResistance => format!("Immune to poison, {} turns", turns_remaining),
     }
-}
-
-/// Metadata lookup that respects the [`StatusEffectRegistry`] for unknown `Custom` kinds.
-pub fn kind_metadata_with(
-    kind: &StatusEffectKind,
-    turns_remaining: u32,
-    magnitude: i32,
-    registry: Option<&StatusEffectRegistry>,
-) -> (&'static str, Color, String) {
-    if let (StatusEffectKind::Custom { id }, Some(reg)) = (kind, registry) {
-        // Only consult registry for game-unknown ids; our blessed custom ids
-        // still use the built-in metadata above.
-        if !matches!(
-            *id,
-            STATUS_ENTANGLED | STATUS_ENRAGED | STATUS_FIRE_RESISTANCE | STATUS_POISON_RESISTANCE
-        ) {
-            if let Some(entry) = reg.get(*id) {
-                return (entry.name, entry.color, (entry.describe)(turns_remaining));
-            }
-        }
-    }
-    (
-        kind_name(kind),
-        kind_color(kind),
-        kind_description(kind, turns_remaining, magnitude),
-    )
 }
 
 // =====================================================================
@@ -213,7 +146,7 @@ impl GameStatusEffectsExt for StatusEffects {
     }
 
     fn is_entangled(&self) -> bool {
-        self.has(StatusEffectKind::Custom { id: STATUS_ENTANGLED })
+        self.has(StatusEffectKind::Entangled)
     }
 
     fn is_hasted(&self) -> bool {
@@ -225,7 +158,7 @@ impl GameStatusEffectsExt for StatusEffects {
     }
 
     fn is_enraged(&self) -> bool {
-        self.has(StatusEffectKind::Custom { id: STATUS_ENRAGED })
+        self.has(StatusEffectKind::Enraged)
     }
 
     fn is_poisoned(&self) -> bool {
@@ -237,11 +170,11 @@ impl GameStatusEffectsExt for StatusEffects {
     }
 
     fn is_poison_resistant(&self) -> bool {
-        self.has(StatusEffectKind::Custom { id: STATUS_POISON_RESISTANCE })
+        self.has(StatusEffectKind::PoisonResistance)
     }
 
     fn is_fire_resistant(&self) -> bool {
-        self.has(StatusEffectKind::Custom { id: STATUS_FIRE_RESISTANCE })
+        self.has(StatusEffectKind::FireResistance)
     }
 
     fn burning_damage(&self) -> Option<i32> {
@@ -312,7 +245,7 @@ pub fn status_expiry_log_system(
             StatusEffectKind::Poisoned => {
                 log_writer.write(GameLogMessage(format!("{} is no longer poisoned.", name.0)));
             }
-            StatusEffectKind::Custom { id: STATUS_ENTANGLED } => {
+            StatusEffectKind::Entangled => {
                 log_writer.write(GameLogMessage(format!(
                     "{} breaks free of the cobwebs!",
                     name.0
@@ -322,13 +255,13 @@ pub fn status_expiry_log_system(
                     new_decoration: crate::map::tile::Decoration::None,
                 });
             }
-            StatusEffectKind::Custom { id: STATUS_FIRE_RESISTANCE } => {
+            StatusEffectKind::FireResistance => {
                 log_writer.write(GameLogMessage(format!(
                     "{}'s fire resistance fades.",
                     name.0
                 )));
             }
-            StatusEffectKind::Custom { id: STATUS_POISON_RESISTANCE } => {
+            StatusEffectKind::PoisonResistance => {
                 log_writer.write(GameLogMessage(format!(
                     "{}'s poison resistance fades.",
                     name.0
@@ -526,7 +459,6 @@ pub struct MagicPlugin;
 impl Plugin for MagicPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(StatusEffectPlugin)
-            .init_resource::<StatusEffectRegistry>()
             .add_systems(
                 Update,
                 (apply_speed_effects_system, process_pending_summon)
@@ -624,17 +556,17 @@ mod tests {
     }
 
     #[test]
-    fn entangled_via_custom_id() {
+    fn entangled_named_variant() {
         let mut effects = StatusEffects::default();
-        effects.add_effect(StatusEffectKind::Custom { id: STATUS_ENTANGLED }, 3);
+        effects.add_effect(StatusEffectKind::Entangled, 3);
         assert!(effects.is_entangled());
         assert!(!effects.is_stunned());
     }
 
     #[test]
-    fn fire_resistance_via_custom_id() {
+    fn fire_resistance_named_variant() {
         let mut effects = StatusEffects::default();
-        effects.add_effect(StatusEffectKind::Custom { id: STATUS_FIRE_RESISTANCE }, 3);
+        effects.add_effect(StatusEffectKind::FireResistance, 3);
         assert!(effects.is_fire_resistant());
         assert!(!effects.is_poison_resistant());
     }
@@ -687,47 +619,19 @@ mod tests {
     }
 
     #[test]
-    fn custom_status_distinct_ids_stack_separately() {
+    fn distinct_kinds_stack_separately() {
         let mut effects = StatusEffects::default();
-        effects.add_effect(StatusEffectKind::Custom { id: 11 }, 3);
-        effects.add_effect(StatusEffectKind::Custom { id: 12 }, 5);
+        effects.add_effect(StatusEffectKind::Entangled, 3);
+        effects.add_effect(StatusEffectKind::Enraged, 5);
         assert_eq!(effects.effects.len(), 2);
     }
 
     #[test]
-    fn custom_status_same_id_refreshes() {
+    fn same_kind_refreshes() {
         let mut effects = StatusEffects::default();
-        effects.add_effect(StatusEffectKind::Custom { id: 7 }, 3);
-        effects.add_effect(StatusEffectKind::Custom { id: 7 }, 10);
+        effects.add_effect(StatusEffectKind::Entangled, 3);
+        effects.add_effect(StatusEffectKind::Entangled, 10);
         assert_eq!(effects.effects.len(), 1);
         assert_eq!(effects.effects[0].remaining_turns, 10);
-    }
-
-    #[test]
-    fn custom_status_registry_provides_metadata() {
-        fn describe_frozen(turns: u32) -> String {
-            format!("Frozen solid, {} turns", turns)
-        }
-        let mut registry = StatusEffectRegistry::default();
-        registry.register(
-            100,
-            CustomStatusEntry {
-                name: "Frozen",
-                color: Color::srgb(0.3, 0.5, 1.0),
-                describe: describe_frozen,
-            },
-        );
-
-        let kind = StatusEffectKind::Custom { id: 100 };
-        let (name, _color, desc) = kind_metadata_with(&kind, 4, 0, Some(&registry));
-        assert_eq!(name, "Frozen");
-        assert_eq!(desc, "Frozen solid, 4 turns");
-    }
-
-    #[test]
-    fn custom_status_metadata_falls_back_without_registry() {
-        let kind = StatusEffectKind::Custom { id: 99 };
-        let (name, _color, _desc) = kind_metadata_with(&kind, 3, 0, None);
-        assert_eq!(name, "Custom");
     }
 }

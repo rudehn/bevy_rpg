@@ -3,19 +3,27 @@
 A Brogue-inspired roguelike built with Bevy 0.17 and Rust.
 
 **Current shape (linear-floor milestone):** traditional descend-stairs
-roguelike. Player starts in a procedural **town** (floor 0). The town has
-a return Portal at its centre (the win-condition tile) and a `DownStairs`
-on the south border leading to the **forest** (floor 1 → floor 2). The
-Amulet of Yendor sits on floor 2 (the deepest authored floor); pick it up
-and return to the town Portal to win. Permadeath. **Monster spawns are
-re-enabled (Voronoi-cell spawner — see [SPAWNING.md](docs/design/SPAWNING.md));
-the active roster is currently Giant Rat on Forest 1–2 with more
-incoming. Item spawns remain disabled — the amulet is the only item in
-the world.** See
-[OVERWORLD.md](docs/design/OVERWORLD.md) for the canonical writeup
-(forthcoming rename → `DUNGEON.md`). `MAX_FLOOR` lives in
+roguelike. Player starts in a procedural **town** (floor 0), descends
+through **four forest floors** (1–4), and reaches the **cult temple**
+at the bottom (floor 5 = `MAX_FLOOR`). The temple is a linear stone
+corridor opening into a sanctum chamber holding the Amulet of Yendor.
+Pick it up and return to the town's central Portal to win. Permadeath.
+
+The temple entrance on **Forest 4** is intentionally hidden — instead
+of a `DownStairs` at the east clearing, it's placed at a random
+walkable tile well off the east-west spine. The player has to wander
+off the corridor to find it; the temple is "discoverable" rather than
+handed to them.
+
+**Monster spawns are re-enabled** on forest floors via the Voronoi-cell
+spawner (see [SPAWNING.md](docs/design/SPAWNING.md)). Forest 1 is solo-
+only (no packs); packs form starting on Forest 2 and full pack tiers
+ship on Forest 3–4. The temple has no spawn entries yet — cultists
+arrive in a future pass. Item spawns remain disabled — the amulet is
+the only item in the world. See [OVERWORLD.md](docs/design/OVERWORLD.md)
+for the canonical writeup. `MAX_FLOOR` lives in
 [src/constants.rs](src/constants.rs); raising it is content work — add
-more `FloorKind::Forest` floors or new variants.
+more `FloorKind::Forest` floors, new variants, or expand the temple.
 
 ## Build & Run
 
@@ -51,7 +59,7 @@ Design docs live in `docs/design/`. Read these before making gameplay changes.
 |-----|--------|
 | [TURNS.md](docs/design/TURNS.md) | Turn queue, TurnState FSM, SpeedStats delay model, ActionFinishedEvent contract, processing phases |
 | [ABILITIES.md](docs/design/ABILITIES.md) | Monster ability triggers (on-hit/on-being-hit/on-death/passive), cooldown family, ExplodeEffect variants |
-| [STATUS_EFFECTS.md](docs/design/STATUS_EFFECTS.md) | Burning, Poisoned, Slowed, Stunned, Hasted, Enraged, Entangled, Custom IDs, tick model, refresh policy |
+| [STATUS_EFFECTS.md](docs/design/STATUS_EFFECTS.md) | Burning, Poisoned, Slowed, Stunned, Hasted, Enraged, Entangled, Fire/Poison Resistance, tick model, refresh policy |
 | [FACTIONS.md](docs/design/FACTIONS.md) | Faction component, FactionMatrix, hostility lookup, cross-faction combat, default-Hostile gotcha |
 | [NPCS.md](docs/design/NPCS.md) | Peaceful Townsfolk reuse the monster pipeline; faction-gated Idle→Hunting; town_npcs.ron placement contract; AreaRoam / Sentry patrol routes |
 | [RANGED.md](docs/design/RANGED.md) | Ranged attack pipeline, F-key targeting, weapon range, ammo, LOS gating |
@@ -139,7 +147,8 @@ src/
     builders/
       mod.rs             # BuilderChain, BuilderMap, floor_builder dispatch (town | forest | temple | dungeon)
       town.rs            # TownLayoutBuilder (water + piers + scattered themed buildings + roles + interior props + Pub-door spawn + quest-board) + TownPortalBuilder + TownDownStairsBuilder (east border) + TownPathBuilder (A* organic road network)
-      forest.rs          # ForestTerrainBuilder (depth-tuned CA + west/east end-clearings + spine corridor) + ForestStairsBuilder (west `<`, east `>` or Amulet)
+      forest.rs          # ForestTerrainBuilder (depth-tuned CA, depths 1-4 + west/east end-clearings + spine corridor) + ForestStairsBuilder (west `<`, east `>` for Forest 1-3; off-spine random `>` on Forest 4 — the hidden temple entrance)
+      temple.rs          # TempleLayoutBuilder (sealed stone interior — east-west corridor + 7×7 sanctum chamber) + TempleStairsBuilder (UpStairs at entry, Amulet at sanctum centre)
       town_npcs.rs       # TownNpcBuilder + TownNpcManifest + Placement enum — reads assets/town_npcs.ron, queues SpawnEntry with PatrolRoute per NPC count
       brogelike.rs       # BrogueLikeBuilder — primary map generator (room types + corridors)
       algorithms.rs      # BlobGenConfig, Grid, cellular automata helpers
@@ -255,10 +264,11 @@ src/
 - `BuilderChain` composes one `InitialMapBuilder` + N `MetaMapBuilder`s; call `build_map()` to run the pipeline
 - `floor_builder()` in [src/map/builders/mod.rs](src/map/builders/mod.rs) dispatches on `FloorKind` from [src/map/world.rs](src/map/world.rs):
   - **Town** (floor 0) → `town_builder`: `TownLayoutBuilder → TownPortalBuilder → TownDownStairsBuilder → TownPathBuilder` — water + piers on the west edge, scattered themed buildings (Pub, Smithy, Alchemist, Temple, Houses, Hovel — each with role-specific interior props), a centre `Portal` (win-condition return), an east-border `DownStairs` into Forest 1, and an **organic A*-style dirt road network** connecting the east stair, the centre Portal, every building door, and every pier inland end. Path A* uses per-tile random noise + a merge bonus so branches join the trunk instead of running parallel — paths wiggle and look hand-laid. Player spawns one tile in front of the Pub door; a `totem_pole` quest-board prop stands one more step toward centre.
-  - **Forest** (floors 1..=`MAX_FLOOR`) → `forest_builder`: `ForestTerrainBuilder → ForestStairsBuilder → DecorationPropagator` — cellular-automata trees with **two end-clearings** (west = `UpStairs` where the player arrives, east = `DownStairs` to the next floor, or the Amulet of Yendor on the final floor) connected by a 1-tile corridor through the centre. CA parameters are tuned per depth: Forest 1 is sparser (50% alive, 4 rounds), Forest 2 is denser (62% alive, 5 rounds). Decoration propagation seeds grass/dead-grass/foliage across walkable tiles for visual texture; density scales with depth (0.20 for Forest 1, 0.35 for Forest 2 — more decay deeper in).
+  - **Forest** (floors 1..=`MAX_FLOOR - 1`) → `forest_builder`: `ForestTerrainBuilder → ForestStairsBuilder → VoronoiSpawner → DecorationPropagator` — cellular-automata trees with **two end-clearings** (west = `UpStairs` where the player arrives, east = `DownStairs` to the next floor) connected by a 1-tile corridor through the centre. CA parameters are tuned per depth across all four forest floors (50→62% alive, 4–5 rounds — deeper floors get denser/gnarlier). Forest 4 is a special case: the `DownStairs` is **not** at the east clearing — it's placed at a random walkable tile at least 6 tiles off the spine, hiding the temple entrance. Decoration density also ramps with depth (0.20 → 0.40).
+  - **Temple** (floor `MAX_FLOOR`) → `temple_builder`: `TempleLayoutBuilder → TempleStairsBuilder` — a sealed stone interior carved from solid wall, with a 3-tile-tall east-west corridor opening into a 7×7 sanctum chamber at the east end. `UpStairs` at the corridor's west end (returns to Forest 4); Amulet of Yendor at the sanctum centre. No monster spawn entries yet — cultists ship in a future pass. The shape is designed to extend downward (sub-levels) without restructuring.
 - **Map-to-map transitions** unified in `player_transition_system`: terrain-based stairs (`>` → `floor + 1`, `<` → `floor - 1`) are the standard path. A tile may carry an optional `MapExitTile` component for **explicit** destinations (currently unused but retained for future warps / fast-travel / scripted teleporters). Walking onto the `Portal` in town triggers Victory if the player carries the Amulet of Yendor; otherwise it just logs an atmospheric line. One `MapTransitionMessage { destination_floor, destination_pos: Option<Position> }` flows through `apply_map_transition` to swap floors, with `PendingArrival` honoured by `spawn_dungeon` when a destination position is set.
 - **Town paths** are marked with `Decoration::Custom { id: TOWN_PATH_DECO_ID }` (defined in [src/map/world.rs](src/map/world.rs)); `themed_tile_display` / `themed_tile_bg` substitute a packed-dirt glyph + colour. The underlying terrain stays `Floor` so movement is unaffected.
-- **`FloorTheme` resource** (`Dungeon | Town | Forest`) is set by `spawn_dungeon` on every materialisation and read by the ASCII renderer ([src/map/ascii_renderer.rs](src/map/ascii_renderer.rs)) to override Wall/Floor glyphs and colours per biome (e.g. forest walls render as `♣`). No new `TerrainType` variants needed.
+- **`FloorTheme` resource** (`Dungeon | Town | Forest | Temple`) is set by `spawn_dungeon` on every materialisation and read by the ASCII renderer ([src/map/ascii_renderer.rs](src/map/ascii_renderer.rs)) to override Wall/Floor glyphs and colours per biome (forest walls `♣` green, town walls `▓` brown, temple walls `▒` cold grey). No new `TerrainType` variants needed.
 - **`OverworldState` resource** is currently an empty struct — kept as a home for future per-run state (faction influence, NPC progress, quest flags). The 3×3 overworld grid (`GridDir`, `CardinalDir`, `temple_entrance_*`, border stair clusters) was removed when the game pivoted back to traditional linear floors.
 
 ### NPCs (Phase 1, see [NPCS.md](docs/design/NPCS.md))
