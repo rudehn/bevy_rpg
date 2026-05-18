@@ -662,7 +662,16 @@ pub enum AiTrait {
     Ranged { range: u32 },
 }
 
-/// AI behavior configuration for a monster. Either a standard FSM or GOAP planner.
+/// AI behavior configuration for a monster. One of three paths during
+/// the in-progress tactic-registry migration (see
+/// `docs/design/TACTICS.md`):
+///
+/// - `Fsm` — the legacy 3-state FSM dispatcher. Deletion target for
+///   Phase 4 of the migration.
+/// - `Goap` — the legacy GOAP planner. Deletion target for Phase 5.
+/// - `TacticList` — the new path. A monster declares its ordered
+///   tactic list by name; the spawner looks each name up in the
+///   tactic registry and attaches a `TacticBrain` component.
 #[derive(Debug, Clone, Deserialize)]
 pub enum AiConfig {
     /// Standard 3-state FSM (Asleep/Hunting/Idle) with reactive behaviors.
@@ -687,6 +696,28 @@ pub enum AiConfig {
         /// Initial morale value (0.0-1.0).
         #[serde(default = "default_morale")]
         base_morale: f32,
+    },
+    /// Ordered list of tactic names plus the same tuning knobs as
+    /// `Fsm`. The names are resolved via
+    /// `game::tactics::library::lookup_tactic` at spawn time; the
+    /// knobs are written into the monster's `MonsterAI` component
+    /// (same as the `Fsm` path) so tactics can read them from the
+    /// snapshot. Each list must end with `"Wait"` — enforced at
+    /// startup by `validate_tactic_names_system`.
+    TacticList {
+        tactics: Vec<String>,
+        #[serde(default)]
+        flee_at_hp_percent: f32,
+        #[serde(default)]
+        erratic_chance: f32,
+        #[serde(default)]
+        chase_leash: u32,
+        #[serde(default)]
+        kites: bool,
+        #[serde(default = "default_kite_distance")]
+        kite_distance: u32,
+        #[serde(default)]
+        ranged_range: u32,
     },
 }
 

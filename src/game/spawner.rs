@@ -124,6 +124,17 @@ pub fn spawn_monster(
         crate::assets::AiConfig::Goap { base_morale, .. } => {
             (MonsterAI::default(), *base_morale)
         }
+        crate::assets::AiConfig::TacticList { flee_at_hp_percent, erratic_chance, chase_leash, kites, kite_distance, .. } => {
+            // TacticList monsters carry the same tuning knobs as FSM —
+            // tactics read them via the snapshot.
+            let mut ai = MonsterAI::default();
+            ai.flee_at_hp_percent = *flee_at_hp_percent;
+            ai.erratic_chance = *erratic_chance;
+            ai.chase_leash = *chase_leash;
+            ai.kites = *kites;
+            ai.kite_distance = *kite_distance;
+            (ai, 0.6) // Default morale; squad-driven morale lands in Phase 4+
+        }
     };
     monster_ai.spawn_position = Some(spawn_pt);
     monster_ai.stationary = monster_asset.stationary;
@@ -227,6 +238,7 @@ pub fn spawn_monster(
                 _ => None,
             }).unwrap_or(0)
         }
+        crate::assets::AiConfig::TacticList { ranged_range, .. } => *ranged_range,
     };
     if ranged_range > 0 {
         commands
@@ -373,6 +385,29 @@ pub fn spawn_monster(
     // ASCII glyph child
     if let Some(font) = ascii_font {
         attach_ascii_glyph(commands, monster_entity, &monster_asset.ascii_char, monster_asset.ascii_fg, &font.0, Vec3::new(scale_x, scale_y, 1.0));
+    }
+
+    // TacticList monsters get a TacticBrain component holding the
+    // looked-up tactic list. The names were already validated at
+    // startup by `validate_tactic_names_system`; unknown names here
+    // are a programming error.
+    if let crate::assets::AiConfig::TacticList { tactics: names, .. } = &monster_asset.ai {
+        let tactics_vec: Vec<&'static dyn crate::game::tactics::resolve::Tactic> = names
+            .iter()
+            .map(|name| {
+                crate::game::tactics::library::lookup_tactic(name)
+                    .unwrap_or_else(|| panic!("unknown tactic {name:?} on monster {:?} (validator should have caught this)", monster_asset.name))
+            })
+            .collect();
+        // Leak into 'static — the slice lives for the rest of the
+        // program. Per-spawn leakage is bounded by the number of
+        // unique tactic lists × number of monster spawns; in practice
+        // this is small. A future optimisation can intern by list-shape.
+        let leaked: &'static [&'static dyn crate::game::tactics::resolve::Tactic] =
+            Box::leak(tactics_vec.into_boxed_slice());
+        commands
+            .entity(monster_entity)
+            .insert(crate::game::tactics::TacticBrain::new(leaked));
     }
 
     // GOAP monsters get a GoapAI component with trait-driven goals/actions.

@@ -7,12 +7,16 @@
 //!
 //! - [`resolve`] — pure resolver types ([`resolve::TurnSnapshot`],
 //!   [`resolve::Tactic`], [`resolve::resolve_turn`]). No Bevy imports.
-//! - [`library`] — shipping tactic implementations, one per file.
-//!
-//! Phase 1 ships only the pure module + tactics. The Bevy adapter
-//! lands in Phase 2.
+//! - [`library`] — shipping tactic implementations + the
+//!   name-to-tactic registry ([`library::lookup_tactic`]).
+//! - [`dispatch`] — the Bevy adapter: snapshot construction, state
+//!   delta application, intent writing, and the
+//!   [`dispatch::TacticsPlugin`].
 //!
 //! [`docs/design/TACTICS.md`]: ../../../../docs/design/TACTICS.md
 
+pub mod dispatch;
 pub mod library;
 pub mod resolve;
+
+pub use dispatch::{TacticBrain, TacticsPlugin};

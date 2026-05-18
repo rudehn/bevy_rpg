@@ -155,6 +155,7 @@ impl Plugin for GamePlugin {
                 crate::game::xp::XpPlugin,
                 crate::game::skills::SkillsPlugin,
                 crate::game::stealth::StealthPlugin,
+                crate::game::tactics::TacticsPlugin,
             ))
             // Position→Transform sync and camera run whenever in-game, including Targeting state.
             //
