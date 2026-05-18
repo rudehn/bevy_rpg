@@ -154,13 +154,26 @@ impl Plugin for GamePlugin {
                 crate::game::skills::SkillsPlugin,
             ))
             // Position→Transform sync and camera run whenever in-game, including Targeting state.
+            //
+            // Ordered .after(ProcessingPhase::ResolveActions) so all
+            // turn-resolution handlers that may mutate `Position`
+            // (handle_movement, knockback, blink, chasm-fall, monster
+            // AI) have completed before we read positions. Without
+            // this, Bevy was free to schedule sync_entity_transforms /
+            // mark_moved_viewsheds_dirty BEFORE handle_movement in the
+            // same Update tick — `Changed<Position>` would miss the
+            // change, the FOV dirty flag stayed false, and
+            // render_tile_ascii skipped the new player tile for one
+            // frame → player sprite flickers when moving.
+            //
             // move_camera runs after player_spawn_or_move_system so the camera snaps to the new
             // floor position in the same frame the player is teleported (floor transitions).
             .add_systems(
                 Update,
                 (
                     sync_entity_transforms
-                        .after(CombatDamageSet),
+                        .after(CombatDamageSet)
+                        .after(crate::game::turns::ProcessingPhase::ResolveActions),
                     move_camera
                         .after(sync_entity_transforms)
                         .after(player_spawn_or_move_system),
@@ -181,9 +194,15 @@ impl Plugin for GamePlugin {
             // system happens to flip viewshed.dirty (door opens, tile
             // mutations, vision-bonus equip), producing the "FOV updates
             // randomly after several turns" symptom.
+            //
+            // Must run after ProcessingPhase::ResolveActions for the
+            // same reason as sync_entity_transforms above — without it,
+            // Bevy can schedule this before handle_movement and the
+            // Changed<Position> filter sees nothing.
             .add_systems(
                 Update,
                 mark_moved_viewsheds_dirty
+                    .after(crate::game::turns::ProcessingPhase::ResolveActions)
                     .before(roguelike_engine::components::FovSet)
                     .run_if(in_state(AppState::InGame)),
             )
