@@ -1,202 +1,67 @@
+// Monster spawn table for the linear-floor world (town → forest 1..MAX_FLOOR).
+//
+// Each entry tells `VoronoiSpawner` which monsters / packs are eligible
+// on a given floor. The spawner picks one entry per chosen Voronoi cell
+// at build time. See docs/design/SPAWNING.md for the algorithm and
+// docs/design/ENEMIES.md for the per-monster identity / mechanic.
+//
+// **Currently active roster:** Giant Rat only, as the first step of the
+// forest content pass. The legacy 26-floor dungeon spawn table from the
+// previous milestone is preserved at the bottom of this file (commented
+// out) so we can lift entries back in as we wire up new monsters.
+//
+// Schema reminder:
+//   (monster: "Name", min_floor: i32, max_floor: i32, min_group: u32,
+//    max_group: u32, flee_threshold: f32, spawn_on_liquid: bool)
+//   (group: [(monster, min_count, max_count), ...], min_floor, max_floor, flee_threshold)
 (
   spawns: [
-    // ========================================================================
-    // T1 — SHALLOWS (Floors 1-4)
-    // Player learns basic melee, FOV, terrain. Low HP, low damage, simple AI.
-    // ========================================================================
+    // ====================================================================
+    // FOREST — active spawns
+    // ====================================================================
 
-    (monster: "Sewer Rat",     min_floor: 1, max_floor: 5, min_group: 1, max_group: 3),
-    (monster: "Giant Rat",     min_floor: 1, max_floor: 4, min_group: 1, max_group: 4),
-    (monster: "Giant Bat",     min_floor: 1, max_floor: 3, min_group: 1, max_group: 2),
-    (monster: "Plague Rat",    min_floor: 3, max_floor: 7, min_group: 1, max_group: 2),
-    (monster: "Goblin",        min_floor: 1, max_floor: 4, min_group: 1, max_group: 3),
-    (monster: "Kobold Hoarder", min_floor: 1, max_floor: 5, min_group: 1, max_group: 2),
-    (monster: "Pit Bloat",     min_floor: 1, max_floor: 5, min_group: 1, max_group: 1),
-    (monster: "Bloat",         min_floor: 2, max_floor: 6, min_group: 1, max_group: 1),
-    (monster: "Eel",           min_floor: 1, max_floor: 10, min_group: 1, max_group: 2, spawn_on_liquid: true),
+    // Giant Rat: introductory swarm threat on both forest floors.
+    // Pack size 1–3 keeps Forest 1 light; the Voronoi spawner caps total
+    // packs per floor at `BUDGET_BASE + depth` (3 on floor 1, 4 on floor 2).
+    (monster: "Giant Rat", min_floor: 1, max_floor: 2, min_group: 1, max_group: 3),
 
-    (group: [
-        (monster: "Sewer Rat",  min_count: 2, max_count: 4),
-        (monster: "Plague Rat", min_count: 0, max_count: 2),
-    ], min_floor: 3, max_floor: 7, flee_threshold: 0.5),
+    // Jackal: paired with rats as the second forest threat. Pack 1–2,
+    // very fast (0.5x movement_delay). Same eligibility as Giant Rat so
+    // either can fill a Voronoi cell — the spawner picks weighted-uniform
+    // (default weight 100) when the entry omits `weight:`.
+    (monster: "Jackal", min_floor: 1, max_floor: 2, min_group: 1, max_group: 2),
 
-    // Floor 1-2 thickening: mixed early packs so the first impression
-    // isn't just "one rat at a time." Rats+Bats in the same pack gives
-    // positional variety (bat erratic movement + rat volume).
-    (group: [
-        (monster: "Giant Rat", min_count: 2, max_count: 3),
-        (monster: "Giant Bat", min_count: 1, max_count: 2),
-    ], min_floor: 1, max_floor: 3, flee_threshold: 0.4),
-
-    (group: [
-        (monster: "Goblin",         min_count: 1, max_count: 2),
-        (monster: "Kobold Hoarder", min_count: 1, max_count: 1),
-    ], min_floor: 2, max_floor: 4),
-
-    // ========================================================================
-    // T2 — CAVES (Floors 5-9)
-    // Status effects, packs, water/fire terrain, first summoners.
-    // ========================================================================
-
-    (monster: "Rat Broodmother",  min_floor: 5, max_floor: 9),
-    (monster: "Jelly",            min_floor: 4, max_floor: 8),
-    (monster: "Goblin Conjurer",  min_floor: 5, max_floor: 9, min_group: 1, max_group: 2),
-    (monster: "Giant Spider",     min_floor: 5, max_floor: 9, min_group: 1, max_group: 2),
-    (monster: "Fire Salamander",  min_floor: 5, max_floor: 9, min_group: 1, max_group: 1),
-    (monster: "Wolf",             min_floor: 4, max_floor: 7, min_group: 1, max_group: 3),
-    (monster: "Cave Bear",        min_floor: 7, max_floor: 10),
-    (monster: "Goblin Brute",     min_floor: 6, max_floor: 10, min_group: 1, max_group: 2),
-    (monster: "Goblin Shaman",    min_floor: 7, max_floor: 10),
-    (monster: "Eel",              min_floor: 7, max_floor: 14, min_group: 2, max_group: 3, spawn_on_liquid: true),
-
-    (group: [
-        (monster: "Rat Broodmother", min_count: 1, max_count: 1),
-        (monster: "Sewer Rat",       min_count: 3, max_count: 4),
-        (monster: "Plague Rat",      min_count: 1, max_count: 2),
-    ], min_floor: 5, max_floor: 10, flee_threshold: 0.5),
-
-    (group: [
-        (monster: "Wolf", min_count: 2, max_count: 4),
-    ], min_floor: 4, max_floor: 7, flee_threshold: 0.4),
-
-    (group: [
-        (monster: "Goblin Brute", min_count: 1, max_count: 1),
-        (monster: "Goblin",       min_count: 2, max_count: 3),
-    ], min_floor: 6, max_floor: 9),
-
-    // ========================================================================
-    // T3 — DEPTHS (Floors 10-14)
-    // Ranged threats, fortified groups, first Undead, Orcs arrive.
-    // ========================================================================
-
-    (monster: "Goblin Firebomber",  min_floor: 10, max_floor: 14),
-    (monster: "Goblin Totem",       min_floor: 10, max_floor: 14),
-    (monster: "Fungal Spore",       min_floor: 10, max_floor: 13, min_group: 1, max_group: 3),
-    (monster: "Spore Crawler",      min_floor: 11, max_floor: 15, min_group: 2, max_group: 3),
-    (monster: "Cave Troll",         min_floor: 10, max_floor: 15),
-    (monster: "Mimic",              min_floor: 10, max_floor: 16),
-    (monster: "Skeleton",           min_floor: 12, max_floor: 15, min_group: 1, max_group: 3),
-    (monster: "Shade",              min_floor: 12, max_floor: 16),
-    (monster: "Imp",                min_floor: 12, max_floor: 16, min_group: 1, max_group: 2),
-    (monster: "Kobold Marauder",    min_floor: 10, max_floor: 14, min_group: 1, max_group: 2),
-    (monster: "Kobold Alchemist",   min_floor: 6,  max_floor: 11, min_group: 1, max_group: 2),
-    (monster: "Kobold Chieftain",   min_floor: 15, max_floor: 22),
-
-    // Kobold warband — late-game pack that makes the Goblin↔Kobold
-    // faction hostility climactic when it meets a Goblin warchief group.
-    (group: [
-        (monster: "Kobold Chieftain", min_count: 1, max_count: 1),
-        (monster: "Kobold Marauder",  min_count: 2, max_count: 3),
-        (monster: "Kobold Alchemist", min_count: 0, max_count: 1),
-    ], min_floor: 16, max_floor: 22, flee_threshold: 0.4),
-    (monster: "Goblin Sapper",      min_floor: 11, max_floor: 14),
-    (monster: "Orc Warrior",        min_floor: 10, max_floor: 14, min_group: 1, max_group: 2),
-    (monster: "Orc Archer",         min_floor: 11, max_floor: 14),
-
-    (group: [
-        (monster: "Goblin Warchief",   min_count: 1, max_count: 1),
-        (monster: "Goblin",            min_count: 2, max_count: 3),
-        (monster: "Goblin Firebomber", min_count: 0, max_count: 1),
-    ], min_floor: 10, max_floor: 14),
-
-    (group: [
-        (monster: "Orc Warrior", min_count: 1, max_count: 1),
-        (monster: "Orc Archer",  min_count: 1, max_count: 2),
-        (monster: "Orc Warrior", min_count: 1, max_count: 2),
-    ], min_floor: 11, max_floor: 14),
-
-    (group: [
-        (monster: "Spore Crawler", min_count: 1, max_count: 1),
-        (monster: "Fungal Spore",  min_count: 2, max_count: 3),
-    ], min_floor: 11, max_floor: 14),
-
-    // ========================================================================
-    // T4 — TOMBS (Floors 15-19)
-    // Elemental resist, undead peak, Giants rise, first Dragons.
-    // ========================================================================
-
-    (monster: "Bone Archer",        min_floor: 13, max_floor: 17, min_group: 1, max_group: 2),
-    (monster: "Zombie",             min_floor: 14, max_floor: 20, min_group: 1, max_group: 3),
-    (monster: "Wraith",             min_floor: 15, max_floor: 20),
-    (monster: "Fungal Shambler",    min_floor: 15, max_floor: 20, min_group: 1, max_group: 2),
-    (monster: "Shrieking Mushroom", min_floor: 15, max_floor: 19),
-    (monster: "Ogre",               min_floor: 15, max_floor: 20),
-    (monster: "Troll",              min_floor: 16, max_floor: 21),
-    (monster: "Dragon Whelp",       min_floor: 16, max_floor: 20),
-    (monster: "Arrow Turret",       min_floor: 12, max_floor: 24),
-    (monster: "Black Mold",         min_floor: 15, max_floor: 20, min_group: 1, max_group: 2),
-    (monster: "Lich Acolyte",       min_floor: 15, max_floor: 20, min_group: 1, max_group: 2),
-    (monster: "Orc Shaman",         min_floor: 13, max_floor: 18),
-    (monster: "Orc Warlord",        min_floor: 15, max_floor: 19),
-    (monster: "Necromancer",        min_floor: 17, max_floor: 22),
-    (monster: "Mycoid Sovereign",   min_floor: 18, max_floor: 23),
-
-    (group: [
-        (monster: "Necromancer", min_count: 1, max_count: 1),
-        (monster: "Skeleton",    min_count: 2, max_count: 3),
-        (monster: "Zombie",      min_count: 1, max_count: 2),
-    ], min_floor: 17, max_floor: 20),
-
-    (group: [
-        (monster: "Orc Warlord", min_count: 1, max_count: 1),
-        (monster: "Orc Warrior", min_count: 2, max_count: 3),
-        (monster: "Orc Archer",  min_count: 1, max_count: 2),
-    ], min_floor: 15, max_floor: 18),
-
-    (group: [
-        (monster: "Mycoid Sovereign", min_count: 1, max_count: 1),
-        (monster: "Spore Crawler",    min_count: 2, max_count: 3),
-        (monster: "Fungal Shambler",  min_count: 0, max_count: 1),
-    ], min_floor: 18, max_floor: 19),
-
-    // ========================================================================
-    // T5 — DEEP KEEP (Floors 20-24)
-    // Apex combat. Dragons dominate, Giants peak, Constructs gate.
-    // ========================================================================
-
-    (monster: "Ogre Mage",      min_floor: 18, max_floor: 24),
-    (monster: "Hill Giant",     min_floor: 20, max_floor: 26),
-    (monster: "Young Dragon",   min_floor: 19, max_floor: 26),
-    (monster: "Drake",          min_floor: 20, max_floor: 26),
-    (monster: "Wyrm",           min_floor: 21, max_floor: 26),
-    (monster: "Dragon Priest",  min_floor: 21, max_floor: 26),
-    (monster: "Elder Drake",    min_floor: 22, max_floor: 26),
-    (monster: "Stone Sentinel", min_floor: 19, max_floor: 26),
-    (monster: "Bone Colossus",  min_floor: 20, max_floor: 26),
-
-    (group: [
-        (monster: "Hill Giant", min_count: 1, max_count: 1),
-        (monster: "Ogre",       min_count: 1, max_count: 2),
-        (monster: "Ogre Mage",  min_count: 1, max_count: 1),
-    ], min_floor: 21, max_floor: 24),
-
-    (group: [
-        (monster: "Elder Drake", min_count: 1, max_count: 1),
-        (monster: "Drake",       min_count: 1, max_count: 2),
-        (monster: "Wyrm",        min_count: 1, max_count: 1),
-    ], min_floor: 23, max_floor: 25),
-
-    (group: [
-        (monster: "Bone Colossus", min_count: 1, max_count: 1),
-        (monster: "Wraith",        min_count: 1, max_count: 2),
-        (monster: "Lich Acolyte",  min_count: 1, max_count: 2),
-    ], min_floor: 21, max_floor: 24),
-
-    // ========================================================================
-    // T6 — THE AMULET (Floors 25-26)
-    // f25: mixed apex gauntlet. f26: the Amulet and its Guardian.
-    // ========================================================================
-
-    (monster: "Elder Drake",    min_floor: 25, max_floor: 26),
-    (monster: "Hill Giant",     min_floor: 25, max_floor: 26),
-    (monster: "Stone Sentinel", min_floor: 25, max_floor: 26, min_group: 1, max_group: 2),
-    (monster: "Bone Colossus",  min_floor: 25, max_floor: 26),
-
-    (monster: "Amulet Guardian", min_floor: 26, max_floor: 26),
-
-    (group: [
-        (monster: "Amulet Guardian", min_count: 1, max_count: 1),
-        (monster: "Stone Sentinel",  min_count: 1, max_count: 2),
-    ], min_floor: 26, max_floor: 26),
+    // Treant: very rare floor 2-3 mini-boss. weight: 5 against the
+    // default 100 means it spawns ~2.4% as often as a Giant Rat / Jackal
+    // entry on the same floor → most floors won't see one; when one
+    // appears, it's a memorable encounter. Solo (min_group=max_group=1).
+    // See assets/monsters.ron for the stat sheet.
+    (monster: "Treant", min_floor: 2, max_floor: 3, min_group: 1, max_group: 1, weight: 5),
   ]
 )
+
+// ======================================================================
+// LEGACY 26-FLOOR DUNGEON SPAWN TABLE (kept for reference)
+// ======================================================================
+//
+// Restored monster entries below — uncomment and move into the `spawns:`
+// list above as we re-introduce each one through the brainstorm /
+// design-doc loop. Floor numbers reference the *old* 26-floor pipeline;
+// re-tag for the linear forest before re-enabling.
+//
+//     (monster: "Sewer Rat",     min_floor: 1, max_floor: 5, min_group: 1, max_group: 3),
+//     (monster: "Giant Bat",     min_floor: 1, max_floor: 3, min_group: 1, max_group: 2),
+//     (monster: "Plague Rat",    min_floor: 3, max_floor: 7, min_group: 1, max_group: 2),
+//     (monster: "Goblin",        min_floor: 1, max_floor: 4, min_group: 1, max_group: 3),
+//     (monster: "Kobold Hoarder", min_floor: 1, max_floor: 5, min_group: 1, max_group: 2),
+//     (monster: "Pit Bloat",     min_floor: 1, max_floor: 5, min_group: 1, max_group: 1),
+//     (monster: "Bloat",         min_floor: 2, max_floor: 6, min_group: 1, max_group: 1),
+//     (monster: "Eel",           min_floor: 1, max_floor: 10, min_group: 1, max_group: 2, spawn_on_liquid: true),
+//     (monster: "Wolf",          min_floor: 4, max_floor: 7, min_group: 1, max_group: 3),
+//     (monster: "Cave Bear",     min_floor: 7, max_floor: 10),
+//     (monster: "Giant Spider",  min_floor: 5, max_floor: 9, min_group: 1, max_group: 2),
+//     (monster: "Fire Salamander", min_floor: 5, max_floor: 9, min_group: 1, max_group: 1),
+//     ... etc. The full legacy table is preserved in git history if
+//     more is ever needed. Most dungeon-tier monsters (Skeletons,
+//     Dragons, Constructs, Liches) are unlikely to return without a
+//     re-themed pass for the forest setting.

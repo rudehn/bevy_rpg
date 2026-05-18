@@ -821,6 +821,59 @@
             ascii_fg: "#604028",
         ),
 
+        // Jackal: fast forest harasser. Same HP/damage as a Giant Rat,
+        // but movement_delay 0.5 (twice default speed) means it dictates
+        // engagement — the player can't out-walk it the way they can a
+        // rat. Teaches "speed > HP." Wide vision (10) so it commits to
+        // chases instead of breaking off; flees only when wounded.
+        "Jackal": (
+            name: "Jackal",
+            vision: 10,
+            damage: "1d3",
+            base_hp: 5,
+            movement_delay: 0.5,
+            attack_delay: 1.0,
+            species: Beast,
+            ai: Fsm(flee_at_hp_percent: 0.25, chase_leash: 12),
+            ascii_char: "j",
+            ascii_fg: "#C8A06A",
+        ),
+
+        // Treant: very rare floor 2-3 mini-boss. Animate tree the player
+        // should avoid in a melee. Five-times-default movement (delay 5.0)
+        // means it's an obstacle as much as a hunter — engaging at range
+        // is the smart play. Heavy slam (2d6+2 plus Knockback + Stunning
+        // Blow) one-shots an unprepared adventurer in 3 hits. 50 HP +
+        // armor 3 + regen 1 = grinding it down with a starting dagger is
+        // suicidal; fire vulnerability (-100 resistance = 2x damage) is
+        // the intended counterplay vector — burning oil, fire-runic
+        // weapons, the staff of fire. Tier 6 grants a fat XP burst
+        // relative to other floor-2-3 threats; killing one is a real
+        // accomplishment at this depth.
+        "Treant": (
+            name: "Treant",
+            vision: 6,
+            perception: -1,
+            damage: "2d6+2",
+            damage_type: "physical",
+            base_hp: 50,
+            base_armor: 3,
+            movement_delay: 5.0,
+            attack_delay: 1.5,
+            regen: 1,
+            tier: 6,
+            species: Aberration,
+            faction: "Monster",
+            resistances: {"fire": -100},
+            abilities: [
+                Knockback(distance: 2, chance: 60),
+                StunningBlow(duration: 1, chance: 30),
+            ],
+            ai: Fsm(chase_leash: 5),
+            ascii_char: "Y",
+            ascii_fg: "#3C6B2F",
+        ),
+
         // ==================== GAP FILLERS (T3-T5) ====================
         // New designs from the 26-floor distribution plan.
 
