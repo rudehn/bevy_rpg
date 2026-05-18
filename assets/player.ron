@@ -5,7 +5,7 @@
     regen_rate: 10,
     armor: 0,
     dodge: 0,
-    viewshed_range: 20,
+    viewshed_range: 8,
     starting_items: [
         (name: "Bow"),
         (name: "Arrow", count: 20),
