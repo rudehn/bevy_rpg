@@ -777,7 +777,24 @@
             movement_delay: 0.9,
             faction: "Rat",
             species: Beast,
-            ai: Fsm(flee_at_hp_percent: 0.25, chase_leash: 8),
+            // Phase 3 canary for the tactic registry. Same behavior as
+            // the previous Fsm config: flee at low HP (now via sticky
+            // Fleeing mode), pursue last-known after losing LOS, give
+            // up at chase_leash, wander randomly when Idle.
+            // See docs/design/TACTICS.md.
+            ai: TacticList(
+                tactics: [
+                    "FleePanicked",
+                    "FleeAtLowHp",
+                    "MeleeAdjacent",
+                    "HuntVisibleTarget",
+                    "PursueLastKnownPosition",
+                    "FreeWander",
+                    "Wait",
+                ],
+                flee_at_hp_percent: 0.25,
+                chase_leash: 8,
+            ),
             ascii_char: "r",
             ascii_fg: "#A06820",
         ),

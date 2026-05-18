@@ -25,7 +25,7 @@ mod wait;
 
 pub use combat::MeleeAdjacent;
 pub use flee::{FleeAtLowHp, FleePanicked, KiteRetreat};
-pub use movement::{HuntVisibleTarget, PursueLastKnownPosition};
+pub use movement::{FreeWander, HuntVisibleTarget, PursueLastKnownPosition};
 pub use wait::WaitTactic;
 
 use crate::game::tactics::resolve::Tactic;
@@ -48,6 +48,7 @@ const FLEE_PANICKED: &dyn Tactic = &FleePanicked;
 const KITE_RETREAT: &dyn Tactic = &KiteRetreat;
 const HUNT_VISIBLE_TARGET: &dyn Tactic = &HuntVisibleTarget;
 const PURSUE_LAST_KNOWN_POSITION: &dyn Tactic = &PursueLastKnownPosition;
+const FREE_WANDER: &dyn Tactic = &FreeWander;
 
 /// Every tactic name that may appear in `monsters.ron` `ai: TacticList`
 /// entries. Used by `validate_tactic_names` at startup to fail loudly
@@ -55,6 +56,7 @@ const PURSUE_LAST_KNOWN_POSITION: &dyn Tactic = &PursueLastKnownPosition;
 pub const ALL_TACTIC_NAMES: &[&str] = &[
     "FleeAtLowHp",
     "FleePanicked",
+    "FreeWander",
     "HuntVisibleTarget",
     "KiteRetreat",
     "MeleeAdjacent",
@@ -80,6 +82,7 @@ pub fn lookup_tactic(name: &str) -> Option<&'static dyn Tactic> {
         "KiteRetreat" => Some(KITE_RETREAT),
         "HuntVisibleTarget" => Some(HUNT_VISIBLE_TARGET),
         "PursueLastKnownPosition" => Some(PURSUE_LAST_KNOWN_POSITION),
+        "FreeWander" => Some(FREE_WANDER),
         _ => None,
     }
 }

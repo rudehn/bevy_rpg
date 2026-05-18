@@ -103,9 +103,15 @@ pub(super) fn awareness_pill(
     mode: MonsterAIMode,
     awareness: &Awareness,
     player_entity: Entity,
+    fleeing: bool,
 ) -> (&'static str, Color) {
+    // Sticky Fleeing wins over everything except Sleeping — a fleeing
+    // monster is by definition awake and panicked.
     if mode == MonsterAIMode::Asleep {
         return ("Sleeping", Color::srgb(0.45, 0.45, 0.45));
+    }
+    if fleeing {
+        return ("Fleeing", Color::srgb(0.95, 0.50, 0.20));
     }
     match awareness.get(player_entity).map(|r| r.state) {
         Some(AwarenessState::Aware) => ("Hunting", Color::srgb(0.85, 0.20, 0.20)),
@@ -134,6 +140,7 @@ fn update_nearby_panel(
             Option<&GoapAI>,
             Option<&StatusEffects>,
             Option<&Awareness>,
+            Option<&crate::game::fleeing::Fleeing>,
         ),
         With<Monster>,
     >,
@@ -191,13 +198,14 @@ fn update_nearby_panel(
         monster_query
             .iter()
             .filter(|(_, pos, ..)| visible.contains(&(pos.x, pos.y)))
-            .map(|(entity, pos, name, children, health, monster_ai, _goap_ai, status, awareness)| {
+            .map(|(entity, pos, name, children, health, monster_ai, _goap_ai, status, awareness, fleeing)| {
                 let dist = tile_distance(player_pos, pos);
                 let (ac, acol) = get_ascii_info(children).unzip();
                 let health_pct = if health.max > 0 { health.current as f32 / health.max as f32 } else { 1.0 };
                 let mode = monster_ai.map(|a| a.mode).unwrap_or(MonsterAIMode::Idle);
                 let aw = awareness.unwrap_or(&empty_awareness);
-                let (awareness_label, awareness_color) = awareness_pill(mode, aw, player_entity);
+                let (awareness_label, awareness_color) =
+                    awareness_pill(mode, aw, player_entity, fleeing.is_some());
                 let status_effects = collect_status_effects_with_duration(status);
                 MonsterEntry {
                     base: (entity, dist, name.0.clone(), ac, acol),
@@ -738,7 +746,7 @@ mod tests {
     fn asleep_overrides_awareness() {
         let mut a = Awareness::default();
         a.set(pe(), AwarenessState::Aware, 0);
-        let (text, _) = awareness_pill(MonsterAIMode::Asleep, &a, pe());
+        let (text, _) = awareness_pill(MonsterAIMode::Asleep, &a, pe(), false);
         assert_eq!(text, "Sleeping");
     }
 
@@ -746,14 +754,14 @@ mod tests {
     fn aware_yields_hunting() {
         let mut a = Awareness::default();
         a.set(pe(), AwarenessState::Aware, 0);
-        let (text, _) = awareness_pill(MonsterAIMode::Hunting, &a, pe());
+        let (text, _) = awareness_pill(MonsterAIMode::Hunting, &a, pe(), false);
         assert_eq!(text, "Hunting");
     }
 
     #[test]
     fn no_record_yields_wandering() {
         let a = Awareness::default();
-        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe());
+        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe(), false);
         assert_eq!(text, "Wandering");
     }
 
@@ -768,7 +776,7 @@ mod tests {
             },
             0,
         );
-        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe());
+        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe(), false);
         assert_eq!(text, "Searching");
     }
 
@@ -783,7 +791,7 @@ mod tests {
             },
             0,
         );
-        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe());
+        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe(), false);
         assert_eq!(text, "Suspicious");
     }
 
@@ -791,7 +799,23 @@ mod tests {
     fn hidden_record_yields_wandering() {
         let mut a = Awareness::default();
         a.set(pe(), AwarenessState::Hidden, 0);
-        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe());
+        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe(), false);
         assert_eq!(text, "Wandering");
+    }
+
+    #[test]
+    fn fleeing_marker_overrides_hunting_label() {
+        let mut a = Awareness::default();
+        a.set(pe(), AwarenessState::Aware, 0);
+        let (text, _) = awareness_pill(MonsterAIMode::Hunting, &a, pe(), true);
+        assert_eq!(text, "Fleeing");
+    }
+
+    #[test]
+    fn fleeing_marker_does_not_override_sleeping() {
+        // A sleeping monster cannot also be fleeing — guard the invariant.
+        let a = Awareness::default();
+        let (text, _) = awareness_pill(MonsterAIMode::Asleep, &a, pe(), true);
+        assert_eq!(text, "Sleeping");
     }
 }

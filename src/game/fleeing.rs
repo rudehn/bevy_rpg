@@ -23,6 +23,7 @@ use roguelike_engine::turn::TurnManager;
 
 use crate::components::{Faction, Position, Viewshed};
 use crate::game::combat::{DamageEvent, Health};
+use crate::game::tactics::TacticBrain;
 use crate::game::turns::ProcessingPhase;
 use roguelike_engine::factions::FactionMatrix;
 
@@ -69,11 +70,12 @@ pub struct Fleeing {
 pub fn damage_triggers_flee(
     mut damage_events: MessageReader<DamageEvent>,
     mut commands: Commands,
-    monsters: Query<(
-        &Health,
-        &MonsterAI,
-        Option<&Fleeing>,
-    )>,
+    // Filtered on `TacticBrain` so the Fleeing layer only enrolls
+    // monsters on the new AI path. FSM/GOAP monsters continue to
+    // handle flee reactively per-turn in their own dispatchers; once
+    // they migrate, the filter becomes a no-op and the line stays
+    // for cheap explicit intent.
+    monsters: Query<(&Health, &MonsterAI, Option<&Fleeing>), With<TacticBrain>>,
     attackers: Query<&Position>,
     turn_manager: Res<TurnManager>,
 ) {
