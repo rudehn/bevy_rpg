@@ -56,6 +56,7 @@ Design docs live in `docs/design/`. Read these before making gameplay changes.
 | [NPCS.md](docs/design/NPCS.md) | Peaceful Townsfolk reuse the monster pipeline; faction-gated Idle→Hunting; town_npcs.ron placement contract; AreaRoam / Sentry patrol routes |
 | [RANGED.md](docs/design/RANGED.md) | Ranged attack pipeline, F-key targeting, weapon range, ammo, LOS gating |
 | [SQUAD_AI.md](docs/design/SQUAD_AI.md) | Squad system, shared alerting, leader mechanics, morale-based fleeing |
+| [TACTICS.md](docs/design/TACTICS.md) | **In-progress migration.** Per-monster tactic registry replacing FSM mega-dispatcher + GOAP planner; pure resolver + Bevy adapter pattern; sticky `Fleeing` mode addition |
 | [STEALTH.md](docs/design/STEALTH.md) | Per-perceiver awareness model, opposed d20 detection, Stealth skill, Backstab gate, noise map V2 hook |
 | [FIRE.md](docs/design/FIRE.md) | Fire entities, spread, ignition chance, burn duration, water/gas interactions |
 | [GAS.md](docs/design/GAS.md) | Gas types (Poison, Steam), volume, diffusion, decay, FOV blocking, ignition |
