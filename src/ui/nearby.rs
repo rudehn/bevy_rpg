@@ -180,22 +180,9 @@ fn update_nearby_panel(
     struct MonsterEntry {
         base: NearbyEntry,
         health_pct: f32,
-        ai_state: &'static str,
-        ai_color: Color,
         awareness_label: &'static str,
         awareness_color: Color,
         status_effects: Vec<(String, Color, u32, u32, String)>,
-    }
-
-    fn ai_state_color(state: &str) -> Color {
-        match state {
-            "Sleeping" => Color::srgb(0.5, 0.5, 0.5),
-            "Wandering" => Color::srgb(0.8, 0.7, 0.4),
-            "Hunting" => Color::srgb(0.9, 0.3, 0.3),
-            "Fleeing" => Color::srgb(0.3, 0.8, 0.8),
-            "Looting" => Color::srgb(0.9, 0.7, 0.2),
-            _ => Color::srgb(0.5, 0.5, 0.5),
-        }
     }
 
     // Collect visible monsters
@@ -204,18 +191,10 @@ fn update_nearby_panel(
         monster_query
             .iter()
             .filter(|(_, pos, ..)| visible.contains(&(pos.x, pos.y)))
-            .map(|(entity, pos, name, children, health, monster_ai, goap_ai, status, awareness)| {
+            .map(|(entity, pos, name, children, health, monster_ai, _goap_ai, status, awareness)| {
                 let dist = tile_distance(player_pos, pos);
                 let (ac, acol) = get_ascii_info(children).unzip();
                 let health_pct = if health.max > 0 { health.current as f32 / health.max as f32 } else { 1.0 };
-                let ai_state = if let Some(goap) = goap_ai {
-                    goap.display_state()
-                } else if let Some(fsm) = monster_ai {
-                    fsm.display_state()
-                } else {
-                    "Unknown"
-                };
-                let ai_color = ai_state_color(ai_state);
                 let mode = monster_ai.map(|a| a.mode).unwrap_or(MonsterAIMode::Idle);
                 let aw = awareness.unwrap_or(&empty_awareness);
                 let (awareness_label, awareness_color) = awareness_pill(mode, aw, player_entity);
@@ -223,8 +202,6 @@ fn update_nearby_panel(
                 MonsterEntry {
                     base: (entity, dist, name.0.clone(), ac, acol),
                     health_pct,
-                    ai_state,
-                    ai_color,
                     awareness_label,
                     awareness_color,
                     status_effects,
@@ -407,14 +384,10 @@ fn update_nearby_panel(
                                     BackgroundColor(Color::srgb(0.0, 0.8, 0.0)),
                                 ));
                             });
-                            // AI state label
-                            row.spawn((
-                                Text::new(format!("({})", monster.ai_state)),
-                                TextFont { font: font.clone(), font_size: 10.0, ..default() },
-                                TextColor(monster.ai_color),
-                                Node { margin: UiRect::left(Val::Px(4.0)), ..default() },
-                            ));
-                            // Awareness pill
+                            // Awareness pill (subsumes the legacy
+                            // mode-only `(Sleeping)` label by adding
+                            // Suspicious / Searching states the engine
+                            // mode FSM can't distinguish).
                             row.spawn((
                                 Text::new(monster.awareness_label),
                                 TextFont { font: font.clone(), font_size: 11.0, ..default() },

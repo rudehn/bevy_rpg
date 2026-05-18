@@ -144,7 +144,7 @@ pub fn render_stealth_section(
     ));
     if let (Some(p), Some(s)) = (lines.perception, lines.stealth) {
         let body = format!(
-            "Perception: {:+} (base {:+}, close {:+}, asleep {:+})\nStealth:    {:+} (skill {:+}, DEX {:+}, armor {:+}, light {:+}, noise {:+})",
+            "Perception: {:+}\n  base   {:+}\n  close  {:+}\n  asleep {:+}\nStealth:    {:+}\n  skill  {:+}\n  DEX    {:+}\n  armor  {:+}\n  light  {:+}\n  noise  {:+}",
             p.total(),
             p.base,
             p.close_range_bonus,
