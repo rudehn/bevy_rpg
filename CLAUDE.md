@@ -2,16 +2,18 @@
 
 A Brogue-inspired roguelike built with Bevy 0.17 and Rust.
 
-**Current shape (overworld milestone):** the player starts in a procedural
-**town** (floor 0) at the centre of a 3×3 grid of **forest tiles** (floors
-1..=8). One randomly-chosen forest tile contains the entrance to a 3-floor
-**temple** (floors 9..=11). The Amulet of Yendor sits on temple 3; return it
-to the town portal to win. Permadeath. **Monster and item spawns are
-currently disabled** in all pipelines — the amulet is the only item in the
-world. Content returns in a later phase. See
-[OVERWORLD.md](docs/design/OVERWORLD.md) for the canonical writeup. The
-legacy 26-floor descent pipeline still exists for `floor >= 12` but is not
-reached in a fresh run.
+**Current shape (linear-floor milestone):** traditional descend-stairs
+roguelike. Player starts in a procedural **town** (floor 0). The town has
+a return Portal at its centre (the win-condition tile) and a `DownStairs`
+on the south border leading to the **forest** (floor 1 → floor 2). The
+Amulet of Yendor sits on floor 2 (the deepest authored floor); pick it up
+and return to the town Portal to win. Permadeath. **Monster and item
+spawns are currently disabled** in all pipelines — the amulet is the only
+item in the world. Content returns in a later phase. See
+[OVERWORLD.md](docs/design/OVERWORLD.md) for the canonical writeup
+(forthcoming rename → `DUNGEON.md`). `MAX_FLOOR` lives in
+[src/constants.rs](src/constants.rs); raising it is content work — add
+more `FloorKind::Forest` floors or new variants.
 
 ## Build & Run
 
@@ -63,7 +65,7 @@ Design docs live in `docs/design/`. Read these before making gameplay changes.
 **Key design constraints:**
 - All loot comes from chests — no floor drops
 - 4 damage types: Physical, Poison, Fire, Lightning
-- Win condition: Find Amulet of Yendor on floor 26, climb back up to the Escape Portal on floor 1
+- Win condition: Find Amulet of Yendor on floor `MAX_FLOOR` (currently 2), climb back up to the Town Portal on floor 0
 - **Character system (Phase 2, see [CHARACTER.md](docs/design/CHARACTER.md)):** the game is mid-pivot from the original Brogue-style "no chargen, no attributes" model toward a D&D-flavored RPG layer. Players pick 1 of 3 races (Human/Dwarf/Elf) and 1 of 4 classes (Warrior/Rogue/Mage/Ranger) at character creation; attribute scores are fully race + class sum (no allocation step). Three attributes: STR/DEX/INT (CON removed). Modifier formula `(score - 16) / 2` — anchored at 16 so chargen mods are typically negative and players grow into them. HP scales from race + level via `floor(race_hp_mod × (8 + 11 × XL / 2))`.
 - **XP and levels.** Player gains XP from kills (anti-farming dropoff: monsters 5+ levels below give 0 XP); level cap 27. Level-up recomputes HP, heals to full, fires a particle, and may queue ASI prompts (racial schedule every 4 levels — `Race.gain_schedule`; player-choice at L3/9/15/21/27 → +2 free points). ASI prompts route through `InGameState::AsiSelect` (DCSS-style inline modal).
 - **Symmetric combat is partially broken:** the player now has `Race`, `Class`, `Attributes`, `Level`, `Experience` components; monsters have `MonsterTier` but no attributes. Monster-side parity (save bonuses, skills) lands in later phases. Don't write code that *requires* monsters to have a `Race` or `Attributes` component.
@@ -130,10 +132,8 @@ src/
     world.rs             # Overworld topology — FloorKind, GridDir, neighbor, edge/arrival positions, FloorTheme, MapExitTile, OverworldState
     builders/
       mod.rs             # BuilderChain, BuilderMap, floor_builder dispatch (town | forest | temple | dungeon)
-      town.rs            # TownLayoutBuilder + TownBorderStairsBuilder + TownPathBuilder + TownPortalBuilder (open-floor town, 4 border stair clusters, dirt-path network)
-      forest.rs          # ForestTerrainBuilder (hardened cellular automata) + ForestBorderStairsBuilder (4 per valid cardinal) + TempleEntranceBuilder
-      temple.rs          # TempleUpstairsLinker (temple-1 UpStairs ↔ forest entrance)
-      amulet_placer.rs   # Places the Amulet of Yendor on temple 3 (the only item)
+      town.rs            # TownLayoutBuilder + TownPortalBuilder + TownDownStairsBuilder (open-Floor town with scattered buildings, centre Portal, south-border DownStairs)
+      forest.rs          # ForestTerrainBuilder (hardened cellular automata, centre clearing) + ForestStairsBuilder (UpStairs at start, DownStairs at farthest tile, or Amulet on final floor)
       brogelike.rs       # BrogueLikeBuilder — primary map generator (room types + corridors)
       algorithms.rs      # BlobGenConfig, Grid, cellular automata helpers
       choke_map.rs       # Topology analysis via petgraph (chokepoints for machines)
@@ -238,14 +238,12 @@ src/
 - `Tile` is a value type with two layers: `TerrainType` + `LiquidType`
 - `BuilderChain` composes one `InitialMapBuilder` + N `MetaMapBuilder`s; call `build_map()` to run the pipeline
 - `floor_builder()` in [src/map/builders/mod.rs](src/map/builders/mod.rs) dispatches on `FloorKind` from [src/map/world.rs](src/map/world.rs):
-  - **Town** (floor 0) → `town_builder`: `TownLayoutBuilder → TownBorderStairsBuilder → TownPathBuilder → TownPortalBuilder` — open-floor map with 4 border stair clusters (4 stairs side-by-side per cardinal direction), a cross-shaped dirt-path network connecting the clusters and the buildings' doors, and a central return portal.
-  - **Forest** (floors 1..=8) → `forest_builder`: `ForestTerrainBuilder → ForestBorderStairsBuilder → [TempleEntranceBuilder, only on the chosen entrance tile]` — cellular-automata trees with border stair clusters (2 borders for corner forests, 3 for cardinal forests); `<` on the border facing town, `>` on lateral-forest borders.
-  - **Temple** (floors 9..=11) → `temple_builder`: `BrogueLikeBuilder → StartPointBuilder → [DistantExit on 9-10 | AmuletPlacer on 11] → [TempleUpstairsLinker on 9]`.
-  - Legacy dungeon pipeline (floor >= 12, not currently reached): `BrogueLikeBuilder → StartPointBuilder → LakeBuilder → MonsterSpawner → DecorationPropagator → DistantExit`.
-- **Map-to-map transitions** unified in `player_transition_system`: a tile carrying a `MapExitTile` component overrides the terrain-based stair check. Each overworld stair tile carries `MapExitTile { destination_floor, destination_pos: Some(<mirror K-th stair>) }` — the K-th stair on a border maps to the K-th stair on the destination's mirror border, so walking off one map lands the player at the matching slot in the destination. Bare `>` / `<` terrain (temple internal stairs) falls back to `floor ± 1`. One `MapTransitionMessage { destination_floor, destination_pos: Option<Position> }` flows through `apply_map_transition` to swap floors, with `PendingArrival` honoured by `spawn_dungeon` when a destination position is set.
+  - **Town** (floor 0) → `town_builder`: `TownLayoutBuilder → TownPortalBuilder → TownDownStairsBuilder` — open Floor map with a handful of scattered buildings, a `Portal` at the centre (win-condition return), and a single `DownStairs` on the south border into Forest 1.
+  - **Forest** (floors 1..=`MAX_FLOOR`) → `forest_builder`: `ForestTerrainBuilder → ForestStairsBuilder` — cellular-automata trees with a central clearing where the player lands; `<` (UpStairs) at the start; on non-final floors `>` at the farthest reachable tile; on the final floor (`MAX_FLOOR`) the Amulet of Yendor sits at the farthest tile instead.
+- **Map-to-map transitions** unified in `player_transition_system`: terrain-based stairs (`>` → `floor + 1`, `<` → `floor - 1`) are the standard path. A tile may carry an optional `MapExitTile` component for **explicit** destinations (currently unused but retained for future warps / fast-travel / scripted teleporters). Walking onto the `Portal` in town triggers Victory if the player carries the Amulet of Yendor; otherwise it just logs an atmospheric line. One `MapTransitionMessage { destination_floor, destination_pos: Option<Position> }` flows through `apply_map_transition` to swap floors, with `PendingArrival` honoured by `spawn_dungeon` when a destination position is set.
 - **Town paths** are marked with `Decoration::Custom { id: TOWN_PATH_DECO_ID }` (defined in [src/map/world.rs](src/map/world.rs)); `themed_tile_display` / `themed_tile_bg` substitute a packed-dirt glyph + colour. The underlying terrain stays `Floor` so movement is unaffected.
-- **`FloorTheme` resource** (`Dungeon | Town | Forest | Temple`) is set by `spawn_dungeon` on every materialisation and read by the ASCII renderer ([src/map/ascii_renderer.rs](src/map/ascii_renderer.rs)) to override Wall/Floor glyphs and colours per biome (e.g. forest walls render as `♣`). No new `TerrainType` variants needed.
-- **`OverworldState` resource** holds `temple_entrance_floor` (which forest tile, 1..=8) and `temple_entrance_pos`. Seeded on `OnEnter(AppState::InGame)` (unless restoring from a save). Persisted in save schema v6+.
+- **`FloorTheme` resource** (`Dungeon | Town | Forest`) is set by `spawn_dungeon` on every materialisation and read by the ASCII renderer ([src/map/ascii_renderer.rs](src/map/ascii_renderer.rs)) to override Wall/Floor glyphs and colours per biome (e.g. forest walls render as `♣`). No new `TerrainType` variants needed.
+- **`OverworldState` resource** is currently an empty struct — kept as a home for future per-run state (faction influence, NPC progress, quest flags). The 3×3 overworld grid (`GridDir`, `CardinalDir`, `temple_entrance_*`, border stair clusters) was removed when the game pivoted back to traditional linear floors.
 
 ### Tile Mutation Pipeline (engine-owned)
 - Mutation messages (`TileMutationMessage`, `DecorationMutationMessage`, `LiquidMutationMessage`) and their apply systems live in `roguelike_engine::map::mutation`. The engine plugin `MapMutationPlugin` registers them; game configures `MapMutationSet` ordering inside `ProcessingPhase::Cleanup`.

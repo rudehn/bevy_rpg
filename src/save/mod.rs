@@ -1096,10 +1096,7 @@ pub fn auto_save_system(
         squad_id_counter: squad_counter.0,
         fallen_monsters: fallen_entities.monsters.clone(),
         fallen_items: fallen_entities.items.clone(),
-        overworld: OverworldSave {
-            temple_entrance_floor: overworld_state.temple_entrance_floor,
-            temple_entrance_pos: overworld_state.temple_entrance_pos.map(|p| [p.x, p.y]),
-        },
+        overworld: OverworldSave::default(),
     };
 
     match ron::ser::to_string_pretty(&save_data, ron::ser::PrettyConfig::default()) {

@@ -14,17 +14,12 @@ use crate::map::world::{FloorKind, FloorTheme, floor_kind};
 // ---------------------------------------------------------------------------
 
 /// One-line welcome message shown when the player arrives on a floor.
-/// Falls back to a generic "descend into the dungeon" line for legacy
-/// floor indices (>= 12) that the overworld pipelines do not cover.
 pub fn welcome_line_for_floor(floor: u32) -> String {
-    if floor <= 11 {
-        match floor_kind(floor) {
-            FloorKind::Town => "You arrive in the town square.".to_string(),
-            FloorKind::Forest(_) => format!("You step into the forest. (floor {floor})"),
-            FloorKind::Temple(n) => format!("You descend into the temple. (level {n})"),
+    match floor_kind(floor) {
+        FloorKind::Town => "You arrive in the town square.".to_string(),
+        FloorKind::Forest { depth } => {
+            format!("You step deeper into the forest. (floor {depth})")
         }
-    } else {
-        format!("You descend into the dungeon. (floor {floor})")
     }
 }
 
@@ -32,11 +27,7 @@ pub fn welcome_line_for_floor(floor: u32) -> String {
 /// legacy floor indices (>= 12) which the overworld pipelines do not
 /// cover.
 pub fn theme_for_floor(floor: u32) -> FloorTheme {
-    if floor <= 11 {
-        FloorTheme::for_floor_kind(floor_kind(floor))
-    } else {
-        FloorTheme::Dungeon
-    }
+    FloorTheme::for_floor_kind(floor_kind(floor))
 }
 
 // ---------------------------------------------------------------------------
@@ -120,25 +111,14 @@ mod tests {
     }
 
     #[test]
-    fn welcome_line_forest_carries_floor_index() {
+    fn welcome_line_forest_carries_depth() {
         assert_eq!(
-            welcome_line_for_floor(4),
-            "You step into the forest. (floor 4)",
+            welcome_line_for_floor(1),
+            "You step deeper into the forest. (floor 1)",
         );
-    }
-
-    #[test]
-    fn welcome_line_temple_uses_level_number_not_floor_index() {
-        assert_eq!(welcome_line_for_floor(9), "You descend into the temple. (level 1)");
-        assert_eq!(welcome_line_for_floor(10), "You descend into the temple. (level 2)");
-        assert_eq!(welcome_line_for_floor(11), "You descend into the temple. (level 3)");
-    }
-
-    #[test]
-    fn welcome_line_legacy_dungeon_falls_through() {
         assert_eq!(
-            welcome_line_for_floor(15),
-            "You descend into the dungeon. (floor 15)",
+            welcome_line_for_floor(2),
+            "You step deeper into the forest. (floor 2)",
         );
     }
 
@@ -147,14 +127,8 @@ mod tests {
     #[test]
     fn theme_matches_floor_kind() {
         assert_eq!(theme_for_floor(0), FloorTheme::Town);
-        assert_eq!(theme_for_floor(3), FloorTheme::Forest);
-        assert_eq!(theme_for_floor(10), FloorTheme::Temple);
-    }
-
-    #[test]
-    fn theme_falls_back_to_dungeon_for_legacy_floors() {
-        assert_eq!(theme_for_floor(12), FloorTheme::Dungeon);
-        assert_eq!(theme_for_floor(20), FloorTheme::Dungeon);
+        assert_eq!(theme_for_floor(1), FloorTheme::Forest);
+        assert_eq!(theme_for_floor(2), FloorTheme::Forest);
     }
 
     // ----- pick_source_kind ----------------------------------------------
