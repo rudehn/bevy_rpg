@@ -28,8 +28,20 @@ Every frame in `Update`, the engine's `LightingSet` runs (gated by the game's `A
 
 ## Light source flavours
 
-- **Resource-driven** (preferred for transient/algorithmic sources): code calls `light_sources.add(...)` directly. Used by fire ([src/game/fire.rs](src/game/fire.rs)). The `fungal_light` helper is exported but **not currently wired to any decoration** — no shipping plant emits light. To restore glow on a future plant variant, rewire `apply_decoration_mutations` to match on the new `Decoration` and call `light_sources.add(fungal_light(x, y))` (and `remove_at` on transitions away).
+- **Resource-driven** (preferred for transient/algorithmic sources): code calls `light_sources.add(...)` directly. Used by fire ([src/game/fire.rs](src/game/fire.rs)).
+- **Decoration-emitting** (resource-driven, built on top): a `Decoration` variant that ships its own light helper. `Decoration::PhosphorescentMoss` is the first shipping example — `apply_decoration_mutations` calls `light_sources.add(phosphorescent_moss_light(x, y))` when the decoration appears and `light_sources.remove_at(x, y)` when it's replaced (e.g. burned to Ash). At floor-enter time, [`register_decoration_lights`](../../src/map/light.rs) sweeps the materialised map and registers the same sources for tiles the `DecorationPropagator` stamped directly into `Tile.decoration` (which bypasses the mutation pipeline). The `fungal_light` helper follows the same pattern but is currently unused — no shipping decoration registers it yet.
 - **Entity-driven**: an entity carries a `LightSource` component. Candles use this so the candle entity owns its light's lifecycle. `sync_entity_lights_system` does a full resync of `on_wall: true` sources whenever any change is detected.
+
+### Lighting × stealth
+
+The light intensity at any tile feeds directly into the stealth pipeline. [`stealth::light_modifier`](../../src/game/stealth.rs) returns `-3` at intensity ≥ 0.75, `-1` at ≥ 0.40, `+2` for any dim light, `+3` for pitch black. Decoration-emitting lights therefore have a **mechanical** effect, not just visual: standing in a thick patch of phosphorescent moss hits the stealth penalty band; standing at the patch edge takes the softer one. Adding a new glow-emitting decoration is the supported pattern for "this terrain feature interferes with hiding."
+
+To add a new emitting decoration:
+1. Add a `Decoration::X` variant to the engine enum (or use `Custom { id }` if game-local).
+2. Add a `light_x(x, y) -> LightSourceData` helper in `roguelike_engine::lighting`. Pick a radius / intensity / colour fitting the source.
+3. Match on the new variant in `apply_decoration_mutations` — add on appearance, remove on departure.
+4. Match on it in `register_decoration_lights` for the build-time pass.
+5. Add a `tiles.ron` entry for the renderer glyph/colour and a `decorations.ron` rule for propagation.
 
 ## Dirty propagation
 

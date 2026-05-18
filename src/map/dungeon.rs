@@ -850,6 +850,12 @@ pub fn spawn_dungeon(
         &mut extras.water_tiles,
     );
 
+    // Re-register decoration-emitted light sources (PhosphorescentMoss,
+    // future glowing plants). Runs AFTER `remove_floor_sources` cleared
+    // stale entries. Runtime mutations to moss tiles are handled
+    // separately by the engine's `apply_decoration_mutations`.
+    crate::map::light::register_decoration_lights(&map, &mut extras.light_sources);
+
     // Honour an explicit arrival hint (set by `apply_map_transition` for
     // overworld-edge transitions). Snap to the nearest walkable tile so a
     // forest/town border that's been overgrown by a tree doesn't trap the

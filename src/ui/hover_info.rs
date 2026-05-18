@@ -203,6 +203,7 @@ fn update_hover_description(
             Decoration::Embers => "embers",
             Decoration::Ash => "ash",
             Decoration::CrackedFloor => "cracked floor",
+            Decoration::PhosphorescentMoss => "phosphorescent moss",
             _ => "decoration",
         };
 
