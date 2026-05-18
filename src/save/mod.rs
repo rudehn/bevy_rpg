@@ -79,7 +79,14 @@ const GAME_SAVE_KEY: &str = "ironveil_save";
 ///   `skill_xp`, `skill_training`, `skill_xp_pool`. Pre-v5 saves load
 ///   with empty maps and 0 pool via serde defaults — no in-game
 ///   effect until the player trains; migration is a no-op.
-pub const SAVE_SCHEMA_VERSION: u32 = 6;
+/// - **v6**: Overworld topology — `OverworldSave` on `GameSaveData` and
+///   `exit_tiles` on `SavedFloorData`. Both `#[serde(default)]`.
+/// - **v7**: Stealth Phase I — per-monster awareness state persisted on
+///   `SavedMonster.awareness` as a degraded shape (Hidden | Searching).
+///   `Aware` collapses to `Searching{ player.pos, +20 }` at save time;
+///   `Suspicious` collapses to `Hidden`. `#[serde(default)]` keeps v6
+///   saves loadable with all monsters defaulting to `Hidden`.
+pub const SAVE_SCHEMA_VERSION: u32 = 7;
 
 // ---- Migration chain ----
 
@@ -248,6 +255,17 @@ impl SaveMigration for MigrateV5ToV6 {
     fn migrate(&self, data: &str) -> Result<String, String> { Ok(data.to_string()) }
 }
 
+/// v6 → v7: Stealth Phase I adds `SavedMonster.awareness`. The field is
+/// `#[serde(default)]` so the migration itself is a no-op — old saves
+/// load with `MonsterAwarenessSave::default()` (Hidden), which mirrors
+/// a fresh monster spawn before perception has fired.
+struct MigrateV6ToV7;
+impl SaveMigration for MigrateV6ToV7 {
+    fn from_version(&self) -> u32 { 6 }
+    fn to_version(&self) -> u32 { 7 }
+    fn migrate(&self, data: &str) -> Result<String, String> { Ok(data.to_string()) }
+}
+
 fn migrations() -> Vec<Box<dyn SaveMigration>> {
     vec![
         Box::new(MigrateV0ToV1),
@@ -256,6 +274,7 @@ fn migrations() -> Vec<Box<dyn SaveMigration>> {
         Box::new(MigrateV3ToV4),
         Box::new(MigrateV4ToV5),
         Box::new(MigrateV5ToV6),
+        Box::new(MigrateV6ToV7),
     ]
 }
 
@@ -426,6 +445,44 @@ pub struct SavedExitTile {
 // these types + the queries that populate them.
 // ---------------------------------------------------------------------------
 
+/// Degraded per-monster awareness snapshot. Stealth Phase I (schema v7)
+/// persists awareness across save/load with a deliberately small shape:
+/// only the player-keyed record is saved, and only the two states that
+/// reconstruct cleanly without resolving stale `Entity` IDs.
+///
+/// Save-time degradations (see `degrade_awareness_for_save`):
+/// - `Aware`               → `Searching{ player.pos, +20 turns }`
+/// - `Searching{pos, t}`   → `Searching{ pos, t - now }` (offset preserved)
+/// - `Suspicious{...}`     → `Hidden` (no tracked suspect to round-trip)
+/// - `Hidden` / no record  → `Hidden`
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum SavedAwarenessState {
+    Hidden,
+    Searching {
+        last_known_x: i32,
+        last_known_y: i32,
+        /// `giveup_at_turn - now_at_save`. On load, recomputed as
+        /// `now_at_load + giveup_at_offset` so the timer resumes with
+        /// the same remaining duration.
+        giveup_at_offset: u32,
+    },
+}
+
+impl Default for SavedAwarenessState {
+    fn default() -> Self {
+        SavedAwarenessState::Hidden
+    }
+}
+
+/// Wrapper around `SavedAwarenessState` so future per-monster awareness
+/// fields (e.g. last-known-pos for *other* targets) can be added without
+/// another schema bump.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct MonsterAwarenessSave {
+    #[serde(default)]
+    pub state: SavedAwarenessState,
+}
+
 /// A monster's mutable state, shared by save files and the floor cache.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct SavedMonster {
@@ -446,6 +503,11 @@ pub struct SavedMonster {
     pub patrol_route: Option<crate::game::ai::PatrolRoute>,
     #[serde(default)]
     pub submerged: bool,
+    /// Stealth Phase I (schema v7+): degraded awareness snapshot. Only
+    /// the player-keyed record survives the round trip. Pre-v7 saves
+    /// default to `Hidden` (matches a fresh perception state).
+    #[serde(default)]
+    pub awareness: MonsterAwarenessSave,
 }
 
 impl SavedMonster {
@@ -712,6 +774,77 @@ pub fn restore_item_mutable_state(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Stealth Phase I — awareness degrade / restore helpers (schema v7).
+// ---------------------------------------------------------------------------
+
+/// Snapshot the *player-keyed* awareness record into a `MonsterAwarenessSave`
+/// using the degraded scheme described on `SavedAwarenessState`. Pure
+/// function — pulled out for unit testability and so the save loop stays
+/// a simple `.map()`.
+pub(crate) fn degrade_awareness_for_save(
+    awareness: &roguelike_engine::stealth::Awareness,
+    player_entity: Entity,
+    player_pos: Point,
+    now: u32,
+) -> MonsterAwarenessSave {
+    use roguelike_engine::stealth::AwarenessState;
+    let saved_state = match awareness.get(player_entity).map(|r| r.state) {
+        Some(AwarenessState::Aware) => SavedAwarenessState::Searching {
+            last_known_x: player_pos.x,
+            last_known_y: player_pos.y,
+            giveup_at_offset: 20,
+        },
+        Some(AwarenessState::Searching { last_known_pos, giveup_at_turn }) => {
+            SavedAwarenessState::Searching {
+                last_known_x: last_known_pos.x,
+                last_known_y: last_known_pos.y,
+                giveup_at_offset: giveup_at_turn.saturating_sub(now),
+            }
+        }
+        // Suspicious has a suspect_pos but we deliberately drop it — V1
+        // keeps the saved shape narrow. Hidden / missing → Hidden.
+        _ => SavedAwarenessState::Hidden,
+    };
+    MonsterAwarenessSave { state: saved_state }
+}
+
+/// Reconstruct an `Awareness` component from a saved snapshot, keyed at
+/// the *post-load* player entity. Hidden saves produce an empty map (no
+/// record); Searching saves produce a single Searching record with the
+/// timer rebased to `now + giveup_at_offset`.
+pub(crate) fn restore_awareness_from_save(
+    saved: &MonsterAwarenessSave,
+    player_entity: Entity,
+    now: u32,
+) -> roguelike_engine::stealth::Awareness {
+    use roguelike_engine::stealth::{Awareness, AwarenessRecord, AwarenessState};
+    let mut a = Awareness::default();
+    let (last_known, giveup_at_turn) = match saved.state {
+        SavedAwarenessState::Hidden => return a,
+        SavedAwarenessState::Searching {
+            last_known_x,
+            last_known_y,
+            giveup_at_offset,
+        } => (
+            Point::new(last_known_x, last_known_y),
+            now.saturating_add(giveup_at_offset),
+        ),
+    };
+    a.records.insert(
+        player_entity,
+        AwarenessRecord {
+            state: AwarenessState::Searching {
+                last_known_pos: last_known,
+                giveup_at_turn,
+            },
+            last_update_turn: now,
+            last_seen_pos: Some(last_known),
+        },
+    );
+    a
+}
+
 pub fn map_to_save_data(map: &Map) -> MapSaveData {
     MapSaveData {
         width: map.width,
@@ -803,10 +936,16 @@ pub struct PlayerSkillSaveParams<'w, 's> {
 /// Bundled resources for `auto_save_system` — keeps the system under
 /// Bevy's 16-param limit now that overworld state needs to be saved.
 #[derive(bevy::ecs::system::SystemParam)]
-pub struct AutoSaveExtras<'w> {
+pub struct AutoSaveExtras<'w, 's> {
     pub squad_counter: Res<'w, SquadIdCounter>,
     pub fallen_entities: Res<'w, crate::map::dungeon::FallenEntities>,
     pub overworld_state: Res<'w, crate::map::world::OverworldState>,
+    /// Stealth Phase I (schema v7): needed by the per-monster awareness
+    /// degrade pass to compute `giveup_at_offset = giveup_at_turn - now`.
+    pub turn_manager: Res<'w, crate::game::TurnManager>,
+    /// Stealth Phase I (schema v7): the player entity is the only key
+    /// the degraded awareness shape preserves. Looked up once per save.
+    pub player_entity: Query<'w, 's, Entity, With<Player>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -873,6 +1012,7 @@ pub fn auto_save_system(
             Has<SquadLeader>,
             Option<&crate::game::ai::PatrolRoute>,
             Has<crate::components::Submerged>,
+            Option<&roguelike_engine::stealth::Awareness>,
         ),
         With<Monster>,
     >,
@@ -898,6 +1038,11 @@ pub fn auto_save_system(
     let fallen_entities = &auto_save_extras.fallen_entities;
     let overworld_state = &auto_save_extras.overworld_state;
     let squad_counter = &auto_save_extras.squad_counter;
+    let now = auto_save_extras.turn_manager.current_time;
+    // Stealth Phase I: degraded awareness keys on the player entity. If
+    // the player entity is missing the awareness map collapses to Hidden
+    // (the safe default — perception will rebuild within a turn or two).
+    let player_entity = auto_save_extras.player_entity.single().ok();
 
     let Ok((pos, health, armor, block, max_shield_blocks, dodge, inventory, equipment, damage, viewshed)) =
         player_query.single()
@@ -955,13 +1100,20 @@ pub fn auto_save_system(
         .collect();
 
     // Floor monsters
+    let player_pos_point = Point::new(pos.x, pos.y);
     let monsters: Vec<SavedMonster> = monster_query
         .iter()
         .map(
-            |(pos, name, health, squad_id, squad_config, is_leader, patrol_route, is_submerged)| {
+            |(mpos, name, health, squad_id, squad_config, is_leader, patrol_route, is_submerged, awareness)| {
+                let awareness_save = match (awareness, player_entity) {
+                    (Some(a), Some(pe)) => {
+                        degrade_awareness_for_save(a, pe, player_pos_point, now)
+                    }
+                    _ => MonsterAwarenessSave::default(),
+                };
                 SavedMonster {
-                    x: pos.x,
-                    y: pos.y,
+                    x: mpos.x,
+                    y: mpos.y,
                     name: name.0.clone(),
                     hp_current: health.current,
                     squad_id: squad_id.map(|s| s.0),
@@ -969,6 +1121,7 @@ pub fn auto_save_system(
                     squad_config: squad_config.cloned(),
                     patrol_route: patrol_route.cloned(),
                     submerged: is_submerged,
+                    awareness: awareness_save,
                 }
             },
         )
@@ -1426,6 +1579,7 @@ mod tests {
             squad_config: None,
             patrol_route: None,
             submerged: false,
+            awareness: MonsterAwarenessSave::default(),
         }
     }
 
@@ -1444,6 +1598,7 @@ mod tests {
                 state: PatrolState::Sentry { home: (12, 7) },
             }),
             submerged: false,
+            awareness: MonsterAwarenessSave::default(),
         }
     }
 
@@ -1465,6 +1620,7 @@ mod tests {
                 },
             }),
             submerged: true,
+            awareness: MonsterAwarenessSave::default(),
         }
     }
 
@@ -2666,8 +2822,8 @@ mod tests {
     // =====================================================================
 
     #[test]
-    fn schema_version_is_six() {
-        assert_eq!(SAVE_SCHEMA_VERSION, 6);
+    fn schema_version_is_seven() {
+        assert_eq!(SAVE_SCHEMA_VERSION, 7);
     }
 
     #[test]
@@ -2750,7 +2906,7 @@ mod tests {
     #[test]
     fn migrations_chain_is_ordered() {
         let migs = migrations();
-        assert_eq!(migs.len(), 6);
+        assert_eq!(migs.len(), 7);
         assert_eq!(migs[0].from_version(), 0);
         assert_eq!(migs[0].to_version(), 1);
         assert_eq!(migs[1].from_version(), 1);
@@ -2763,6 +2919,108 @@ mod tests {
         assert_eq!(migs[4].to_version(), 5);
         assert_eq!(migs[5].from_version(), 5);
         assert_eq!(migs[5].to_version(), 6);
+        assert_eq!(migs[6].from_version(), 6);
+        assert_eq!(migs[6].to_version(), 7);
+    }
+
+    // =====================================================================
+    // Stealth save / load (degraded persistence) tests
+    // =====================================================================
+
+    fn pe() -> Entity {
+        Entity::from_raw_u32(1).expect("valid test entity")
+    }
+
+    #[test]
+    fn aware_collapses_to_searching_on_save() {
+        let mut a = roguelike_engine::stealth::Awareness::default();
+        a.set(pe(), roguelike_engine::stealth::AwarenessState::Aware, 10);
+        let saved = degrade_awareness_for_save(&a, pe(), Point::new(5, 5), 10);
+        assert!(matches!(
+            saved.state,
+            SavedAwarenessState::Searching {
+                last_known_x: 5,
+                last_known_y: 5,
+                giveup_at_offset: 20,
+            }
+        ));
+    }
+
+    #[test]
+    fn searching_preserves_last_known_with_offset_on_save() {
+        let mut a = roguelike_engine::stealth::Awareness::default();
+        a.set(
+            pe(),
+            roguelike_engine::stealth::AwarenessState::Searching {
+                last_known_pos: Point::new(3, 4),
+                giveup_at_turn: 50,
+            },
+            10,
+        );
+        let saved = degrade_awareness_for_save(&a, pe(), Point::new(99, 99), 30);
+        assert!(matches!(
+            saved.state,
+            SavedAwarenessState::Searching {
+                last_known_x: 3,
+                last_known_y: 4,
+                giveup_at_offset: 20,
+            }
+        ));
+    }
+
+    #[test]
+    fn suspicious_collapses_to_hidden_on_save() {
+        let mut a = roguelike_engine::stealth::Awareness::default();
+        a.set(
+            pe(),
+            roguelike_engine::stealth::AwarenessState::Suspicious {
+                suspect_pos: Point::new(7, 7),
+                decay_at_turn: 100,
+            },
+            0,
+        );
+        let saved = degrade_awareness_for_save(&a, pe(), Point::new(0, 0), 0);
+        assert_eq!(saved.state, SavedAwarenessState::Hidden);
+    }
+
+    #[test]
+    fn no_record_saves_as_hidden() {
+        let a = roguelike_engine::stealth::Awareness::default();
+        let saved = degrade_awareness_for_save(&a, pe(), Point::new(0, 0), 0);
+        assert_eq!(saved.state, SavedAwarenessState::Hidden);
+    }
+
+    #[test]
+    fn hidden_save_restores_empty_awareness() {
+        let saved = MonsterAwarenessSave {
+            state: SavedAwarenessState::Hidden,
+        };
+        let a = restore_awareness_from_save(&saved, pe(), 0);
+        assert!(a.records.is_empty());
+    }
+
+    #[test]
+    fn searching_save_restores_with_recomputed_turn() {
+        let saved = MonsterAwarenessSave {
+            state: SavedAwarenessState::Searching {
+                last_known_x: 7,
+                last_known_y: 8,
+                giveup_at_offset: 15,
+            },
+        };
+        let now = 100;
+        let a = restore_awareness_from_save(&saved, pe(), now);
+        let rec = a.records.get(&pe()).expect("player record restored");
+        match rec.state {
+            roguelike_engine::stealth::AwarenessState::Searching {
+                last_known_pos,
+                giveup_at_turn,
+            } => {
+                assert_eq!(last_known_pos, Point::new(7, 8));
+                assert_eq!(giveup_at_turn, 115);
+            }
+            other => panic!("expected Searching, got {:?}", other),
+        }
     }
 
     /// v2 → v3 migration is a no-op (serde defaults handle the new fields).

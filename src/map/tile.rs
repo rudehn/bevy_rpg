@@ -388,6 +388,10 @@ pub fn chasm_fall_reaction_system(
                             squad_config: squad_config.cloned(),
                             patrol_route: patrol_route.cloned(),
                             submerged: is_submerged,
+                            // Chasm fallers reset to Hidden — they re-encounter
+                            // the player on a fresh floor; degraded awareness
+                            // would be a stale carryover.
+                            awareness: crate::save::MonsterAwarenessSave::default(),
                         };
                         fallen.monsters.entry(dest_floor).or_default().push(saved);
 

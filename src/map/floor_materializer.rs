@@ -312,6 +312,9 @@ impl FloorPlan {
                 squad_config: entry.squad_config,
                 patrol_route: entry.patrol_route,
                 submerged: false,
+                // Fresh spawns default to Hidden — perception fills in
+                // on the next tick.
+                awareness: crate::save::MonsterAwarenessSave::default(),
             })
             .collect();
 
@@ -798,6 +801,7 @@ mod tests {
             squad_config: None,
             patrol_route: None,
             submerged: false,
+            awareness: Default::default(),
         });
         cached.items.push(SavedItem {
             x: 9,
@@ -926,6 +930,7 @@ mod tests {
             squad_config: Some(SquadConfig { flee_threshold: 0.3 }),
             patrol_route: None,
             submerged: true,
+            awareness: Default::default(),
         };
         cached.monsters.push(monster.clone());
         let plan = plan_floor(FloorSource::Restore { cached, ascending: true });
