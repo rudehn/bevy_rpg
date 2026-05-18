@@ -389,6 +389,40 @@ pub fn attack_reveals_attacker(
     }
 }
 
+/// Bumps `SkillUseCounters::Stealth` once per turn when the player is
+/// successfully unseen by at least one nearby hostile. The "use" is
+/// defined as: there exists a [`Monster`] with an [`Awareness`] record
+/// of the player whose state is **not** [`AwarenessState::Aware`].
+/// Aware monsters don't count — once they've spotted the player,
+/// continuing to hide doesn't train stealth.
+///
+/// Counts at most once per turn regardless of how many monsters meet
+/// the condition — the `return` after the first bump caps it.
+/// Scheduled in `ProcessingPhase::Cleanup` so it sees the post-
+/// `awareness_tick_system` state (decayed Searching → Hidden).
+///
+/// If there is no player entity (e.g. the player is dead and despawned
+/// mid-frame), the system early-outs without bumping.
+pub fn bump_stealth_use_counter(
+    player_query: Query<Entity, With<Player>>,
+    hostile_awareness: Query<&Awareness, With<Monster>>,
+    mut counters: ResMut<SkillUseCounters>,
+) {
+    let Ok(player_entity) = player_query.single() else {
+        return;
+    };
+    for awareness in &hostile_awareness {
+        let is_aware = awareness
+            .get(player_entity)
+            .map(|r| matches!(r.state, AwarenessState::Aware))
+            .unwrap_or(false);
+        if !is_aware {
+            counters.bump(Skill::Stealth);
+            return;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
