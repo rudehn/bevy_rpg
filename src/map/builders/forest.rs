@@ -1,14 +1,25 @@
 //! Forest builder — cellular automata over a `Grid<u8>` to carve an
-//! organic floor / "trees" (Wall terrain rendered as trees by the
-//! Forest [`FloorTheme`]) layout, plus simple linear-roguelike stairs.
+//! organic forest layout, plus an east-west spine for the linear
+//! roguelike stair flow.
 //!
-//! Connectivity is enforced by keeping the largest connected region;
-//! the remaining tiles are filled with Wall so the player can't wander
-//! into isolated pockets. The UpStairs sits at the centre clearing
-//! (where the player lands when descending from the floor above); the
-//! DownStairs is placed at the farthest reachable tile from that
-//! clearing (unless this is the final floor, in which case
-//! `DistantExit` places the Amulet instead).
+//! Two clearings are always carved: a western clearing (where the
+//! `UpStairs` sits, mirroring the player's east-into-the-forest entry
+//! from town) and an eastern clearing (where the `DownStairs` or the
+//! `Amulet of Yendor` sits, depending on whether this is the final
+//! floor). A 1-tile-wide corridor connects them through the map
+//! centre — the player's natural east-bound path through the woods.
+//! Cellular-automata trees fill the regions on either side, giving
+//! the corridor an organic feel.
+//!
+//! CA parameters vary by depth so each forest floor has its own
+//! character:
+//!
+//! - Forest 1 (outer woods): sparser trees, larger clearings, brighter.
+//! - Forest 2 (deep woods): denser trees, gnarlier, more decay decorations.
+//!
+//! Connectivity is enforced by keeping only tiles reachable from the
+//! west clearing, so the player can never wander into an isolated
+//! pocket.
 
 use bracket_lib::prelude::{Algorithm2D, DijkstraMap, Point};
 
@@ -23,26 +34,36 @@ use roguelike_engine::map::builders::algorithms::{
 const FLOOR_VAL: u8 = 1;
 const WALL_VAL: u8 = 0;
 
-/// If the largest connected region after CA covers less than this
-/// fraction of the playable area, the builder retries with a fresh
-/// random seed. Stops the "1×1 forest" failure mode from shipping.
 const MIN_REGION_FRACTION: f32 = 0.25;
-/// Maximum CA attempts before falling back to a fully-open interior
-/// (guarantees the player can always move even on pathological seeds).
 const MAX_CA_RETRIES: usize = 8;
-/// Half-width of the always-clear patch at the map centre, where the
-/// forest UpStairs gets placed.
-const CENTER_CLEARING: i32 = 2;
+/// Half-width of each end-clearing (3×3 carve when this is 1).
+const END_CLEARING_HALF: i32 = 1;
+/// Distance from the map's east/west border to the centre of the
+/// end-clearings. 3 keeps the stair one tile inside the border-wall.
+const CLEARING_INSET: i32 = 3;
 
 // =====================================================================
-// ForestTerrainBuilder — cellular automata trees + centre clearing.
+// CA profile per forest depth
 // =====================================================================
 
-/// Cellular-automata forest. Trees are `TerrainType::Wall`; the renderer
-/// applies the Forest theme to draw them as `♣`.
+/// Returns `(initial_alive_percent, round_count)` tuned to depth.
+/// Forest 1 is sparser (smaller %), Forest 2 is denser.
+fn profile_for_depth(depth: i32) -> (i32, usize) {
+    match depth {
+        // Forest 1 (outer woods) — looser trees, larger clearings.
+        1 => (50, 4),
+        // Forest 2 (deep woods) — gnarlier, denser canopy.
+        2 => (62, 5),
+        // Beyond authored content — fall back to mid values.
+        _ => (55, 5),
+    }
+}
+
+// =====================================================================
+// ForestTerrainBuilder — cellular automata + east-west spine.
+// =====================================================================
+
 pub struct ForestTerrainBuilder {
-    pub initial_alive_percent: i32,
-    pub round_count: usize,
     pub birth_threshold: i32,
     pub survival_threshold: i32,
 }
@@ -50,8 +71,6 @@ pub struct ForestTerrainBuilder {
 impl Default for ForestTerrainBuilder {
     fn default() -> Self {
         Self {
-            initial_alive_percent: 55,
-            round_count: 5,
             birth_threshold: 5,
             survival_threshold: 4,
         }
@@ -66,17 +85,23 @@ impl InitialMapBuilder for ForestTerrainBuilder {
     fn build_map(&mut self, build: &mut BuilderMap) {
         let w = build.width;
         let h = build.height;
+        let depth = build.map.depth;
+        let (initial_alive_percent, round_count) = profile_for_depth(depth);
         let min_region_size = ((w * h) as f32 * MIN_REGION_FRACTION) as usize;
-        let cx = w / 2;
-        let cy = h / 2;
 
+        // East-west spine: west clearing → corridor → east clearing.
+        let mid_y = h / 2;
+        let west_cx = CLEARING_INSET;
+        let east_cx = w - 1 - CLEARING_INSET;
+
+        // 1. Run CA until we get a healthy connected region OR exhaust retries.
         let mut grid: Grid<u8> = Grid::new(w, h, WALL_VAL);
         let mut attempts = 0;
         loop {
             attempts += 1;
-            randomize_grid(&mut grid, self.initial_alive_percent, FLOOR_VAL, WALL_VAL);
+            randomize_grid(&mut grid, initial_alive_percent, FLOOR_VAL, WALL_VAL);
             force_border_wall(&mut grid);
-            for _ in 0..self.round_count {
+            for _ in 0..round_count {
                 cellular_automata_iteration(
                     &mut grid,
                     self.birth_threshold,
@@ -96,6 +121,7 @@ impl InitialMapBuilder for ForestTerrainBuilder {
                     for idx in region.tiles { grid.data[idx] = FLOOR_VAL; }
                 }
                 if biggest_size < min_region_size {
+                    // Pathological CA fallback: just open the interior.
                     for y in 1..h - 1 {
                         for x in 1..w - 1 {
                             let idx = grid.xy_idx(x, y);
@@ -107,21 +133,19 @@ impl InitialMapBuilder for ForestTerrainBuilder {
             }
         }
 
-        // Always carve a small clearing at the map centre — UpStairs
-        // lives here, and we never want it pinched off.
-        for dy in -CENTER_CLEARING..=CENTER_CLEARING {
-            for dx in -CENTER_CLEARING..=CENTER_CLEARING {
-                let x = cx + dx;
-                let y = cy + dy;
-                if x <= 0 || y <= 0 || x >= w - 1 || y >= h - 1 { continue; }
-                let idx = grid.xy_idx(x, y);
-                grid.data[idx] = FLOOR_VAL;
-            }
-        }
+        // 2. Force-carve the two end-clearings and the corridor between
+        //    them. This guarantees the spine exists no matter what CA
+        //    produced.
+        carve_clearing(&mut grid, west_cx, mid_y, END_CLEARING_HALF);
+        carve_clearing(&mut grid, east_cx, mid_y, END_CLEARING_HALF);
+        carve_corridor(&mut grid, west_cx, east_cx, mid_y);
         force_border_wall(&mut grid);
-        ensure_centre_connected(&mut grid, cx, cy);
-        keep_only_reachable_from(&mut grid, cx, cy);
 
+        // 3. Final connectivity cull from the west clearing centre —
+        //    everything not reachable from spawn becomes wall.
+        keep_only_reachable_from(&mut grid, west_cx, mid_y);
+
+        // 4. Stamp the grid onto the BuilderMap.
         for y in 0..h {
             for x in 0..w {
                 let gidx = grid.xy_idx(x, y);
@@ -139,21 +163,43 @@ impl InitialMapBuilder for ForestTerrainBuilder {
             }
         }
 
-        build.set_starting_position(Position { x: cx, y: cy });
+        // Starting position = west clearing centre (the UpStairs spot).
+        // The player lands here when arriving from the east stair on
+        // the previous floor (town or Forest n-1).
+        build.set_starting_position(Position { x: west_cx, y: mid_y });
+    }
+}
+
+fn carve_clearing(grid: &mut Grid<u8>, cx: i32, cy: i32, half: i32) {
+    let w = grid.width;
+    let h = grid.height;
+    for dy in -half..=half {
+        for dx in -half..=half {
+            let x = cx + dx;
+            let y = cy + dy;
+            if x <= 0 || y <= 0 || x >= w - 1 || y >= h - 1 { continue; }
+            let idx = grid.xy_idx(x, y);
+            grid.data[idx] = FLOOR_VAL;
+        }
+    }
+}
+
+fn carve_corridor(grid: &mut Grid<u8>, x_start: i32, x_end: i32, y: i32) {
+    let w = grid.width;
+    let h = grid.height;
+    if y <= 0 || y >= h - 1 { return; }
+    let (xa, xb) = if x_start < x_end { (x_start, x_end) } else { (x_end, x_start) };
+    for x in xa..=xb {
+        if x <= 0 || x >= w - 1 { continue; }
+        let idx = grid.xy_idx(x, y);
+        grid.data[idx] = FLOOR_VAL;
     }
 }
 
 // =====================================================================
-// ForestStairsBuilder — places UpStairs at start, DownStairs at farthest.
+// ForestStairsBuilder — stairs at the east + west ends of the spine.
 // =====================================================================
 
-/// Places the forest's stair tiles for the linear floor scheme.
-///
-/// - **UpStairs** at `starting_position` (the centre clearing). The
-///   player lands here when descending from the floor above.
-/// - **DownStairs** at the farthest reachable floor tile from the
-///   start. Omitted on the final floor (`crate::constants::MAX_FLOOR`)
-///   — `AmuletPlacer` / `DistantExit` puts the Amulet there instead.
 pub struct ForestStairsBuilder;
 
 impl ForestStairsBuilder {
@@ -163,75 +209,72 @@ impl ForestStairsBuilder {
 impl MetaMapBuilder for ForestStairsBuilder {
     fn phase(&self) -> Option<BuilderPhase> { Some(BuilderPhase::Finalization) }
     fn build_map(&mut self, build: &mut BuilderMap) {
-        let Some(start) = build.starting_position else {
-            bevy::log::warn!("ForestStairsBuilder: starting_position not set; skipping");
-            return;
-        };
+        let w = build.width;
+        let h = build.height;
+        let mid_y = h / 2;
+        let west_cx = CLEARING_INSET;
+        let east_cx = w - 1 - CLEARING_INSET;
+        let depth = build.map.depth;
 
-        // UpStairs at the start.
-        let up_idx = build.map.xy_idx(start.x, start.y);
+        // West clearing → UpStairs (where the player arrives).
+        let up_idx = build.map.xy_idx(west_cx, mid_y);
         build.map.tiles[up_idx].terrain = TerrainType::UpStairs;
         build.map.tiles[up_idx].liquid = LiquidType::None;
 
-        let depth = build.map.depth;
+        // East clearing → DownStairs (non-final floor) or Amulet (final floor).
+        if depth >= crate::constants::MAX_FLOOR {
+            build.add_item_spawn(
+                Point::new(east_cx, mid_y),
+                "Amulet of Yendor".to_string(),
+                1,
+            );
+            bevy::log::info!(
+                "ForestStairsBuilder: Amulet at east clearing ({}, {}) on final floor {}",
+                east_cx, mid_y, depth,
+            );
+        } else {
+            let down_idx = build.map.xy_idx(east_cx, mid_y);
+            build.map.tiles[down_idx].terrain = TerrainType::DownStairs;
+            build.map.tiles[down_idx].liquid = LiquidType::None;
+            bevy::log::info!(
+                "ForestStairsBuilder: DownStairs at east clearing ({}, {}) on floor {}",
+                east_cx, mid_y, depth,
+            );
+        }
 
+        // Belt-and-suspenders: ensure the east clearing is reachable
+        // from the west by walking east along the spine. The terrain
+        // builder already carved this corridor, but rerun a Dijkstra
+        // sanity check; if unreachable, force-carve the corridor again.
         let start_idx = build
             .map
-            .point2d_to_index(Point::new(start.x, start.y));
-
-        // Walkable mask used by the Dijkstra map — any non-wall tile.
-        let width = build.map.width;
-        let height = build.map.height;
-        let mut walkable = vec![false; (width * height) as usize];
+            .point2d_to_index(Point::new(west_cx, mid_y));
+        let mut walkable = vec![false; (w * h) as usize];
         for (idx, tile) in build.map.tiles.iter().enumerate() {
             walkable[idx] = !matches!(tile.terrain, TerrainType::Wall);
         }
-
         let dijkstra = DijkstraMap::new(
-            width as usize,
-            height as usize,
+            w as usize,
+            h as usize,
             &[start_idx],
-            &WalkableMaskMap { walkable: &walkable, width: width as usize, height: height as usize },
+            &WalkableMaskMap { walkable: &walkable, width: w as usize, height: h as usize },
             1024.0,
         );
-
-        let mut best: Option<(usize, f32)> = None;
-        for (idx, &d) in dijkstra.map.iter().enumerate() {
-            if d == std::f32::MAX || !walkable[idx] { continue; }
-            if idx == start_idx { continue; }
-            if best.map(|(_, bd)| d > bd).unwrap_or(true) {
-                best = Some((idx, d));
+        let east_idx = build.map.xy_idx(east_cx, mid_y);
+        if dijkstra.map[east_idx] == f32::MAX {
+            // Re-carve the spine on the live map. Rare path; just defends
+            // against a CA + cull combo that severed the corridor.
+            for x in west_cx..=east_cx {
+                let idx = build.map.xy_idx(x, mid_y);
+                if build.map.tiles[idx].terrain == TerrainType::Wall {
+                    build.map.tiles[idx].terrain = TerrainType::Floor;
+                }
             }
-        }
-
-        let Some((far_idx, _)) = best else {
-            bevy::log::warn!("ForestStairsBuilder: no walkable target for stair / amulet");
-            return;
-        };
-        let far_x = (far_idx % width as usize) as i32;
-        let far_y = (far_idx / width as usize) as i32;
-        if depth >= crate::constants::MAX_FLOOR {
-            // Final floor — place the Amulet of Yendor at the farthest
-            // tile, no DownStairs. Player must climb back up to the
-            // town Portal.
-            build.add_item_spawn(Point::new(far_x, far_y), "Amulet of Yendor".to_string(), 1);
-            bevy::log::info!(
-                "ForestStairsBuilder: Amulet of Yendor at ({}, {}) on final floor {}",
-                far_x, far_y, depth,
-            );
-        } else {
-            build.map.tiles[far_idx].terrain = TerrainType::DownStairs;
-            build.map.tiles[far_idx].liquid = LiquidType::None;
-            bevy::log::info!(
-                "ForestStairsBuilder: DownStairs at ({}, {}) on floor {}",
-                far_x, far_y, depth,
-            );
         }
     }
 }
 
-/// Minimal `BaseMap` adapter for the Dijkstra map computation. A tile
-/// is walkable iff its terrain is non-wall.
+/// Minimal `BaseMap` adapter for the spine-reachability check.
 struct WalkableMaskMap<'a> {
     walkable: &'a [bool],
     width: usize,
@@ -266,7 +309,7 @@ impl<'a> Algorithm2D for WalkableMaskMap<'a> {
 }
 
 // =====================================================================
-// Helpers (private to this module)
+// Connectivity helpers
 // =====================================================================
 
 fn force_border_wall(grid: &mut Grid<u8>) {
@@ -283,66 +326,6 @@ fn force_border_wall(grid: &mut Grid<u8>) {
         grid.data[left] = WALL_VAL;
         let right = grid.xy_idx(w - 1, y);
         grid.data[right] = WALL_VAL;
-    }
-}
-
-fn ensure_centre_connected(grid: &mut Grid<u8>, cx: i32, cy: i32) {
-    let w = grid.width;
-    let h = grid.height;
-    let total = (w * h) as usize;
-    let mut visited = vec![false; total];
-    let mut queue = std::collections::VecDeque::new();
-    let start_idx = grid.xy_idx(cx, cy);
-    visited[start_idx] = true;
-    queue.push_back((cx, cy));
-    let mut reachable_count = 0;
-    while let Some((x, y)) = queue.pop_front() {
-        let idx = grid.xy_idx(x, y);
-        if grid.data[idx] != FLOOR_VAL { continue; }
-        reachable_count += 1;
-        for (dx, dy) in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
-            let nx = x + dx;
-            let ny = y + dy;
-            if nx < 0 || ny < 0 || nx >= w || ny >= h { continue; }
-            let nidx = grid.xy_idx(nx, ny);
-            if visited[nidx] { continue; }
-            visited[nidx] = true;
-            if grid.data[nidx] == FLOOR_VAL {
-                queue.push_back((nx, ny));
-            }
-        }
-    }
-    let clearing_cells = ((CENTER_CLEARING * 2 + 1) * (CENTER_CLEARING * 2 + 1)) as usize;
-    if reachable_count > clearing_cells {
-        return;
-    }
-    let mut best: Option<(i32, i32, i32)> = None;
-    for y in 1..h - 1 {
-        for x in 1..w - 1 {
-            let idx = grid.xy_idx(x, y);
-            if grid.data[idx] != FLOOR_VAL { continue; }
-            if (x - cx).abs() <= CENTER_CLEARING && (y - cy).abs() <= CENTER_CLEARING {
-                continue;
-            }
-            let dist = (x - cx).abs() + (y - cy).abs();
-            if best.map(|b| dist < b.0).unwrap_or(true) {
-                best = Some((dist, x, y));
-            }
-        }
-    }
-    if let Some((_, tx, ty)) = best {
-        let (xa, xb) = if cx < tx { (cx, tx) } else { (tx, cx) };
-        for x in xa..=xb {
-            if x <= 0 || x >= w - 1 { continue; }
-            let idx = grid.xy_idx(x, cy);
-            grid.data[idx] = FLOOR_VAL;
-        }
-        let (ya, yb) = if cy < ty { (cy, ty) } else { (ty, cy) };
-        for y in ya..=yb {
-            if y <= 0 || y >= h - 1 { continue; }
-            let idx = grid.xy_idx(tx, y);
-            grid.data[idx] = FLOOR_VAL;
-        }
     }
 }
 
@@ -388,77 +371,72 @@ mod tests {
     }
 
     #[test]
-    fn forest_sets_starting_position() {
+    fn forest_starting_position_at_west_clearing() {
         let bm = build_forest(1);
         let start = bm.starting_position.expect("forest must set starting_position");
+        assert_eq!(start.x, CLEARING_INSET, "start x must be at west clearing");
+        assert_eq!(start.y, bm.height / 2);
         let idx = bm.map.xy_idx(start.x, start.y);
         assert_eq!(bm.map.tiles[idx].terrain, TerrainType::Floor);
     }
 
     #[test]
-    fn forest_largest_region_is_substantial() {
-        let bm = build_forest(2);
-        let w = bm.width;
-        let h = bm.height;
-        let mut grid: Grid<u8> = Grid::new(w, h, WALL_VAL);
-        for y in 0..h {
-            for x in 0..w {
-                let midx = bm.map.xy_idx(x, y);
-                let gidx = grid.xy_idx(x, y);
-                grid.data[gidx] = if bm.map.tiles[midx].terrain == TerrainType::Floor {
-                    FLOOR_VAL
-                } else {
-                    WALL_VAL
-                };
-            }
-        }
-        let regions = get_all_regions(&grid, FLOOR_VAL, WALL_VAL);
-        let largest = regions.iter().map(|r| r.size).max().unwrap_or(0);
-        let min_size = ((w * h) as f32 * MIN_REGION_FRACTION * 0.5) as usize;
-        assert!(largest >= min_size, "expected at least {min_size}, got {largest}");
-    }
-
-    #[test]
-    fn forest_centre_clearing_is_walkable() {
-        let bm = build_forest(1);
-        let cx = bm.width / 2;
-        let cy = bm.height / 2;
-        let idx = bm.map.xy_idx(cx, cy);
-        assert_eq!(bm.map.tiles[idx].terrain, TerrainType::Floor);
-    }
-
-    #[test]
-    fn forest_stairs_stamps_up_stairs_at_start() {
-        let mut bm = build_forest(1);
-        ForestStairsBuilder.build_map(&mut bm);
-        let start = bm.starting_position.expect("start set by terrain builder");
-        let idx = bm.map.xy_idx(start.x, start.y);
-        assert_eq!(bm.map.tiles[idx].terrain, TerrainType::UpStairs);
-    }
-
-    #[test]
-    fn forest_stairs_stamps_down_stairs_on_non_final_floor() {
+    fn forest_stairs_at_west_and_east() {
         let mut bm = build_forest(1); // floor 1, MAX_FLOOR = 2
         ForestStairsBuilder.build_map(&mut bm);
-        let count = bm
-            .map
-            .tiles
-            .iter()
-            .filter(|t| t.terrain == TerrainType::DownStairs)
-            .count();
-        assert_eq!(count, 1, "exactly one DownStairs on non-final floor");
+        let west_idx = bm.map.xy_idx(CLEARING_INSET, bm.height / 2);
+        let east_idx = bm.map.xy_idx(bm.width - 1 - CLEARING_INSET, bm.height / 2);
+        assert_eq!(bm.map.tiles[west_idx].terrain, TerrainType::UpStairs);
+        assert_eq!(bm.map.tiles[east_idx].terrain, TerrainType::DownStairs);
     }
 
     #[test]
-    fn forest_stairs_omits_down_stairs_on_final_floor() {
-        let mut bm = build_forest(crate::constants::MAX_FLOOR); // floor 2
+    fn forest_final_floor_places_amulet_not_downstairs() {
+        let mut bm = build_forest(crate::constants::MAX_FLOOR);
         ForestStairsBuilder.build_map(&mut bm);
-        let count = bm
-            .map
-            .tiles
+        let east_idx = bm.map.xy_idx(bm.width - 1 - CLEARING_INSET, bm.height / 2);
+        assert_eq!(bm.map.tiles[east_idx].terrain, TerrainType::Floor,
+                   "east clearing must NOT be DownStairs on the final floor");
+        let amulet_count = bm
+            .item_spawn_list
             .iter()
-            .filter(|t| t.terrain == TerrainType::DownStairs)
+            .filter(|(_, name, _)| name == "Amulet of Yendor")
             .count();
-        assert_eq!(count, 0, "no DownStairs on final floor");
+        assert_eq!(amulet_count, 1, "final floor must spawn the Amulet");
+    }
+
+    #[test]
+    fn forest_west_to_east_is_walkable() {
+        // Sanity: walking east-west along the spine y=h/2 should stay
+        // on Floor (or Stairs) tiles all the way across.
+        let mut bm = build_forest(1);
+        ForestStairsBuilder.build_map(&mut bm);
+        let mid_y = bm.height / 2;
+        for x in CLEARING_INSET..=(bm.width - 1 - CLEARING_INSET) {
+            let idx = bm.map.xy_idx(x, mid_y);
+            let terrain = bm.map.tiles[idx].terrain;
+            assert!(
+                matches!(terrain, TerrainType::Floor | TerrainType::UpStairs | TerrainType::DownStairs),
+                "spine tile ({}, {}) must be walkable, got {:?}", x, mid_y, terrain,
+            );
+        }
+    }
+
+    /// Forest 1 and Forest 2 use different CA profiles. We can't
+    /// assert *which* is denser on any single seed, but we can at
+    /// least check that both depths produce a valid spine.
+    #[test]
+    fn forest_2_carving_produces_walkable_spine() {
+        let mut bm = build_forest(2);
+        ForestStairsBuilder.build_map(&mut bm);
+        let mid_y = bm.height / 2;
+        for x in CLEARING_INSET..=(bm.width - 1 - CLEARING_INSET) {
+            let idx = bm.map.xy_idx(x, mid_y);
+            let terrain = bm.map.tiles[idx].terrain;
+            assert!(
+                matches!(terrain, TerrainType::Floor | TerrainType::UpStairs | TerrainType::DownStairs),
+                "deep-forest spine tile ({}, {}) must be walkable, got {:?}", x, mid_y, terrain,
+            );
+        }
     }
 }

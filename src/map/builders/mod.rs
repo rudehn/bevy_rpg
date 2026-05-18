@@ -524,13 +524,15 @@ pub fn floor_builder(
     squad_counter: SquadIdCounter,
     _prefabs: Vec<PrefabTemplate>,
     _monster_manifest: &HashMap<String, MonsterAsset>,
-    _decoration_rules: Vec<crate::assets::DecorationRule>,
+    decoration_rules: Vec<crate::assets::DecorationRule>,
     _overworld: crate::map::world::OverworldState,
 ) -> BuilderChain {
     use crate::map::world::{FloorKind, floor_kind};
     match floor_kind(new_depth as u32) {
         FloorKind::Town => town_builder(new_depth, width, height, squad_counter),
-        FloorKind::Forest { .. } => forest_builder(new_depth, width, height, squad_counter),
+        FloorKind::Forest { .. } => {
+            forest_builder(new_depth, width, height, squad_counter, decoration_rules)
+        }
     }
 }
 
@@ -547,27 +549,43 @@ pub fn town_builder(
     builder.start_with(town::TownLayoutBuilder::new());
     builder.with_named("TownPortalBuilder", town::TownPortalBuilder::new());
     builder.with_named("TownDownStairsBuilder", town::TownDownStairsBuilder::new());
+    // Path network runs LAST so it picks up Portal + DownStairs + every
+    // building door already on the map and connects them via organic
+    // pathfinding (A*-style with per-tile noise).
+    builder.with_named("TownPathBuilder", town::TownPathBuilder::new());
     builder
 }
 
 /// Build one of the forest floors (1..=`MAX_FLOOR`). Cellular-automata
-/// trees, UpStairs at the centre clearing (where the player lands when
-/// descending), DownStairs at the farthest reachable tile — or, on the
-/// final floor, the Amulet of Yendor via `DistantExit`.
+/// trees + west/east end-clearings connected by a corridor (the spine).
+/// `<` sits at the west clearing (player arrival), `>` at the east
+/// clearing on non-final floors, and the Amulet at the east clearing
+/// on the final floor. Decoration propagation seeds grass/foliage
+/// across walkable tiles for visual texture.
 pub fn forest_builder(
     new_depth: i32,
     width: i32,
     height: i32,
     squad_counter: SquadIdCounter,
+    decoration_rules: Vec<crate::assets::DecorationRule>,
 ) -> BuilderChain {
     let map_name = format!("Forest {new_depth}");
     let mut builder = BuilderChain::new(new_depth, width, height, map_name, squad_counter);
     builder.start_with(forest::ForestTerrainBuilder::new());
-    // ForestStairsBuilder handles both halves of stair placement:
-    // UpStairs at the start, then either DownStairs at the farthest
-    // tile (non-final floor) or the Amulet at the farthest tile
-    // (final floor — `crate::constants::MAX_FLOOR`).
+    // Stairs are placed before decoration propagation so the seed
+    // points don't accidentally land on the UpStairs / DownStairs
+    // tile (decorations are skipped on non-Floor terrain).
     builder.with_named("ForestStairsBuilder", forest::ForestStairsBuilder::new());
+    // Decoration density scales with depth: Forest 2 (deep woods) gets
+    // more rubble + dead grass than Forest 1 (outer woods).
+    let density = match new_depth {
+        1 => 0.20,
+        _ => 0.35,
+    };
+    builder.with_named(
+        "DecorationPropagator",
+        Box::new(DecorationPropagator::new(decoration_rules, new_depth, density)),
+    );
     builder
 }
 
