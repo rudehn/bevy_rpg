@@ -220,6 +220,13 @@ pub fn player_spawn_or_move_system(
                 build_starting_skill_xp(&class_asset.starting_skills),
                 build_starting_skills(&class_asset.starting_skills),
                 crate::game::skills::SkillTraining::new(),
+                // Phase 4 (stealth): player carries an empty Awareness
+                // map. V1 doesn't treat the player as a perceiver
+                // (`MonsterPerception` is intentionally omitted), so
+                // this is purely a reservation for future stealthed
+                // monsters that need to track the player's awareness
+                // of *them*.
+                roguelike_engine::stealth::Awareness::default(),
             ))
             .insert((
                 Transform {
