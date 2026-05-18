@@ -70,6 +70,7 @@ pub mod stats;
 pub mod stealth;
 pub mod systems;
 pub mod skills;
+pub mod tactics;
 pub mod targeting;
 pub mod tile_promotion;
 pub mod turns;
