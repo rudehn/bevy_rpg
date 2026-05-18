@@ -130,7 +130,7 @@ pub fn fungal_light(x: i32, y: i32) -> LightSourceData {
 // stealth into the "noticeable but not blinding" band — at the edge of
 // a patch, `light_modifier` lands around -1; standing on it hits -3.
 pub const PHOSPHORESCENT_MOSS_LIGHT_RADIUS: f32 = 6.0;
-pub const PHOSPHORESCENT_MOSS_LIGHT_INTENSITY: f32 = 0.7;
+pub const PHOSPHORESCENT_MOSS_LIGHT_INTENSITY: f32 = 1.3;
 pub const PHOSPHORESCENT_MOSS_LIGHT_COLOR: [f32; 3] = [0.4, 1.0, 0.8];
 
 /// Create a phosphorescent-moss glow light source at the given position.
