@@ -7,9 +7,11 @@ roguelike. Player starts in a procedural **town** (floor 0). The town has
 a return Portal at its centre (the win-condition tile) and a `DownStairs`
 on the south border leading to the **forest** (floor 1 → floor 2). The
 Amulet of Yendor sits on floor 2 (the deepest authored floor); pick it up
-and return to the town Portal to win. Permadeath. **Monster and item
-spawns are currently disabled** in all pipelines — the amulet is the only
-item in the world. Content returns in a later phase. See
+and return to the town Portal to win. Permadeath. **Monster spawns are
+re-enabled (Voronoi-cell spawner — see [SPAWNING.md](docs/design/SPAWNING.md));
+the active roster is currently Giant Rat on Forest 1–2 with more
+incoming. Item spawns remain disabled — the amulet is the only item in
+the world.** See
 [OVERWORLD.md](docs/design/OVERWORLD.md) for the canonical writeup
 (forthcoming rename → `DUNGEON.md`). `MAX_FLOOR` lives in
 [src/constants.rs](src/constants.rs); raising it is content work — add
@@ -62,6 +64,7 @@ Design docs live in `docs/design/`. Read these before making gameplay changes.
 | [LIGHT.md](docs/design/LIGHT.md) | Per-tile light intensity + color, Bresenham LOS, resource vs. entity-driven sources, dirty propagation |
 | [ASCII_RENDERER.md](docs/design/ASCII_RENDERER.md) | Per-tile glyph variation, animated effects, lighting, color palettes |
 | [SAVE.md](docs/design/SAVE.md) | Save/load architecture — schema versions v0–v6, persisted shape, save/load triggers, permadeath flow, serde compatibility contract |
+| [SPAWNING.md](docs/design/SPAWNING.md) | Voronoi-cell monster spawner: pack-per-cell placement, FastNoise tunables, per-floor budget, exclusion buffer, pipeline ordering, tuning knobs |
 
 **Key design constraints:**
 - All loot comes from chests — no floor drops
@@ -150,7 +153,7 @@ src/
       cave_eroder.rs     # Cave wall erosion for organic shapes
       finish_doors.rs    # Final door placement/cleanup pass
       item_spawner.rs    # Places chests with loot (currently unused by overworld pipelines)
-      monster_spawner.rs # Populates spawn_list (currently unused by overworld pipelines)
+      voronoi_spawner.rs # Voronoi-cell pack spawner; works on any walkable map (forest, future dungeon). See docs/design/SPAWNING.md
       candle_spawner.rs  # Places light source entities (currently unused by overworld pipelines)
       start_point.rs     # Places player starting position
       exit_points.rs     # Places distant exit stairs

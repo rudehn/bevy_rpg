@@ -37,7 +37,7 @@ BrogueLikeBuilder          (initial map: rooms, corridors, doors)
   -> DecorationPropagator  (pass 2: fill edges around placed encounters)
   -> CandleSpawner         (place light sources on wall tiles)
   -> ItemSpawner           (place chests with loot)
-  -> MonsterSpawner        (populate rooms with enemies)
+  -> VoronoiSpawner        (populate the map with enemy packs — see SPAWNING.md)
   -> UnseenCuller          (remove tiles unreachable from player start)
   -> DistantExit           (place down-stairs far from player)
 ```

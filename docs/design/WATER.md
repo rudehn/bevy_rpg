@@ -208,8 +208,11 @@ Water/lava/chasm placement is the job of `LakeBuilder` — see
 `DUNGEON.md` "Lakes". Terrain definitions live in
 `assets/tiles.ron:73-112`; `Water`, `ShallowWater`, `Lava`, and `Chasm`
 are separate manifest entries each with their own ASCII glyph and color.
-`MonsterSpawner` honors `MovementMode`: aquatic monsters cluster into
-liquid-only candidate cells, so eels never spawn on dry floor.
+**Note (linear-floor milestone):** the active `VoronoiSpawner`
+(see [SPAWNING.md](SPAWNING.md)) builds its cells over **dry** walkable
+tiles only — `spawn_on_liquid` entries are silently dropped today. When
+an aquatic monster (Eel) is reintroduced, add a parallel water-cell
+pass that runs the same Voronoi flow over liquid tiles.
 
 ## Edge Cases & Resolved Decisions
 
