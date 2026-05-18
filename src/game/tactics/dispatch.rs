@@ -718,9 +718,52 @@ fn run_one_actor(entity: Entity, world: &mut World) -> TurnOutcome {
         resolve_turn(&snapshot, tactics, &mut adapter)
     };
 
+    // Stun / entangle short-circuit: emit the player-feedback log line
+    // and floating-text particle the legacy FSM provided. The resolver
+    // returns "StunnedSkip" / "EntangledSkip" as the tactic_name; we
+    // recognise them here to keep the resolver Bevy-free.
+    match outcome.tactic_name {
+        "StunnedSkip" => emit_stun_feedback(entity, world, StunKind::Stunned),
+        "EntangledSkip" => emit_stun_feedback(entity, world, StunKind::Entangled),
+        _ => {}
+    }
+
     apply_state_delta(entity, &outcome.delta, world);
     write_intent(entity, outcome.action, &id_map, world);
     outcome
+}
+
+enum StunKind {
+    Stunned,
+    Entangled,
+}
+
+/// Restores the FSM-era stun/entangle player feedback: log line +
+/// floating-text star particle. The resolver's `maybe_skip_turn` is
+/// pure (no log, no particles); this is the adapter-side wrapper.
+fn emit_stun_feedback(entity: Entity, world: &mut World, kind: StunKind) {
+    let name = world
+        .get::<crate::components::Name>(entity)
+        .map(|n| n.0.clone())
+        .unwrap_or_else(|| "Something".to_string());
+    let line = match kind {
+        StunKind::Stunned => format!("{} is stunned and cannot act!", name),
+        StunKind::Entangled => format!("{} struggles against the cobwebs!", name),
+    };
+    world
+        .resource_mut::<Messages<crate::ui::game_log::GameLogMessage>>()
+        .write(crate::ui::game_log::GameLogMessage(line));
+    if let Some(pos) = world.get::<Position>(entity) {
+        let world_pos = crate::game::particles::grid_to_world(pos.x, pos.y);
+        world
+            .resource_mut::<Messages<crate::game::particles::ParticleRequest>>()
+            .write(crate::game::particles::ParticleRequest::FloatingText {
+                world_pos,
+                text: "\u{2605}".to_string(),
+                color: bevy::prelude::Color::srgba(1.0, 1.0, 0.3, 1.0),
+                font_size: 5.0,
+            });
+    }
 }
 
 // =====================================================================

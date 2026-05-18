@@ -318,6 +318,8 @@ impl FloorPlan {
                 // Fresh spawns default to Hidden — perception fills in
                 // on the next tick.
                 awareness: crate::save::MonsterAwarenessSave::default(),
+                // Fresh spawns are never panicking.
+                fleeing: None,
             })
             .collect();
 
@@ -540,6 +542,11 @@ pub fn materialize_floor(
                 commands
                     .entity(entity)
                     .insert(crate::save::PendingAwarenessRestore(m.awareness.clone()));
+            }
+            // Restore sticky Fleeing overlay (schema v8+). Pre-v8 saves
+            // default this to None and the monster loads as not-fleeing.
+            if let Some(fleeing) = &m.fleeing {
+                commands.entity(entity).insert(fleeing.to_component());
             }
         } else {
             warnings.push(format!("Failed to spawn monster '{}'", m.name));
@@ -812,6 +819,7 @@ mod tests {
             patrol_route: None,
             submerged: false,
             awareness: Default::default(),
+            fleeing: None,
         });
         cached.items.push(SavedItem {
             x: 9,
@@ -941,6 +949,7 @@ mod tests {
             patrol_route: None,
             submerged: true,
             awareness: Default::default(),
+            fleeing: None,
         };
         cached.monsters.push(monster.clone());
         let plan = plan_floor(FloorSource::Restore { cached, ascending: true });

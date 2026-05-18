@@ -43,6 +43,9 @@ pub const FLEE_HYSTERESIS_MARGIN: f32 = 0.15;
 /// Game-side marker component overlaying the engine's `MonsterAIMode`.
 /// When present, the tactic snapshot builder synthesizes
 /// `AiMode::Fleeing { .. }` regardless of the engine mode value.
+///
+/// Persists across save/load via [`SavedFleeing`] in the save schema
+/// (added at schema v8).
 #[derive(Component, Debug, Clone, Copy)]
 pub struct Fleeing {
     /// `TurnManager.current_time` at the moment of entry. Used to
@@ -52,6 +55,39 @@ pub struct Fleeing {
     /// Tactics flee away from this position when no current threat
     /// is visible.
     pub last_known_threat_pos: Option<Point>,
+}
+
+/// Save-wire representation of [`Fleeing`]. `Point` doesn't derive
+/// `Serialize` directly, so we flatten to `(x, y)` here. Optional
+/// fields default to `None` for v7-and-earlier saves.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SavedFleeing {
+    pub since_turn: u32,
+    #[serde(default)]
+    pub last_known_threat_x: Option<i32>,
+    #[serde(default)]
+    pub last_known_threat_y: Option<i32>,
+}
+
+impl SavedFleeing {
+    pub fn from_component(f: &Fleeing) -> Self {
+        Self {
+            since_turn: f.since_turn,
+            last_known_threat_x: f.last_known_threat_pos.map(|p| p.x),
+            last_known_threat_y: f.last_known_threat_pos.map(|p| p.y),
+        }
+    }
+
+    pub fn to_component(&self) -> Fleeing {
+        let last_known_threat_pos = match (self.last_known_threat_x, self.last_known_threat_y) {
+            (Some(x), Some(y)) => Some(Point::new(x, y)),
+            _ => None,
+        };
+        Fleeing {
+            since_turn: self.since_turn,
+            last_known_threat_pos,
+        }
+    }
 }
 
 // =====================================================================

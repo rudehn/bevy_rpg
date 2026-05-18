@@ -86,7 +86,13 @@ const GAME_SAVE_KEY: &str = "ironveil_save";
 ///   `Aware` collapses to `Searching{ player.pos, +20 }` at save time;
 ///   `Suspicious` collapses to `Hidden`. `#[serde(default)]` keeps v6
 ///   saves loadable with all monsters defaulting to `Hidden`.
-pub const SAVE_SCHEMA_VERSION: u32 = 7;
+/// - **v8**: Tactic registry — `SavedMonster.fleeing: Option<SavedFleeing>`
+///   persists the sticky `Fleeing` overlay component (since_turn +
+///   last_known_threat_pos). `#[serde(default)]` keeps v7 saves
+///   loadable; pre-v8 monsters load with `None` (not fleeing), which
+///   matches the historical behaviour where Fleeing was always lost on
+///   load anyway.
+pub const SAVE_SCHEMA_VERSION: u32 = 8;
 
 // ---- Migration chain ----
 
@@ -266,6 +272,18 @@ impl SaveMigration for MigrateV6ToV7 {
     fn migrate(&self, data: &str) -> Result<String, String> { Ok(data.to_string()) }
 }
 
+/// v7 → v8: tactic-registry migration adds
+/// `SavedMonster.fleeing: Option<SavedFleeing>`. The field is
+/// `#[serde(default)]` (defaults to `None`), so the migration is a
+/// no-op — v7 monsters load as not-fleeing, which matches the
+/// historical behaviour where sticky panic was always lost on save.
+struct MigrateV7ToV8;
+impl SaveMigration for MigrateV7ToV8 {
+    fn from_version(&self) -> u32 { 7 }
+    fn to_version(&self) -> u32 { 8 }
+    fn migrate(&self, data: &str) -> Result<String, String> { Ok(data.to_string()) }
+}
+
 fn migrations() -> Vec<Box<dyn SaveMigration>> {
     vec![
         Box::new(MigrateV0ToV1),
@@ -275,6 +293,7 @@ fn migrations() -> Vec<Box<dyn SaveMigration>> {
         Box::new(MigrateV4ToV5),
         Box::new(MigrateV5ToV6),
         Box::new(MigrateV6ToV7),
+        Box::new(MigrateV7ToV8),
     ]
 }
 
@@ -509,6 +528,11 @@ pub struct SavedMonster {
     /// default to `Hidden` (matches a fresh perception state).
     #[serde(default)]
     pub awareness: MonsterAwarenessSave,
+    /// Tactic-registry migration (schema v8+): sticky Fleeing overlay.
+    /// `None` for monsters that weren't panicking when the save was
+    /// taken (the common case). Pre-v8 saves default to `None`.
+    #[serde(default)]
+    pub fleeing: Option<crate::game::fleeing::SavedFleeing>,
 }
 
 impl SavedMonster {
@@ -1014,6 +1038,7 @@ pub fn auto_save_system(
             Option<&crate::game::ai::PatrolRoute>,
             Has<crate::components::Submerged>,
             Option<&roguelike_engine::stealth::Awareness>,
+            Option<&crate::game::fleeing::Fleeing>,
         ),
         With<Monster>,
     >,
@@ -1105,7 +1130,7 @@ pub fn auto_save_system(
     let monsters: Vec<SavedMonster> = monster_query
         .iter()
         .map(
-            |(mpos, name, health, squad_id, squad_config, is_leader, patrol_route, is_submerged, awareness)| {
+            |(mpos, name, health, squad_id, squad_config, is_leader, patrol_route, is_submerged, awareness, fleeing)| {
                 let awareness_save = match (awareness, player_entity) {
                     (Some(a), Some(pe)) => {
                         degrade_awareness_for_save(a, pe, player_pos_point, now)
@@ -1123,6 +1148,7 @@ pub fn auto_save_system(
                     patrol_route: patrol_route.cloned(),
                     submerged: is_submerged,
                     awareness: awareness_save,
+                    fleeing: fleeing.map(crate::game::fleeing::SavedFleeing::from_component),
                 }
             },
         )
@@ -1607,6 +1633,7 @@ mod tests {
             patrol_route: None,
             submerged: false,
             awareness: MonsterAwarenessSave::default(),
+            fleeing: None,
         }
     }
 
@@ -1626,6 +1653,7 @@ mod tests {
             }),
             submerged: false,
             awareness: MonsterAwarenessSave::default(),
+            fleeing: None,
         }
     }
 
@@ -1648,6 +1676,7 @@ mod tests {
             }),
             submerged: true,
             awareness: MonsterAwarenessSave::default(),
+            fleeing: None,
         }
     }
 
@@ -2174,6 +2203,45 @@ mod tests {
             }
             _ => panic!("expected AreaRoam"),
         }
+    }
+
+    #[test]
+    fn roundtrip_monster_fleeing_state() {
+        use crate::game::fleeing::SavedFleeing;
+        let m = SavedMonster {
+            fleeing: Some(SavedFleeing {
+                since_turn: 142,
+                last_known_threat_x: Some(12),
+                last_known_threat_y: Some(7),
+            }),
+            ..basic_monster()
+        };
+        let loaded: SavedMonster = from_ron(&to_ron(&m));
+        let f = loaded.fleeing.expect("Fleeing should survive roundtrip");
+        assert_eq!(f.since_turn, 142);
+        assert_eq!(f.last_known_threat_x, Some(12));
+        assert_eq!(f.last_known_threat_y, Some(7));
+    }
+
+    #[test]
+    fn roundtrip_monster_without_fleeing() {
+        let m = basic_monster();
+        let loaded: SavedMonster = from_ron(&to_ron(&m));
+        assert!(loaded.fleeing.is_none());
+    }
+
+    #[test]
+    fn pre_v8_save_loads_with_no_fleeing() {
+        // RON without a `fleeing:` field must round-trip via serde defaults
+        // — that's the v7→v8 migration contract (no-op + serde(default)).
+        let ron = r#"(
+            x: 5, y: 10, name: "Goblin", hp_current: 8,
+            squad_id: None, is_leader: false, squad_config: None,
+            patrol_route: None, submerged: false,
+            awareness: (state: Hidden),
+        )"#;
+        let loaded: SavedMonster = from_ron(ron);
+        assert!(loaded.fleeing.is_none());
     }
 
     #[test]
@@ -2849,8 +2917,8 @@ mod tests {
     // =====================================================================
 
     #[test]
-    fn schema_version_is_seven() {
-        assert_eq!(SAVE_SCHEMA_VERSION, 7);
+    fn schema_version_is_eight() {
+        assert_eq!(SAVE_SCHEMA_VERSION, 8);
     }
 
     #[test]
@@ -2933,7 +3001,7 @@ mod tests {
     #[test]
     fn migrations_chain_is_ordered() {
         let migs = migrations();
-        assert_eq!(migs.len(), 7);
+        assert_eq!(migs.len(), 8);
         assert_eq!(migs[0].from_version(), 0);
         assert_eq!(migs[0].to_version(), 1);
         assert_eq!(migs[1].from_version(), 1);
@@ -2948,6 +3016,8 @@ mod tests {
         assert_eq!(migs[5].to_version(), 6);
         assert_eq!(migs[6].from_version(), 6);
         assert_eq!(migs[6].to_version(), 7);
+        assert_eq!(migs[7].from_version(), 7);
+        assert_eq!(migs[7].to_version(), 8);
     }
 
     // =====================================================================

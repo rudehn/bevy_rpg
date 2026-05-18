@@ -399,6 +399,9 @@ pub fn chasm_fall_reaction_system(
                             // the player on a fresh floor; degraded awareness
                             // would be a stale carryover.
                             awareness: crate::save::MonsterAwarenessSave::default(),
+                            // Same reasoning: drop sticky Fleeing on a fresh
+                            // floor. The new environment is its own fight.
+                            fleeing: None,
                         };
                         fallen.monsters.entry(dest_floor).or_default().push(saved);
 
