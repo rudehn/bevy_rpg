@@ -44,9 +44,7 @@ mod finish_doors;
 mod isolated_area_culler;
 pub mod item_spawner;
 mod lake_builder;
-pub mod amulet_placer;
 pub mod forest;
-pub mod temple;
 pub mod town;
 pub mod monster_spawner;
 mod pillar_culler;
@@ -521,69 +519,24 @@ pub fn floor_builder(
     new_depth: i32,
     width: i32,
     height: i32,
-    spawn_table: &[MonsterSpawnInfo],
+    _spawn_table: &[MonsterSpawnInfo],
     _item_spawn_table: &[ItemSpawnInfo],
     squad_counter: SquadIdCounter,
     _prefabs: Vec<PrefabTemplate>,
     _monster_manifest: &HashMap<String, MonsterAsset>,
-    decoration_rules: Vec<crate::assets::DecorationRule>,
-    overworld: crate::map::world::OverworldState,
+    _decoration_rules: Vec<crate::assets::DecorationRule>,
+    _overworld: crate::map::world::OverworldState,
 ) -> BuilderChain {
-    // Overworld dispatch — town and forest tiles use their own pipelines
-    // and skip the dungeon spawners entirely (no monsters / items yet).
     use crate::map::world::{FloorKind, floor_kind};
-    if new_depth >= 0 && new_depth <= 11 {
-        match floor_kind(new_depth as u32) {
-            FloorKind::Town => return town_builder(new_depth, width, height, squad_counter),
-            FloorKind::Forest(_) => {
-                let is_entrance =
-                    new_depth as u32 == overworld.temple_entrance_floor;
-                return forest_builder(new_depth, width, height, squad_counter, is_entrance);
-            }
-            FloorKind::Temple(_) => {
-                return temple_builder(
-                    new_depth, width, height, squad_counter, overworld,
-                );
-            }
-        }
+    match floor_kind(new_depth as u32) {
+        FloorKind::Town => town_builder(new_depth, width, height, squad_counter),
+        FloorKind::Forest { .. } => forest_builder(new_depth, width, height, squad_counter),
     }
-
-    let mut map_name = "Floor ".to_owned() + &new_depth.to_string();
-    if new_depth == 1 {
-        map_name = "Entrance".to_owned();
-    }
-    let profile = floor_profile_for_depth(new_depth);
-    let mut builder = BuilderChain::new(new_depth, width, height, map_name, squad_counter);
-
-    // MAP Generation
-    builder.start_with(Box::new(brogelike::BrogueLikeBuilder::dungeon(
-        new_depth, width, height, profile,
-    )));
-    // builder.with_named("DiagonalCuller", DiagonalCuller::new());
-    builder.with_named("StartPoint", Box::new(StartPointBuilder::new()));
-    builder.with_named("LakeBuilder", Box::new(LakeBuilder::new(new_depth)));
-    // builder.with_named("DiagonalCuller2", DiagonalCuller::new());
-    // builder.with_named("PillarCuller", PillarCuller::new());
-    // builder.with_named("FinishDoors", FinishDoors::new());
-    // builder.with_named("PrefabPlacer", PrefabPlacer::new(prefabs));
-    // builder.with_named("IsolatedAreaCuller", IsolatedAreaCuller::new());
-    // --- Spawners run after IsolatedAreaCuller so entities are never placed in walled-off regions ---
-    // builder.with_named("CandleSpawner", CandleSpawner::new());
-    builder.with_named("MonsterSpawner", MonsterSpawner::new(spawn_table));
-    // builder.with_named("ItemSpawner", ItemSpawner::new());
-    builder.with_named(
-        "DecorationPropagator",
-        Box::new(DecorationPropagator::new(decoration_rules, new_depth, profile.decoration_density)),
-    );
-    builder.with_named("DistantExit", DistantExit::new());
-
-    builder
 }
 
-/// Build the town hub (floor 0). Procedural plaza + buildings + 8 edge
-/// exits to the surrounding forest tiles + a return Portal at the
-/// plaza center. No monsters, items, or chests — content lands in a
-/// later phase.
+/// Build the town hub (floor 0). Open Floor with a handful of small
+/// buildings, a Portal at the centre (the win-condition return point),
+/// and one DownStairs on the south border for the descent into Forest 1.
 pub fn town_builder(
     new_depth: i32,
     width: i32,
@@ -592,78 +545,29 @@ pub fn town_builder(
 ) -> BuilderChain {
     let mut builder = BuilderChain::new(new_depth, width, height, "Town", squad_counter);
     builder.start_with(town::TownLayoutBuilder::new());
-    builder.with_named("TownBorderStairsBuilder", town::TownBorderStairsBuilder::new());
-    builder.with_named("TownPathBuilder", town::TownPathBuilder::new());
     builder.with_named("TownPortalBuilder", town::TownPortalBuilder::new());
+    builder.with_named("TownDownStairsBuilder", town::TownDownStairsBuilder::new());
     builder
 }
 
-/// Build one of the 8 forest tiles (floors 1..=8) — cellular automata
-/// trees, one UpStairs back to the town stair the player came in on,
-/// and (on the chosen entrance forest) one DownStairs to temple 1.
-/// No monster / item spawns.
+/// Build one of the forest floors (1..=`MAX_FLOOR`). Cellular-automata
+/// trees, UpStairs at the centre clearing (where the player lands when
+/// descending), DownStairs at the farthest reachable tile — or, on the
+/// final floor, the Amulet of Yendor via `DistantExit`.
 pub fn forest_builder(
     new_depth: i32,
     width: i32,
     height: i32,
     squad_counter: SquadIdCounter,
-    is_temple_entrance: bool,
 ) -> BuilderChain {
-    let mut builder = BuilderChain::new(
-        new_depth, width, height,
-        format!("Forest {new_depth}"),
-        squad_counter,
-    );
-    builder.start_with(forest::ForestTerrainBuilder::new());
-    builder.with_named("ForestBorderStairsBuilder", forest::ForestBorderStairsBuilder::new());
-    if is_temple_entrance {
-        builder.with_named("TempleEntranceBuilder", forest::TempleEntranceBuilder::new());
-    }
-    builder
-}
-
-/// Build a temple floor (depth 9..=11). Reuses `BrogueLikeBuilder`
-/// for the geometry and skips all spawners; on temple-1 wires the
-/// UpStairs back to the forest entrance via `TempleUpstairsLinker`.
-pub fn temple_builder(
-    new_depth: i32,
-    width: i32,
-    height: i32,
-    squad_counter: SquadIdCounter,
-    overworld: crate::map::world::OverworldState,
-) -> BuilderChain {
-    let profile = FloorProfile {
-        cavern_weight: 30,
-        force_cavern_start: false,
-        target_rooms: 12,
-        hallway_chance: 30,
-        erosion_percent: 50,
-        relaxed_fitting: true,
-        decoration_density: 0.5,
-    };
-    let map_name = format!("Temple {}", new_depth - 8);
+    let map_name = format!("Forest {new_depth}");
     let mut builder = BuilderChain::new(new_depth, width, height, map_name, squad_counter);
-    builder.start_with(Box::new(brogelike::BrogueLikeBuilder::dungeon(
-        new_depth, width, height, profile,
-    )));
-    builder.with_named("StartPoint", Box::new(StartPointBuilder::new()));
-    // Temple 3 is the bottom — the amulet placer takes the spot
-    // where DistantExit would have put DownStairs, so only stamp
-    // downstairs for temple floors 1 and 2.
-    if new_depth < 11 {
-        builder.with_named("DistantExit", DistantExit::new());
-    } else {
-        builder.with_named("AmuletPlacer", amulet_placer::AmuletPlacerBuilder::new());
-    }
-    // Temple 1 needs its UpStairs to return to the forest entrance.
-    if new_depth == 9
-        && let Some(forest_pos) = overworld.temple_entrance_pos
-    {
-        builder.with_named(
-            "TempleUpstairsLinker",
-            temple::TempleUpstairsLinker::boxed(overworld.temple_entrance_floor, forest_pos),
-        );
-    }
+    builder.start_with(forest::ForestTerrainBuilder::new());
+    // ForestStairsBuilder handles both halves of stair placement:
+    // UpStairs at the start, then either DownStairs at the farthest
+    // tile (non-final floor) or the Amulet at the farthest tile
+    // (final floor — `crate::constants::MAX_FLOOR`).
+    builder.with_named("ForestStairsBuilder", forest::ForestStairsBuilder::new());
     builder
 }
 

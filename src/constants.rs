@@ -14,8 +14,11 @@ pub use roguelike_engine::constants::{
 
 // --- Game-specific balance constants ---
 
-/// The deepest floor in the dungeon. The final boss spawns here instead of stairs.
-pub const MAX_FLOOR: i32 = 26;
+/// The deepest floor in the dungeon. Player can descend 0 → 1 → 2:
+/// floor 0 is the town hub (return Portal lives here), floors 1..=2
+/// are forest. The Amulet of Yendor sits on floor 2; return to the
+/// town Portal to win.
+pub const MAX_FLOOR: i32 = 2;
 
 /// Damage dice used when no weapon is equipped (bare fists).
 pub const UNARMED_DAMAGE: &str = "1d4";

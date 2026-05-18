@@ -542,7 +542,7 @@ fn player_transition_system(
                     destination_pos: None,
                 });
             }
-            TerrainType::UpStairs if floor.0 > 1 => {
+            TerrainType::UpStairs if floor.0 > 0 => {
                 writer.write(MapTransitionMessage {
                     destination_floor: floor.0 - 1,
                     destination_pos: None,
@@ -702,9 +702,10 @@ pub fn spawn_dungeon(
 
         // Restore overworld state from the save so the temple entrance
         // stays put across reloads.
-        extras.overworld.temple_entrance_floor = save_data.overworld.temple_entrance_floor;
-        extras.overworld.temple_entrance_pos =
-            save_data.overworld.temple_entrance_pos.map(|p| crate::components::Position { x: p[0], y: p[1] });
+        // Linear-floor scheme: OverworldState carries no per-run
+        // overworld topology to restore. Future fields (faction
+        // influence, NPC state) land here.
+        let _ = save_data; // suppress unused-binding warning if save_data isn't read elsewhere
 
         let saved_floor_cache: std::collections::HashMap<u32, crate::save::CachedFloorSave> =
             save_data.floor_cache.clone();
@@ -763,20 +764,17 @@ pub fn spawn_dungeon(
             prefabs,
             &monster_manifest.monsters,
             decoration_rules,
-            *extras.overworld,
+            extras.overworld.clone(),
         );
         builder.build_map();
         // Write the updated counter back so future floors don't reuse IDs.
         *extras.squad_counter = builder.build_data.squad_counter.clone();
 
-        // If we just built the temple-entrance forest tile,
-        // `TempleEntranceBuilder` stamped its chosen DownStairs
-        // coordinate onto `build_data.overworld_edit`. Latch it onto
-        // `OverworldState` so temple floor 1's UpStairs (built later)
-        // can return to it. No map scan needed.
-        if let Some(entrance) = builder.build_data.overworld_edit {
-            extras.overworld.temple_entrance_pos = Some(entrance);
-        }
+        // Legacy: TempleEntranceBuilder used to stamp the temple
+        // entrance position here. The linear-floor scheme has no
+        // temple entrance to track. Field retained on BuilderMap for
+        // future use (e.g. boss-room anchor).
+        let _ = builder.build_data.overworld_edit;
 
         // Reset RunStats on new game (town, generate path only — the
         // town is floor 0 and is always the first floor a fresh run

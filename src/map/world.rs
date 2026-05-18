@@ -1,413 +1,138 @@
-//! Overworld topology — floor index scheme and direction helpers.
+//! Floor index scheme and rendering-theme helpers for the linear
+//! roguelike layout.
 //!
-//! The overworld is a 3×3 grid: town at center (floor 0), 8 forest
-//! tiles surrounding it (floors 1..=8), then a 3-floor temple beneath
-//! one of the forest tiles (floors 9..=11). See
-//! `docs/design/DUNGEON.md` for the full layout.
+//! The game is a traditional descend-stairs roguelike: floor 0 is the
+//! town hub, floors 1..=`MAX_FLOOR` are the dungeon (currently two
+//! forest floors). Going down a `>` tile takes you to `floor + 1`;
+//! going up `<` returns you to `floor - 1`. The town's Portal tile is
+//! the win-condition return point once the amulet is recovered.
+//!
+//! This module previously hosted an overworld 3×3 grid topology
+//! (GridDir / neighbor / cardinal stair helpers + `MapExitTile`
+//! components). That was ripped out when the game pivoted back to
+//! linear floors; see `docs/design/DUNGEON.md` for the writeup.
 
 use bevy::prelude::{Color, Component, Resource};
 
-use crate::assets::TileManifest;
 use crate::components::Position;
-use crate::map::map::MAP_SIZE;
+
+use crate::assets::TileManifest;
 use crate::map::tile::{Tile, TerrainType, resolve_tile_bg, resolve_tile_display};
 
-/// Per-run overworld state. Picked at the start of a new game and
-/// persisted across saves so the temple stays in the same forest tile
-/// for the duration of a run.
-#[derive(Resource, Clone, Copy, Debug)]
-pub struct OverworldState {
-    /// Which of the 8 forest tiles contains the temple entrance (1..=8).
-    pub temple_entrance_floor: u32,
-    /// Where the DownStairs sit on that forest tile. Written by the
-    /// forest builder when it stamps the entrance; read by the temple
-    /// builder so temple floor 1's UpStairs can return to that exact
-    /// tile.
-    pub temple_entrance_pos: Option<Position>,
-}
+/// Final floor of the descent. Player can descend 0 → 1 → 2; floor 2
+/// is the deepest authored floor (holds the amulet). Raising this is
+/// content work — add more `FloorKind::Forest` floors or new variants.
+pub const MAX_FLOOR: u32 = 2;
 
-impl Default for OverworldState {
-    fn default() -> Self {
-        Self {
-            // Sentinel — `seed_overworld_state` rerolls this when a new
-            // run starts. We avoid randomising in `Default` so unit
-            // tests that init the resource get a deterministic value.
-            temple_entrance_floor: 1,
-            temple_entrance_pos: None,
-        }
-    }
-}
-
-/// Pick a random forest tile (1..=8) as the temple entrance. Called
-/// when a new run begins (via `OnEnter(AppState::InGame)` in
-/// `DungeonPlugin`). The save-load path overwrites this from
-/// `GameSaveData` so the entrance stays put across reloads.
-pub fn seed_overworld_state(state: &mut OverworldState) {
-    let mut rng = bracket_lib::random::RandomNumberGenerator::new();
-    state.temple_entrance_floor = rng.range(1, 9) as u32;
-    state.temple_entrance_pos = None;
-}
-
-/// Tagged onto a tile entity to mark it as a one-way transition to
-/// another floor.
-///
-/// Used for overworld edge tiles, the temple entrance, and the temple
-/// exit. The legacy `TerrainType::DownStairs` / `UpStairs` still work
-/// without this component (they imply `floor ± 1` with stair-relative
-/// arrival); this component is the explicit-destination version.
-#[derive(Component, Clone, Copy, Debug)]
-pub struct MapExitTile {
-    pub destination_floor: u32,
-    /// `Some(pos)` means the player arrives at exactly `pos`.
-    /// `None` means the destination floor decides (its UpStairs /
-    /// DownStairs position, depending on which way we travelled).
-    pub destination_pos: Option<Position>,
-}
-
-/// Eight-way grid direction.
-///
-/// Used for both overworld navigation (which neighbor a floor is) and
-/// edge-tile placement (which wall an exit sits on).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum GridDir {
-    NW, N, NE,
-    W,      E,
-    SW, S, SE,
-}
-
-impl GridDir {
-    pub const ALL: [GridDir; 8] = [
-        GridDir::NW, GridDir::N, GridDir::NE,
-        GridDir::W,              GridDir::E,
-        GridDir::SW, GridDir::S, GridDir::SE,
-    ];
-
-    /// (dx, dy) on the 3×3 grid. dy follows screen convention (south = +1).
-    pub fn delta(self) -> (i32, i32) {
-        match self {
-            GridDir::NW => (-1, -1),
-            GridDir::N  => ( 0, -1),
-            GridDir::NE => ( 1, -1),
-            GridDir::W  => (-1,  0),
-            GridDir::E  => ( 1,  0),
-            GridDir::SW => (-1,  1),
-            GridDir::S  => ( 0,  1),
-            GridDir::SE => ( 1,  1),
-        }
-    }
-}
-
-/// What kind of map a `Floor(u32)` index represents.
+/// What kind of map a `Floor(u32)` index represents. Drives the
+/// builder pipeline + visual theme.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FloorKind {
-    /// Floor 0 — the hub town.
+    /// Floor 0 — the hub town with the return portal.
     Town,
-    /// Floors 1..=8 — one of the 8 forest tiles.
-    Forest(GridDir),
-    /// Floors 9..=11 — temple level 1, 2, or 3.
-    Temple(u8),
-}
-
-/// Forest floor index for a given grid direction (1..=8).
-pub fn forest_index(dir: GridDir) -> u32 {
-    match dir {
-        GridDir::NW => 1,
-        GridDir::N  => 2,
-        GridDir::NE => 3,
-        GridDir::W  => 4,
-        GridDir::E  => 5,
-        GridDir::SW => 6,
-        GridDir::S  => 7,
-        GridDir::SE => 8,
-    }
-}
-
-fn forest_dir(index: u32) -> Option<GridDir> {
-    match index {
-        1 => Some(GridDir::NW),
-        2 => Some(GridDir::N),
-        3 => Some(GridDir::NE),
-        4 => Some(GridDir::W),
-        5 => Some(GridDir::E),
-        6 => Some(GridDir::SW),
-        7 => Some(GridDir::S),
-        8 => Some(GridDir::SE),
-        _ => None,
-    }
+    /// Floors 1..=MAX_FLOOR — forest descent. `depth` is the floor's
+    /// distance from town (1 = first forest, 2 = deeper forest). Kept
+    /// as a `u8` so future content can branch on it (boss floors,
+    /// thematic variation per depth).
+    Forest { depth: u8 },
 }
 
 /// Classify a `Floor(u32)` index into a `FloorKind`.
 ///
-/// Panics on out-of-range indices (>= 12) — the floor scheme is closed
-/// and any out-of-range floor is a programmer error.
+/// Panics on out-of-range indices — the floor scheme is closed.
 pub fn floor_kind(floor: u32) -> FloorKind {
     match floor {
         0 => FloorKind::Town,
-        1..=8 => FloorKind::Forest(forest_dir(floor).unwrap()),
-        9 => FloorKind::Temple(1),
-        10 => FloorKind::Temple(2),
-        11 => FloorKind::Temple(3),
-        other => panic!("floor_kind: invalid floor index {other}"),
+        f if f <= MAX_FLOOR => FloorKind::Forest { depth: f as u8 },
+        other => panic!("floor_kind: floor {other} is beyond MAX_FLOOR ({MAX_FLOOR})"),
     }
 }
 
-/// The reverse of a direction (180° turn).
-pub fn mirror_dir(d: GridDir) -> GridDir {
-    match d {
-        GridDir::NW => GridDir::SE,
-        GridDir::N  => GridDir::S,
-        GridDir::NE => GridDir::SW,
-        GridDir::W  => GridDir::E,
-        GridDir::E  => GridDir::W,
-        GridDir::SW => GridDir::NE,
-        GridDir::S  => GridDir::N,
-        GridDir::SE => GridDir::NW,
-    }
-}
+/// Per-run state that survives across floor transitions. Kept as a
+/// struct so future per-run content (faction influence, NPC state,
+/// quest flags) has a home, even though it's empty today.
+#[derive(Resource, Clone, Debug, Default)]
+pub struct OverworldState {}
 
-/// The neighbor on the 3×3 overworld grid in direction `dir`, or
-/// `None` if there is no neighbor (e.g., walking N off the NW forest
-/// tile would leave the world).
+/// Optional component on a tile entity that overrides the default
+/// `>` / `<` terrain-based transition with an **explicit** destination.
 ///
-/// Temple floors have no overworld neighbors — they connect by stairs.
-pub fn neighbor(from: u32, dir: GridDir) -> Option<u32> {
-    // Grid coords with town at (0, 0).
-    let (fx, fy) = match floor_kind(from) {
-        FloorKind::Town => (0, 0),
-        FloorKind::Forest(d) => d.delta(),
-        FloorKind::Temple(_) => return None,
-    };
-    let (dx, dy) = dir.delta();
-    let (nx, ny) = (fx + dx, fy + dy);
-    if !(-1..=1).contains(&nx) || !(-1..=1).contains(&ny) {
-        return None;
-    }
-    if (nx, ny) == (0, 0) {
-        return Some(0);
-    }
-    // Find the GridDir whose delta is (nx, ny).
-    let neighbor_dir = GridDir::ALL.into_iter().find(|d| d.delta() == (nx, ny))?;
-    Some(forest_index(neighbor_dir))
+/// In the linear-floor scheme, terrain stairs are sufficient and this
+/// component is rarely used — but the materializer still threads
+/// `exit_tile_spawn_list` through the build pipeline so future content
+/// (warps, fast-travel, scripted teleporters) can stamp explicit
+/// transitions without re-introducing infrastructure.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct MapExitTile {
+    pub destination_floor: u32,
+    /// `Some(pos)` means the player arrives at exactly `pos`. `None`
+    /// means the destination floor decides (its `<` / `>` position).
+    pub destination_pos: Option<Position>,
 }
 
-/// The valid overworld exit directions for a given floor.
-///
-/// - Town: all 8 directions.
-/// - Forest tile: only the directions that lead to another in-bounds
-///   overworld tile (so corner forests have 3 inward exits, edge
-///   forests have 5).
-/// - Temple: none.
-pub fn valid_exits(floor: u32) -> Vec<GridDir> {
-    GridDir::ALL
-        .into_iter()
-        .filter(|d| neighbor(floor, *d).is_some())
-        .collect()
+/// Reseed per-run state at the start of a new game. No-op today;
+/// future seeders hook here.
+pub fn seed_overworld_state(_state: &mut OverworldState) {
+    // Intentionally empty.
 }
 
-/// The 4 cardinal compass directions. Used for map-to-map
-/// transitions: each border of a map maps to the mirror border of
-/// the destination map.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum CardinalDir { N, S, E, W }
-
-impl CardinalDir {
-    pub const ALL: [CardinalDir; 4] = [
-        CardinalDir::N, CardinalDir::S, CardinalDir::E, CardinalDir::W,
-    ];
-
-    pub fn mirror(self) -> Self {
-        match self {
-            CardinalDir::N => CardinalDir::S,
-            CardinalDir::S => CardinalDir::N,
-            CardinalDir::E => CardinalDir::W,
-            CardinalDir::W => CardinalDir::E,
-        }
-    }
-
-    pub fn delta(self) -> (i32, i32) {
-        match self {
-            CardinalDir::N => (0, -1),
-            CardinalDir::S => (0, 1),
-            CardinalDir::E => (1, 0),
-            CardinalDir::W => (-1, 0),
-        }
-    }
-
-    /// Promote to a GridDir so we can use the existing `forest_index`
-    /// table for floor numbering.
-    fn as_grid(self) -> GridDir {
-        match self {
-            CardinalDir::N => GridDir::N,
-            CardinalDir::S => GridDir::S,
-            CardinalDir::E => GridDir::E,
-            CardinalDir::W => GridDir::W,
-        }
-    }
-}
-
-/// How many stair tiles per border. Spread evenly along the border so
-/// the K-th stair pairs with the K-th stair on the destination's
-/// mirror border ("walk off the east → arrive on the west, same row").
-pub const STAIRS_PER_BORDER: usize = 4;
-
-/// Positions of the 4 stair tiles along the border in direction `dir`,
-/// in K-order from low to high coordinate. **Clustered side-by-side
-/// at the centre of the border** — 4 consecutive tiles whose midpoint
-/// is the map's centre x (for N/S) or centre y (for E/W). Always one
-/// tile inside the map border so the stair is reachable from the
-/// interior.
-pub fn border_stair_positions(dir: CardinalDir) -> [Position; STAIRS_PER_BORDER] {
-    let w = MAP_SIZE.x as i32;
-    let h = MAP_SIZE.y as i32;
-    let xs = cluster(w);
-    let ys = cluster(h);
-    match dir {
-        CardinalDir::N => [
-            Position { x: xs[0], y: 1 },
-            Position { x: xs[1], y: 1 },
-            Position { x: xs[2], y: 1 },
-            Position { x: xs[3], y: 1 },
-        ],
-        CardinalDir::S => [
-            Position { x: xs[0], y: h - 2 },
-            Position { x: xs[1], y: h - 2 },
-            Position { x: xs[2], y: h - 2 },
-            Position { x: xs[3], y: h - 2 },
-        ],
-        CardinalDir::E => [
-            Position { x: w - 2, y: ys[0] },
-            Position { x: w - 2, y: ys[1] },
-            Position { x: w - 2, y: ys[2] },
-            Position { x: w - 2, y: ys[3] },
-        ],
-        CardinalDir::W => [
-            Position { x: 1, y: ys[0] },
-            Position { x: 1, y: ys[1] },
-            Position { x: 1, y: ys[2] },
-            Position { x: 1, y: ys[3] },
-        ],
-    }
-}
-
-/// Where the player arrives when stepping off the K-th stair on the
-/// `exit_dir` border. Lands on the K-th stair on the destination's
-/// mirror border so the player ends up at the same column (N↔S) or
-/// row (E↔W) — the StairCooldown prevents an immediate re-trigger.
-pub fn arrival_at_mirror(exit_dir: CardinalDir, k: usize) -> Position {
-    border_stair_positions(exit_dir.mirror())[k]
-}
-
-/// 4 consecutive coordinates centred on the midpoint of `length`. For
-/// length=80 returns [38, 39, 40, 41]; for length=60 returns [28, 29,
-/// 30, 31]. The cluster matches on the mirror border, so the K-th
-/// stair lines up with the K-th destination stair.
-fn cluster(length: i32) -> [i32; 4] {
-    let mid = length / 2;
-    [mid - 2, mid - 1, mid, mid + 1]
-}
-
-/// The neighbour floor in cardinal direction `dir`, or `None` if the
-/// step would leave the 3×3 overworld grid (or this floor is a
-/// temple). Always uses the cardinal-only restriction — no diagonals.
-pub fn cardinal_neighbor(floor: u32, dir: CardinalDir) -> Option<u32> {
-    let (col, row) = match floor_kind(floor) {
-        FloorKind::Town => (1, 1),
-        FloorKind::Forest(d) => {
-            let (dx, dy) = d.delta();
-            (1 + dx, 1 + dy)
-        }
-        FloorKind::Temple(_) => return None,
-    };
-    let (dx, dy) = dir.delta();
-    let (nc, nr) = (col + dx, row + dy);
-    if !(0..=2).contains(&nc) || !(0..=2).contains(&nr) {
-        return None;
-    }
-    if (nc, nr) == (1, 1) {
-        return Some(0); // town
-    }
-    let neighbor_dir = GridDir::ALL.into_iter().find(|d| d.delta() == (nc - 1, nr - 1))?;
-    Some(forest_index(neighbor_dir))
-}
-
-/// Which cardinal exits are valid for this floor (only the directions
-/// whose neighbour is in-bounds).
-pub fn valid_cardinal_exits(floor: u32) -> Vec<CardinalDir> {
-    CardinalDir::ALL.into_iter()
-        .filter(|d| cardinal_neighbor(floor, *d).is_some())
-        .collect()
-}
-
-// Silence unused-warning lint when as_grid isn't used elsewhere.
-#[allow(dead_code)]
-fn _force_use_as_grid(d: CardinalDir) -> GridDir { d.as_grid() }
+// =====================================================================
+// Floor-theme + path rendering — used by the ASCII renderer.
+// =====================================================================
 
 /// `Decoration::Custom { id: TOWN_PATH_DECO_ID }` marks a floor tile
 /// as part of the town's path network — the renderer overrides the
-/// glyph + colour to read as packed dirt. Defined here (not in the
-/// engine) because path tiles are a town-specific concept.
+/// glyph + colour to read as packed dirt.
 pub const TOWN_PATH_DECO_ID: u32 = 1;
 
-/// Visual theme for a floor, applied in the ASCII renderer to override
-/// the default Wall/Floor glyph + color so different overworld biomes
-/// read distinctly without requiring new `TerrainType` variants.
-///
-/// `FloorTheme::Dungeon` is the legacy/default appearance.
+/// Visual theme for a floor. Set per-floor by `spawn_dungeon`; read by
+/// the ASCII renderer to override Wall/Floor glyphs and colours.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum FloorTheme {
     #[default]
     Dungeon,
     Town,
     Forest,
-    Temple,
 }
 
 impl FloorTheme {
     pub fn for_floor_kind(kind: FloorKind) -> Self {
         match kind {
-            FloorKind::Town       => FloorTheme::Town,
-            FloorKind::Forest(_)  => FloorTheme::Forest,
-            FloorKind::Temple(_)  => FloorTheme::Temple,
+            FloorKind::Town => FloorTheme::Town,
+            FloorKind::Forest { .. } => FloorTheme::Forest,
         }
     }
 
-    /// Theme override for the **glyph** of a base terrain type, or
-    /// `None` to use the manifest default. Only Wall + Floor are themed —
-    /// stairs, doors, portal, etc. stay manifest-driven.
     fn override_glyph(self, terrain: TerrainType) -> Option<&'static str> {
         match (self, terrain) {
-            (FloorTheme::Forest, TerrainType::Wall)  => Some("♣"),
+            (FloorTheme::Forest, TerrainType::Wall) => Some("\u{2663}"), // ♣
             (FloorTheme::Forest, TerrainType::Floor) => Some(","),
-            (FloorTheme::Town,   TerrainType::Wall)  => Some("▓"),
-            (FloorTheme::Town,   TerrainType::Floor) => Some("."),
+            (FloorTheme::Town, TerrainType::Wall) => Some("\u{2593}"),    // ▓
+            (FloorTheme::Town, TerrainType::Floor) => Some("."),
             _ => None,
         }
     }
 
-    /// Theme override for the **foreground colour** of a base terrain type.
     fn override_fg(self, terrain: TerrainType) -> Option<Color> {
         match (self, terrain) {
-            (FloorTheme::Forest, TerrainType::Wall)  => Some(Color::srgb(0.20, 0.55, 0.18)),
+            (FloorTheme::Forest, TerrainType::Wall) => Some(Color::srgb(0.20, 0.55, 0.18)),
             (FloorTheme::Forest, TerrainType::Floor) => Some(Color::srgb(0.20, 0.35, 0.12)),
-            (FloorTheme::Town,   TerrainType::Wall)  => Some(Color::srgb(0.55, 0.40, 0.25)),
-            (FloorTheme::Town,   TerrainType::Floor) => Some(Color::srgb(0.65, 0.55, 0.40)),
-            (FloorTheme::Temple, TerrainType::Wall)  => Some(Color::srgb(0.40, 0.50, 0.40)),
+            (FloorTheme::Town, TerrainType::Wall) => Some(Color::srgb(0.55, 0.40, 0.25)),
+            (FloorTheme::Town, TerrainType::Floor) => Some(Color::srgb(0.65, 0.55, 0.40)),
             _ => None,
         }
     }
 
-    /// Theme override for the **background colour** of a base terrain type.
     fn override_bg(self, terrain: TerrainType) -> Option<Color> {
         match (self, terrain) {
             (FloorTheme::Forest, TerrainType::Floor) => Some(Color::srgb(0.06, 0.10, 0.05)),
-            (FloorTheme::Forest, TerrainType::Wall)  => Some(Color::srgb(0.04, 0.07, 0.03)),
-            (FloorTheme::Town,   TerrainType::Floor) => Some(Color::srgb(0.18, 0.15, 0.10)),
+            (FloorTheme::Forest, TerrainType::Wall) => Some(Color::srgb(0.04, 0.07, 0.03)),
+            (FloorTheme::Town, TerrainType::Floor) => Some(Color::srgb(0.18, 0.15, 0.10)),
             _ => None,
         }
     }
 }
 
-/// Is this tile the town's path decoration?
 fn is_path_tile(tile: Tile) -> bool {
     matches!(
         tile.decoration,
@@ -415,36 +140,22 @@ fn is_path_tile(tile: Tile) -> bool {
     )
 }
 
-/// Theme-aware wrapper around [`resolve_tile_display`].
-///
-/// Returns the manifest default unless the active `FloorTheme`
-/// overrides this terrain's glyph/colour. Decorations, liquids, and
-/// priority terrain (stairs, doors, portal) are unaffected — the
-/// override only fires when the un-themed code path would have used
-/// the base Wall/Floor glyph. Town path tiles get a packed-dirt look
-/// regardless of the surrounding theme so the path stays readable.
+/// Theme-aware wrapper around [`resolve_tile_display`]. Returns the
+/// glyph, foreground colour, and tile display name.
 pub fn themed_tile_display<'a>(
     tile: Tile,
     manifest: &'a TileManifest,
     theme: FloorTheme,
 ) -> (String, Color, &'a str) {
-    // Town paths render as a darker `.` regardless of terrain theme.
     if is_path_tile(tile) {
-        return (
-            ".".to_string(),
-            Color::srgb(0.45, 0.32, 0.18),
-            tile.terrain.name(),
-        );
+        return (".".to_string(), Color::srgb(0.45, 0.32, 0.18), tile.terrain.name());
     }
-
     let (glyph, fg, name) = resolve_tile_display(tile, manifest);
-
-    // Only theme bare Wall/Floor tiles. If a decoration or liquid took
-    // priority, `name` won't be the terrain name — leave it alone.
+    // Only theme bare Wall/Floor. Decorations / liquids / stairs keep
+    // their manifest defaults.
     if name != tile.terrain.name() {
         return (glyph, fg, name);
     }
-
     let new_glyph = theme
         .override_glyph(tile.terrain)
         .map(|s| s.to_string())
@@ -459,7 +170,6 @@ pub fn themed_tile_bg(tile: Tile, manifest: &TileManifest, theme: FloorTheme) ->
         return Color::srgb(0.30, 0.22, 0.13);
     }
     let base = resolve_tile_bg(tile, manifest);
-    // Liquids own their own bg unconditionally.
     if tile.liquid != crate::map::tile::LiquidType::None {
         return base;
     }
@@ -471,245 +181,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn floor_kind_classification() {
+    fn floor_kind_town_at_zero() {
         assert_eq!(floor_kind(0), FloorKind::Town);
-        assert_eq!(floor_kind(1), FloorKind::Forest(GridDir::NW));
-        assert_eq!(floor_kind(2), FloorKind::Forest(GridDir::N));
-        assert_eq!(floor_kind(5), FloorKind::Forest(GridDir::E));
-        assert_eq!(floor_kind(8), FloorKind::Forest(GridDir::SE));
-        assert_eq!(floor_kind(9), FloorKind::Temple(1));
-        assert_eq!(floor_kind(10), FloorKind::Temple(2));
-        assert_eq!(floor_kind(11), FloorKind::Temple(3));
+    }
+
+    #[test]
+    fn floor_kind_forest_at_depth() {
+        assert_eq!(floor_kind(1), FloorKind::Forest { depth: 1 });
+        assert_eq!(floor_kind(2), FloorKind::Forest { depth: 2 });
     }
 
     #[test]
     #[should_panic]
-    fn floor_kind_out_of_range() {
-        let _ = floor_kind(12);
-    }
-
-    #[test]
-    fn forest_index_roundtrip() {
-        for d in GridDir::ALL {
-            assert_eq!(floor_kind(forest_index(d)), FloorKind::Forest(d));
-        }
-    }
-
-    #[test]
-    fn mirror_dir_is_involution() {
-        for d in GridDir::ALL {
-            assert_eq!(mirror_dir(mirror_dir(d)), d);
-        }
-    }
-
-    #[test]
-    fn mirror_dir_pairs() {
-        assert_eq!(mirror_dir(GridDir::N), GridDir::S);
-        assert_eq!(mirror_dir(GridDir::NE), GridDir::SW);
-        assert_eq!(mirror_dir(GridDir::E), GridDir::W);
-    }
-
-    #[test]
-    fn neighbor_from_town() {
-        // Town has all 8 forest neighbors.
-        for d in GridDir::ALL {
-            assert_eq!(neighbor(0, d), Some(forest_index(d)));
-        }
-    }
-
-    #[test]
-    fn neighbor_back_to_town() {
-        // Walking back toward town from any forest tile by going the
-        // mirror of the tile's own direction lands at floor 0.
-        for d in GridDir::ALL {
-            assert_eq!(neighbor(forest_index(d), mirror_dir(d)), Some(0));
-        }
-    }
-
-    #[test]
-    fn neighbor_corner_forest_world_edge() {
-        // NW forest tile (floor 1) is at grid (-1, -1).
-        // It can only reach the world by going E (to N forest), S (to W forest),
-        // or SE (back to town). N, W, NW, NE, SW all leave the world.
-        let floor = forest_index(GridDir::NW);
-        assert_eq!(neighbor(floor, GridDir::N), None);
-        assert_eq!(neighbor(floor, GridDir::W), None);
-        assert_eq!(neighbor(floor, GridDir::NW), None);
-        assert_eq!(neighbor(floor, GridDir::NE), None);
-        assert_eq!(neighbor(floor, GridDir::SW), None);
-        assert_eq!(neighbor(floor, GridDir::E), Some(forest_index(GridDir::N)));
-        assert_eq!(neighbor(floor, GridDir::S), Some(forest_index(GridDir::W)));
-        assert_eq!(neighbor(floor, GridDir::SE), Some(0));
-    }
-
-    #[test]
-    fn neighbor_edge_forest_has_five_exits() {
-        // N forest tile (floor 2) is at grid (0, -1). World-edge to the
-        // north; valid exits: W, E (other forests), SW, S, SE (toward town row).
-        let n = forest_index(GridDir::N);
-        assert_eq!(neighbor(n, GridDir::N), None);
-        assert_eq!(neighbor(n, GridDir::NW), None);
-        assert_eq!(neighbor(n, GridDir::NE), None);
-        assert_eq!(neighbor(n, GridDir::W), Some(forest_index(GridDir::NW)));
-        assert_eq!(neighbor(n, GridDir::E), Some(forest_index(GridDir::NE)));
-        assert_eq!(neighbor(n, GridDir::SW), Some(forest_index(GridDir::W)));
-        assert_eq!(neighbor(n, GridDir::S), Some(0));
-        assert_eq!(neighbor(n, GridDir::SE), Some(forest_index(GridDir::E)));
-    }
-
-    #[test]
-    fn neighbor_temple_has_none() {
-        for d in GridDir::ALL {
-            assert_eq!(neighbor(9, d), None);
-            assert_eq!(neighbor(10, d), None);
-            assert_eq!(neighbor(11, d), None);
-        }
-    }
-
-    #[test]
-    fn valid_exits_count() {
-        assert_eq!(valid_exits(0).len(), 8); // town
-        assert_eq!(valid_exits(forest_index(GridDir::NW)).len(), 3); // corner
-        assert_eq!(valid_exits(forest_index(GridDir::N)).len(), 5); // edge
-        assert_eq!(valid_exits(9).len(), 0); // temple
-    }
-
-    #[test]
-    fn cardinal_directions_mirror() {
-        assert_eq!(CardinalDir::N.mirror(), CardinalDir::S);
-        assert_eq!(CardinalDir::S.mirror(), CardinalDir::N);
-        assert_eq!(CardinalDir::E.mirror(), CardinalDir::W);
-        assert_eq!(CardinalDir::W.mirror(), CardinalDir::E);
-        for d in CardinalDir::ALL {
-            assert_eq!(d.mirror().mirror(), d);
-        }
-    }
-
-    #[test]
-    fn border_stair_positions_lie_inside_map() {
-        let w = MAP_SIZE.x as i32;
-        let h = MAP_SIZE.y as i32;
-        for d in CardinalDir::ALL {
-            for p in border_stair_positions(d) {
-                assert!(p.x > 0 && p.x < w - 1, "{:?} stair x out of range: {:?}", d, p);
-                assert!(p.y > 0 && p.y < h - 1, "{:?} stair y out of range: {:?}", d, p);
-            }
-        }
-    }
-
-    #[test]
-    fn border_stair_positions_are_on_the_right_border() {
-        let w = MAP_SIZE.x as i32;
-        let h = MAP_SIZE.y as i32;
-        for p in border_stair_positions(CardinalDir::N) { assert_eq!(p.y, 1); }
-        for p in border_stair_positions(CardinalDir::S) { assert_eq!(p.y, h - 2); }
-        for p in border_stair_positions(CardinalDir::E) { assert_eq!(p.x, w - 2); }
-        for p in border_stair_positions(CardinalDir::W) { assert_eq!(p.x, 1); }
-    }
-
-    #[test]
-    fn k_th_stair_pairs_with_k_th_mirror_stair_same_axis() {
-        // K-th N stair has the same x as K-th S stair (entering S
-        // border of destination keeps the player's column).
-        for k in 0..STAIRS_PER_BORDER {
-            let north = border_stair_positions(CardinalDir::N)[k];
-            let south = border_stair_positions(CardinalDir::S)[k];
-            assert_eq!(north.x, south.x, "K={}", k);
-        }
-        // K-th E stair has the same y as K-th W stair.
-        for k in 0..STAIRS_PER_BORDER {
-            let east = border_stair_positions(CardinalDir::E)[k];
-            let west = border_stair_positions(CardinalDir::W)[k];
-            assert_eq!(east.y, west.y, "K={}", k);
-        }
-    }
-
-    #[test]
-    fn arrival_at_mirror_lands_on_destinations_k_th_stair() {
-        for k in 0..STAIRS_PER_BORDER {
-            assert_eq!(
-                arrival_at_mirror(CardinalDir::N, k),
-                border_stair_positions(CardinalDir::S)[k],
-            );
-            assert_eq!(
-                arrival_at_mirror(CardinalDir::W, k),
-                border_stair_positions(CardinalDir::E)[k],
-            );
-        }
-    }
-
-    #[test]
-    fn town_has_four_cardinal_exits() {
-        let exits = valid_cardinal_exits(0);
-        assert_eq!(exits.len(), 4);
-        assert!(exits.contains(&CardinalDir::N));
-        assert!(exits.contains(&CardinalDir::S));
-        assert!(exits.contains(&CardinalDir::E));
-        assert!(exits.contains(&CardinalDir::W));
-    }
-
-    #[test]
-    fn cardinal_forest_has_three_exits() {
-        // N forest (floor 2) reaches town (S), NW (W), NE (E).
-        let exits = valid_cardinal_exits(forest_index(GridDir::N));
-        assert_eq!(exits.len(), 3);
-        assert!(exits.contains(&CardinalDir::S));
-        assert!(exits.contains(&CardinalDir::W));
-        assert!(exits.contains(&CardinalDir::E));
-        assert!(!exits.contains(&CardinalDir::N));
-    }
-
-    #[test]
-    fn corner_forest_has_two_exits() {
-        // NW forest reaches N (E) and W (S). No N or W exit.
-        let exits = valid_cardinal_exits(forest_index(GridDir::NW));
-        assert_eq!(exits.len(), 2);
-        assert!(exits.contains(&CardinalDir::E));
-        assert!(exits.contains(&CardinalDir::S));
-    }
-
-    #[test]
-    fn cardinal_neighbor_topology() {
-        // From town: cardinal moves go to the 4 cardinal forests.
-        assert_eq!(cardinal_neighbor(0, CardinalDir::N), Some(forest_index(GridDir::N)));
-        assert_eq!(cardinal_neighbor(0, CardinalDir::S), Some(forest_index(GridDir::S)));
-        assert_eq!(cardinal_neighbor(0, CardinalDir::E), Some(forest_index(GridDir::E)));
-        assert_eq!(cardinal_neighbor(0, CardinalDir::W), Some(forest_index(GridDir::W)));
-        // From N forest: S goes back to town, W to NW, E to NE.
-        let n = forest_index(GridDir::N);
-        assert_eq!(cardinal_neighbor(n, CardinalDir::S), Some(0));
-        assert_eq!(cardinal_neighbor(n, CardinalDir::W), Some(forest_index(GridDir::NW)));
-        assert_eq!(cardinal_neighbor(n, CardinalDir::E), Some(forest_index(GridDir::NE)));
-        assert_eq!(cardinal_neighbor(n, CardinalDir::N), None);
-        // Temple has no cardinal neighbours.
-        for d in CardinalDir::ALL {
-            assert_eq!(cardinal_neighbor(9, d), None);
-        }
+    fn floor_kind_out_of_range_panics() {
+        let _ = floor_kind(MAX_FLOOR + 1);
     }
 
     #[test]
     fn floor_theme_for_kind() {
         assert_eq!(FloorTheme::for_floor_kind(FloorKind::Town), FloorTheme::Town);
         assert_eq!(
-            FloorTheme::for_floor_kind(FloorKind::Forest(GridDir::N)),
+            FloorTheme::for_floor_kind(FloorKind::Forest { depth: 1 }),
             FloorTheme::Forest,
         );
-        assert_eq!(FloorTheme::for_floor_kind(FloorKind::Temple(2)), FloorTheme::Temple);
     }
 
     #[test]
     fn forest_theme_overrides_wall_and_floor_glyphs() {
-        assert_eq!(FloorTheme::Forest.override_glyph(TerrainType::Wall), Some("♣"));
+        assert_eq!(FloorTheme::Forest.override_glyph(TerrainType::Wall), Some("\u{2663}"));
         assert_eq!(FloorTheme::Forest.override_glyph(TerrainType::Floor), Some(","));
     }
 
     #[test]
     fn dungeon_theme_overrides_nothing() {
-        // Default theme must be the legacy look — no overrides at all.
-        for terrain in [
-            TerrainType::Wall, TerrainType::Floor, TerrainType::DownStairs,
-            TerrainType::Portal,
-        ] {
+        for terrain in [TerrainType::Wall, TerrainType::Floor, TerrainType::Portal] {
             assert_eq!(FloorTheme::Dungeon.override_glyph(terrain), None);
             assert_eq!(FloorTheme::Dungeon.override_fg(terrain), None);
             assert_eq!(FloorTheme::Dungeon.override_bg(terrain), None);
@@ -717,15 +222,14 @@ mod tests {
     }
 
     #[test]
-    fn theme_leaves_stairs_alone() {
-        // Even in Forest, DownStairs / UpStairs / Portal stay manifest-driven.
+    fn theme_leaves_stairs_and_portals_alone() {
         for terrain in [
             TerrainType::DownStairs,
             TerrainType::UpStairs,
             TerrainType::Portal,
             TerrainType::Door,
         ] {
-            for theme in [FloorTheme::Forest, FloorTheme::Town, FloorTheme::Temple] {
+            for theme in [FloorTheme::Forest, FloorTheme::Town] {
                 assert_eq!(theme.override_glyph(terrain), None);
                 assert_eq!(theme.override_bg(terrain), None);
             }
