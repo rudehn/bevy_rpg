@@ -56,6 +56,7 @@ pub mod effects;
 pub mod enchantment;
 pub mod factions;
 pub mod fire;
+pub mod fleeing;
 pub mod gas;
 pub mod goap;
 pub mod items;
@@ -156,6 +157,7 @@ impl Plugin for GamePlugin {
                 crate::game::skills::SkillsPlugin,
                 crate::game::stealth::StealthPlugin,
                 crate::game::tactics::TacticsPlugin,
+                crate::game::fleeing::FleeingPlugin,
             ))
             // Position→Transform sync and camera run whenever in-game, including Targeting state.
             //

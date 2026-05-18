@@ -1,11 +1,16 @@
-//! `FleeAtLowHp` — retreat when wounded and an enemy is in sight.
-//! `KiteRetreat` — back away from melee range to stay at preferred
-//! ranged distance.
+//! Flee-family tactics:
 //!
-//! Both gate on `AiMode::Hunting`. The sticky `Fleeing` mode (Phase 2.5)
-//! has its own tactic `FleePanicked` in a separate file; this file
-//! covers only the reactive flee/kite behaviors that fire from the
-//! Hunting state.
+//! - `FleeAtLowHp` — retreat when wounded and an enemy is in sight.
+//!   Gates on `AiMode::Hunting`. This is the **entry condition** that
+//!   makes a monster *want* to flee. The actual transition into sticky
+//!   `Fleeing` mode happens in `src/game/fleeing.rs` via the
+//!   `damage_triggers_flee` system.
+//! - `KiteRetreat` — back away from melee range to stay at preferred
+//!   ranged distance. Gates on `AiMode::Hunting`.
+//! - `FleePanicked` — drive movement while in sticky `Fleeing` mode.
+//!   Gates on `AiMode::Fleeing { .. }`. Does NOT check HP threshold;
+//!   the entry transition (`damage_triggers_flee`) and the exit
+//!   transition (`maybe_exit_fleeing`) own the mode lifecycle.
 
 use rand::RngCore;
 use roguelike_engine::ai::decisions::{should_flee, should_kite_retreat};
@@ -50,6 +55,43 @@ impl Tactic for FleeAtLowHp {
 /// Back off from melee range. Fires for kiting monsters
 /// (`kites == true`) when an enemy gets within `kite_distance`. The
 /// monster steps one tile away to maintain ranged spacing.
+/// Drive panicked movement while the actor is in the sticky `Fleeing`
+/// mode. Reads `last_known_threat_pos` from the mode variant so the
+/// monster keeps fleeing even after losing line-of-sight on the
+/// attacker. If an enemy is currently visible, prefer fleeing from
+/// the visible enemy over the remembered position.
+///
+/// This tactic has no HP threshold check — the entry condition was
+/// already met when `Fleeing` was inserted by `damage_triggers_flee`,
+/// and the exit condition is owned by `maybe_exit_fleeing`. Inside
+/// `Fleeing`, a monster always tries to flee.
+pub struct FleePanicked;
+
+impl Tactic for FleePanicked {
+    fn name(&self) -> &'static str {
+        "FleePanicked"
+    }
+
+    fn evaluate(
+        &self,
+        snap: &TurnSnapshot,
+        _rng: &mut dyn rand::RngCore,
+    ) -> Option<(TacticAction, TacticStateDelta)> {
+        let AiMode::Fleeing { last_known_threat_pos, .. } = snap.self_.mode else {
+            return None;
+        };
+        // Prefer visible enemy; fall back to remembered position.
+        let flee_from = snap
+            .visible_enemies
+            .first()
+            .map(|e| e.pos)
+            .or(last_known_threat_pos)?;
+        let step = snap.paths.next_flee_step(snap.self_.pos, flee_from)?;
+        let dir = GridDir::from_step(snap.self_.pos, step)?;
+        Some((TacticAction::Move { dir }, TacticStateDelta::default()))
+    }
+}
+
 pub struct KiteRetreat;
 
 impl Tactic for KiteRetreat {
@@ -191,5 +233,71 @@ mod tests {
         snap.self_.mode = AiMode::Idle;
         let mut rng = test_rng();
         assert!(KiteRetreat.evaluate(&snap, &mut rng).is_none());
+    }
+
+    // ----- FleePanicked -----
+
+    fn fleeing_actor() -> super::TurnSnapshot {
+        use super::TurnSnapshot;
+        use crate::game::tactics::resolve::test_support::{
+            snapshot_with, test_actor,
+        };
+        let mut actor = test_actor(1, Point::new(5, 5));
+        actor.mode = AiMode::Fleeing {
+            since_turn: 100,
+            last_known_threat_pos: Some(Point::new(7, 5)), // threat to the east
+        };
+        let snap: TurnSnapshot = snapshot_with(actor);
+        snap
+    }
+
+    #[test]
+    fn flee_panicked_flees_from_last_known_threat_when_nothing_visible() {
+        let snap = fleeing_actor();
+        let mut rng = test_rng();
+        let outcome = FleePanicked.evaluate(&snap, &mut rng).expect("should panic-flee");
+        // Threat was east, monster flees west.
+        assert!(matches!(outcome.0, TacticAction::Move { dir: GridDir::W }));
+    }
+
+    #[test]
+    fn flee_panicked_prefers_visible_enemy_over_last_known_position() {
+        let mut snap = fleeing_actor();
+        // Visible enemy at the SOUTH, last_known_threat_pos to the EAST.
+        // FleePanicked should flee NORTH (away from visible), not WEST.
+        snap.visible_enemies = vec![crate::game::tactics::resolve::test_support::test_player(
+            Point::new(5, 8),
+            30,
+        )];
+        // Override is_adjacent/chebyshev for the moved test_player:
+        snap.visible_enemies[0].chebyshev = 3;
+        snap.visible_enemies[0].is_adjacent = false;
+        let mut rng = test_rng();
+        let outcome = FleePanicked.evaluate(&snap, &mut rng).unwrap();
+        assert!(matches!(outcome.0, TacticAction::Move { dir: GridDir::N }));
+    }
+
+    #[test]
+    fn flee_panicked_passes_when_not_in_fleeing_mode() {
+        use crate::game::tactics::resolve::test_support::{snapshot_with, test_actor};
+        let mut actor = test_actor(1, Point::new(5, 5));
+        actor.mode = AiMode::Hunting;
+        let snap = snapshot_with(actor);
+        let mut rng = test_rng();
+        assert!(FleePanicked.evaluate(&snap, &mut rng).is_none());
+    }
+
+    #[test]
+    fn flee_panicked_passes_when_no_threat_info_available() {
+        use crate::game::tactics::resolve::test_support::{snapshot_with, test_actor};
+        let mut actor = test_actor(1, Point::new(5, 5));
+        actor.mode = AiMode::Fleeing {
+            since_turn: 100,
+            last_known_threat_pos: None, // no remembered threat
+        };
+        let snap = snapshot_with(actor);
+        // No visible enemies either — nothing to flee from.
+        let mut rng = test_rng();
+        assert!(FleePanicked.evaluate(&snap, &mut rng).is_none());
     }
 }

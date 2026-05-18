@@ -24,7 +24,7 @@ mod movement;
 mod wait;
 
 pub use combat::MeleeAdjacent;
-pub use flee::{FleeAtLowHp, KiteRetreat};
+pub use flee::{FleeAtLowHp, FleePanicked, KiteRetreat};
 pub use movement::{HuntVisibleTarget, PursueLastKnownPosition};
 pub use wait::WaitTactic;
 
@@ -44,6 +44,7 @@ use crate::game::tactics::resolve::Tactic;
 const WAIT: &dyn Tactic = &WaitTactic;
 const MELEE_ADJACENT: &dyn Tactic = &MeleeAdjacent;
 const FLEE_AT_LOW_HP: &dyn Tactic = &FleeAtLowHp;
+const FLEE_PANICKED: &dyn Tactic = &FleePanicked;
 const KITE_RETREAT: &dyn Tactic = &KiteRetreat;
 const HUNT_VISIBLE_TARGET: &dyn Tactic = &HuntVisibleTarget;
 const PURSUE_LAST_KNOWN_POSITION: &dyn Tactic = &PursueLastKnownPosition;
@@ -53,6 +54,7 @@ const PURSUE_LAST_KNOWN_POSITION: &dyn Tactic = &PursueLastKnownPosition;
 /// on typos. Keep alphabetized for legibility.
 pub const ALL_TACTIC_NAMES: &[&str] = &[
     "FleeAtLowHp",
+    "FleePanicked",
     "HuntVisibleTarget",
     "KiteRetreat",
     "MeleeAdjacent",
@@ -74,6 +76,7 @@ pub fn lookup_tactic(name: &str) -> Option<&'static dyn Tactic> {
         "Wait" => Some(WAIT),
         "MeleeAdjacent" => Some(MELEE_ADJACENT),
         "FleeAtLowHp" => Some(FLEE_AT_LOW_HP),
+        "FleePanicked" => Some(FLEE_PANICKED),
         "KiteRetreat" => Some(KITE_RETREAT),
         "HuntVisibleTarget" => Some(HUNT_VISIBLE_TARGET),
         "PursueLastKnownPosition" => Some(PURSUE_LAST_KNOWN_POSITION),

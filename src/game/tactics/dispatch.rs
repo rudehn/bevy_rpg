@@ -35,6 +35,7 @@ use crate::game::actions::{
     WaitIntent,
 };
 use crate::game::combat::{GameRng, Health};
+use crate::game::fleeing::Fleeing;
 use crate::game::magic::GameStatusEffectsExt;
 use crate::game::ranged::RangedCapable;
 use crate::game::tactics::library::{ALL_TACTIC_NAMES, TERMINAL_TACTIC_NAME};
@@ -300,7 +301,7 @@ fn build_snapshot(
         (hp.current, hp.max)
     };
     let (
-        mode,
+        engine_mode,
         flee_threshold,
         kites,
         kite_distance,
@@ -322,6 +323,15 @@ fn build_snapshot(
             ai.last_known_player_position,
             ai.stationary,
         )
+    };
+    // Game-side Fleeing marker overrides the engine mode. See
+    // src/game/fleeing.rs and docs/design/TACTICS.md §"FSM additions".
+    let mode = match world.get::<Fleeing>(entity) {
+        Some(fleeing) => AiMode::Fleeing {
+            since_turn: fleeing.since_turn,
+            last_known_threat_pos: fleeing.last_known_threat_pos,
+        },
+        None => engine_mode,
     };
     let viewshed = world.get::<Viewshed>(entity)?.clone();
     let self_faction_name = world.get::<Faction>(entity).map(|f| f.0 .0.clone());
