@@ -196,9 +196,15 @@ pub fn execute_monster_ai(monster_ai: &mut MonsterAI, entity: Entity, world: &mu
 /// to `execute_monster_ai` — was previously the private method
 /// `MonsterAI::update_mode`.
 fn update_mode(monster_ai: &mut MonsterAI, entity: Entity, ctx: &AIContext, world: &mut World) {
+    // Friendly NPCs (Townsfolk, future allies) see the player but
+    // don't pursue them — `Asleep`/`Idle`→`Hunting` is gated on the
+    // faction relation being Hostile. Non-Hostile actors stay where
+    // they are.
+    let player_is_hostile_target = is_player_hostile_target(entity, world);
+
     match monster_ai.mode {
         MonsterAIMode::Asleep => {
-            if ctx.is_player_visible {
+            if ctx.is_player_visible && player_is_hostile_target {
                 monster_ai.mode = MonsterAIMode::Hunting;
                 monster_ai.last_known_player_position = Some(ctx.player_point);
                 monster_ai.chase_distance = 0;
@@ -246,7 +252,7 @@ fn update_mode(monster_ai: &mut MonsterAI, entity: Entity, ctx: &AIContext, worl
             }
         }
         MonsterAIMode::Idle => {
-            if ctx.is_player_visible {
+            if ctx.is_player_visible && player_is_hostile_target {
                 monster_ai.mode = MonsterAIMode::Hunting;
             }
         }
@@ -255,6 +261,22 @@ fn update_mode(monster_ai: &mut MonsterAI, entity: Entity, ctx: &AIContext, worl
         // handle yet.
         _ => {}
     }
+}
+
+/// Returns `true` when the entity's faction relation to "Player" is
+/// `Hostile`. Used to gate Asleep/Idle→Hunting transitions so allied
+/// or neutral NPCs (Townsfolk drunks, fishermen, future vendors)
+/// never pursue the player even when the player is in their FOV.
+///
+/// Entities without a `Faction` component default to Hostile —
+/// matches the legacy behavior where unfactioned monsters always
+/// hunted the player.
+fn is_player_hostile_target(entity: Entity, world: &World) -> bool {
+    let Some(faction) = world.get::<Faction>(entity) else {
+        return true;
+    };
+    let matrix = world.resource::<FactionMatrix>();
+    matrix.is_hostile_to(&faction.0.0, "Player")
 }
 
 // ---------------------------------------------------------------------------

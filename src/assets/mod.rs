@@ -95,6 +95,7 @@ impl Plugin for AssetsPlugin {
             .init_resource::<PropManifestHandle>()
             .init_resource::<PrefabManifestHandle>()
             .init_resource::<DecorationCatalogHandle>()
+            .init_resource::<crate::map::builders::town_npcs::TownNpcManifestHandle>()
             .init_resource::<crate::character::RaceManifestHandle>()
             .init_resource::<crate::character::ClassManifestHandle>()
             .add_systems(
@@ -110,6 +111,7 @@ impl Plugin for AssetsPlugin {
                     load_prop_manifest,
                     load_prefab_manifest,
                     load_decoration_catalog,
+                    crate::map::builders::town_npcs::load_town_npc_manifest,
                     load_faction_matrix,
                     load_race_manifest,
                     load_class_manifest,
@@ -137,6 +139,7 @@ impl Plugin for LoadingPlugin {
             RonAssetPlugin::<PropManifest>::new(&["props.ron"]),
             RonAssetPlugin::<PrefabManifest>::new(&["prefabs.ron"]),
             RonAssetPlugin::<DecorationCatalog>::new(&["decorations.ron"]),
+            RonAssetPlugin::<crate::map::builders::town_npcs::TownNpcManifest>::new(&["town_npcs.ron"]),
             RonAssetPlugin::<crate::game::factions::FactionMatrixAsset>::new(&["factions.ron"]),
             RonAssetPlugin::<crate::character::RaceManifest>::new(&["races.ron"]),
             RonAssetPlugin::<crate::character::ClassManifest>::new(&["classes.ron"]),
@@ -1041,6 +1044,8 @@ struct ExtraLoadingParams<'w> {
     prefab_manifests: Res<'w, Assets<PrefabManifest>>,
     decoration_catalog_handle: Res<'w, DecorationCatalogHandle>,
     decoration_catalogs: Res<'w, Assets<DecorationCatalog>>,
+    town_npc_handle: Res<'w, crate::map::builders::town_npcs::TownNpcManifestHandle>,
+    town_npc_manifests: Res<'w, Assets<crate::map::builders::town_npcs::TownNpcManifest>>,
     faction_matrix_handle: Res<'w, crate::game::factions::FactionMatrixHandle>,
     faction_matrix_assets: Res<'w, Assets<crate::game::factions::FactionMatrixAsset>>,
     race_manifest_handle: Res<'w, crate::character::RaceManifestHandle>,
@@ -1115,6 +1120,14 @@ fn check_assets_loaded(
     if extra
         .decoration_catalogs
         .get(&extra.decoration_catalog_handle.0)
+        .is_none()
+    {
+        return;
+    }
+
+    if extra
+        .town_npc_manifests
+        .get(&extra.town_npc_handle.0)
         .is_none()
     {
         return;
