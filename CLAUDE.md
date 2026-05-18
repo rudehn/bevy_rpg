@@ -316,7 +316,7 @@ src/
 ## Dependencies
 - `bevy 0.17` — game engine
 - `bracket-lib` (forked) — FOV, pathfinding, geometry, RNG
-- `roguelike_engine` (path: `../roguelike_engine`) — shared roguelike infrastructure (turns, combat, status, abilities, AI, factions, squad, FOV, save, **map builders incl. decoration propagator**, **lighting**, **tile mutation messages + apply systems**, **tile promotion**)
+- `roguelike_engine` (path: `crates/roguelike_engine`, workspace member) — shared roguelike infrastructure (turns, combat, status, abilities, AI, factions, squad, FOV, save, **map builders incl. decoration propagator**, **lighting**, **tile mutation messages + apply systems**, **tile promotion**)
 - `petgraph 0.8` — graph analysis for choke map
 - `rand 0.9` — random generation in map builders
 - `bevy_common_assets 0.14` + `serde` — RON asset loading

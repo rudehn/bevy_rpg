@@ -1,6 +1,6 @@
 # CLAUDE.md — roguelike_engine
 
-Bevy 0.17 headless engine for turn-based grid roguelikes, extracted from [The Veiled Tyrant](../bevy_rpg).
+Bevy 0.17 headless engine for turn-based grid roguelikes. Vendored as a workspace crate inside [The Veiled Tyrant](../../).
 
 ## Build & Test
 
@@ -63,4 +63,4 @@ All public items re-exported through `roguelike_engine::prelude::*`.
 
 ## Related Project
 
-Extracted from The Veiled Tyrant (`bevy_rpg`) at `../bevy_rpg`. Migration notes tracking how the game crate adapts to engine changes are in `bevy_rpg/docs/ENGINE_MIGRATION.md`.
+Workspace member of The Veiled Tyrant (`bevy_rpg`). The game crate sits at the repo root; this engine crate lives at `crates/roguelike_engine/`. Migration notes tracking how the game crate adapts to engine changes are in `../../docs/ENGINE_MIGRATION.md`.
