@@ -11,6 +11,22 @@
         ( a: "Player",  b: "Rat",     relation: Hostile ),
         ( a: "Player",  b: "Kobold",  relation: Hostile ),
 
+        // Townsfolk: peaceful townsfolk faction — drunks, fishermen,
+        // (eventually) vendors. Allied to the player so bumps don't
+        // trigger melee. Neutral to monster factions (a goblin invasion
+        // wouldn't ignore the locals, but the town has no monsters yet
+        // and the relation can be tightened later).
+        ( a: "Player",   b: "Townsfolk", relation: Allied ),
+        ( a: "Townsfolk", b: "Monster",  relation: Neutral ),
+        ( a: "Townsfolk", b: "Goblin",   relation: Neutral ),
+        ( a: "Townsfolk", b: "Orc",      relation: Neutral ),
+        ( a: "Townsfolk", b: "Fungal",   relation: Neutral ),
+        ( a: "Townsfolk", b: "Undead",   relation: Neutral ),
+        ( a: "Townsfolk", b: "Giant",    relation: Neutral ),
+        ( a: "Townsfolk", b: "Dragon",   relation: Neutral ),
+        ( a: "Townsfolk", b: "Rat",      relation: Neutral ),
+        ( a: "Townsfolk", b: "Kobold",   relation: Neutral ),
+
         // Rat faction: hostile to Player, neutral to all monster factions
         ( a: "Monster", b: "Rat",     relation: Neutral ),
         ( a: "Rat",     b: "Goblin",  relation: Neutral ),

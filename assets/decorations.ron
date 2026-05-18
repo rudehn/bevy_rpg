@@ -84,6 +84,21 @@
           propagation_decay: 0.80,
           max_propagation_depth: 8,
         ),
+        // Phosphorescent moss — sparse cyan-green glow patches in the
+        // forest. Each tile emits a `phosphorescent_moss_light` (radius
+        // 6, intensity 0.7) via the engine's lighting pipeline, which
+        // the stealth system reads to penalise hiding nearby. Kept
+        // small (3-6 seeds, fast falloff) so patches are clumpy
+        // accents, not a wall-to-wall green carpet.
+        ( name: "Phosphorescent Moss",
+          min_floor: 1, max_floor: 2,
+          min_seeds: 3, max_seeds: 6,
+          decoration: PhosphorescentMoss,
+          requires_terrain: [Floor],
+          propagation_chance: 0.45,
+          propagation_decay: 0.70,
+          max_propagation_depth: 4,
+        ),
         ( name: "Fungal Bloom",
           min_floor: 1, max_floor: 26,
           min_seeds: 10, max_seeds: 20,

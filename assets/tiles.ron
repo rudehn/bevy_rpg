@@ -180,6 +180,21 @@
             ascii_fg: "#3C8C50",
             ascii_bg: "#23232B",
         ),
+        // Phosphorescent moss — emits a soft cyan-green glow. The light
+        // source itself is registered by the engine's lighting pipeline
+        // (see roguelike_engine::lighting::phosphorescent_moss_light);
+        // this entry only governs the glyph + colour the ASCII renderer
+        // draws on the tile.
+        "PhosphorescentMoss": (
+            name: "PhosphorescentMoss",
+            walkable: true,
+            opaque: false,
+            tile_size: (32, 32),
+            grid_size: (1, 1),
+            ascii_char: "*",
+            ascii_fg: "#66FFCC",
+            ascii_bg: "#23232B",
+        ),
         "Fungus": (
             name: "Fungus",
             walkable: true,
