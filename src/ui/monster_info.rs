@@ -1,3 +1,20 @@
+//! Monster inspection panel. Serves two roles in one surface:
+//!
+//! 1. **Hover tooltip** — pops up under the mouse cursor when the
+//!    player hovers a monster, item, or prop tile. Renders next to
+//!    the entity in screen space.
+//! 2. **Monster info overlay** — when the player Tab-cycles through
+//!    the Nearby sidebar, the selected entity drives the same panel
+//!    using a screen-projected position above the entity.
+//!
+//! Both surfaces share the same content pipeline so the Stealth
+//! "Notice this turn" block, status effects, and battle estimate
+//! stay consistent regardless of how the player reached the panel.
+//!
+//! The Stealth block itself is rendered via the shared helpers in
+//! [`crate::ui::stealth_display`] — see that module for the
+//! breakdown formula and edge cases.
+
 use bevy::prelude::*;
 use bracket_lib::prelude::Point;
 
