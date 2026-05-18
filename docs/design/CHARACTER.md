@@ -156,8 +156,13 @@ DEX (finesse blades scale on DEX — see §Combat Math Integration).
   a tide-over.
 - **Rogue** — DEX-driven, blade- and dodge-focused. +8 DEX scales
   hit/damage on Daggers, Swords, and throwing weapons; also feeds
-  Dodge. Backstab (3× damage vs unaware) is the L1 power spike.
-  Intentionally fragile until you grow into INT for scroll use.
+  Dodge. **Stealth is the L1 power axis** — the Rogue starts with 2
+  ranks of Stealth (the only class that does), which combined with
+  DEX +2 and the no-penalty Cloth Wraps gives a reliable hide game in
+  dim corridors. Backstab (3× damage) gates on the monster's
+  awareness about you being `Hidden` ([STEALTH.md](STEALTH.md)) — kill
+  one target, break LOS, restealth, repeat. Intentionally fragile
+  until you grow into INT for scroll use.
 - **Mage** — INT-driven. The +8 INT yields INT_mod ≥ +0 for an Elf
   Mage at chargen; staff zap damage scales with INT_mod (clamped at
   0). Frailest class — Elf Mage has only 12 HP at L1. The Apprentice
@@ -165,7 +170,9 @@ DEX (finesse blades scale on DEX — see §Combat Math Integration).
   Mage's primary weapon, not a panic button.
 - **Ranger** — DEX-driven ranged. Bow attacks consume DEX_mod for both
   hit and damage. Six arrows to start; conserving ammo is the early
-  puzzle.
+  puzzle. A single starting rank in **Stealth** (a flavor-fit forest
+  scout) lets a Ranger break LOS after a missed shot and reposition
+  without immediately being chased down — see [STEALTH.md](STEALTH.md).
 
 ## HP Formula
 
