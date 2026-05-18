@@ -168,6 +168,10 @@ The coordinator assigns roles based on archetype and situation. Roles are reassi
 
 ---
 
+### Awareness propagation (stealth integration)
+
+When any squad member transitions to `AwarenessState::Aware` about a target, squadmates receive `Searching{last_known_pos}` via `AwarenessAlertEvent`, **not direct `Aware`**. They begin investigating the spotted position; they only become Aware when they roll perception successfully themselves. This is intentional — instant squadwide `Aware` would feel like radar. See [STEALTH.md](STEALTH.md) §Squad Propagation for the full handler, and the alert handler in [src/game/stealth.rs](../../src/game/stealth.rs) (`squad_propagate_awareness`).
+
 ## Alert Propagation
 
 Extends the existing `squad_alert_system` (12-tile range within a squad) with cross-squad alerting.
