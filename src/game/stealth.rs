@@ -351,6 +351,44 @@ pub fn squad_propagate_awareness(
     }
 }
 
+/// Attack-reveal: any time an entity takes damage from a known
+/// attacker, the victim immediately becomes [`AwarenessState::Aware`]
+/// of that attacker. This guarantees that a backstabbed monster wakes
+/// up regardless of light, distance, or skill — there's no "stealthy
+/// hit that fails to register" gotcha.
+///
+/// Filters:
+/// - Environmental damage (`attacker: None`) is ignored.
+/// - Self-damage (e.g. an explode-on-death blasting its own corpse) is
+///   ignored — `attacker == target` should not flag the victim as
+///   aware of itself.
+/// - Victims without an [`Awareness`] component are silently skipped
+///   (the player today has none — that's fine, this system runs only
+///   on entities that opt in via the component).
+///
+/// Scheduled in `ProcessingPhase::ResolveActions` so it runs after the
+/// damage pipeline has emitted [`DamageEvent`]s for this turn but
+/// before Cleanup ticks down `Searching`/`Suspicious` timers.
+pub fn attack_reveals_attacker(
+    mut events: MessageReader<DamageEvent>,
+    mut awareness_query: Query<&mut Awareness>,
+    turn_manager: Res<TurnManager>,
+) {
+    let now = turn_manager.current_time;
+    for ev in events.read() {
+        let Some(attacker) = ev.attacker else {
+            continue;
+        };
+        if attacker == ev.target {
+            continue;
+        }
+        let Ok(mut victim_awareness) = awareness_query.get_mut(ev.target) else {
+            continue;
+        };
+        victim_awareness.set(attacker, AwarenessState::Aware, now);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
