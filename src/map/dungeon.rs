@@ -239,13 +239,17 @@ pub(crate) struct SnapshotQueries<'w, 's> {
     /// disk-save path. Awareness without an active player collapses to
     /// `Hidden` (safe default).
     pub player: Query<'w, 's, (Entity, &'static Position), With<Player>>,
-    pub turn_manager: Res<'w, crate::game::TurnManager>,
 }
 
 /// Snapshot the current floor's surviving entities into a `CachedFloor`.
+/// `now` is the current `TurnManager.current_time`; passed in explicitly
+/// so this function can be called from systems that already hold
+/// `ResMut<TurnManager>` (e.g. `apply_map_transition`) without param
+/// conflicts.
 fn snapshot_floor(
     map: &Map,
     snap: &SnapshotQueries,
+    now: u32,
 ) -> CachedFloor {
     let monster_query = &snap.monsters;
     let item_query = &snap.items;
@@ -253,7 +257,6 @@ fn snapshot_floor(
     let exit_query = &snap.exit_tiles;
     use crate::save::{SavedMonster, SavedItem, SavedProp};
 
-    let now = snap.turn_manager.current_time;
     let player_snapshot = snap.player.single().ok().map(|(e, p)| (e, Point::new(p.x, p.y)));
     let monsters = monster_query
         .iter()
@@ -624,7 +627,7 @@ fn apply_map_transition(
         return;
     };
 
-    let cached = snapshot_floor(&map, &snap);
+    let cached = snapshot_floor(&map, &snap, turn_manager.current_time);
     floor_cache.0.insert(source, cached);
 
     despawn_floor_entities(&mut commands, &q_map_markers, &q_tiles, &q_floor_entities);
