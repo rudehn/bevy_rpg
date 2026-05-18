@@ -400,7 +400,7 @@ fn dequeue_next_batch(
 }
 
 /// BRIDGE: Triggers Monster AI
-fn monster_ai_dispatch(world: &mut World) {
+pub(crate) fn monster_ai_dispatch(world: &mut World) {
     let mut query = world.query_filtered::<Entity, (With<MonsterAI>, With<MyTurn>)>();
     let entities: Vec<Entity> = query.iter(world).collect();
 
