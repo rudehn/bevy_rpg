@@ -5,12 +5,15 @@ use bevy::prelude::*;
 use bracket_lib::prelude::{Point, RandomNumberGenerator};
 
 use crate::character::Attributes;
-use crate::components::{Position, Viewshed};
+use crate::components::{Monster, Position, Viewshed};
 use crate::game::ai::{MonsterAI, MonsterAIMode};
 use crate::game::items::{Equipment, ItemProperties};
-use crate::game::skills::{Skill, Skills};
+use crate::game::skills::{Skill, Skills, SkillUseCounters};
 use crate::map::Map;
 use crate::map::light::LightMap;
+use crate::player::Player;
+use roguelike_engine::combat::events::DamageEvent;
+use roguelike_engine::squad::SquadId;
 use roguelike_engine::stealth::{
     noise_modifier, Awareness, AwarenessAlertEvent, AwarenessRecord, AwarenessState, NoiseMap,
 };
@@ -286,6 +289,64 @@ pub fn perception_tick_system(
                 entry.last_seen_pos = Some(target_point);
                 alerts.write(AwarenessAlertEvent { seeker, target });
             }
+        }
+    }
+}
+
+/// Squad propagation: when one squadmate becomes Aware of a target,
+/// upgrade every other member of the same [`SquadId`] to (at least)
+/// [`AwarenessState::Searching`] anchored at the target's current
+/// position. Members already at [`AwarenessState::Aware`] are left
+/// alone — Aware is sticky and outranks Searching.
+///
+/// Reads [`AwarenessAlertEvent`] (emitted by `perception_tick_system`)
+/// and runs in `ProcessingPhase::ResolveActions` so the upgraded state
+/// is visible to the *next* turn's Brain phase.
+///
+/// Squadmates that lack an [`Awareness`] component are silently skipped
+/// — `Awareness` is opt-in per perceiver.
+pub fn squad_propagate_awareness(
+    mut alerts: MessageReader<AwarenessAlertEvent>,
+    squad_lookup: Query<(Entity, &SquadId)>,
+    target_positions: Query<&Position>,
+    mut perceivers: Query<&mut Awareness>,
+    turn_manager: Res<TurnManager>,
+) {
+    let now = turn_manager.current_time;
+    let giveup_at = now + 20;
+    for ev in alerts.read() {
+        let Ok((_, seeker_squad)) = squad_lookup.get(ev.seeker) else {
+            continue;
+        };
+        let Ok(target_pos_comp) = target_positions.get(ev.target) else {
+            continue;
+        };
+        let target_pt = Point::new(target_pos_comp.x, target_pos_comp.y);
+
+        for (squadmate, sq) in &squad_lookup {
+            if squadmate == ev.seeker {
+                continue;
+            }
+            if sq != seeker_squad {
+                continue;
+            }
+
+            let Ok(mut awareness) = perceivers.get_mut(squadmate) else {
+                continue;
+            };
+            let cur = awareness.get(ev.target).map(|r| r.state);
+            // Don't downgrade Aware; otherwise upgrade-or-refresh to Searching.
+            if matches!(cur, Some(AwarenessState::Aware)) {
+                continue;
+            }
+            awareness.set(
+                ev.target,
+                AwarenessState::Searching {
+                    last_known_pos: target_pt,
+                    giveup_at_turn: giveup_at,
+                },
+                now,
+            );
         }
     }
 }
