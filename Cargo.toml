@@ -14,10 +14,9 @@ rand = "0.9.2"
 bevy_common_assets = { version = "0.14.0", features = ["ron"] }
 serde = { version = "1.0", features = ["derive"] }
 ron = "0.10"
-# roguelike_engine = { git = "https://github.com/rudehn/roguelike_engine", branch = "main" }
-# Local development override for the stealth phase. Restored to the Git dep in Task L1.
-# Absolute path needed because this workspace runs in a worktree under .claude/worktrees/.
-roguelike_engine = { path = "/Users/nathanrude/Development/roguelike_engine" }
+roguelike_engine = { git = "https://github.com/rudehn/roguelike_engine", branch = "main" }
+# For local development, swap to the path dependency:
+# roguelike_engine = { path = "../roguelike_engine" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = ["Window", "Storage"] }
