@@ -26,6 +26,7 @@ pub mod menu;
 pub mod modal;
 pub mod monster_info;
 pub mod nearby;
+pub mod stealth_display;
 
 use cheat_menu::CheatMenuPlugin;
 use inventory::InventoryPlugin;

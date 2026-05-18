@@ -1,20 +1,32 @@
 use bevy::prelude::*;
+use bracket_lib::prelude::Point;
 
-use crate::components::{GameEntityMarker, Monster, Name, Position, Species};
+use crate::character::Attributes;
+use crate::components::{GameEntityMarker, Monster, Name, Position, Species, Viewshed};
 use crate::constants::TILE_SIZE_X;
 use crate::game::abilities::{
     BurningStrike, ExplodeOnDeath, ExplodeOnHit, Knockback, LifeDrain, PackTactics, Rally,
     RoughBody, SlowStrike, StunningBlow, SummonOnDeath, Terrify, WarCry,
 };
 use crate::game::actions::SpeedStats;
+use crate::game::ai::{MonsterAI, MonsterAIMode};
 use crate::game::camera::{MainCamera, UiCamera};
 use crate::game::combat::{Damage, Health, HealthRegen};
+use crate::game::items::{Equipment, ItemProperties};
 use crate::game::magic::StatusEffects;
+use crate::game::skills::Skills;
 use crate::game::staves::MonsterAbilities;
 use crate::game::stats::{Armor, DamageBonus};
+use crate::game::stealth::MonsterPerception;
 use crate::game::AppState;
+use crate::map::Map;
+use crate::map::light::LightMap;
 use crate::player::Player;
 use crate::ui::nearby::NearbyState;
+use crate::ui::stealth_display::{
+    light_intensity_at, player_armor_stealth_penalty, render_stealth_section, stealth_display_for,
+};
+use roguelike_engine::stealth::{Awareness, NoiseMap};
 
 // --- Marker Components ---
 
@@ -24,12 +36,50 @@ pub struct MonsterInfoPanel;
 #[derive(Component)]
 struct MonsterInfoContent;
 
-/// Tracks which entity the panel is currently showing and its last known HP,
-/// to avoid rebuilding every frame.
+/// Bundled inputs needed to render the Stealth section. Pulled into a
+/// single [`SystemParam`] to keep `update_monster_info_panel`'s
+/// argument count under Bevy's 16-parameter ceiling.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct StealthDisplayParams<'w, 's> {
+    pub player: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static Position,
+            Option<&'static Skills>,
+            Option<&'static Attributes>,
+            Option<&'static Equipment>,
+            Option<&'static Viewshed>,
+        ),
+        With<Player>,
+    >,
+    pub monsters: Query<
+        'w,
+        's,
+        (
+            Option<&'static MonsterPerception>,
+            Option<&'static MonsterAI>,
+            Option<&'static Awareness>,
+            Option<&'static Viewshed>,
+        ),
+    >,
+    pub item_props: Query<'w, 's, &'static ItemProperties>,
+    pub light_map: Res<'w, LightMap>,
+    pub map: Res<'w, Map>,
+    pub noise_map: Res<'w, NoiseMap>,
+}
+
+/// Tracks which entity the panel is currently showing and a small set
+/// of values that should force a rebuild when they change. HP drives
+/// the bar refresh; the stealth headline keeps the "Notice this turn"
+/// line in step with the monster's awareness state and the player's
+/// stealth modifiers.
 #[derive(Component)]
 struct PanelTarget {
     entity: Entity,
     last_hp: i32,
+    last_stealth_headline: String,
 }
 
 // --- Spawn ---
@@ -110,6 +160,7 @@ fn update_monster_info_panel(
     )>,
     // Query 5: player stats for battle sim
     q_player_combat: Query<(&Health, &Damage, &Armor, &DamageBonus), With<Player>>,
+    stealth_params: StealthDisplayParams,
     nearby_state: Res<NearbyState>,
     pos_query: Query<(Entity, &Position), Or<(With<Monster>, With<Player>, With<crate::components::Item>, With<crate::components::Prop>)>>,
     name_query: Query<&Name>,
@@ -213,7 +264,11 @@ fn update_monster_info_panel(
 
             if should_rebuild {
                 let font: Handle<Font> = asset_server.load("fonts/Macondo-Regular.ttf");
-                commands.entity(panel_entity).insert(PanelTarget { entity, last_hp: 0 });
+                commands.entity(panel_entity).insert(PanelTarget {
+                    entity,
+                    last_hp: 0,
+                    last_stealth_headline: String::new(),
+                });
                 commands.entity(content_entity).despawn_related::<Children>();
                 commands.entity(content_entity).with_children(|parent| {
                     parent.spawn((
@@ -239,17 +294,76 @@ fn update_monster_info_panel(
         panel_node.top = Val::Px(sp.y - 18.0);
     }
 
-    // Skip full rebuild if we're already showing this entity with the same HP
+    // Build the Stealth section lines before the rebuild guard so we
+    // can fold the headline into the cache key. This keeps the
+    // "Notice this turn" line live as the player moves, sneaks into
+    // shadow, or the monster transitions Hidden → Searching → Aware.
+    let is_player_focused = q_player_combat.get(entity).is_ok();
+    let stealth_lines = if is_player_focused {
+        None
+    } else if let Ok((player_e, p_pos, p_skills, p_attrs, p_equip, p_viewshed)) =
+        stealth_params.player.single()
+    {
+        let (mp, mai, m_aware, m_viewshed) = match stealth_params.monsters.get(entity) {
+            Ok(v) => v,
+            Err(_) => (None, None, None, None),
+        };
+        let monster_pos = match pos_query.get(entity) {
+            Ok((_, pos)) => Point::new(pos.x, pos.y),
+            Err(_) => Point::new(0, 0),
+        };
+        let player_point = Point::new(p_pos.x, p_pos.y);
+        let monster_perception = mp.map(|p| p.0).unwrap_or(0);
+        let is_asleep = mai
+            .map(|a| a.mode == MonsterAIMode::Asleep)
+            .unwrap_or(false);
+        // The monster sees the player this turn iff the player's tile
+        // is in the monster's viewshed. Fall back to the player's own
+        // viewshed for symmetry if the monster has none (treat as
+        // visible).
+        let in_viewshed = m_viewshed
+            .map(|vs| vs.visible_tiles.contains(&monster_pos))
+            .or_else(|| p_viewshed.map(|vs| vs.visible_tiles.contains(&monster_pos)))
+            .unwrap_or(true);
+        let light_intensity = light_intensity_at(&stealth_params.light_map, &stealth_params.map, player_point);
+        let armor_pen = player_armor_stealth_penalty(p_equip, &stealth_params.item_props);
+        Some(stealth_display_for(
+            monster_perception,
+            monster_pos,
+            is_asleep,
+            in_viewshed,
+            m_aware,
+            player_e,
+            player_point,
+            p_skills,
+            p_attrs,
+            armor_pen,
+            light_intensity,
+            &stealth_params.noise_map,
+        ))
+    } else {
+        None
+    };
+    let stealth_headline = stealth_lines
+        .as_ref()
+        .map(|l| l.headline.clone())
+        .unwrap_or_default();
+
+    // Skip full rebuild if entity, HP, and stealth headline are unchanged.
     if let Some(target) = current_target
-        && target.entity == entity && target.last_hp == health.current {
-            return;
-        }
+        && target.entity == entity
+        && target.last_hp == health.current
+        && target.last_stealth_headline == stealth_headline
+    {
+        return;
+    }
 
     // Clear existing content children and update tracking
     commands.entity(content_entity).despawn_related::<Children>();
     commands.entity(panel_entity).insert(PanelTarget {
         entity,
         last_hp: health.current,
+        last_stealth_headline: stealth_headline,
     });
 
     let font: Handle<Font> = asset_server.load("fonts/Macondo-Regular.ttf");
@@ -546,6 +660,12 @@ fn update_monster_info_panel(
                     ..default()
                 },
             ));
+        }
+
+        // Stealth section — "Notice this turn: XX%" + per-modifier breakdown.
+        // Suppressed when the focused entity is the player itself.
+        if let Some(lines) = &stealth_lines {
+            render_stealth_section(parent, font.clone(), lines);
         }
     });
 }
