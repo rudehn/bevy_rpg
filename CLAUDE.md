@@ -118,6 +118,7 @@ src/
     water.rs             # Water effects (item sweep, movement cost, extinguish)
     xp.rs                # Level / Experience / MonsterTier / XP curve / level-up handler
     skills.rs            # Skill / WeaponSkill / Skills / SkillXp / SkillTraining / training-mode allocator
+    stealth.rs           # Stealth system (Phase 4): compute_*_mod, perception_tick_system, squad propagation, Backstab gate, use-counter, StealthPlugin
 
   map/
     mod.rs               # MapPlugin re-exports
@@ -222,6 +223,15 @@ src/
 - Skill screen UI: `InGameState::SkillScreen` (key `M`). DCSS-style listing with state badges (`+`/`*`/`-`), aptitude column, pool counter, mode toggle (`/`).
 - Save schema v5 persists `skills`, `skill_xp`, `skill_training`, `skill_xp_pool`.
 - See [docs/design/SKILLS.md](docs/design/SKILLS.md) for the canonical writeup. Class `starting_skills` and race `aptitudes` are test-enforced — see `.claude/rules/skill-writeup-required.md` (next phase) and the maintenance contracts in `src/character/asset.rs`.
+
+### Stealth & Awareness ([STEALTH.md](docs/design/STEALTH.md))
+- Per-perceiver `Awareness` component (engine-side, `roguelike_engine::stealth::Awareness`) maps `target_entity → AwarenessState`.
+- 4 states: `Hidden | Suspicious | Searching | Aware`. **Aware is sticky** — no rolls fire against an Aware target until LOS is lost; then it drops to Searching with a ~20-turn timer.
+- Opposed d20 roll fires on each perceiver's turn against non-Aware visible targets in [src/game/stealth.rs](src/game/stealth.rs).
+- `MonsterAIMode` is driven by `Awareness` via `MonsterAI::update_mode_from_awareness` (engine). Asleep monsters keep sleeping until awareness transitions away from Hidden.
+- Backstab triple-damage gates on `AwarenessState::Hidden` only (combat.rs). Asleep monsters resolve as Hidden by default.
+- `NoiseMap` resource ships in V1 with decay-by-1 tick but no producer. V2 noise phase plugs in Dijkstra populator.
+- Save schema v7: degraded persistence (`Aware → Searching{last_known_pos}` on save, `Suspicious → Hidden`).
 
 ### Turn System
 - `TurnState`: `Waiting → NextTurn → PlayerInput → Processing → NextTurn`
