@@ -207,7 +207,10 @@ impl ForestStairsBuilder {
 }
 
 impl MetaMapBuilder for ForestStairsBuilder {
-    fn phase(&self) -> Option<BuilderPhase> { Some(BuilderPhase::Finalization) }
+    // StructurePlacement (not Finalization): stairs *are* terrain placement,
+    // and Spawning must run after stair tiles exist so the spawner can
+    // skip them. See docs/design/SPAWNING.md §pipeline ordering.
+    fn phase(&self) -> Option<BuilderPhase> { Some(BuilderPhase::StructurePlacement) }
     fn build_map(&mut self, build: &mut BuilderMap) {
         let w = build.width;
         let h = build.height;
