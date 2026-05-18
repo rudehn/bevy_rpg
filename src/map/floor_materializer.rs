@@ -531,6 +531,13 @@ pub fn materialize_floor(
             if m.submerged {
                 commands.entity(entity).insert(crate::components::Submerged);
             }
+            // Defer awareness restore until the player entity exists.
+            // `apply_saved_awareness_system` resolves this marker.
+            if !matches!(m.awareness.state, crate::save::SavedAwarenessState::Hidden) {
+                commands
+                    .entity(entity)
+                    .insert(crate::save::PendingAwarenessRestore(m.awareness.clone()));
+            }
         } else {
             warnings.push(format!("Failed to spawn monster '{}'", m.name));
         }

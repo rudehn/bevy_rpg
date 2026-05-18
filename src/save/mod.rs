@@ -366,6 +366,7 @@ impl Plugin for SavePlugin {
             (
                 apply_player_load_system.run_if(|r: Res<PendingPlayerLoad>| r.0.is_some()),
                 apply_saved_hp_system,
+                apply_saved_awareness_system,
             )
                 .run_if(in_state(AppState::InGame)),
         )
@@ -1458,6 +1459,35 @@ pub fn apply_saved_hp_system(
     for (entity, mut health, saved) in query.iter_mut() {
         health.current = saved.0.min(health.max);
         commands.entity(entity).remove::<SavedHp>();
+    }
+}
+
+// ---- Awareness restore system ----
+// Applies PendingAwarenessRestore to monsters once the player entity is
+// available. Mirrors the SavedHp pattern — monsters get the marker
+// component at spawn, this system converts it into a real `Awareness`
+// keyed by the live player entity, then removes the marker.
+
+/// Temporary marker carrying the saved degraded awareness blob until
+/// the player entity exists and we can key the reconstructed
+/// `Awareness::records` against it.
+#[derive(Component, Debug, Clone)]
+pub struct PendingAwarenessRestore(pub MonsterAwarenessSave);
+
+pub fn apply_saved_awareness_system(
+    mut commands: Commands,
+    turn_manager: Res<roguelike_engine::turn::TurnManager>,
+    player_query: Query<Entity, With<crate::player::Player>>,
+    query: Query<(Entity, &PendingAwarenessRestore)>,
+) {
+    let Ok(player_entity) = player_query.single() else { return; };
+    let now = turn_manager.current_time;
+    for (monster_entity, pending) in query.iter() {
+        let restored = restore_awareness_from_save(&pending.0, player_entity, now);
+        commands
+            .entity(monster_entity)
+            .insert(restored)
+            .remove::<PendingAwarenessRestore>();
     }
 }
 

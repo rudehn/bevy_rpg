@@ -117,6 +117,11 @@ pub fn compute_perception_components(
     }
 }
 
+/// Public-API convenience: total stealth mod without breakdown. The
+/// internal callsite (`perception_tick_system`) uses
+/// `compute_stealth_components` to avoid recomputing the breakdown for
+/// the UI; external consumers that only need the i32 sum can call this.
+#[allow(dead_code)]
 pub fn compute_stealth_mod(
     skills: Option<&Skills>,
     attrs: Option<&Attributes>,
