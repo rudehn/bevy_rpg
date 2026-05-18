@@ -233,7 +233,6 @@ impl Plugin for TurnOrderPlugin {
                     // entity before any dispatcher reads it. Replaces the
                     // mode-update logic that lived inside execute_monster_ai.
                     crate::game::ai::refresh_monster_modes_system,
-                    crate::game::goap::goap_ai_dispatch,
                     crate::game::tactics::dispatch::tactic_dispatch_system,
                     marker_dispatch,
                 )

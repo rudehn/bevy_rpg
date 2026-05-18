@@ -112,10 +112,7 @@ pub fn spawn_monster(
 
     let spawn_pt = Point::new(spawn_point.x, spawn_point.y);
     let (mut monster_ai, base_morale) = match &monster_asset.ai {
-        crate::assets::AiConfig::Goap { base_morale, .. } => {
-            (MonsterAI::default(), *base_morale)
-        }
-        crate::assets::AiConfig::TacticList { flee_at_hp_percent, erratic_chance, chase_leash, kites, kite_distance, .. } => {
+        crate::assets::AiConfig::TacticList { flee_at_hp_percent, erratic_chance, chase_leash, kites, kite_distance, base_morale, .. } => {
             // Tactics read these tuning knobs via the snapshot.
             let mut ai = MonsterAI::default();
             ai.flee_at_hp_percent = *flee_at_hp_percent;
@@ -123,7 +120,7 @@ pub fn spawn_monster(
             ai.chase_leash = *chase_leash;
             ai.kites = *kites;
             ai.kite_distance = *kite_distance;
-            (ai, 0.6) // Default morale; squad-driven morale lands in Phase 5+
+            (ai, *base_morale)
         }
     };
     monster_ai.spawn_position = Some(spawn_pt);
@@ -221,12 +218,6 @@ pub fn spawn_monster(
     }
 
     let ranged_range = match &monster_asset.ai {
-        crate::assets::AiConfig::Goap { traits, .. } => {
-            traits.iter().find_map(|t| match t {
-                crate::assets::AiTrait::Ranged { range } => Some(*range),
-                _ => None,
-            }).unwrap_or(0)
-        }
         crate::assets::AiConfig::TacticList { ranged_range, .. } => *ranged_range,
     };
     if ranged_range > 0 {
@@ -399,26 +390,8 @@ pub fn spawn_monster(
             .insert(crate::game::tactics::TacticBrain::new(leaked));
     }
 
-    // GOAP monsters get a GoapAI component with trait-driven goals/actions.
-    if let crate::assets::AiConfig::Goap { traits, .. } = &monster_asset.ai {
-        let (goals, actions) = crate::game::goap::build_goap_config(
-            traits,
-            !monster_asset.monster_abilities.is_empty(),
-            monster_asset.base_armor >= 2,
-            /* is_squad_member */ false, // Will be set later when squad is assigned
-        );
-        commands.entity(monster_entity).insert(crate::game::goap::GoapAI {
-            goals,
-            actions,
-            hoard_position: if traits.iter().any(|t| matches!(t, crate::assets::AiTrait::Hoarder)) {
-                Some(spawn_pt)
-            } else {
-                None
-            },
-            roam_target: None,
-            last_action: None,
-        });
-    }
+    // GOAP was deleted in Phase 5 of the tactic-registry migration.
+    // All monsters now use TacticBrain (above).
 
     turn_manager.add_entity(monster_entity);
     Some(monster_entity)

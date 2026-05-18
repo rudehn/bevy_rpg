@@ -49,7 +49,10 @@
             attack_delay: 1.2,
             faction: "Rat",
             species: Beast,
-            ai: Goap(traits: [Cowardly, Support], base_morale: 0.7),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                flee_at_hp_percent: 0.3, base_morale: 0.7,
+            ),
             monster_abilities: [(
                 kind: SummonCapped(weights: [("Sewer Rat", 70), ("Plague Rat", 30)], max_summons: 6),
                 cooldown: 2,
@@ -68,7 +71,10 @@
             base_hp: 7,
             movement_delay: 0.8,
             attack_delay: 0.8,
-            ai: Goap(traits: [Cowardly, Intelligent, Hoarder], base_morale: 0.5),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                flee_at_hp_percent: 0.35, base_morale: 0.5,
+            ),
             faction: "Kobold",
             species: Humanoid,
             ascii_char: "k",
@@ -166,7 +172,10 @@
             vision: 8,
             damage: "1d4",
             base_hp: 5,
-            ai: Goap(traits: [Cowardly, Intelligent], base_morale: 0.6),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                flee_at_hp_percent: 0.3, base_morale: 0.6,
+            ),
             faction: "Goblin",
             species: Humanoid,
             loot_table: [
@@ -196,7 +205,10 @@
             perception: 1,
             damage: "1d4",
             base_hp: 8,
-            ai: Goap(traits: [Cowardly, Intelligent, Support], base_morale: 0.55),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                flee_at_hp_percent: 0.4, base_morale: 0.55,
+            ),
             faction: "Goblin",
             species: Humanoid,
             monster_abilities: [(
@@ -223,7 +235,10 @@
                 (kind: Bolt(dice: "2d4", damage_type: Physical), cooldown: 3, current_cooldown: 0, range: 6, name: "Magic Missile"),
                 (kind: Heal(dice: "2d6"), cooldown: 5, current_cooldown: 0, range: 6, name: "Heal"),
             ],
-            ai: Goap(traits: [Cowardly, Intelligent, Support], base_morale: 0.55),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                flee_at_hp_percent: 0.4, base_morale: 0.55,
+            ),
             faction: "Goblin",
             loot_table: [
                 (item: "Healing Potion", spawn_chance: 0.20),
@@ -239,7 +254,10 @@
             base_hp: 14,
             base_armor: 2,
             species: Humanoid,
-            ai: Goap(traits: [Aggressive, Intelligent], base_morale: 0.7),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                base_morale: 0.7,
+            ),
             faction: "Goblin",
             ascii_char: "g",
             ascii_fg: "#2CA02C",
@@ -286,7 +304,10 @@
                 WarCry(radius: 3, duration: 4),
                 SummonOnDeath(monster: "Goblin", count: 2),
             ],
-            ai: Goap(traits: [Intelligent, Commander], base_morale: 0.7),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                base_morale: 0.7,
+            ),
             faction: "Goblin",
             loot_table: [
                 (item: "Sword", spawn_chance: 0.20),
@@ -970,7 +991,10 @@
             faction: "Kobold",
             species: Humanoid,
             abilities: [PackTactics],
-            ai: Goap(traits: [Aggressive, Intelligent], base_morale: 0.65),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                base_morale: 0.65,
+            ),
             loot_table: [
                 (item: "Sword", spawn_chance: 0.20),
                 (item: "Healing Potion", spawn_chance: 0.20),
@@ -1020,7 +1044,10 @@
             faction: "Kobold",
             species: Humanoid,
             abilities: [PackTactics, WarCry(radius: 3, duration: 5)],
-            ai: Goap(traits: [Aggressive, Intelligent, Commander], base_morale: 0.8),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                base_morale: 0.8,
+            ),
             loot_table: [
                 (item: "Sword", spawn_chance: 0.30),
                 (item: "Healing Potion", spawn_chance: 0.30),
@@ -1119,7 +1146,10 @@
             monster_abilities: [
                 (kind: SelfBuff(effect: Strengthened, duration: 15), cooldown: 10, current_cooldown: 0, range: 0, name: "Adamant Will"),
             ],
-            ai: Goap(traits: [Aggressive, Commander], base_morale: 1.0),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                base_morale: 1.0,
+            ),
             ascii_char: "W",
             ascii_fg: "#FFD700",
         ),

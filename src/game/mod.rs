@@ -58,7 +58,6 @@ pub mod factions;
 pub mod fire;
 pub mod fleeing;
 pub mod gas;
-pub mod goap;
 pub mod items;
 pub mod machines;
 pub mod magic;
@@ -150,7 +149,6 @@ impl Plugin for GamePlugin {
                 EnchantmentPlugin,
                 crate::game::staves::StavesPlugin,
                 crate::game::machines::MachinesPlugin,
-                crate::game::goap::GoapPlugin,
                 water::WaterPlugin,
                 ascii_mode::AsciiModePlugin,
                 crate::game::xp::XpPlugin,

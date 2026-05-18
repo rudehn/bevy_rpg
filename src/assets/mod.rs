@@ -662,32 +662,18 @@ pub enum AiTrait {
     Ranged { range: u32 },
 }
 
-/// AI behavior configuration for a monster. One of two paths during
-/// the in-progress GOAP → tactic-registry migration (see
-/// `docs/design/TACTICS.md`):
-///
-/// - `Goap` — the legacy GOAP planner. Deletion target for Phase 5.
-/// - `TacticList` — the new path. A monster declares its ordered
-///   tactic list by name; the spawner looks each name up in the
-///   tactic registry and attaches a `TacticBrain` component.
-///
-/// The legacy `Fsm` variant was deleted in Phase 4 after every
-/// shipping monster migrated to `TacticList`.
+/// AI behavior configuration for a monster. The sole variant after
+/// the tactic-registry migration completed (Phase 5). The legacy
+/// `Fsm` and `Goap` variants were deleted in Phases 4 and 5
+/// respectively. See `docs/design/TACTICS.md`.
 #[derive(Debug, Clone, Deserialize)]
 pub enum AiConfig {
-    /// Goal-Oriented Action Planning with trait-based goals/actions.
-    Goap {
-        /// Behavioral traits that drive goal/action generation.
-        traits: Vec<AiTrait>,
-        /// Initial morale value (0.0-1.0).
-        #[serde(default = "default_morale")]
-        base_morale: f32,
-    },
     /// Ordered list of tactic names plus tuning knobs that flow into
-    /// `MonsterAI`. The names are resolved via
-    /// `game::tactics::library::lookup_tactic` at spawn time; tactics
-    /// read the knobs through the snapshot. Each list must end with
-    /// `"Wait"` — enforced at startup by `validate_tactic_names_system`.
+    /// `MonsterAI` and the squad `Morale` component. The names are
+    /// resolved via `game::tactics::library::lookup_tactic` at spawn
+    /// time; tactics read the knobs through the snapshot. Each list
+    /// must end with `"Wait"` — enforced at startup by
+    /// `validate_tactic_names_system`.
     TacticList {
         tactics: Vec<String>,
         #[serde(default)]
@@ -702,6 +688,11 @@ pub enum AiConfig {
         kite_distance: u32,
         #[serde(default)]
         ranged_range: u32,
+        /// Starting morale for the squad system. 0.0–1.0; default 0.6.
+        /// Bosses and elite leaders raise this; cowardly support
+        /// monsters lower it.
+        #[serde(default = "default_morale")]
+        base_morale: f32,
     },
 }
 
@@ -719,6 +710,7 @@ impl Default for AiConfig {
             kites: false,
             kite_distance: 3,
             ranged_range: 0,
+            base_morale: 0.6,
         }
     }
 }

@@ -9,7 +9,6 @@ use crate::components::{Chest, GameEntityMarker, InInventory, Item, Monster, Nam
 use crate::game::ai::{MonsterAI, MonsterAIMode};
 use crate::game::combat::Health;
 use crate::game::enchantment::{display_item_name, Enchantment, ItemArmorRunic, ItemWeaponRunic, RunicIdentified};
-use crate::game::goap::GoapAI;
 use crate::game::items::ItemProperties;
 use crate::game::magic::StatusEffects;
 use crate::game::{AppState, InGameState};
@@ -137,7 +136,6 @@ fn update_nearby_panel(
             Option<&Children>,
             &Health,
             Option<&MonsterAI>,
-            Option<&GoapAI>,
             Option<&StatusEffects>,
             Option<&Awareness>,
             Option<&crate::game::fleeing::Fleeing>,
@@ -198,7 +196,7 @@ fn update_nearby_panel(
         monster_query
             .iter()
             .filter(|(_, pos, ..)| visible.contains(&(pos.x, pos.y)))
-            .map(|(entity, pos, name, children, health, monster_ai, _goap_ai, status, awareness, fleeing)| {
+            .map(|(entity, pos, name, children, health, monster_ai, status, awareness, fleeing)| {
                 let dist = tile_distance(player_pos, pos);
                 let (ac, acol) = get_ascii_info(children).unzip();
                 let health_pct = if health.max > 0 { health.current as f32 / health.max as f32 } else { 1.0 };

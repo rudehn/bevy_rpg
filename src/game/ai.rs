@@ -211,25 +211,6 @@ impl AIContext {
     }
 }
 
-/// Returns true if any hostile entity is adjacent (Chebyshev distance 1) to the given position.
-fn has_adjacent_enemy(entity: Entity, pos: Point, world: &mut World) -> bool {
-    let monster_faction = world.get::<Faction>(entity).map(|f| f.0.clone());
-    let faction_matrix = world.resource::<FactionMatrix>().clone();
-    let mut query = world.query::<(Entity, &Position, &Faction)>();
-    for (other, other_pos, other_faction) in query.iter(world) {
-        if other == entity { continue; }
-        let dist = (other_pos.x - pos.x).abs().max((other_pos.y - pos.y).abs());
-        if dist <= 1 {
-            if let Some(ref mf) = monster_faction {
-                if faction_matrix.is_hostile_to(&mf.0, &other_faction.0.0) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
 /// Snap waypoint patrols to the nearest waypoint after a hunt ends.
 fn snap_to_nearest_waypoint(entity: Entity, monster_pos: Point, world: &mut World) {
     if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity)
@@ -242,93 +223,8 @@ fn snap_to_nearest_waypoint(entity: Entity, monster_pos: Point, world: &mut Worl
             }
 }
 
-/// Try to move away from the threat position (used for fleeing and kiting).
-/// Tries the primary flee direction first, then perpendicular directions.
-pub fn try_flee_movement(
-    entity: Entity,
-    monster_pos: Point,
-    threat_pos: Point,
-    world: &mut World,
-) -> Option<MovementIntent> {
-    let (dx, dy) = flee_direction(
-        monster_pos.x, monster_pos.y,
-        threat_pos.x, threat_pos.y,
-    );
-    if dx == 0 && dy == 0 {
-        return None;
-    }
-
-    let mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
-    let map = world.resource::<Map>();
-
-    // Try primary flee direction.
-    let primary = Point::new(monster_pos.x + dx, monster_pos.y + dy);
-    if map.in_bounds(primary) && can_entity_enter_tile(map.tiles[map.xy_idx(primary.x, primary.y)], mode) {
-        let dir = Direction::from_pos(
-            &Position::from_point(monster_pos),
-            &Position::from_point(primary),
-        );
-        return Some(MovementIntent { entity, dir });
-    }
-
-    // Try perpendicular directions.
-    let perp_offsets = if dx != 0 {
-        [(0, 1), (0, -1)] // Primary was horizontal, try vertical
-    } else {
-        [(1, 0), (-1, 0)] // Primary was vertical, try horizontal
-    };
-
-    for (px, py) in perp_offsets {
-        let target = Point::new(monster_pos.x + px, monster_pos.y + py);
-        if map.in_bounds(target) && can_entity_enter_tile(map.tiles[map.xy_idx(target.x, target.y)], mode) {
-            let dir = Direction::from_pos(
-                &Position::from_point(monster_pos),
-                &Position::from_point(target),
-            );
-            return Some(MovementIntent { entity, dir });
-        }
-    }
-
-    None
-}
-
-/// If the entity is stunned, emit a wait + visual feedback and return true.
-pub fn try_stun_skip(entity: Entity, world: &mut World) -> bool {
-    let Some(effects) = world.get::<StatusEffects>(entity) else {
-        return false;
-    };
-    let is_entangled = effects.is_entangled();
-    if !effects.is_stunned() && !is_entangled {
-        return false;
-    }
-    let name = world
-        .get::<crate::components::Name>(entity)
-        .map(|n| n.0.clone())
-        .unwrap_or_else(|| "Something".to_string());
-    if is_entangled {
-        world.write_message(crate::ui::game_log::GameLogMessage(format!(
-            "{} struggles against the cobwebs!", name
-        )));
-    } else {
-        world.write_message(crate::ui::game_log::GameLogMessage(format!(
-            "{} is stunned and cannot act!", name
-        )));
-    }
-    if let Some(pos) = world.get::<Position>(entity) {
-        let world_pos = crate::game::particles::grid_to_world(pos.x, pos.y);
-        world.write_message(crate::game::particles::ParticleRequest::FloatingText {
-            world_pos,
-            text: "\u{2605}".to_string(),
-            color: bevy::prelude::Color::srgba(1.0, 1.0, 0.3, 1.0),
-            font_size: 5.0,
-        });
-    }
-    world.write_message(WaitIntent { entity });
-    true
-}
-
-/// Try to use a monster ability. Returns true if an ability was used (caller should return).
-/// Public entry point for GOAP entities to attempt using their best ability.
+/// Try to use a monster ability. Returns `true` if one was fired.
+/// Public entry point for the tactic adapter's `UseAbility` handler.
 pub fn try_use_ability_world(entity: Entity, world: &mut World) -> bool {
     let pos = world.get::<Position>(entity).map(|p| p.to_point()).unwrap_or(Point::new(0, 0));
     let player_entity = {
@@ -524,158 +420,24 @@ fn try_use_ability(entity: Entity, monster_pos: Point, player_entity: Option<Ent
     false
 }
 
-// `try_ranged_attack`, `resolve_squad_leash`, and `resolve_movement`
-// were deleted in Phase 4d. They were FSM-only helpers used by
-// `execute_monster_ai` (now also deleted). Their behavior moved into
-// tactics: `RangedAttack`, `SquadLeash`, `HuntVisibleTarget` /
-// `PursueLastKnownPosition` / `FreeWander` respectively. See
-// docs/design/TACTICS.md.
+// FSM-era helpers (`try_ranged_attack`, `resolve_squad_leash`,
+// `resolve_movement`, `try_flee_movement`, `try_stun_skip`,
+// `pathfind_toward`, `has_adjacent_enemy`, `idle_movement`) were
+// deleted in Phases 4–5. Their behaviour moved into tactics:
+// `RangedAttack`, `SquadLeash`, `MeleeAdjacent`/`HuntVisibleTarget`/
+// `PursueLastKnownPosition`/`FreeWander`, `FleePanicked`/`FleeAtLowHp`/
+// `KiteRetreat`, `SubmergeOrSurface`. The stun/entangle short-circuit
+// is now `resolve::maybe_skip_turn`. See `docs/design/TACTICS.md`.
 
-/// A* pathfind one step toward `target` and return a MovementIntent.
-/// Uses the entity's `MovementMode` for mode-aware pathing costs.
-pub fn pathfind_toward(entity: Entity, from: Point, target: Point, world: &mut World) -> Option<MovementIntent> {
-    let mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
-    let map = world.resource::<Map>();
-    let next_step = next_step_toward_with_mode(map, from, target, mode)?;
-    let dir = Direction::from_pos(
-        &Position::from_point(from),
-        &Position::from_point(next_step),
-    );
-    Some(MovementIntent { entity, dir })
-}
-
-/// Spells gated by boss phase comment preserved for reference.
-
-/// Dispatch idle movement for a monster based on its `PatrolRoute` component.
-/// Sentry: jitter near home. Waypoint: walk route. AreaRoam: bounded random walk. None: free wander.
-pub fn idle_movement(
-    entity: Entity,
-    monster_pos: Point,
-    world: &mut World,
-    rng: &mut impl rand::Rng,
-) -> Option<MovementIntent> {
-    let patrol = world.get::<PatrolRoute>(entity).cloned();
-    let mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
-    let map = world.resource::<Map>();
-
-    match patrol.as_ref().map(|p| &p.state) {
-        Some(PatrolState::Sentry { home }) => {
-            let home_pt = Point::new(home.0, home.1);
-            let dist = DistanceAlg::Pythagoras.distance2d(monster_pos, home_pt);
-            if dist > GUARD_PATROL_RADIUS as f32 {
-                let next_step = next_step_toward_with_mode(map, monster_pos, home_pt, mode)?;
-                let dir = Direction::from_pos(
-                    &Position::from_point(monster_pos),
-                    &Position::from_point(next_step),
-                );
-                Some(MovementIntent { entity, dir })
-            } else {
-                let mut directions = Direction::ALL.to_vec();
-                directions.shuffle(rng);
-                directions.into_iter().find_map(|dir| {
-                    let target = monster_pos + dir.offset();
-                    if map.in_bounds(target)
-                        && can_entity_enter_tile(map.tiles[map.xy_idx(target.x, target.y)], mode)
-                        && DistanceAlg::Pythagoras.distance2d(target, home_pt) <= GUARD_PATROL_RADIUS as f32
-                    {
-                        Some(MovementIntent { entity, dir })
-                    } else {
-                        None
-                    }
-                })
-            }
-        }
-        Some(PatrolState::Waypoint { points, current_index }) => {
-            if points.is_empty() { return None; }
-            let target = Point::new(points[*current_index].0, points[*current_index].1);
-            if monster_pos == target {
-                // Arrived — advance index.
-                if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity)
-                    && let PatrolState::Waypoint { ref points, ref mut current_index } = patrol.state {
-                        *current_index = (*current_index + 1) % points.len();
-                    }
-                // Re-borrow and pathfind to next waypoint.
-                let patrol = world.get::<PatrolRoute>(entity).cloned();
-                let map = world.resource::<Map>();
-                if let Some(PatrolRoute { state: PatrolState::Waypoint { ref points, current_index } }) = patrol
-                    && let Some(next_step) = next_step_toward_with_mode(
-                        map,
-                        monster_pos,
-                        Point::new(points[current_index].0, points[current_index].1),
-                        mode,
-                    )
-                {
-                    let dir = Direction::from_pos(
-                        &Position::from_point(monster_pos),
-                        &Position::from_point(next_step),
-                    );
-                    return Some(MovementIntent { entity, dir });
-                }
-                None
-            } else if let Some(next_step) = next_step_toward_with_mode(map, monster_pos, target, mode) {
-                let dir = Direction::from_pos(
-                    &Position::from_point(monster_pos),
-                    &Position::from_point(next_step),
-                );
-                Some(MovementIntent { entity, dir })
-            } else {
-                // Pathfinding failed — skip to next waypoint.
-                if let Some(mut patrol) = world.get_mut::<PatrolRoute>(entity)
-                    && let PatrolState::Waypoint { ref points, ref mut current_index } = patrol.state {
-                        *current_index = (*current_index + 1) % points.len();
-                    }
-                None
-            }
-        }
-        Some(PatrolState::AreaRoam { min, max }) => {
-            let (min, max) = (*min, *max);
-            let mut directions = Direction::ALL.to_vec();
-            directions.shuffle(rng);
-            directions.into_iter().find_map(|dir| {
-                let target = monster_pos + dir.offset();
-                if map.in_bounds(target)
-                    && can_entity_enter_tile(map.tiles[map.xy_idx(target.x, target.y)], mode)
-                    && target.x >= min.0 && target.x <= max.0
-                    && target.y >= min.1 && target.y <= max.1
-                {
-                    Some(MovementIntent { entity, dir })
-                } else {
-                    None
-                }
-            })
-        }
-        None | Some(_) => {
-            // No PatrolRoute, or a `#[non_exhaustive]` variant the
-            // engine added that this game hasn't implemented yet —
-            // wander freely.
-            let mut directions = Direction::ALL.to_vec();
-            directions.shuffle(rng);
-            directions.into_iter().find_map(|dir| {
-                let target = monster_pos + dir.offset();
-                if map.in_bounds(target)
-                    && can_entity_enter_tile(map.tiles[map.xy_idx(target.x, target.y)], mode)
-                {
-                    Some(MovementIntent { entity, dir })
-                } else {
-                    None
-                }
-            })
-        }
-    }
-}
-
-/// Evaluates all ready spells for `caster` and returns `(slot_index, target_entity)` for
-/// the best one, or `None` if no spell is worth casting.
-///
-// Old choose_spell code — find the end marker below and delete everything between.
 // =====================================================================
-// AI Behavior Helpers (pure decision functions)
+// Pure decision helpers (re-exported)
 // =====================================================================
 //
-// Pure decision helpers now live in `roguelike_engine::ai::decisions`.
-// Re-exported here so the rest of ai.rs (`MonsterAI::execute` and
-// helpers) keeps calling `should_flee`, `should_kite_retreat`, etc.
-// with their existing names and signatures.
+// `roguelike_engine::ai::decisions` is the canonical home for the pure
+// "should I flee / kite / give up chase / move erratically" helpers.
+// Re-exported here so tactic implementations can `use crate::game::ai::*`
+// and grab the named decisions. Mode-update logic still calls
+// `should_give_up_chase` and `flee_direction` via these re-exports.
 pub use roguelike_engine::ai::decisions::{
     flee_direction, should_flee, should_give_up_chase, should_kite_retreat,
     should_move_erratically,
