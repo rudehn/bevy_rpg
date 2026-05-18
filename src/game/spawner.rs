@@ -112,28 +112,18 @@ pub fn spawn_monster(
 
     let spawn_pt = Point::new(spawn_point.x, spawn_point.y);
     let (mut monster_ai, base_morale) = match &monster_asset.ai {
-        crate::assets::AiConfig::Fsm { flee_at_hp_percent, erratic_chance, chase_leash, kites, kite_distance, .. } => {
-            let mut ai = MonsterAI::default();
-            ai.flee_at_hp_percent = *flee_at_hp_percent;
-            ai.erratic_chance = *erratic_chance;
-            ai.chase_leash = *chase_leash;
-            ai.kites = *kites;
-            ai.kite_distance = *kite_distance;
-            (ai, 0.6) // Default morale for FSM monsters
-        }
         crate::assets::AiConfig::Goap { base_morale, .. } => {
             (MonsterAI::default(), *base_morale)
         }
         crate::assets::AiConfig::TacticList { flee_at_hp_percent, erratic_chance, chase_leash, kites, kite_distance, .. } => {
-            // TacticList monsters carry the same tuning knobs as FSM —
-            // tactics read them via the snapshot.
+            // Tactics read these tuning knobs via the snapshot.
             let mut ai = MonsterAI::default();
             ai.flee_at_hp_percent = *flee_at_hp_percent;
             ai.erratic_chance = *erratic_chance;
             ai.chase_leash = *chase_leash;
             ai.kites = *kites;
             ai.kite_distance = *kite_distance;
-            (ai, 0.6) // Default morale; squad-driven morale lands in Phase 4+
+            (ai, 0.6) // Default morale; squad-driven morale lands in Phase 5+
         }
     };
     monster_ai.spawn_position = Some(spawn_pt);
@@ -231,7 +221,6 @@ pub fn spawn_monster(
     }
 
     let ranged_range = match &monster_asset.ai {
-        crate::assets::AiConfig::Fsm { ranged_range, .. } => *ranged_range,
         crate::assets::AiConfig::Goap { traits, .. } => {
             traits.iter().find_map(|t| match t {
                 crate::assets::AiTrait::Ranged { range } => Some(*range),

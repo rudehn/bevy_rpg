@@ -24,8 +24,9 @@ use roguelike_engine::ai::pathfinding::next_step_toward_with_mode;
 use roguelike_engine::components::MovementMode;
 use roguelike_engine::factions::FactionMatrix;
 use roguelike_engine::geometry::Direction;
-use roguelike_engine::map::tile::can_entity_enter_tile;
+use roguelike_engine::map::tile::{can_entity_enter_tile, LiquidType};
 use roguelike_engine::map::Map;
+use roguelike_engine::squad::{SquadId, SquadLeader};
 use roguelike_engine::status::StatusEffects;
 
 use crate::assets::MonsterManifest;
@@ -38,6 +39,7 @@ use crate::game::combat::{GameRng, Health};
 use crate::game::fleeing::Fleeing;
 use crate::game::magic::GameStatusEffectsExt;
 use crate::game::ranged::RangedCapable;
+use crate::game::staves::MonsterAbilities;
 use crate::game::tactics::library::{ALL_TACTIC_NAMES, TERMINAL_TACTIC_NAME};
 use crate::game::tactics::resolve::{
     resolve_turn, ActorId, ActorView, AiMode, EnemyView, GridDir, MovementKind, PathContext,
@@ -341,6 +343,10 @@ fn build_snapshot(
         .copied()
         .unwrap_or_default();
     let ranged_range = world.get::<RangedCapable>(entity).map(|r| r.range);
+    let has_useable_ability = world
+        .get::<MonsterAbilities>(entity)
+        .map(|abs| abs.0.iter().any(|a| a.current_cooldown == 0))
+        .unwrap_or(false);
     let (is_stunned, is_entangled) = {
         if let Some(effects) = world.get::<StatusEffects>(entity) {
             (effects.is_stunned(), effects.is_entangled())
@@ -349,6 +355,33 @@ fn build_snapshot(
         }
     };
     let is_submerged = world.get::<Submerged>(entity).is_some();
+    // Squad leader position — only for non-leader followers whose
+    // leader is alive. Self-leaders return None, soloists return None.
+    let squad_leader_pos = {
+        let my_squad = world.get::<SquadId>(entity).copied();
+        let is_self_leader = world.get::<SquadLeader>(entity).is_some();
+        match (my_squad, is_self_leader) {
+            (Some(sid), false) => {
+                let mut q = world
+                    .query_filtered::<(&SquadId, &Position), With<SquadLeader>>();
+                q.iter(world)
+                    .find_map(|(s, p)| if *s == sid { Some(p.to_point()) } else { None })
+            }
+            _ => None,
+        }
+    };
+    // Liquid layer check at the actor's tile. Used by SubmergeOrSurface.
+    let on_liquid = {
+        let map = world.resource::<Map>();
+        if !map.in_bounds(pos) {
+            false
+        } else {
+            !matches!(
+                map.tiles[map.xy_idx(pos.x, pos.y)].liquid,
+                LiquidType::None
+            )
+        }
+    };
 
     // --- Collect candidate enemies from a single query, then drop the query. ---
     let candidates: Vec<CandidateActor> = {
@@ -430,7 +463,7 @@ fn build_snapshot(
         is_stunned,
         is_entangled,
         is_submerged,
-        on_liquid: false, // Phase 2 doesn't read liquid tiles; submerge tactic lands later
+        on_liquid,
         flee_threshold,
         kites,
         kite_distance,
@@ -438,9 +471,11 @@ fn build_snapshot(
         chase_distance,
         chase_leash,
         last_known_player_pos,
-        patrol: None, // Phase 4 wires PatrolView
+        patrol: None, // PatrolView wiring lands when NPCs migrate (Phase 5+)
         stationary,
         ranged_range,
+        has_useable_ability,
+        squad_leader_pos,
     };
 
     Some((
@@ -518,8 +553,12 @@ fn write_intent(entity: Entity, action: TacticAction, id_map: &IdMap, world: &mu
                 });
         }
         TacticAction::UseAbility { .. } => {
-            // Phase 4 wires ability dispatch; until then this tactic
-            // shouldn't be in any monster's list. Wait as a safe fallback.
+            // Defer to the existing ability dispatcher, which handles
+            // per-ability target selection + cooldown setting +
+            // damage/heal/summon side effects. Either way, the turn is
+            // consumed — we write WaitIntent so the turn loop's
+            // ActionFinishedEvent contract is satisfied.
+            let _used = crate::game::ai::try_use_ability_world(entity, world);
             emit_wait(entity, world);
         }
         TacticAction::PickUp => {
@@ -656,25 +695,14 @@ pub fn validate_tactic_names_system(
 // Plugin
 // =====================================================================
 
-/// Registers the tactic dispatch system in `ProcessingPhase::Brain`
-/// and the startup name-validation check.
-///
-/// Scheduled `.after(crate::game::goap::goap_ai_dispatch).before(crate::game::turns::monster_ai_dispatch)`
-/// so the three AI paths coexist deterministically during migration.
-/// Once Phase 5 deletes the GOAP and FSM dispatchers, the `.after` /
-/// `.before` constraints come out and this becomes the sole dispatcher.
+/// Registers the startup name-validation check. The
+/// `tactic_dispatch_system` itself is registered as part of the Brain
+/// phase chain in [`crate::game::turns`] alongside the other AI
+/// dispatchers — see `TurnOrderPlugin::build`.
 pub struct TacticsPlugin;
 
 impl Plugin for TacticsPlugin {
     fn build(&self, app: &mut App) {
-        use crate::game::turns::ProcessingPhase;
-        app.add_systems(
-            Update,
-            tactic_dispatch_system
-                .in_set(ProcessingPhase::Brain)
-                .after(crate::game::goap::goap_ai_dispatch)
-                .before(crate::game::turns::monster_ai_dispatch),
-        );
         // Validation runs once after the manifest finishes loading.
         // The run_if gate handles the asset-loading race.
         app.add_systems(

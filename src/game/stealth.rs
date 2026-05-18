@@ -453,7 +453,10 @@ impl Plugin for StealthPlugin {
                 Update,
                 perception_tick_system
                     .in_set(crate::game::turns::ProcessingPhase::Brain)
-                    .before(crate::game::turns::monster_ai_dispatch)
+                    // Perception updates Awareness, which feeds
+                    // refresh_monster_modes_system → MonsterAI.mode →
+                    // tactic/goap dispatchers. Run before mode refresh.
+                    .before(crate::game::ai::refresh_monster_modes_system)
                     .run_if(in_state(crate::game::AppState::InGame)),
             )
             .add_systems(

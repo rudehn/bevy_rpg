@@ -159,6 +159,14 @@ pub struct ActorView {
     pub stationary: bool,
     /// `None` for monsters without ranged abilities.
     pub ranged_range: Option<u32>,
+    /// True when this actor has at least one `MonsterAbility` with
+    /// `current_cooldown == 0`. Gates the `UseAbility` tactic without
+    /// requiring tactics to enumerate every ability.
+    pub has_useable_ability: bool,
+    /// Position of this actor's squad leader, if any. Populated only
+    /// for non-leader squad members whose leader is alive. Used by
+    /// the `SquadLeash` tactic to drag stragglers back.
+    pub squad_leader_pos: Option<Point>,
 }
 
 /// Read view of a visible enemy. The snapshot builder pre-filters by
@@ -467,6 +475,8 @@ pub(crate) mod test_support {
             patrol: None,
             stationary: false,
             ranged_range: None,
+            has_useable_ability: false,
+            squad_leader_pos: None,
         }
     }
 

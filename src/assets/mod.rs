@@ -662,33 +662,19 @@ pub enum AiTrait {
     Ranged { range: u32 },
 }
 
-/// AI behavior configuration for a monster. One of three paths during
-/// the in-progress tactic-registry migration (see
+/// AI behavior configuration for a monster. One of two paths during
+/// the in-progress GOAP → tactic-registry migration (see
 /// `docs/design/TACTICS.md`):
 ///
-/// - `Fsm` — the legacy 3-state FSM dispatcher. Deletion target for
-///   Phase 4 of the migration.
 /// - `Goap` — the legacy GOAP planner. Deletion target for Phase 5.
 /// - `TacticList` — the new path. A monster declares its ordered
 ///   tactic list by name; the spawner looks each name up in the
 ///   tactic registry and attaches a `TacticBrain` component.
+///
+/// The legacy `Fsm` variant was deleted in Phase 4 after every
+/// shipping monster migrated to `TacticList`.
 #[derive(Debug, Clone, Deserialize)]
 pub enum AiConfig {
-    /// Standard 3-state FSM (Asleep/Hunting/Idle) with reactive behaviors.
-    Fsm {
-        #[serde(default)]
-        flee_at_hp_percent: f32,
-        #[serde(default)]
-        erratic_chance: f32,
-        #[serde(default)]
-        chase_leash: u32,
-        #[serde(default)]
-        kites: bool,
-        #[serde(default = "default_kite_distance")]
-        kite_distance: u32,
-        #[serde(default)]
-        ranged_range: u32,
-    },
     /// Goal-Oriented Action Planning with trait-based goals/actions.
     Goap {
         /// Behavioral traits that drive goal/action generation.
@@ -697,13 +683,11 @@ pub enum AiConfig {
         #[serde(default = "default_morale")]
         base_morale: f32,
     },
-    /// Ordered list of tactic names plus the same tuning knobs as
-    /// `Fsm`. The names are resolved via
-    /// `game::tactics::library::lookup_tactic` at spawn time; the
-    /// knobs are written into the monster's `MonsterAI` component
-    /// (same as the `Fsm` path) so tactics can read them from the
-    /// snapshot. Each list must end with `"Wait"` — enforced at
-    /// startup by `validate_tactic_names_system`.
+    /// Ordered list of tactic names plus tuning knobs that flow into
+    /// `MonsterAI`. The names are resolved via
+    /// `game::tactics::library::lookup_tactic` at spawn time; tactics
+    /// read the knobs through the snapshot. Each list must end with
+    /// `"Wait"` — enforced at startup by `validate_tactic_names_system`.
     TacticList {
         tactics: Vec<String>,
         #[serde(default)]
@@ -723,7 +707,12 @@ pub enum AiConfig {
 
 impl Default for AiConfig {
     fn default() -> Self {
-        AiConfig::Fsm {
+        // Minimal valid TacticList — just `Wait`. A monster falling
+        // through to this default ends up doing nothing, which is the
+        // safest possible behavior for content that forgot to declare
+        // its AI. Real assets always declare an explicit list.
+        AiConfig::TacticList {
+            tactics: vec!["Wait".to_string()],
             flee_at_hp_percent: 0.0,
             erratic_chance: 0.0,
             chase_leash: 0,

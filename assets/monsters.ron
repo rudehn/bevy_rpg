@@ -12,7 +12,10 @@
             movement_delay: 0.9,
             faction: "Rat",
             species: Beast,
-            ai: Fsm(flee_at_hp_percent: 0.25, chase_leash: 8),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                flee_at_hp_percent: 0.25, chase_leash: 8,
+            ),
             ascii_char: "r",
             ascii_fg: "#8C6432",
         ),
@@ -27,7 +30,10 @@
             movement_delay: 0.9,
             faction: "Rat",
             species: Beast,
-            ai: Fsm(flee_at_hp_percent: 0.25, chase_leash: 8),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                flee_at_hp_percent: 0.25, chase_leash: 8,
+            ),
             abilities: [PoisonStrike(damage_per_turn: 1, duration: 3, chance: 100)],
             ascii_char: "r",
             ascii_fg: "#3CB43C",
@@ -75,7 +81,10 @@
             base_hp: 4,
             movement_delay: 1.2,
             species: Fungal,
-            ai: Fsm(erratic_chance: 0.4),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                erratic_chance: 0.4,
+            ),
             abilities: [ExplodeOnHit(radius: 2, effect: CrackFloor)],
             ascii_char: "b",
             ascii_fg: "#1e8ca8ff",
@@ -87,7 +96,10 @@
             base_hp: 5,
             movement_delay: 1.2,
             species: Fungal,
-            ai: Fsm(erratic_chance: 0.4),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                erratic_chance: 0.4,
+            ),
             abilities: [
                 ExplodeOnHit(radius: 2, effect: GasCloud(volume: 500)),
                 GasOnDeath(radius: 2, volume: 500),
@@ -103,7 +115,10 @@
             movement_mode: RestrictedToLiquid,
             movement_delay: 0.7,
             species: Beast,
-            ai: Fsm(erratic_chance: 0.2),
+            ai: TacticList(
+                tactics: ["SubmergeOrSurface", "FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                erratic_chance: 0.2,
+            ),
             ascii_char: "e",
             ascii_fg: "#4488CC",
         ),
@@ -168,7 +183,10 @@
             movement_delay: 0.9,
             faction: "Goblin",
             species: Construct,
-            ai: Fsm(flee_at_hp_percent: 0.0, chase_leash: 20),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                flee_at_hp_percent: 0.0, chase_leash: 20,
+            ),
             ascii_char: "↑",
             ascii_fg: "#88CCFF",
         ),
@@ -234,7 +252,10 @@
             base_hp: 8,
             base_dodge: 2,
             species: Humanoid,
-            ai: Fsm(kites: true, kite_distance: 3, ranged_range: 6),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                kites: true, kite_distance: 3, ranged_range: 6,
+            ),
             faction: "Goblin",
             ascii_char: "g",
             ascii_fg: "#CC3232",
@@ -301,7 +322,10 @@
             base_hp: 20,
             base_armor: 1,
             species: Humanoid,
-            ai: Fsm(ranged_range: 8),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                ranged_range: 8,
+            ),
             faction: "Orc",
             loot_table: [
                 (item: "Arrow", spawn_chance: 0.80, count_min: 5, count_max: 12),
@@ -397,7 +421,10 @@
             movement_delay: 1.1,
             attack_delay: 0.9,
             species: Fungal,
-            ai: Fsm(ranged_range: 5),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                ranged_range: 5,
+            ),
             faction: "Fungal",
             ascii_char: "m",
             ascii_fg: "#9050A0",
@@ -446,7 +473,10 @@
             base_hp: 15,
             base_armor: 1,
             species: Undead,
-            ai: Fsm(ranged_range: 7),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                ranged_range: 7,
+            ),
             resistances: {"physical": 50},
             faction: "Undead",
             loot_table: [
@@ -520,7 +550,10 @@
             species: Humanoid,
             faction: "Giant",
             resistances: {"fire": -50},
-            ai: Fsm(chase_leash: 10),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                chase_leash: 10,
+            ),
             ascii_char: "T",
             ascii_fg: "#4A7030",
         ),
@@ -648,7 +681,10 @@
             base_armor: 3,
             movement_delay: 0.9,
             species: Dragon,
-            ai: Fsm(ranged_range: 5),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                ranged_range: 5,
+            ),
             resistances: {"fire": 100},
             abilities: [BurningStrike(damage_per_turn: 2, duration: 3, chance: 40)],
             faction: "Dragon",
@@ -682,7 +718,10 @@
             base_armor: 7,
             attack_delay: 0.85,
             species: Dragon,
-            ai: Fsm(ranged_range: 4),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                ranged_range: 4,
+            ),
             resistances: {"fire": 100},
             abilities: [
                 WarCry(radius: 3, duration: 4),
@@ -709,7 +748,10 @@
             movement_delay: 8.0,
             attack_delay: 4.0,
             species: Construct,
-            ai: Fsm(chase_leash: 12),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                chase_leash: 12,
+            ),
             ascii_char: "S",
             ascii_fg: "#808080",
         ),
@@ -720,7 +762,12 @@
             base_hp: 10,
             stationary: true,
             species: Construct,
-            ai: Fsm(ranged_range: 8),
+            // Stationary turret — movement tactics no-op via stationary flag,
+            // so the same list works; only RangedAttack and Wait will ever fire.
+            ai: TacticList(
+                tactics: ["RangedAttack", "Wait"],
+                ranged_range: 8,
+            ),
             ascii_char: "^",
             ascii_fg: "#808080",
         ),
@@ -760,7 +807,10 @@
             base_dodge: 1,
             movement_delay: 0.8,
             species: Aberration,
-            ai: Fsm(ranged_range: 6, kites: true, kite_distance: 3),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                ranged_range: 6, kites: true, kite_distance: 3,
+            ),
             ascii_char: "i",
             ascii_fg: "#CC3232",
         ),
@@ -806,7 +856,10 @@
             base_dodge: 2,
             movement_delay: 0.8,
             species: Beast,
-            ai: Fsm(erratic_chance: 0.3, chase_leash: 10),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                erratic_chance: 0.3, chase_leash: 10,
+            ),
             ascii_char: "B",
             ascii_fg: "#4A3030",
         ),
@@ -819,7 +872,10 @@
             base_dodge: 1,
             movement_delay: 0.9,
             species: Beast,
-            ai: Fsm(chase_leash: 14),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                chase_leash: 14,
+            ),
             abilities: [PackTactics],
             ascii_char: "W",
             ascii_fg: "#706050",
@@ -833,7 +889,10 @@
             movement_delay: 1.15,
             attack_delay: 1.0,
             species: Beast,
-            ai: Fsm(chase_leash: 8),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                chase_leash: 8,
+            ),
             ascii_char: "U",
             ascii_fg: "#604028",
         ),
@@ -851,7 +910,10 @@
             movement_delay: 0.5,
             attack_delay: 1.0,
             species: Beast,
-            ai: Fsm(flee_at_hp_percent: 0.25, chase_leash: 12),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                flee_at_hp_percent: 0.25, chase_leash: 12,
+            ),
             ascii_char: "j",
             ascii_fg: "#C8A06A",
         ),
@@ -886,7 +948,10 @@
                 Knockback(distance: 2, chance: 60),
                 StunningBlow(duration: 1, chance: 30),
             ],
-            ai: Fsm(chase_leash: 5),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                chase_leash: 5,
+            ),
             ascii_char: "Y",
             ascii_fg: "#3C6B2F",
         ),
@@ -926,7 +991,8 @@
             attack_delay: 1.0,
             faction: "Kobold",
             species: Humanoid,
-            ai: Fsm(
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
                 ranged_range: 5,
                 kites: true,
                 kite_distance: 3,
@@ -972,7 +1038,10 @@
             movement_delay: 0.9,
             faction: "Goblin",
             species: Humanoid,
-            ai: Fsm(kites: true, kite_distance: 3, ranged_range: 5, flee_at_hp_percent: 0.4),
+            ai: TacticList(
+                tactics: ["FleePanicked", "FleeAtLowHp", "RangedAttack", "KiteRetreat", "ErraticMove", "MeleeAdjacent", "SquadLeash", "HuntVisibleTarget", "PursueLastKnownPosition", "FreeWander", "Wait"],
+                kites: true, kite_distance: 3, ranged_range: 5, flee_at_hp_percent: 0.4,
+            ),
             abilities: [ExplodeOnDeath(damage: 8, radius: 2, damage_type: Some("physical"))],
             ascii_char: "g",
             ascii_fg: "#8080A0",
@@ -1074,14 +1143,15 @@
             vision: 6,
             damage: "1d2",
             base_hp: 12,
-            // Fsm with high erratic + zero chase-leash gates wandering
-            // entirely through idle_movement reading the AreaRoam
-            // PatrolRoute the builder attaches.
-            ai: Fsm(
-                flee_at_hp_percent: 0.0,
+            // NPC: never attacks (Townsfolk-vs-Player is non-hostile in the
+            // faction matrix, so HuntVisibleTarget passes). ErraticMove +
+            // FreeWander handle the drunken stagger; FreeWander currently
+            // ignores the AreaRoam bounds the town builder attaches —
+            // restoring patrol-aware wander lands with the PatrolOrWander
+            // tactic in a follow-up phase.
+            ai: TacticList(
+                tactics: ["ErraticMove", "FreeWander", "Wait"],
                 erratic_chance: 0.8,
-                chase_leash: 0,
-                kites: false,
             ),
             faction: "Townsfolk",
             species: Humanoid,

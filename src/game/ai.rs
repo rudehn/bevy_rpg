@@ -41,155 +41,39 @@ pub use roguelike_engine::components::{PatrolRoute, PatrolState};
 // `use crate::game::ai::MonsterAI` continue to resolve.
 pub use roguelike_engine::ai::{MonsterAI, MonsterAIMode, GUARD_PATROL_RADIUS};
 
-/// Execute one turn for a monster AI.
+/// Run the mode-update transitions for a monster. Wraps the legacy
+/// `update_mode` body — gathers `AIContext` then applies the
+/// visibility-driven FSM transitions (Asleep/Idle → Hunting, chase
+/// tracking, chase_leash give-up, waypoint snapback).
 ///
-/// This is the game-crate side of the AI loop. Previously it was
-/// `MonsterAI::execute(&mut self, entity, world)`, but Rust does not
-/// allow inherent methods on a type to be split across crates — the
-/// struct now lives in `roguelike_engine::ai`, so `execute` is a free
-/// function here and call sites are `execute_monster_ai(&mut ai, ...)`.
-pub fn execute_monster_ai(monster_ai: &mut MonsterAI, entity: Entity, world: &mut World) {
-        // Stunned entities skip their turn entirely.
-        if try_stun_skip(entity, world) {
-            return;
-        }
-
-        // Gather read-only data about the monster and player.
-        let Some(ctx) = AIContext::gather(entity, world) else {
-            world.write_message(WaitIntent { entity });
-            return;
-        };
-
-        // Update AI mode based on visibility.
+/// Called by [`refresh_monster_modes_system`] every turn before any
+/// AI dispatcher runs, so both GOAP and TacticBrain entities see an
+/// up-to-date `MonsterAI.mode`.
+pub fn refresh_monster_mode(monster_ai: &mut MonsterAI, entity: Entity, world: &mut World) {
+    if let Some(ctx) = AIContext::gather(entity, world) {
         update_mode(monster_ai, entity, &ctx, world);
+    }
+}
 
-        // --- Submerge / Surface logic for aquatic monsters ---
-        let movement_mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
-        if movement_mode == MovementMode::RestrictedToLiquid {
-            let map = world.resource::<Map>();
-            let idx = map.xy_idx(ctx.monster_pos.x, ctx.monster_pos.y);
-            let on_liquid = map.tiles[idx].liquid != crate::map::tile::LiquidType::None;
-
-            if on_liquid && !has_adjacent_enemy(entity, ctx.monster_pos, world) {
-                // Submerge when on liquid with no adjacent enemies
-                world.commands().entity(entity).insert(crate::components::Submerged);
-            } else {
-                // Surface when enemy is adjacent or not on liquid
-                world.commands().entity(entity).remove::<crate::components::Submerged>();
-            }
+/// Exclusive Bevy system: refresh every (`MonsterAI`, `MyTurn`)
+/// entity's mode. Runs in `ProcessingPhase::Brain` before any AI
+/// dispatcher (`goap_ai_dispatch`, `tactic_dispatch_system`) so
+/// dispatchers always read the fresh mode.
+///
+/// This replaces the per-turn mode-update call that used to live
+/// inside `execute_monster_ai` (deleted in Phase 4 of the tactic
+/// registry migration).
+pub fn refresh_monster_modes_system(world: &mut World) {
+    let entities: Vec<Entity> = {
+        let mut q = world.query_filtered::<Entity, (With<MonsterAI>, With<crate::game::turns::MyTurn>)>();
+        q.iter(world).collect()
+    };
+    for entity in entities {
+        if let Some(mut ai) = world.entity_mut(entity).take::<MonsterAI>() {
+            refresh_monster_mode(&mut ai, entity, world);
+            world.entity_mut(entity).insert(ai);
         }
-
-        // Helper closure: surface before any attack action
-        let surface = |ent: Entity, w: &mut World| {
-            w.commands().entity(ent).remove::<crate::components::Submerged>();
-        };
-
-        // --- Stationary monsters: only use abilities/ranged, never move ---
-        if monster_ai.stationary {
-            if monster_ai.mode == MonsterAIMode::Hunting && ctx.is_player_visible {
-                if try_use_ability(entity, ctx.monster_pos, ctx.player_entity, world) {
-                    return;
-                }
-                if try_ranged_attack(entity, ctx.monster_pos, ctx.player_point, ctx.player_entity, world) {
-                    return;
-                }
-            }
-            world.write_message(WaitIntent { entity });
-            return;
-        }
-
-        // --- Flee check (highest priority behavior) ---
-        // Only flee when the player is visible — a monster that rounds a corner
-        // and loses sight of the threat should stop fleeing and resume normal AI.
-        if monster_ai.mode == MonsterAIMode::Hunting && monster_ai.flee_at_hp_percent > 0.0 && ctx.is_player_visible
-            && let Some(health) = world.get::<Health>(entity)
-                && should_flee(health.current, health.max, monster_ai.flee_at_hp_percent)
-                    && let Some(intent) = try_flee_movement(
-                        entity, ctx.monster_pos, ctx.player_point, world,
-                    ) {
-                        surface(entity, world);
-                        world.write_message(intent);
-                        return;
-                    }
-                    // All flee directions blocked (cornered) — fall through to
-                    // normal behavior so the monster can still attack or act.
-
-        // Try special actions (spell, ranged) before kiting.
-        // Ranged monsters fire first, THEN kite on their next turn.
-        if monster_ai.mode == MonsterAIMode::Hunting && ctx.is_player_visible {
-            if try_use_ability(entity, ctx.monster_pos, ctx.player_entity, world) {
-                surface(entity, world);
-                return;
-            }
-            if try_ranged_attack(entity, ctx.monster_pos, ctx.player_point, ctx.player_entity, world) {
-                surface(entity, world);
-                return;
-            }
-        }
-
-        // --- Kite check (ranged monsters retreat when player is too close) ---
-        // Runs AFTER ranged attack so archers shoot-then-retreat, not retreat-forever.
-        if monster_ai.mode == MonsterAIMode::Hunting && monster_ai.kites && ctx.is_player_visible
-            && should_kite_retreat(
-                ctx.monster_pos.x, ctx.monster_pos.y,
-                ctx.player_point.x, ctx.player_point.y,
-                monster_ai.kite_distance,
-            )
-                && let Some(intent) = try_flee_movement(
-                    entity, ctx.monster_pos, ctx.player_point, world,
-                ) {
-                    surface(entity, world);
-                    world.write_message(intent);
-                    return;
-                }
-                // Retreat blocked — fall through to normal pathfinding.
-
-        // --- Erratic movement check (before normal pathfinding) ---
-        if monster_ai.mode == MonsterAIMode::Hunting && monster_ai.erratic_chance > 0.0 {
-            let mut rng_inst = rng();
-            let roll: f32 = rand::Rng::random(&mut rng_inst);
-            if should_move_erratically(monster_ai.erratic_chance, roll) {
-                let mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
-                let map = world.resource::<Map>();
-                let mut directions = [Direction::N, Direction::E, Direction::S, Direction::W].to_vec();
-                directions.shuffle(&mut rng_inst);
-                let erratic_intent = directions.into_iter().find_map(|dir| {
-                    let target = ctx.monster_pos + dir.offset();
-                    if map.in_bounds(target)
-                        && can_entity_enter_tile(map.tiles[map.xy_idx(target.x, target.y)], mode)
-                    {
-                        Some(MovementIntent { entity, dir })
-                    } else {
-                        None
-                    }
-                });
-                if let Some(intent) = erratic_intent {
-                    world.write_message(intent);
-                    return;
-                }
-                // If no valid erratic direction, fall through to normal pathfinding.
-            }
-        }
-
-        // Resolve squad leash target (followers stay near their leader).
-        let leader_leash = resolve_squad_leash(entity, ctx.monster_pos, world);
-
-        // Pathfind and move.
-        if let Some(intent) = resolve_movement(
-            entity, monster_ai.mode, ctx.monster_pos, leader_leash,
-            monster_ai.last_known_player_position, world,
-        ) {
-            world.write_message(intent);
-        } else {
-            let name = world.get::<crate::components::Name>(entity)
-                .map(|n| n.0.clone())
-                .unwrap_or_else(|| format!("{entity:?}"));
-            bevy::log::info!(
-                "FSM {name}: WaitIntent (mode={:?}, last_known={:?}, leash={:?})",
-                monster_ai.mode, monster_ai.last_known_player_position, leader_leash
-            );
-            world.write_message(WaitIntent { entity });
-        }
+    }
 }
 
 /// Update AI mode transitions based on player visibility. Companion
@@ -640,77 +524,12 @@ fn try_use_ability(entity: Entity, monster_pos: Point, player_entity: Option<Ent
     false
 }
 
-/// Try a ranged attack if the monster has ranged capability and player is in range
-/// but not adjacent (prefer melee when adjacent). Returns true if fired.
-fn try_ranged_attack(
-    entity: Entity,
-    monster_pos: Point,
-    player_point: Point,
-    player_entity: Option<Entity>,
-    world: &mut World,
-) -> bool {
-    let Some(ranged_capable) = world.get::<RangedCapable>(entity) else {
-        return false;
-    };
-    let range = ranged_capable.range;
-    let dist = DistanceAlg::Pythagoras.distance2d(monster_pos, player_point);
-    if dist > 1.5 && dist <= range as f32
-        && let Some(p_entity) = player_entity {
-            world.write_message(RangedAttackIntent { attacker: entity, target: p_entity });
-            return true;
-        }
-    false
-}
-
-/// Find the squad leader's position if this entity is a non-leader follower
-/// that's too far from its leader.
-fn resolve_squad_leash(entity: Entity, monster_pos: Point, world: &mut World) -> Option<Point> {
-    use crate::game::squad::{SquadId, SquadLeader};
-    const SQUAD_LEASH_RANGE: f32 = 4.0;
-
-    let squad_id = world.get::<SquadId>(entity).copied()?;
-    if world.get::<SquadLeader>(entity).is_some() {
-        return None; // Leaders don't leash
-    }
-
-    let mut leader_pos = None;
-    let mut query = world.query_filtered::<(&SquadId, &Position), With<SquadLeader>>();
-    for (sid, pos) in query.iter(world) {
-        if *sid == squad_id {
-            leader_pos = Some(pos.to_point());
-            break;
-        }
-    }
-    leader_pos.filter(|lp| DistanceAlg::Pythagoras.distance2d(monster_pos, *lp) > SQUAD_LEASH_RANGE)
-}
-
-/// Pathfind toward the appropriate target based on AI mode.
-fn resolve_movement(
-    entity: Entity,
-    mode: MonsterAIMode,
-    monster_pos: Point,
-    leader_leash: Option<Point>,
-    last_known_player_pos: Option<Point>,
-    world: &mut World,
-) -> Option<MovementIntent> {
-    match mode {
-        MonsterAIMode::Hunting => {
-            let target = leader_leash.or(last_known_player_pos)?;
-            pathfind_toward(entity, monster_pos, target, world)
-        }
-        MonsterAIMode::Idle => {
-            if let Some(target) = leader_leash {
-                pathfind_toward(entity, monster_pos, target, world)
-            } else {
-                let mut rng = rng();
-                let map = world.resource::<Map>();
-                let _ = map;
-                idle_movement(entity, monster_pos, world, &mut rng)
-            }
-        }
-        _ => None,
-    }
-}
+// `try_ranged_attack`, `resolve_squad_leash`, and `resolve_movement`
+// were deleted in Phase 4d. They were FSM-only helpers used by
+// `execute_monster_ai` (now also deleted). Their behavior moved into
+// tactics: `RangedAttack`, `SquadLeash`, `HuntVisibleTarget` /
+// `PursueLastKnownPosition` / `FreeWander` respectively. See
+// docs/design/TACTICS.md.
 
 /// A* pathfind one step toward `target` and return a MovementIntent.
 /// Uses the entity's `MovementMode` for mode-aware pathing costs.

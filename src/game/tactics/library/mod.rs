@@ -18,14 +18,22 @@
 //! plugin) panics if a `monsters.ron` entry references a name not in
 //! `ALL_TACTIC_NAMES`, catching typos at boot rather than turn time.
 
+mod aquatic;
 mod combat;
+mod erratic;
 mod flee;
 mod movement;
+mod ranged;
+mod squad;
 mod wait;
 
+pub use aquatic::SubmergeOrSurface;
 pub use combat::MeleeAdjacent;
+pub use erratic::ErraticMove;
 pub use flee::{FleeAtLowHp, FleePanicked, KiteRetreat};
 pub use movement::{FreeWander, HuntVisibleTarget, PursueLastKnownPosition};
+pub use ranged::{RangedAttack, UseAbility};
+pub use squad::SquadLeash;
 pub use wait::WaitTactic;
 
 use crate::game::tactics::resolve::Tactic;
@@ -49,11 +57,17 @@ const KITE_RETREAT: &dyn Tactic = &KiteRetreat;
 const HUNT_VISIBLE_TARGET: &dyn Tactic = &HuntVisibleTarget;
 const PURSUE_LAST_KNOWN_POSITION: &dyn Tactic = &PursueLastKnownPosition;
 const FREE_WANDER: &dyn Tactic = &FreeWander;
+const RANGED_ATTACK: &dyn Tactic = &RangedAttack;
+const USE_ABILITY: &dyn Tactic = &UseAbility;
+const ERRATIC_MOVE: &dyn Tactic = &ErraticMove;
+const SQUAD_LEASH: &dyn Tactic = &SquadLeash;
+const SUBMERGE_OR_SURFACE: &dyn Tactic = &SubmergeOrSurface;
 
 /// Every tactic name that may appear in `monsters.ron` `ai: TacticList`
 /// entries. Used by `validate_tactic_names` at startup to fail loudly
 /// on typos. Keep alphabetized for legibility.
 pub const ALL_TACTIC_NAMES: &[&str] = &[
+    "ErraticMove",
     "FleeAtLowHp",
     "FleePanicked",
     "FreeWander",
@@ -61,6 +75,10 @@ pub const ALL_TACTIC_NAMES: &[&str] = &[
     "KiteRetreat",
     "MeleeAdjacent",
     "PursueLastKnownPosition",
+    "RangedAttack",
+    "SquadLeash",
+    "SubmergeOrSurface",
+    "UseAbility",
     "Wait",
 ];
 
@@ -83,6 +101,11 @@ pub fn lookup_tactic(name: &str) -> Option<&'static dyn Tactic> {
         "HuntVisibleTarget" => Some(HUNT_VISIBLE_TARGET),
         "PursueLastKnownPosition" => Some(PURSUE_LAST_KNOWN_POSITION),
         "FreeWander" => Some(FREE_WANDER),
+        "RangedAttack" => Some(RANGED_ATTACK),
+        "UseAbility" => Some(USE_ABILITY),
+        "ErraticMove" => Some(ERRATIC_MOVE),
+        "SquadLeash" => Some(SQUAD_LEASH),
+        "SubmergeOrSurface" => Some(SUBMERGE_OR_SURFACE),
         _ => None,
     }
 }
