@@ -68,6 +68,27 @@ This keeps the rebuild cost amortised — a turn that touches no lighting state 
 - **Why mark every viewshed dirty after rebuild** — visibility shading depends on light values. Forcing all viewsheds dirty on rebuild guarantees the same-frame visibility update (`Changed<Viewshed>` in downstream systems will fire).
 - **Save/load** — `LightSources` and `LightMap` are not persisted. Lighting is derivable from current entity state; on load, candles re-add themselves on spawn and the dirty flag triggers a rebuild.
 
+## Open questions / future work
+
+- **Generalise decoration-emitted lights — drop the hardcoded
+  `PhosphorescentMoss` match.** Today both
+  [`apply_decoration_mutations`](../../../roguelike_engine/src/map/mutation.rs)
+  and the game's [`register_decoration_lights`](../../src/map/light.rs)
+  hardcode the variant: `if msg.new_decoration == Decoration::PhosphorescentMoss`
+  → `add(phosphorescent_moss_light(...))`. Every new glowing decoration
+  needs four edits (engine variant → engine `name()`/flammability →
+  engine mutation match → game build-time match). Should be a single
+  data-driven lookup. Two reasonable shapes:
+  1. **Method on `Decoration`**: `Decoration::light_source(x, y) -> Option<LightSourceData>`.
+     The mutation handler and the build-time sweep both call this — one
+     match-arm per variant lives on the enum, instead of two scattered
+     match statements. New glow plants only edit `tile.rs`.
+  2. **`tiles.ron` entry**: extend the manifest entry to optionally
+     declare `light: Some((radius, intensity, color))`. Lets designers
+     pick light params per-decoration without touching Rust. Heavier
+     change (asset schema + serde) but truly data-driven.
+  Either way, ship before adding the second emitting decoration.
+
 ## Cross-links
 
 - [TILE_PROMOTION.md](TILE_PROMOTION.md) — opacity changes via promotion automatically dirty the light map (handled in the engine apply systems).
