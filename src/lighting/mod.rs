@@ -126,6 +126,28 @@ pub fn fungal_light(x: i32, y: i32) -> LightSourceData {
     }
 }
 
+// Phosphorescent moss: softer than fungus, cyan-green. Tuned to push
+// stealth into the "noticeable but not blinding" band — at the edge of
+// a patch, `light_modifier` lands around -1; standing on it hits -3.
+pub const PHOSPHORESCENT_MOSS_LIGHT_RADIUS: f32 = 6.0;
+pub const PHOSPHORESCENT_MOSS_LIGHT_INTENSITY: f32 = 0.7;
+pub const PHOSPHORESCENT_MOSS_LIGHT_COLOR: [f32; 3] = [0.4, 1.0, 0.8];
+
+/// Create a phosphorescent-moss glow light source at the given position.
+/// Used by [`apply_decoration_mutations`](crate::map::mutation::apply_decoration_mutations)
+/// to register / unregister the source when the `PhosphorescentMoss`
+/// decoration appears or is replaced (e.g. by fire → Ash).
+pub fn phosphorescent_moss_light(x: i32, y: i32) -> LightSourceData {
+    LightSourceData {
+        x,
+        y,
+        radius: PHOSPHORESCENT_MOSS_LIGHT_RADIUS,
+        intensity: PHOSPHORESCENT_MOSS_LIGHT_INTENSITY,
+        color: PHOSPHORESCENT_MOSS_LIGHT_COLOR,
+        on_wall: false,
+    }
+}
+
 // ─── Plugin ──────────────────────────────────────────────────────────
 
 /// Empty marker for the lighting tick set. Games configure

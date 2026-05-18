@@ -115,9 +115,11 @@ pub use crate::status::{
 
 // ---- Lighting ----
 pub use crate::lighting::{
-    fungal_light, rebuild_light_map_system, sync_entity_lights_system, LightMap, LightSource,
-    LightSourceData, LightSources, LightingPlugin, LightingSet, CANDLE_RADIUS,
-    FUNGAL_LIGHT_COLOR, FUNGAL_LIGHT_INTENSITY, FUNGAL_LIGHT_RADIUS,
+    fungal_light, phosphorescent_moss_light, rebuild_light_map_system, sync_entity_lights_system,
+    LightMap, LightSource, LightSourceData, LightSources, LightingPlugin, LightingSet,
+    CANDLE_RADIUS, FUNGAL_LIGHT_COLOR, FUNGAL_LIGHT_INTENSITY, FUNGAL_LIGHT_RADIUS,
+    PHOSPHORESCENT_MOSS_LIGHT_COLOR, PHOSPHORESCENT_MOSS_LIGHT_INTENSITY,
+    PHOSPHORESCENT_MOSS_LIGHT_RADIUS,
 };
 
 // ---- Stealth ----

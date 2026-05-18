@@ -143,6 +143,11 @@ pub enum Decoration {
     Ash,
     /// Floor cracked by an explosion. Collapses into a chasm after a few turns.
     CrackedFloor,
+    /// Bioluminescent moss. Emits a soft cyan-green glow — `apply_decoration_mutations`
+    /// registers a `phosphorescent_moss_light` source on this tile. The light
+    /// intensity raises the stealth penalty for anyone standing in/near the
+    /// patch via the game-side stealth pipeline.
+    PhosphorescentMoss,
     /// Game-defined custom decoration.
     Custom { id: u32 },
 }
@@ -164,6 +169,7 @@ impl Decoration {
             Self::Embers => "Embers",
             Self::Ash => "Ash",
             Self::CrackedFloor => "CrackedFloor",
+            Self::PhosphorescentMoss => "PhosphorescentMoss",
             Self::Custom { .. } => "Custom",
         }
     }
@@ -177,6 +183,10 @@ impl Decoration {
             Self::Fungus => 40,
             Self::Cobweb => 100,
             Self::Moss => 30,
+            // Phosphorescent moss is a damp fungal mat — burns, but reluctantly.
+            // Burning it triggers the engine's decoration-mutation handler,
+            // which then removes the registered light source.
+            Self::PhosphorescentMoss => 20,
             Self::TrampledGrass => 40,
             Self::TrampledFungus => 30,
             _ => 0,
@@ -579,5 +589,34 @@ mod tests {
     #[test]
     fn custom_terrain_not_passable_by_default() {
         assert!(!is_passable(tile(TerrainType::Custom { id: 1 }, LiquidType::None)));
+    }
+
+    // ---- Decoration::PhosphorescentMoss metadata ----
+
+    #[test]
+    fn phosphorescent_moss_has_correct_name() {
+        assert_eq!(Decoration::PhosphorescentMoss.name(), "PhosphorescentMoss");
+    }
+
+    #[test]
+    fn phosphorescent_moss_is_low_flammability() {
+        // 20% — damp glowing mat; burns, but reluctantly.
+        assert_eq!(Decoration::PhosphorescentMoss.flammability(), 20);
+    }
+
+    #[test]
+    fn phosphorescent_moss_does_not_block_fov() {
+        assert!(!Decoration::PhosphorescentMoss.blocks_fov());
+    }
+
+    #[test]
+    fn phosphorescent_moss_has_no_step_or_timed_promotion() {
+        assert!(Decoration::PhosphorescentMoss.on_step_promotion().is_none());
+        assert!(Decoration::PhosphorescentMoss.timed_promotion().is_none());
+    }
+
+    #[test]
+    fn phosphorescent_moss_does_not_entangle() {
+        assert!(!Decoration::PhosphorescentMoss.entangles());
     }
 }

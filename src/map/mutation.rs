@@ -163,9 +163,9 @@ pub fn apply_tile_mutations(
 }
 
 /// Applies queued decoration mutations: updates [`Map`], handles
-/// [`Decoration::CrackedFloor`] terrain coercion, and marks viewsheds
-/// dirty when FOV-blocking changes. No decoration currently emits
-/// light; rewire here if a future plant variant ships with a glow.
+/// [`Decoration::CrackedFloor`] terrain coercion, marks viewsheds dirty
+/// when FOV-blocking changes, and (un)registers light sources for
+/// glow-emitting decorations like [`Decoration::PhosphorescentMoss`].
 pub fn apply_decoration_mutations(
     mut commands: Commands,
     mut messages: MessageReader<DecorationMutationMessage>,
@@ -174,6 +174,7 @@ pub fn apply_decoration_mutations(
     mut tile_query: Query<&mut TerrainType>,
     mut viewshed_query: Query<&mut Viewshed>,
     mut promotion_cooldown: ResMut<PromotionCooldown>,
+    mut light_sources: ResMut<LightSources>,
 ) {
     let mut fov_changed = false;
 
@@ -203,8 +204,20 @@ pub fn apply_decoration_mutations(
             fov_changed = true;
         }
 
-        // No decoration currently emits light. `fungal_light` is retained as a
-        // helper for future glow-emitting plants; rewire here when one ships.
+        // Decoration → light wiring. Emitting decorations register a
+        // static `LightSources` entry on appearance; replacing them
+        // (burn, trample, manual clear) removes it. Stealth interaction
+        // is automatic via the game-side stealth pipeline reading the
+        // resulting light intensity.
+        if old_decoration != msg.new_decoration {
+            if old_decoration == Decoration::PhosphorescentMoss {
+                light_sources.remove_at(msg.position.x, msg.position.y);
+            }
+            if msg.new_decoration == Decoration::PhosphorescentMoss {
+                light_sources
+                    .add(crate::lighting::phosphorescent_moss_light(msg.position.x, msg.position.y));
+            }
+        }
 
         if old_decoration.blocks_fov() != msg.new_decoration.blocks_fov() {
             fov_changed = true;
