@@ -100,7 +100,7 @@ pub fn handle_reveal_map_system(
 /// floor restore. Runs once (flag is cleared immediately after).
 pub fn init_explored_tiles_system(
     mut needs_init: ResMut<NeedsExploredInit>,
-    map: Res<Map>,
+    mut map: ResMut<Map>,
     mut tile_query: Query<(&Position, &mut TileExplored, &mut Visibility)>,
 ) {
     if !needs_init.0 {
@@ -112,6 +112,25 @@ pub fn init_explored_tiles_system(
         return;
     }
     needs_init.0 = false;
+
+    // Scrub interior-opaque tiles from the restored explored set BEFORE
+    // we propagate it to tile-entity components. Older saves / caches
+    // (built before the runtime FOV cull) can carry stale `true` flags
+    // for trees buried inside dense clusters; without this pass they'd
+    // render as dim memory glyphs forever.
+    let w = map.width;
+    let h = map.height;
+    for y in 0..h {
+        for x in 0..w {
+            let idx = map.xy_idx(x, y);
+            if idx < map.explored_tiles.len()
+                && map.explored_tiles[idx]
+                && crate::game::systems::is_interior_opaque(&map, x, y)
+            {
+                map.explored_tiles[idx] = false;
+            }
+        }
+    }
 
     for (pos, mut tile_explored, mut visibility) in tile_query.iter_mut() {
         let idx = map.xy_idx(pos.x, pos.y);

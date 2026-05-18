@@ -151,7 +151,7 @@ pub fn mark_moved_viewsheds_dirty(
 /// considered interior). bracket-lib's shadowcasting marks every tile
 /// it scans, including opaque ones used to cast shadows; this helper
 /// lets us cull tiles that no FOV ray can geometrically reach.
-fn is_interior_opaque(map: &Map, x: i32, y: i32) -> bool {
+pub(crate) fn is_interior_opaque(map: &Map, x: i32, y: i32) -> bool {
     let idx = map.xy_idx(x, y);
     if idx >= map.tiles.len() || !is_opaque(map.tiles[idx]) {
         return false;
