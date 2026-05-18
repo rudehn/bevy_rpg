@@ -133,6 +133,21 @@ pub enum MovementKind {
 // Snapshot views
 // =====================================================================
 
+/// What an actor does when no combat tactic fires. Resolver-side
+/// mirror of `crate::assets::IdleMovement`.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
+pub enum IdleMovementKind {
+    /// Pick a random walkable tile, walk there, then pick another.
+    #[default]
+    PathToRandomTile,
+    /// Walk waypoints from a `PatrolView::Waypoint`.
+    Patrol,
+    /// Bounded random walk from a `PatrolView::AreaRoam`.
+    Roam,
+    /// Don't move when idle.
+    Stationary,
+}
+
 /// Read view of the actor whose turn this is. No `Default` —
 /// every field must be set explicitly at the adapter boundary.
 #[derive(Clone, Debug)]
@@ -151,10 +166,11 @@ pub struct ActorView {
     pub flee_threshold: f32,
     pub kites: bool,
     pub kite_distance: u32,
-    pub erratic_chance: f32,
     pub chase_distance: u32,
     pub chase_leash: u32,
     pub last_known_player_pos: Option<Point>,
+    /// Spawn-time `PatrolRoute` view (for `IdleMovement::Patrol` /
+    /// `Roam` actors). `None` when no `PatrolRoute` is attached.
     pub patrol: Option<PatrolView>,
     pub stationary: bool,
     /// `None` for monsters without ranged abilities.
@@ -167,6 +183,13 @@ pub struct ActorView {
     /// for non-leader squad members whose leader is alive. Used by
     /// the `SquadLeash` tactic to drag stragglers back.
     pub squad_leader_pos: Option<Point>,
+    /// Idle-time movement style. Default `PathToRandomTile`.
+    pub idle_movement: IdleMovementKind,
+    /// Current roaming destination for `PathToRandomTile`. Persists
+    /// across turns via `MonsterAI.spawn_position`-adjacent storage;
+    /// the `IdleMove` tactic writes a new target into the delta
+    /// whenever the old one is reached or unreachable.
+    pub roam_target: Option<Point>,
 }
 
 /// Read view of a visible enemy. The snapshot builder pre-filters by
@@ -219,13 +242,20 @@ pub trait PathContext: Send {
     fn next_flee_step(&self, from: Point, threat: Point) -> Option<Point>;
 
     /// Pick a random walkable tile within `radius` of `from`. Used by
-    /// `AreaRoam` and erratic movement.
+    /// the `Roam` idle-movement variant.
     fn pick_random_nearby(
         &self,
         from: Point,
         radius: i32,
         rng: &mut dyn RngCore,
     ) -> Option<Point>;
+
+    /// Pick a random walkable tile anywhere on the map. Used by the
+    /// `PathToRandomTile` idle-movement variant to refresh the roam
+    /// target when the previous destination is reached or blocked.
+    /// `None` when the map has no walkable tiles (impossible in
+    /// practice; defensive return).
+    fn pick_random_walkable(&self, rng: &mut dyn RngCore) -> Option<Point>;
 }
 
 /// Everything a tactic is allowed to read about the world this turn.
@@ -275,6 +305,10 @@ pub struct TacticStateDelta {
     pub set_chase_distance: Option<u32>,
     pub set_waypoint_index: Option<usize>,
     pub set_ability_cooldown: Option<(AbilitySlot, u32)>,
+    /// `Some(new_target)` to overwrite the actor's roam target;
+    /// `Some(None)` to clear it. Written by the `IdleMove` tactic
+    /// when refreshing the `PathToRandomTile` destination.
+    pub set_roam_target: Option<Option<Point>>,
 }
 
 /// One full turn's outcome. `tactic_name` powers the `last_tactic`
@@ -426,6 +460,9 @@ pub(crate) mod test_support {
         ) -> Option<Point> {
             Some(Point::new(from.x + 1, from.y))
         }
+        fn pick_random_walkable(&self, _rng: &mut dyn RngCore) -> Option<Point> {
+            Some(Point::new(20, 20))
+        }
     }
 
     /// Path context that fails every query. Useful for testing the
@@ -445,6 +482,9 @@ pub(crate) mod test_support {
             _radius: i32,
             _rng: &mut dyn RngCore,
         ) -> Option<Point> {
+            None
+        }
+        fn pick_random_walkable(&self, _rng: &mut dyn RngCore) -> Option<Point> {
             None
         }
     }
@@ -468,7 +508,6 @@ pub(crate) mod test_support {
             flee_threshold: 0.0,
             kites: false,
             kite_distance: 0,
-            erratic_chance: 0.0,
             chase_distance: 0,
             chase_leash: 0,
             last_known_player_pos: None,
@@ -477,6 +516,8 @@ pub(crate) mod test_support {
             ranged_range: None,
             has_useable_ability: false,
             squad_leader_pos: None,
+            idle_movement: IdleMovementKind::PathToRandomTile,
+            roam_target: None,
         }
     }
 

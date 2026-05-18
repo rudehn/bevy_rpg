@@ -42,9 +42,10 @@ use crate::game::ranged::RangedCapable;
 use crate::game::staves::MonsterAbilities;
 use crate::game::tactics::library::{ALL_TACTIC_NAMES, TERMINAL_TACTIC_NAME};
 use crate::game::tactics::resolve::{
-    resolve_turn, ActorId, ActorView, AiMode, EnemyView, GridDir, MovementKind, PathContext,
-    Tactic, TacticAction, TacticStateDelta, TurnOutcome, TurnSnapshot,
+    resolve_turn, ActorId, ActorView, AiMode, EnemyView, GridDir, IdleMovementKind, MovementKind,
+    PatrolView, PathContext, Tactic, TacticAction, TacticStateDelta, TurnOutcome, TurnSnapshot,
 };
+use roguelike_engine::components::{PatrolRoute, PatrolState};
 use crate::game::turns::MyTurn;
 use crate::player::Player;
 
@@ -99,13 +100,25 @@ pub struct TacticBrain {
     /// The slice and every reference inside it outlive the application.
     pub tactics: &'static [&'static dyn Tactic],
     pub last_tactic: Option<&'static str>,
+    /// Cached per-monster idle-movement style (resolver-side mirror
+    /// of `crate::assets::IdleMovement`).
+    pub idle_movement: IdleMovementKind,
+    /// Current `PathToRandomTile` destination, or `None` when the
+    /// next idle turn will pick a fresh one. Updated by the `IdleMove`
+    /// tactic via `TacticStateDelta::set_roam_target`.
+    pub roam_target: Option<Point>,
 }
 
 impl TacticBrain {
-    pub fn new(tactics: &'static [&'static dyn Tactic]) -> Self {
+    pub fn new(
+        tactics: &'static [&'static dyn Tactic],
+        idle_movement: IdleMovementKind,
+    ) -> Self {
         Self {
             tactics,
             last_tactic: None,
+            idle_movement,
+            roam_target: None,
         }
     }
 }
@@ -156,6 +169,35 @@ fn movement_mode_to_kind(m: MovementMode) -> MovementKind {
         MovementMode::ImmuneToWater => MovementKind::Amphibious,
         MovementMode::RestrictedToLiquid => MovementKind::Aquatic,
         _ => MovementKind::Land,
+    }
+}
+
+pub fn asset_idle_movement_to_kind(m: &crate::assets::IdleMovement) -> IdleMovementKind {
+    match m {
+        crate::assets::IdleMovement::PathToRandomTile => IdleMovementKind::PathToRandomTile,
+        crate::assets::IdleMovement::Patrol => IdleMovementKind::Patrol,
+        crate::assets::IdleMovement::Roam => IdleMovementKind::Roam,
+        crate::assets::IdleMovement::Stationary => IdleMovementKind::Stationary,
+    }
+}
+
+fn patrol_route_to_view(route: &PatrolRoute) -> Option<PatrolView> {
+    // `PatrolState` is `#[non_exhaustive]`; unknown future variants
+    // produce None so callers fall through gracefully.
+    match &route.state {
+        PatrolState::Sentry { home } => Some(PatrolView::Sentry {
+            home: Point::new(home.0, home.1),
+            radius: roguelike_engine::ai::monster_ai::GUARD_PATROL_RADIUS,
+        }),
+        PatrolState::Waypoint { points, current_index } => Some(PatrolView::Waypoint {
+            points: points.iter().map(|(x, y)| Point::new(*x, *y)).collect(),
+            current_index: *current_index,
+        }),
+        PatrolState::AreaRoam { min, max } => Some(PatrolView::AreaRoam {
+            min: Point::new(min.0, min.1),
+            max: Point::new(max.0, max.1),
+        }),
+        _ => None,
     }
 }
 
@@ -238,6 +280,26 @@ impl PathContext for MapPathContext {
         }
         None
     }
+
+    fn pick_random_walkable(&self, rng: &mut dyn RngCore) -> Option<Point> {
+        // Bounded retry — pick random tiles until one is walkable.
+        // Maps are small (typically 80×60); even a 50% walkable
+        // density gives <0.1% odds of 16 failures in a row.
+        let width = self.map.width as u32;
+        let height = self.map.height as u32;
+        if width == 0 || height == 0 {
+            return None;
+        }
+        for _ in 0..16 {
+            let x = (rng.next_u32() % width) as i32;
+            let y = (rng.next_u32() % height) as i32;
+            let target = Point::new(x, y);
+            if can_entity_enter_tile(self.map.tiles[self.map.xy_idx(x, y)], self.mode) {
+                return Some(target);
+            }
+        }
+        None
+    }
 }
 
 // =====================================================================
@@ -307,7 +369,6 @@ fn build_snapshot(
         flee_threshold,
         kites,
         kite_distance,
-        erratic_chance,
         chase_distance,
         chase_leash,
         last_known_player_pos,
@@ -319,7 +380,6 @@ fn build_snapshot(
             ai.flee_at_hp_percent,
             ai.kites,
             ai.kite_distance,
-            ai.erratic_chance,
             ai.chase_distance,
             ai.chase_leash,
             ai.last_known_player_position,
@@ -337,7 +397,12 @@ fn build_snapshot(
     };
     let viewshed = world.get::<Viewshed>(entity)?.clone();
     let self_faction_name = world.get::<Faction>(entity).map(|f| f.0 .0.clone());
-    let tactics = world.get::<TacticBrain>(entity)?.tactics;
+    let (tactics, idle_movement, roam_target) = {
+        let brain = world.get::<TacticBrain>(entity)?;
+        (brain.tactics, brain.idle_movement, brain.roam_target)
+    };
+    // Convert spawn-time PatrolRoute (if any) into the snapshot view.
+    let patrol = world.get::<PatrolRoute>(entity).and_then(patrol_route_to_view);
     let movement_mode = world
         .get::<MovementMode>(entity)
         .copied()
@@ -467,15 +532,16 @@ fn build_snapshot(
         flee_threshold,
         kites,
         kite_distance,
-        erratic_chance,
         chase_distance,
         chase_leash,
         last_known_player_pos,
-        patrol: None, // PatrolView wiring lands when NPCs migrate (Phase 5+)
+        patrol,
         stationary,
         ranged_range,
         has_useable_ability,
         squad_leader_pos,
+        idle_movement,
+        roam_target,
     };
 
     Some((
@@ -510,8 +576,20 @@ fn apply_state_delta(entity: Entity, delta: &TacticStateDelta, world: &mut World
     {
         ai.chase_distance = chase;
     }
-    // set_waypoint_index and set_ability_cooldown are deferred until
-    // the tactics that produce them ship (Phase 4+).
+    if let Some(new_target) = delta.set_roam_target
+        && let Some(mut brain) = world.get_mut::<TacticBrain>(entity)
+    {
+        brain.roam_target = new_target;
+    }
+    if let Some(idx) = delta.set_waypoint_index
+        && let Some(mut route) = world.get_mut::<PatrolRoute>(entity)
+        && let PatrolState::Waypoint { ref mut current_index, .. } = route.state
+    {
+        *current_index = idx;
+    }
+    // set_ability_cooldown is reserved for a future tactic that picks
+    // a specific ability slot — today the adapter delegates to
+    // try_use_ability_world which manages its own cooldowns.
 }
 
 // =====================================================================

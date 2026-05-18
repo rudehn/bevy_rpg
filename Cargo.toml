@@ -3,6 +3,12 @@ name = "bevy_rpg"
 version = "0.1.0"
 edition = "2024"
 
+# The main repo's Cargo.toml now declares a `[workspace]` (added
+# after this worktree was created). Mark this worktree as its own
+# standalone workspace so Cargo doesn't try to include it in the
+# parent.
+[workspace]
+
 [dependencies]
 # file_watcher (hot-reload) is excluded: it is a native-only feature that
 # breaks WASM builds. Re-enable locally by editing this line if you need

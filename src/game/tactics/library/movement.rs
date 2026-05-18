@@ -7,10 +7,8 @@
 //! mode is preserved (Awareness state held until expiry), walk
 //! toward the last-known position. Gives up via `chase_leash`.
 //!
-//! `FreeWander` — bounded random walk while in Idle mode. The simplest
-//! patrol — no waypoints, no home position, just pick a walkable
-//! adjacent tile and step there. Used by monsters without a
-//! `PatrolRoute` (e.g., the Giant Rat canary).
+//! Idle-mode movement (random pathing, patrol, roam) lives in the
+//! `IdleMove` tactic in `library/idle.rs`.
 
 use rand::RngCore;
 use roguelike_engine::ai::decisions::should_give_up_chase;
@@ -107,35 +105,6 @@ impl Tactic for PursueLastKnownPosition {
             ..TacticStateDelta::default()
         };
         Some((TacticAction::Move { dir }, delta))
-    }
-}
-
-/// Bounded random walk while in Idle mode. Picks a random walkable
-/// adjacent tile via `PathContext::pick_random_nearby` with radius 1.
-/// Returns `None` (passes to next tactic) when no walkable neighbor
-/// exists or when the actor is in any non-Idle mode. Stationary
-/// monsters never wander.
-pub struct FreeWander;
-
-impl Tactic for FreeWander {
-    fn name(&self) -> &'static str {
-        "FreeWander"
-    }
-
-    fn evaluate(
-        &self,
-        snap: &TurnSnapshot,
-        rng: &mut dyn RngCore,
-    ) -> Option<(TacticAction, TacticStateDelta)> {
-        if !matches!(snap.self_.mode, AiMode::Idle) {
-            return None;
-        }
-        if snap.self_.stationary {
-            return None;
-        }
-        let step = snap.paths.pick_random_nearby(snap.self_.pos, 1, rng)?;
-        let dir = GridDir::from_step(snap.self_.pos, step)?;
-        Some((TacticAction::Move { dir }, TacticStateDelta::default()))
     }
 }
 
@@ -267,45 +236,4 @@ mod tests {
         assert!(PursueLastKnownPosition.evaluate(&snap, &mut rng).is_none());
     }
 
-    // ----- FreeWander -----
-
-    fn idle_actor() -> TurnSnapshot {
-        let mut actor = test_actor(1, Point::new(5, 5));
-        actor.mode = AiMode::Idle;
-        snapshot_with(actor)
-    }
-
-    #[test]
-    fn free_wander_picks_a_walkable_neighbor_when_idle() {
-        // ToyPaths::pick_random_nearby returns (from.x + 1, from.y).
-        // Step is one east → GridDir::E.
-        let snap = idle_actor();
-        let mut rng = test_rng();
-        let outcome = FreeWander.evaluate(&snap, &mut rng).expect("should wander");
-        assert!(matches!(outcome.0, TacticAction::Move { dir: GridDir::E }));
-    }
-
-    #[test]
-    fn free_wander_passes_when_not_idle() {
-        let mut snap = idle_actor();
-        snap.self_.mode = AiMode::Hunting;
-        let mut rng = test_rng();
-        assert!(FreeWander.evaluate(&snap, &mut rng).is_none());
-    }
-
-    #[test]
-    fn free_wander_passes_when_stationary() {
-        let mut snap = idle_actor();
-        snap.self_.stationary = true;
-        let mut rng = test_rng();
-        assert!(FreeWander.evaluate(&snap, &mut rng).is_none());
-    }
-
-    #[test]
-    fn free_wander_passes_when_pathfinding_blocked() {
-        let mut snap = idle_actor();
-        snap.paths = Box::new(BlockedPaths);
-        let mut rng = test_rng();
-        assert!(FreeWander.evaluate(&snap, &mut rng).is_none());
-    }
 }

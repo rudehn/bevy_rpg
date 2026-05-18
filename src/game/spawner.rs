@@ -112,11 +112,10 @@ pub fn spawn_monster(
 
     let spawn_pt = Point::new(spawn_point.x, spawn_point.y);
     let (mut monster_ai, base_morale) = match &monster_asset.ai {
-        crate::assets::AiConfig::TacticList { flee_at_hp_percent, erratic_chance, chase_leash, kites, kite_distance, base_morale, .. } => {
+        crate::assets::AiConfig::TacticList { flee_at_hp_percent, chase_leash, kites, kite_distance, base_morale, .. } => {
             // Tactics read these tuning knobs via the snapshot.
             let mut ai = MonsterAI::default();
             ai.flee_at_hp_percent = *flee_at_hp_percent;
-            ai.erratic_chance = *erratic_chance;
             ai.chase_leash = *chase_leash;
             ai.kites = *kites;
             ai.kite_distance = *kite_distance;
@@ -371,7 +370,7 @@ pub fn spawn_monster(
     // looked-up tactic list. The names were already validated at
     // startup by `validate_tactic_names_system`; unknown names here
     // are a programming error.
-    if let crate::assets::AiConfig::TacticList { tactics: names, .. } = &monster_asset.ai {
+    if let crate::assets::AiConfig::TacticList { tactics: names, idle_movement, .. } = &monster_asset.ai {
         let tactics_vec: Vec<&'static dyn crate::game::tactics::resolve::Tactic> = names
             .iter()
             .map(|name| {
@@ -379,15 +378,12 @@ pub fn spawn_monster(
                     .unwrap_or_else(|| panic!("unknown tactic {name:?} on monster {:?} (validator should have caught this)", monster_asset.name))
             })
             .collect();
-        // Leak into 'static — the slice lives for the rest of the
-        // program. Per-spawn leakage is bounded by the number of
-        // unique tactic lists × number of monster spawns; in practice
-        // this is small. A future optimisation can intern by list-shape.
         let leaked: &'static [&'static dyn crate::game::tactics::resolve::Tactic] =
             Box::leak(tactics_vec.into_boxed_slice());
+        let idle_kind = crate::game::tactics::dispatch::asset_idle_movement_to_kind(idle_movement);
         commands
             .entity(monster_entity)
-            .insert(crate::game::tactics::TacticBrain::new(leaked));
+            .insert(crate::game::tactics::TacticBrain::new(leaked, idle_kind));
     }
 
     // GOAP was deleted in Phase 5 of the tactic-registry migration.

@@ -679,8 +679,6 @@ pub enum AiConfig {
         #[serde(default)]
         flee_at_hp_percent: f32,
         #[serde(default)]
-        erratic_chance: f32,
-        #[serde(default)]
         chase_leash: u32,
         #[serde(default)]
         kites: bool,
@@ -693,7 +691,37 @@ pub enum AiConfig {
         /// monsters lower it.
         #[serde(default = "default_morale")]
         base_morale: f32,
+        /// What this monster does when no combat tactic fires.
+        /// Defaults to `PathToRandomTile` — pick a random walkable
+        /// destination, walk there, then pick another. Override to
+        /// `Patrol` or `Roam` for monsters that need spawn-time
+        /// bounds / waypoints (the spawner attaches a `PatrolRoute`
+        /// component with the actual data). `Stationary` opts out
+        /// of idle movement entirely (turrets, statues).
+        #[serde(default)]
+        idle_movement: IdleMovement,
     },
+}
+
+/// How a monster behaves when it has no combat target. Read by the
+/// `IdleMove` tactic; default is `PathToRandomTile`.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub enum IdleMovement {
+    /// Pick a random walkable tile on the map, pathfind there, repeat
+    /// when arrived or blocked. Most monsters use this.
+    #[default]
+    PathToRandomTile,
+    /// Walk a fixed list of waypoints in a loop. Requires a
+    /// `PatrolRoute::Waypoint { points, .. }` component attached at
+    /// spawn time (the spawn-time builder supplies the waypoints).
+    Patrol,
+    /// Bounded random walk within a rectangle. Requires a
+    /// `PatrolRoute::AreaRoam { min, max }` component attached at
+    /// spawn time.
+    Roam,
+    /// Never move when idle — combat tactics may still produce
+    /// movement (kite, flee), but idle behavior is to wait.
+    Stationary,
 }
 
 impl Default for AiConfig {
@@ -705,12 +733,12 @@ impl Default for AiConfig {
         AiConfig::TacticList {
             tactics: vec!["Wait".to_string()],
             flee_at_hp_percent: 0.0,
-            erratic_chance: 0.0,
             chase_leash: 0,
             kites: false,
             kite_distance: 3,
             ranged_range: 0,
             base_morale: 0.6,
+            idle_movement: IdleMovement::default(),
         }
     }
 }
