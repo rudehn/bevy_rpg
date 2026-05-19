@@ -1,42 +1,70 @@
-// Monster spawn table for the linear-floor world (town → forest 1..MAX_FLOOR).
+// Monster spawn table for the linear-floor world (town → forest 1..4
+// → temple at floor 5). Floor 5 (the temple) has no spawn entries —
+// cultists will land in a future pass.
 //
 // Each entry tells `VoronoiSpawner` which monsters / packs are eligible
 // on a given floor. The spawner picks one entry per chosen Voronoi cell
 // at build time. See docs/design/SPAWNING.md for the algorithm and
 // docs/design/ENEMIES.md for the per-monster identity / mechanic.
 //
-// **Currently active roster:** Giant Rat only, as the first step of the
-// forest content pass. The legacy 26-floor dungeon spawn table from the
-// previous milestone is preserved at the bottom of this file (commented
-// out) so we can lift entries back in as we wire up new monsters.
+// **Difficulty curve:** Forest 1 is the introduction — solo encounters
+// only (no packs at all) so new players learn one creature at a time.
+// Starting on Forest 2, packs begin forming (rats/jackals pair up,
+// wolves arrive as a 2-pack). Forest 3-4 are the full pack tier
+// (3-rat swarms, 3-wolf packs) with rare Treants as deep-forest mini-
+// bosses. The temple-entrance floor (Forest 4) is the densest.
 //
 // Schema reminder:
 //   (monster: "Name", min_floor: i32, max_floor: i32, min_group: u32,
-//    max_group: u32, flee_threshold: f32, spawn_on_liquid: bool)
+//    max_group: u32, flee_threshold: f32, spawn_on_liquid: bool, weight: u32)
 //   (group: [(monster, min_count, max_count), ...], min_floor, max_floor, flee_threshold)
 (
   spawns: [
     // ====================================================================
-    // FOREST — active spawns
+    // FOREST 1 — introductory, solo encounters only.
     // ====================================================================
 
-    // Giant Rat: introductory swarm threat on both forest floors.
-    // Pack size 1–3 keeps Forest 1 light; the Voronoi spawner caps total
-    // packs per floor at `BUDGET_BASE + depth` (3 on floor 1, 4 on floor 2).
-    (monster: "Giant Rat", min_floor: 1, max_floor: 2, min_group: 1, max_group: 3),
+    // Giant Rat solo: the floor-1 chump. One at a time so the player
+    // learns the swarm threat without being overwhelmed.
+    (monster: "Giant Rat", min_floor: 2, max_floor: 2, min_group: 1, max_group: 1),
 
-    // Jackal: paired with rats as the second forest threat. Pack 1–2,
-    // very fast (0.5x movement_delay). Same eligibility as Giant Rat so
-    // either can fill a Voronoi cell — the spawner picks weighted-uniform
-    // (default weight 100) when the entry omits `weight:`.
-    (monster: "Jackal", min_floor: 1, max_floor: 2, min_group: 1, max_group: 2),
+    // Jackal solo: very fast skirmisher; teaches the player about
+    // movement-delay threats before they meet wolves.
+    (monster: "Jackal", min_floor: 2, max_floor: 2, min_group: 1, max_group: 1),
 
-    // Treant: very rare floor 2-3 mini-boss. weight: 5 against the
-    // default 100 means it spawns ~2.4% as often as a Giant Rat / Jackal
-    // entry on the same floor → most floors won't see one; when one
-    // appears, it's a memorable encounter. Solo (min_group=max_group=1).
-    // See assets/monsters.ron for the stat sheet.
-    (monster: "Treant", min_floor: 2, max_floor: 3, min_group: 1, max_group: 1, weight: 5),
+    // ====================================================================
+    // FOREST 2 — packs begin forming.
+    // ====================================================================
+
+    // Giant Rats start pairing up.
+    (monster: "Giant Rat", min_floor: 3, max_floor: 3, min_group: 1, max_group: 2),
+
+    // Jackals hunt in pairs.
+    (monster: "Jackal", min_floor: 3, max_floor: 3, min_group: 1, max_group: 2),
+
+    // Wolves debut as a 2-pack — the first "real pack" encounter.
+    // PackTactics rewards isolating them.
+    (monster: "Wolf", min_floor: 3, max_floor: 3, min_group: 2, max_group: 2),
+
+    // ====================================================================
+    // FOREST 3-4 — full pack tier (deeper, denser woods).
+    // ====================================================================
+
+    // Giant Rat swarms (2-3 per pack).
+    (monster: "Giant Rat", min_floor: 4, max_floor: 5, min_group: 2, max_group: 3),
+
+    // Jackal pairs still common; sometimes a 3-pack.
+    (monster: "Jackal", min_floor: 4, max_floor: 5, min_group: 1, max_group: 3),
+
+    // Wolf packs — full 2-3 hunters, the staple deep-forest threat.
+    (monster: "Wolf", min_floor: 4, max_floor: 5, min_group: 2, max_group: 3),
+
+    // Treant: very rare deep-forest mini-boss. weight: 5 against the
+    // default 100 means it spawns ~2.4% as often as a Giant Rat /
+    // Jackal / Wolf entry on the same floor → most floors won't see
+    // one; when one appears, it's a memorable encounter. Solo
+    // (min_group=max_group=1). See assets/monsters.ron for the stat sheet.
+    (monster: "Treant", min_floor: 3, max_floor: 5, min_group: 1, max_group: 1, weight: 5),
   ]
 )
 
