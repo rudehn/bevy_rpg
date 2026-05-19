@@ -97,9 +97,12 @@ surface with a thin adapter.
 
 ### One effect vocabulary
 
-A new module **`src/game/effects.rs`** owns the shared `TileEffect`
+A new module **`src/game/prop_effects.rs`** owns the shared `TileEffect`
 enum and its application functions. No Bevy in the enum itself —
-just data.
+just data. (Named `prop_effects.rs` to avoid collision with the
+existing `src/game/effects.rs`, which owns *consumable item* effects
+— HealHp, ZapStaff, EnchantItem — a player-driven vocabulary distinct
+from this world-driven one.)
 
 ```rust
 //! Shared effect vocabulary for props (trigger block) and
@@ -264,7 +267,7 @@ impl Decoration {
 }
 ```
 
-A new system in `effects.rs` watches `Changed<Position>` for any
+A new system in `prop_effects.rs` watches `Changed<Position>` for any
 actor with `Health`, resolves the tile's decoration via `Map`, and
 fires the effect if present. Same system handles the prop step-trigger
 lookup by colocated-entity query.
@@ -318,7 +321,7 @@ prefab.
 
 [src/game/machines.rs](../../src/game/machines.rs) is deleted.
 Replaced by:
-- `src/game/effects.rs` — `TileEffect`, application functions,
+- `src/game/prop_effects.rs` — `TileEffect`, application functions,
   step/bump dispatch systems.
 - `Effected` component (replaces `Machine` marker) — carries the
   `PropTrigger` payload copied from the PropAsset at spawn (effect,
@@ -355,7 +358,7 @@ Locked decisions (per RFC scoping interview):
 
 ### Sequence
 
-1. **Land `TileEffect` + `effects.rs`** without removing Machines.
+1. **Land `TileEffect` + `prop_effects.rs`** without removing Machines.
    Both systems coexist for one commit window so tests can be
    written against the new shape against known-good Machine
    behavior.
@@ -385,7 +388,7 @@ too — the symmetric-combat pillar from CLAUDE.md.
 
 ## Tests
 
-Unit tests in `src/game/effects.rs` (mirrors combat resolver pattern):
+Unit tests in `src/game/prop_effects.rs` (mirrors combat resolver pattern):
 
 - `step_effect_deals_damage_to_player`
 - `step_effect_deals_damage_to_monster_when_audience_is_anyone`
@@ -408,9 +411,9 @@ Save round-trip tests in `src/save/mod.rs`:
 
 | File | Change |
 |------|--------|
-| `src/game/effects.rs` | **NEW** — TileEffect enum, application systems, plugin |
+| `src/game/prop_effects.rs` | **NEW** — TileEffect enum, application systems, plugin |
 | `src/game/machines.rs` | **DELETED** |
-| `src/game/mod.rs` | Remove `MachinesPlugin`, register `EffectsPlugin` |
+| `src/game/mod.rs` | Remove `MachinesPlugin`, register `PropEffectsPlugin` |
 | `src/game/actions.rs` | `BumpResult::Machine` → `BumpResult::ActivateProp`; writer swap |
 | `src/assets/mod.rs` | `PropAsset` gains 5 new fields |
 | `src/map/floor_materializer.rs` | Drop the trigger-spawn loop; props carry effects |

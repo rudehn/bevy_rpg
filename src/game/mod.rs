@@ -62,6 +62,7 @@ pub mod items;
 pub mod machines;
 pub mod magic;
 pub mod particles;
+pub mod prop_effects;
 pub mod ranged;
 pub mod spawner;
 pub mod squad;
@@ -149,6 +150,7 @@ impl Plugin for GamePlugin {
                 EnchantmentPlugin,
                 crate::game::staves::StavesPlugin,
                 crate::game::machines::MachinesPlugin,
+                crate::game::prop_effects::PropEffectsPlugin,
                 water::WaterPlugin,
                 ascii_mode::AsciiModePlugin,
                 crate::game::xp::XpPlugin,
