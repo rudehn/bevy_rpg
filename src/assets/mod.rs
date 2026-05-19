@@ -28,6 +28,7 @@ use std::collections::HashMap;
 use crate::components::{MovementMode, Species};
 use crate::game::effects::Effect;
 use crate::game::items::{ArmorSlot, ItemKind, OnHitEffect, Rarity};
+use crate::game::prop_effects::PropTrigger;
 use crate::game::staves::MonsterAbilityDef;
 
 use crate::game::{AppState, camera};
@@ -200,6 +201,13 @@ pub struct PropAsset {
     pub ascii_char: String,
     #[serde(default = "default_white_hex", deserialize_with = "serde_helpers::deserialize_hex_color")]
     pub ascii_fg: Color,
+    /// Optional trigger declaration. When present, the prop spawner
+    /// attaches `Effected` + `EverFired` components and the dispatch
+    /// systems in `prop_effects` activate this prop on step/bump (per
+    /// `is_blocking`). When `None`, the prop is passive scenery.
+    /// See RFC 0002.
+    #[serde(default)]
+    pub trigger: Option<PropTrigger>,
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
@@ -1503,5 +1511,89 @@ mod species_tests {
             .get::<Species>(entity)
             .expect("Species component should be on entity");
         assert_eq!(*read, Species::Insect);
+    }
+}
+
+#[cfg(test)]
+mod prop_asset_tests {
+    //! Verifies the `PropAsset.trigger` field parses correctly from RON
+    //! and defaults to `None` when omitted. The field is the authoring
+    //! surface for RFC 0002 (prop+machine+decoration unification).
+    use super::*;
+    use crate::game::prop_effects::{ActivationMode, EffectAudience, TileEffect};
+
+    /// A minimal PropAsset RON without the new `trigger:` field still
+    /// parses, and `trigger` defaults to `None`.
+    #[test]
+    fn prop_asset_without_trigger_defaults_to_none() {
+        let ron = r#"(
+            name: "Barrel",
+            is_blocking: true,
+            ascii_char: "o",
+        )"#;
+        let asset: PropAsset = ron::from_str(ron).expect("parse PropAsset");
+        assert_eq!(asset.name, "Barrel");
+        assert!(asset.trigger.is_none(), "missing trigger should default to None");
+    }
+
+    /// A PropAsset declaring a `trigger:` block parses with all
+    /// sub-fields populated.
+    #[test]
+    fn prop_asset_with_trigger_parses_fully() {
+        let ron = r#"(
+            name: "Campfire",
+            is_blocking: false,
+            light_radius: Some(28.0),
+            ascii_char: "*",
+            trigger: Some((
+                effect: DealDamage(dice: "1d4", kind: Fire),
+                audience: Anyone,
+                mode: Repeating,
+            )),
+        )"#;
+        let asset: PropAsset = ron::from_str(ron).expect("parse PropAsset");
+        let trigger = asset.trigger.expect("trigger should be Some");
+        assert!(matches!(trigger.effect, TileEffect::DealDamage { .. }));
+        assert_eq!(trigger.audience, EffectAudience::Anyone);
+        assert_eq!(trigger.mode, ActivationMode::Repeating);
+    }
+
+    /// PropTrigger sub-fields (audience, mode) default correctly when
+    /// the RON omits them — only `effect` is required.
+    #[test]
+    fn prop_asset_trigger_inner_fields_default() {
+        let ron = r#"(
+            name: "Altar",
+            is_blocking: true,
+            ascii_char: "_",
+            trigger: Some((
+                effect: HealFull,
+            )),
+        )"#;
+        let asset: PropAsset = ron::from_str(ron).expect("parse PropAsset");
+        let trigger = asset.trigger.expect("trigger should be Some");
+        assert!(matches!(trigger.effect, TileEffect::HealFull));
+        assert_eq!(trigger.audience, EffectAudience::Anyone);
+        assert_eq!(trigger.mode, ActivationMode::Repeating);
+    }
+
+    /// PropAsset reads OnceConsumed / PlayerOnly correctly — the
+    /// Trapped Vault use case.
+    #[test]
+    fn prop_asset_with_once_consumed_player_only_trigger() {
+        let ron = r#"(
+            name: "Trapped Chest",
+            is_blocking: true,
+            ascii_char: "$",
+            trigger: Some((
+                effect: SpawnMonsters(monster_name: "", count: 2),
+                audience: Anyone,
+                mode: OnceConsumed,
+            )),
+        )"#;
+        let asset: PropAsset = ron::from_str(ron).expect("parse PropAsset");
+        let trigger = asset.trigger.expect("trigger should be Some");
+        assert!(matches!(trigger.effect, TileEffect::SpawnMonsters { .. }));
+        assert_eq!(trigger.mode, ActivationMode::OnceConsumed);
     }
 }
