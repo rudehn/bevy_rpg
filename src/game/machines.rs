@@ -205,10 +205,7 @@ pub struct PendingMachineSpawnMonsters {
 pub fn process_pending_machine_item(
     mut commands: Commands,
     pending: Option<Res<PendingMachineSpawnItem>>,
-    item_manifests: Res<bevy::asset::Assets<crate::assets::ItemManifest>>,
-    item_manifest_handle: Res<crate::assets::ItemManifestHandle>,
-    item_sprite_assets: Res<crate::assets::ItemSpriteAssets>,
-    ascii_font: Option<Res<crate::game::ascii_mode::AsciiFont>>,
+    spawner: crate::game::spawner::ItemSpawner,
     map: Res<Map>,
     collider_query: Query<&Position, With<crate::components::Collider>>,
     mut log_writer: MessageWriter<GameLogMessage>,
@@ -235,16 +232,7 @@ pub fn process_pending_machine_item(
         }
     }
 
-    crate::game::spawner::spawn_item(
-        &mut commands,
-        &pending.item_name,
-        &spawn_point,
-        &item_manifests,
-        &item_manifest_handle,
-        &item_sprite_assets,
-        ascii_font.as_deref(),
-        None,
-    );
+    spawner.try_spawn(&mut commands, &pending.item_name, &spawn_point, None);
     log_writer.write(GameLogMessage(format!("A {} appears!", pending.item_name)));
     commands.remove_resource::<PendingMachineSpawnItem>();
 }

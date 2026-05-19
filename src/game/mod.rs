@@ -256,10 +256,7 @@ fn loot_drop_system(
     mut commands: Commands,
     mut game_rng: ResMut<GameRng>,
     mut log_writer: MessageWriter<GameLogMessage>,
-    item_manifests: Res<Assets<ItemManifest>>,
-    item_manifest_handle: Res<ItemManifestHandle>,
-    item_sprite_assets: Res<ItemSpriteAssets>,
-    ascii_font: Option<Res<crate::game::ascii_mode::AsciiFont>>,
+    spawner: crate::game::spawner::ItemSpawner,
 ) {
     use bracket_lib::prelude::Point;
     for event in death_events.read() {
@@ -275,24 +272,14 @@ fn loot_drop_system(
                 } else {
                     1
                 };
-                if let Some(entity) = spawn_item(
-                    &mut commands,
-                    &entry.item,
-                    &spawn_point,
-                    &item_manifests,
-                    &item_manifest_handle,
-                    &item_sprite_assets,
-                    ascii_font.as_deref(),
-                    None,
-                )
-                    && count > 1 {
-                        let max_stack = item_manifests
-                            .get(&item_manifest_handle.0)
-                            .and_then(|m| m.items.get(entry.item.as_str()))
-                            .map(|a| a.max_stack())
-                            .unwrap_or(1);
-                        commands.entity(entity).insert(crate::game::items::ItemStack { count, max_stack });
-                    }
+                if let Some(entity) = spawner.try_spawn(&mut commands, &entry.item, &spawn_point, None)
+                    && count > 1
+                {
+                    let max_stack = spawner.max_stack_for(&entry.item);
+                    commands
+                        .entity(entity)
+                        .insert(crate::game::items::ItemStack { count, max_stack });
+                }
                 let count_str = if count > 1 { format!(" (x{})", count) } else { String::new() };
                 log_writer.write(GameLogMessage(format!(
                     "{} dropped a {}{}.", name.0, entry.item, count_str
@@ -317,10 +304,7 @@ fn drop_equipment_on_death(
     mut commands: Commands,
     dead_query: Query<(&Health, &Position, &Equipment, &Name)>,
     item_name_query: Query<&Name>,
-    item_manifests: Res<Assets<ItemManifest>>,
-    item_manifest_handle: Res<ItemManifestHandle>,
-    item_sprite_assets: Res<ItemSpriteAssets>,
-    ascii_font: Option<Res<crate::game::ascii_mode::AsciiFont>>,
+    spawner: crate::game::spawner::ItemSpawner,
     mut log_writer: MessageWriter<GameLogMessage>,
 ) {
     use bracket_lib::prelude::Point;
@@ -345,16 +329,7 @@ fn drop_equipment_on_death(
             let item_name_str = item_name.0.clone();
             // Despawn the bare equipped entity; spawn a fresh floor item.
             commands.entity(slot_entity).despawn();
-            if spawn_item(
-                &mut commands,
-                &item_name_str,
-                &drop_point,
-                &item_manifests,
-                &item_manifest_handle,
-                &item_sprite_assets,
-                ascii_font.as_deref(),
-                None,
-            ).is_some() {
+            if spawner.try_spawn(&mut commands, &item_name_str, &drop_point, None).is_some() {
                 log_writer.write(GameLogMessage(format!(
                     "{} drops a {}.", owner_name.0, item_name_str
                 )));

@@ -1326,9 +1326,7 @@ pub fn apply_player_load_system(
         With<Player>,
     >,
     player_entity_query: Query<Entity, With<Player>>,
-    item_manifests: Res<Assets<ItemManifest>>,
-    item_manifest_handle: Res<ItemManifestHandle>,
-    item_sprite_assets: Res<ItemSpriteAssets>,
+    spawner: crate::game::spawner::ItemSpawner,
     mut floor_cache: ResMut<FloorCache>,
     saved_floor_cache: Option<Res<SavedFloorCache>>,
     mut save_exists: ResMut<SaveExists>,
@@ -1409,16 +1407,8 @@ pub fn apply_player_load_system(
 
     let dummy_pt = Point::new(0, 0);
     for item_save in &player_data.inventory {
-        let Some(item_entity) = spawn_item(
-            &mut commands,
-            &item_save.name,
-            &dummy_pt,
-            &item_manifests,
-            &item_manifest_handle,
-            &item_sprite_assets,
-            None,
-            None,
-        ) else {
+        let Some(item_entity) = spawner.try_spawn(&mut commands, &item_save.name, &dummy_pt, None)
+        else {
             continue;
         };
 

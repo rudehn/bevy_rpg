@@ -423,6 +423,67 @@ pub fn spawn_monster_by_name(
     }
 }
 
+/// SystemParam that bundles the four resources [`spawn_item`] needs,
+/// so callers don't have to thread `(Assets<ItemManifest>,
+/// ItemManifestHandle, ItemSpriteAssets, Option<AsciiFont>)` through
+/// every system signature.
+///
+/// Typical use:
+///
+/// ```ignore
+/// fn my_system(mut commands: Commands, spawner: ItemSpawner, /* ... */) {
+///     if let Some(e) = spawner.try_spawn(&mut commands, "Sword", &pos, None) {
+///         // ...
+///     }
+/// }
+/// ```
+///
+/// For the rare caller that holds the raw resource refs (e.g. inside a
+/// `&mut World` block), the lower-level [`spawn_item`] free function is
+/// still available.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct ItemSpawner<'w> {
+    pub manifests: Res<'w, Assets<ItemManifest>>,
+    pub handle: Res<'w, ItemManifestHandle>,
+    pub sprites: Res<'w, ItemSpriteAssets>,
+    pub ascii_font: Option<Res<'w, crate::game::ascii_mode::AsciiFont>>,
+}
+
+impl ItemSpawner<'_> {
+    /// Try to spawn `item_name` at `pos`. Returns the spawned entity
+    /// if the item exists in the manifest, `None` otherwise (warns to
+    /// the log on miss).
+    pub fn try_spawn(
+        &self,
+        commands: &mut Commands,
+        item_name: &str,
+        pos: &Point,
+        enchant_floor_depth: Option<u32>,
+    ) -> Option<Entity> {
+        spawn_item(
+            commands,
+            item_name,
+            pos,
+            &self.manifests,
+            &self.handle,
+            &self.sprites,
+            self.ascii_font.as_deref(),
+            enchant_floor_depth,
+        )
+    }
+
+    /// Look up `max_stack` for an item from the manifest without
+    /// spawning it. Used by loot-drop code that needs to size a fresh
+    /// `ItemStack` after the spawn.
+    pub fn max_stack_for(&self, item_name: &str) -> u32 {
+        self.manifests
+            .get(&self.handle.0)
+            .and_then(|m| m.items.get(item_name))
+            .map(|a| a.max_stack())
+            .unwrap_or(1)
+    }
+}
+
 /// Spawn an item entity from the manifest.
 /// If `enchant_floor_depth` is `Some(depth)`, roll random enchantment and runic for weapons/armor.
 pub fn spawn_item(

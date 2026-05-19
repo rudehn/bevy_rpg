@@ -60,13 +60,11 @@ pub fn player_spawn_or_move_system(
     mut commands: Commands,
     player_asset_handle: Res<PlayerAssetHandle>,
     player_assets: Res<Assets<PlayerAsset>>,
-    item_manifest_handle: Res<ItemManifestHandle>,
-    item_manifests: Res<Assets<ItemManifest>>,
-    item_sprite_assets: Res<ItemSpriteAssets>,
+    spawner: crate::game::spawner::ItemSpawner,
+    ascii_font: Option<Res<crate::game::ascii_mode::AsciiFont>>,
     spawn_point: Res<PlayerSpawnPoint>,
     mut q_player: Query<(Entity, &mut Transform, &mut Position), With<Player>>,
     mut turn_manager: ResMut<TurnManager>,
-    ascii_font: Option<Res<crate::game::ascii_mode::AsciiFont>>,
     character_choice: Res<CharacterChoice>,
     race_manifest_handle: Res<RaceManifestHandle>,
     race_manifests: Res<Assets<RaceManifest>>,
@@ -127,9 +125,7 @@ pub fn player_spawn_or_move_system(
         let starting_items = spawn_starting_items(
             &mut commands,
             &class_asset.starting_kit,
-            &item_manifests,
-            &item_manifest_handle,
-            &item_sprite_assets,
+            &spawner,
         );
 
         let attributes = compose_attributes(race_asset, class_asset);
@@ -316,22 +312,11 @@ fn build_starting_skill_xp(
 fn spawn_starting_items(
     commands: &mut Commands,
     item_defs: &[StartingItemDef],
-    item_manifests: &Res<Assets<ItemManifest>>,
-    item_manifest_handle: &Res<ItemManifestHandle>,
-    item_sprite_assets: &Res<ItemSpriteAssets>,
+    spawner: &crate::game::spawner::ItemSpawner,
 ) -> Vec<Entity> {
     let mut items = Vec::new();
     for def in item_defs {
-        if let Some(entity) = spawn_item(
-            commands,
-            &def.name,
-            &Point::new(0, 0),
-            item_manifests,
-            item_manifest_handle,
-            item_sprite_assets,
-            None,
-            None,
-        ) {
+        if let Some(entity) = spawner.try_spawn(commands, &def.name, &Point::new(0, 0), None) {
             commands
                 .entity(entity)
                 .insert(InInventory)
@@ -339,11 +324,7 @@ fn spawn_starting_items(
                 .remove::<FloorEntityMarker>()
                 .remove::<Position>();
             if def.count > 1 {
-                let max_stack = item_manifests
-                    .get(&item_manifest_handle.0)
-                    .and_then(|m| m.items.get(def.name.as_str()))
-                    .map(|a| a.max_stack())
-                    .unwrap_or(1);
+                let max_stack = spawner.max_stack_for(&def.name);
                 commands.entity(entity).insert(ItemStack {
                     count: def.count,
                     max_stack,

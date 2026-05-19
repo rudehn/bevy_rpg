@@ -910,10 +910,7 @@ pub fn handle_open_chest(
     floor: Res<Floor>,
     item_spawn_table_handle: Res<ItemSpawnTableHandle>,
     item_spawn_tables: Res<Assets<ItemSpawnTable>>,
-    item_manifests: Res<Assets<ItemManifest>>,
-    item_manifest_handle: Res<ItemManifestHandle>,
-    item_sprite_assets: Res<ItemSpriteAssets>,
-    ascii_font: Option<Res<crate::game::ascii_mode::AsciiFont>>,
+    spawner: crate::game::spawner::ItemSpawner,
     player_check: Query<&Name, With<Player>>,
 ) {
     use bracket_lib::prelude::RandomNumberGenerator;
@@ -935,7 +932,7 @@ pub fn handle_open_chest(
             continue;
         };
 
-        let Some(item_manifest) = item_manifests.get(&item_manifest_handle.0) else {
+        let Some(item_manifest) = spawner.manifests.get(&spawner.handle.0) else {
             finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST, ActionKind::Movement);
             continue;
         };
@@ -1024,19 +1021,12 @@ pub fn handle_open_chest(
 
             if let Some(spawn_info) = chosen {
                 let pt = Point::new(pos.x, pos.y);
-                if let Some(_entity) = spawn_item(
-                    &mut commands,
-                    &spawn_info.item,
-                    &pt,
-                    &item_manifests,
-                    &item_manifest_handle,
-                    &item_sprite_assets,
-                    ascii_font.as_deref(),
-                    Some(floor.0),
-                ) {
-                    if is_player {
-                        log_writer.write(GameLogMessage(format!("  Found: {}", spawn_info.item)));
-                    }
+                if spawner
+                    .try_spawn(&mut commands, &spawn_info.item, &pt, Some(floor.0))
+                    .is_some()
+                    && is_player
+                {
+                    log_writer.write(GameLogMessage(format!("  Found: {}", spawn_info.item)));
                 }
             }
         }
