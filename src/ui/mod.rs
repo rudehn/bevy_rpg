@@ -29,7 +29,6 @@ pub mod nearby;
 pub mod registry;
 pub mod stealth_display;
 
-use cheat_menu::CheatMenuPlugin;
 use menu::MenuPlugin;
 use nearby::{NearbyListRoot, NearbyPlugin};
 use game_log::{
@@ -574,7 +573,6 @@ impl Plugin for UiPlugin {
             .add_message::<GameLogMessage>()
             .add_plugins((
                 ScreenRegistryPlugin,
-                CheatMenuPlugin,
                 MenuPlugin, NearbyPlugin, monster_info::MonsterInfoPlugin,
                 hover_info::HoverInfoPlugin,
                 character_creation::CharacterCreationPlugin,
@@ -587,6 +585,7 @@ impl Plugin for UiPlugin {
             .register_screen::<chasm_confirm::ChasmConfirmScreen>()
             .register_screen::<enchant_select::EnchantSelectScreen>()
             .register_screen::<asi_modal::AsiSelectScreen>()
+            .register_screen::<cheat_menu::CheatMenuScreen>()
             .add_systems(
                 OnEnter(AppState::InGame),
                 (

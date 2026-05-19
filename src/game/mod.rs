@@ -113,6 +113,8 @@ pub enum InGameState {
     CharacterInfo,
     /// Skill training screen (Phase 3). Bound to M.
     SkillScreen,
+    /// Debug cheat menu. Bound to Backslash.
+    CheatMenu,
 }
 
 pub struct GamePlugin;

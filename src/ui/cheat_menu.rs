@@ -1,15 +1,19 @@
-use crate::game::{AppState, InGameState};
+//! Debug cheat menu — toggle with Backslash.
+//!
+//! Registered via the [`UiScreen`] trait so the central dispatcher
+//! owns the open/close hotkey + collision detection. While open
+//! (`InGameState::CheatMenu`), shortcut keys (R/H/G/O/N) fire the
+//! same effects as their on-screen buttons.
+
+use bevy::prelude::*;
+
 use crate::game::combat::{HealEvent, ToggleGodModeMessage};
 use crate::game::systems::Omniscient;
+use crate::game::InGameState;
 use crate::map::dungeon::MapTransitionMessage;
 use crate::map::map::RevealMapMessage;
 use crate::player::Player;
-use bevy::prelude::*;
-
-#[derive(Resource, Default)]
-pub struct CheatMenu {
-    pub is_open: bool,
-}
+use crate::ui::registry::{close_on_toggle_or_escape, HelpEntry, UiScreen};
 
 #[derive(Component)]
 pub struct CheatMenuRoot;
@@ -24,12 +28,33 @@ pub enum CheatButton {
     Close,
 }
 
-pub fn toggle_cheat_menu_system(
+pub struct CheatMenuScreen;
+
+impl UiScreen for CheatMenuScreen {
+    const STATE: InGameState = InGameState::CheatMenu;
+    const OPEN_KEY: Option<KeyCode> = Some(KeyCode::Backslash);
+    const HELP: Option<HelpEntry> = Some(HelpEntry {
+        display: "\\",
+        label: "Cheat menu (debug)",
+    });
+
+    fn build(app: &mut App) {
+        app.add_systems(OnEnter(Self::STATE), spawn_cheat_menu)
+            .add_systems(OnExit(Self::STATE), despawn_cheat_menu)
+            .add_systems(
+                Update,
+                (
+                    close_on_toggle_or_escape::<Self>,
+                    cheat_shortcut_keys,
+                    cheat_menu_button_system,
+                )
+                    .run_if(in_state(Self::STATE)),
+            );
+    }
+}
+
+fn cheat_shortcut_keys(
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut cheat_menu: ResMut<CheatMenu>,
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    root_query: Query<Entity, With<CheatMenuRoot>>,
     player_query: Query<Entity, With<Player>>,
     mut reveal_writer: MessageWriter<RevealMapMessage>,
     mut heal_writer: MessageWriter<HealEvent>,
@@ -37,58 +62,36 @@ pub fn toggle_cheat_menu_system(
     mut transition_writer: MessageWriter<MapTransitionMessage>,
     floor: Res<crate::map::dungeon::Floor>,
     mut omniscient: ResMut<Omniscient>,
+    mut next_state: ResMut<NextState<InGameState>>,
 ) {
-    // Open/Close toggle with Backslash
-    if keyboard_input.just_pressed(KeyCode::Backslash) {
-        cheat_menu.is_open = !cheat_menu.is_open;
-        if cheat_menu.is_open {
-            spawn_cheat_menu(&mut commands, &asset_server);
-        } else {
-            for entity in root_query.iter() {
-                commands.entity(entity).despawn();
-            }
-        }
-    }
+    let Ok(player_entity) = player_query.single() else { return };
 
-    // Close only with Escape
-    if keyboard_input.just_pressed(KeyCode::Escape) && cheat_menu.is_open {
-        cheat_menu.is_open = false;
-        for entity in root_query.iter() {
-            commands.entity(entity).despawn();
-        }
+    if keyboard_input.just_pressed(KeyCode::KeyR) {
+        reveal_writer.write(RevealMapMessage);
     }
-
-    // Shortcut keys when open
-    if cheat_menu.is_open
-        && let Ok(player_entity) = player_query.single() {
-            if keyboard_input.just_pressed(KeyCode::KeyR) {
-                reveal_writer.write(RevealMapMessage);
-            }
-            if keyboard_input.just_pressed(KeyCode::KeyH) {
-                heal_writer.write(HealEvent {
-                    target: player_entity,
-                    amount: 999,
-                    source: None,
-                });
-            }
-            if keyboard_input.just_pressed(KeyCode::KeyG) {
-                god_mode_writer.write(ToggleGodModeMessage {
-                    entity: player_entity,
-                });
-            }
-            if keyboard_input.just_pressed(KeyCode::KeyN) {
-                transition_writer.write(MapTransitionMessage {
-                    destination_floor: floor.0 + 1,
-                    destination_pos: None,
-                });
-            }
-            if keyboard_input.just_pressed(KeyCode::KeyO) {
-                omniscient.0 = !omniscient.0;
-            }
-        }
+    if keyboard_input.just_pressed(KeyCode::KeyH) {
+        heal_writer.write(HealEvent {
+            target: player_entity,
+            amount: 999,
+            source: None,
+        });
+    }
+    if keyboard_input.just_pressed(KeyCode::KeyG) {
+        god_mode_writer.write(ToggleGodModeMessage { entity: player_entity });
+    }
+    if keyboard_input.just_pressed(KeyCode::KeyN) {
+        transition_writer.write(MapTransitionMessage {
+            destination_floor: floor.0 + 1,
+            destination_pos: None,
+        });
+        next_state.set(InGameState::Running);
+    }
+    if keyboard_input.just_pressed(KeyCode::KeyO) {
+        omniscient.0 = !omniscient.0;
+    }
 }
 
-fn spawn_cheat_menu(commands: &mut Commands, asset_server: &Res<AssetServer>) {
+fn spawn_cheat_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands
         .spawn((
             Node {
@@ -124,36 +127,27 @@ fn spawn_cheat_menu(commands: &mut Commands, asset_server: &Res<AssetServer>) {
                             font_size: 32.0,
                             ..default()
                         },
-                        TextColor(Color::srgb(1.0, 1.0, 0.0)), // Yellow
+                        TextColor(Color::srgb(1.0, 1.0, 0.0)),
                         Node {
                             margin: UiRect::bottom(Val::Px(20.0)),
                             ..default()
                         },
                     ));
 
-                    spawn_button(parent, asset_server, "(R)eveal Map", CheatButton::RevealMap);
-                    spawn_button(
-                        parent,
-                        asset_server,
-                        "(H)eal Player",
-                        CheatButton::HealPlayer,
-                    );
-                    spawn_button(
-                        parent,
-                        asset_server,
-                        "(G)odmode Toggle",
-                        CheatButton::ToggleGodMode,
-                    );
-                    spawn_button(parent, asset_server, "(O)mniscient Toggle", CheatButton::ToggleOmniscient);
-                    spawn_button(parent, asset_server, "(N)ext Level", CheatButton::NextLevel);
-                    spawn_button(
-                        parent,
-                        asset_server,
-                        r"Close (\ or ESC)",
-                        CheatButton::Close,
-                    );
+                    spawn_button(parent, &asset_server, "(R)eveal Map", CheatButton::RevealMap);
+                    spawn_button(parent, &asset_server, "(H)eal Player", CheatButton::HealPlayer);
+                    spawn_button(parent, &asset_server, "(G)odmode Toggle", CheatButton::ToggleGodMode);
+                    spawn_button(parent, &asset_server, "(O)mniscient Toggle", CheatButton::ToggleOmniscient);
+                    spawn_button(parent, &asset_server, "(N)ext Level", CheatButton::NextLevel);
+                    spawn_button(parent, &asset_server, r"Close (\ or ESC)", CheatButton::Close);
                 });
         });
+}
+
+fn despawn_cheat_menu(mut commands: Commands, query: Query<Entity, With<CheatMenuRoot>>) {
+    for entity in query.iter() {
+        commands.entity(entity).despawn();
+    }
 }
 
 fn spawn_button(
@@ -189,14 +183,11 @@ fn spawn_button(
         });
 }
 
-pub fn cheat_menu_button_system(
+fn cheat_menu_button_system(
     mut interaction_query: Query<
         (&Interaction, &CheatButton, &mut BackgroundColor),
         (Changed<Interaction>, With<Button>),
     >,
-    mut cheat_menu: ResMut<CheatMenu>,
-    mut commands: Commands,
-    root_query: Query<Entity, With<CheatMenuRoot>>,
     player_query: Query<Entity, With<Player>>,
     mut reveal_writer: MessageWriter<RevealMapMessage>,
     mut heal_writer: MessageWriter<HealEvent>,
@@ -204,6 +195,7 @@ pub fn cheat_menu_button_system(
     mut transition_writer: MessageWriter<MapTransitionMessage>,
     floor: Res<crate::map::dungeon::Floor>,
     mut omniscient: ResMut<Omniscient>,
+    mut next_state: ResMut<NextState<InGameState>>,
 ) {
     for (interaction, cheat_button, mut color) in interaction_query.iter_mut() {
         match *interaction {
@@ -217,11 +209,7 @@ pub fn cheat_menu_button_system(
                     }
                     CheatButton::HealPlayer => {
                         if let Some(entity) = player_entity {
-                            heal_writer.write(HealEvent {
-                                target: entity,
-                                amount: 999,
-                                source: None,
-                            });
+                            heal_writer.write(HealEvent { target: entity, amount: 999, source: None });
                         }
                     }
                     CheatButton::ToggleGodMode => {
@@ -237,16 +225,10 @@ pub fn cheat_menu_button_system(
                             destination_floor: floor.0 + 1,
                             destination_pos: None,
                         });
-                        cheat_menu.is_open = false;
-                        for entity in root_query.iter() {
-                            commands.entity(entity).despawn();
-                        }
+                        next_state.set(InGameState::Running);
                     }
                     CheatButton::Close => {
-                        cheat_menu.is_open = false;
-                        for entity in root_query.iter() {
-                            commands.entity(entity).despawn();
-                        }
+                        next_state.set(InGameState::Running);
                     }
                 }
             }
@@ -257,17 +239,5 @@ pub fn cheat_menu_button_system(
                 *color = BackgroundColor(Color::srgb(0.2, 0.2, 0.2));
             }
         }
-    }
-}
-
-pub struct CheatMenuPlugin;
-
-impl Plugin for CheatMenuPlugin {
-    fn build(&self, app: &mut App) {
-        app.init_resource::<CheatMenu>().add_systems(
-            Update,
-            (toggle_cheat_menu_system, cheat_menu_button_system)
-                .run_if(in_state(AppState::InGame).and(in_state(InGameState::Running))),
-        );
     }
 }
