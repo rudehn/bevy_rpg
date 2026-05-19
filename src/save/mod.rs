@@ -100,7 +100,12 @@ const GAME_SAVE_KEY: &str = "ironveil_save";
 ///   loadable; pre-v9 monsters load with `None` (not fleeing), which
 ///   matches the historical behaviour where Fleeing was always lost on
 ///   load anyway.
-pub const SAVE_SCHEMA_VERSION: u32 = 9;
+/// - **v10**: RFC 0002 prop effects — `SavedProp.ever_fired: bool` persists
+///   per-instance prop activation state (used altars stay inert, sprung
+///   traps don't re-fire). `#[serde(default)]` keeps v9 saves loadable;
+///   pre-v10 saves load all props as not-yet-fired, matching the
+///   pre-RFC behavior where Machine activation state was lost on load.
+pub const SAVE_SCHEMA_VERSION: u32 = 10;
 
 // ---- Migration chain ----
 
@@ -298,6 +303,16 @@ impl SaveMigration for MigrateV8ToV9 {
     fn migrate(&self, data: &str) -> Result<String, String> { Ok(data.to_string()) }
 }
 
+/// v9 → v10: RFC 0002 prop effects — `SavedProp.ever_fired` field
+/// added. Backward-compatible (serde default `false`); migration is a
+/// pure version-bump no-op.
+struct MigrateV9ToV10;
+impl SaveMigration for MigrateV9ToV10 {
+    fn from_version(&self) -> u32 { 9 }
+    fn to_version(&self) -> u32 { 10 }
+    fn migrate(&self, data: &str) -> Result<String, String> { Ok(data.to_string()) }
+}
+
 fn migrations() -> Vec<Box<dyn SaveMigration>> {
     vec![
         Box::new(MigrateV0ToV1),
@@ -308,6 +323,7 @@ fn migrations() -> Vec<Box<dyn SaveMigration>> {
         Box::new(MigrateV5ToV6),
         Box::new(MigrateV6ToV7),
         Box::new(MigrateV8ToV9),
+        Box::new(MigrateV9ToV10),
     ]
 }
 
@@ -604,6 +620,13 @@ pub struct SavedProp {
     pub x: i32,
     pub y: i32,
     pub name: String,
+    /// RFC 0002 step 4 — persists the `EverFired` activation flag for
+    /// props with an authored trigger (used altars / sprung traps).
+    /// Defaults to `false` for backward compatibility with v9 saves;
+    /// pre-v10 saves load all props as not-yet-fired, which matches
+    /// the historical behavior where prop activation state was lost.
+    #[serde(default)]
+    pub ever_fired: bool,
 }
 
 impl SavedProp {
@@ -1069,7 +1092,15 @@ pub fn auto_save_system(
         ),
         (With<Item>, Without<InInventory>),
     >,
-    prop_query: Query<(&Position, &Name, Option<&crate::components::PropKey>), With<Prop>>,
+    prop_query: Query<
+        (
+            &Position,
+            &Name,
+            Option<&crate::components::PropKey>,
+            Option<&crate::game::prop_effects::EverFired>,
+        ),
+        With<Prop>,
+    >,
     auto_save_extras: AutoSaveExtras,
 ) {
     auto_save_pending.0 = false;
@@ -1205,7 +1236,7 @@ pub fn auto_save_system(
     // Props
     let props: Vec<SavedProp> = prop_query
         .iter()
-        .map(|(pos, name, prop_key)| SavedProp {
+        .map(|(pos, name, prop_key, ever_fired)| SavedProp {
             x: pos.x,
             y: pos.y,
             // Use the manifest key if available; fall back to display name
@@ -1213,6 +1244,7 @@ pub fn auto_save_system(
             name: prop_key
                 .map(|k| k.0.clone())
                 .unwrap_or_else(|| name.0.clone()),
+            ever_fired: ever_fired.map(|e| e.0).unwrap_or(false),
         })
         .collect();
 
@@ -1728,6 +1760,7 @@ mod tests {
             x: 6,
             y: 9,
             name: "watchfire".to_string(),
+            ever_fired: false,
         }
     }
 
@@ -2475,6 +2508,33 @@ mod tests {
         assert_eq!(l.x, 6);
         assert_eq!(l.y, 9);
         assert_eq!(l.name, "watchfire");
+        assert!(!l.ever_fired);
+    }
+
+    /// RFC 0002 step 4 — `ever_fired = true` survives serde round trip.
+    /// Guards the per-instance prop activation state in saves.
+    #[test]
+    fn roundtrip_prop_with_ever_fired_true() {
+        let prop = SavedProp {
+            x: 2,
+            y: 2,
+            name: "altar".into(),
+            ever_fired: true,
+        };
+        let parsed: SavedProp = from_ron(&to_ron(&prop));
+        assert!(parsed.ever_fired, "ever_fired flag must survive serde");
+    }
+
+    /// Backward-compat: v9 SavedProp RON (no `ever_fired` field) loads
+    /// into the new schema with `ever_fired = false` via #[serde(default)].
+    #[test]
+    fn roundtrip_prop_v9_format_loads_with_ever_fired_default() {
+        let v9_ron = r#"(x: 3, y: 4, name: "altar")"#;
+        let parsed: SavedProp = from_ron(v9_ron);
+        assert_eq!(parsed.x, 3);
+        assert_eq!(parsed.y, 4);
+        assert_eq!(parsed.name, "altar");
+        assert!(!parsed.ever_fired, "v9 saves must default to ever_fired=false");
     }
 
     // =====================================================================
@@ -2873,6 +2933,7 @@ mod tests {
             x: 0,
             y: 0,
             name: "brazier".into(),
+            ever_fired: false,
         };
         assert_eq!(from_ron::<SavedMonster>(&to_ron(&m)).name, "Eel");
         assert_eq!(from_ron::<SavedItem>(&to_ron(&item)).name, "Staff of Fire");
@@ -2897,8 +2958,8 @@ mod tests {
     // =====================================================================
 
     #[test]
-    fn schema_version_is_nine() {
-        assert_eq!(SAVE_SCHEMA_VERSION, 9);
+    fn schema_version_is_ten() {
+        assert_eq!(SAVE_SCHEMA_VERSION, 10);
     }
 
     #[test]
@@ -2984,7 +3045,7 @@ mod tests {
         // StatusEffectKind::Custom { id } → named-variant hard break;
         // pre-v8 saves are unrecoverable by design and fail to load.
         let migs = migrations();
-        assert_eq!(migs.len(), 8);
+        assert_eq!(migs.len(), 9);
         assert_eq!(migs[0].from_version(), 0);
         assert_eq!(migs[0].to_version(), 1);
         assert_eq!(migs[1].from_version(), 1);
@@ -3001,6 +3062,8 @@ mod tests {
         assert_eq!(migs[6].to_version(), 7);
         assert_eq!(migs[7].from_version(), 8);
         assert_eq!(migs[7].to_version(), 9);
+        assert_eq!(migs[8].from_version(), 9);
+        assert_eq!(migs[8].to_version(), 10);
     }
 
     // =====================================================================

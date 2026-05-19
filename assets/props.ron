@@ -60,6 +60,17 @@ PropManifest(
             tile_size: Some((447, 447)),
             ascii_char: "π",
             ascii_fg: "#C8C8FF",
+            // Heal-and-reward shrine (RFC 0002). Bump once → full HP +
+            // Scroll of Enchanting. PlayerOnly + OnceInert: monsters
+            // can't activate; the altar stays as scenery after firing.
+            trigger: Some((
+                effect: Multi([
+                    HealFull,
+                    SpawnItem(item_name: "Scroll of Enchanting"),
+                ]),
+                audience: PlayerOnly,
+                mode: OnceInert,
+            )),
         ),
         "chest": PropAsset(
             name: "Chest",
@@ -69,6 +80,27 @@ PropManifest(
             tile_size: Some((32, 32)),
             ascii_char: "$",
             ascii_fg: "#DCB428",
+        ),
+        "monster_trap": PropAsset(
+            // Invisible step-trap that spawns monsters when an actor
+            // walks onto its tile. RFC 0002 step 5 — used by the
+            // Trapped Vault prefab, where it's colocated with a chest:
+            // bumping opens the chest (chest wins via Collider
+            // priority), and the trap fires on the next step into the
+            // now-empty tile. OnceConsumed: trap despawns after firing.
+            // ascii "^" matches the classic roguelike trap glyph.
+            name: "Trap",
+            is_blocking: false,
+            is_opaque: false,
+            grid_size: Some((1, 1)),
+            tile_size: Some((16, 16)),
+            ascii_char: "^",
+            ascii_fg: "#965A28",
+            trigger: Some((
+                effect: SpawnMonsters(monster_name: "", count: 2),
+                audience: Anyone,
+                mode: OnceConsumed,
+            )),
         ),
     },
 )

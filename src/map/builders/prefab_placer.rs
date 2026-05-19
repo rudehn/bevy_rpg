@@ -134,17 +134,6 @@ fn rotate_90_cw(prefab: &PrefabTemplate) -> PrefabTemplate {
         crate::assets::PrefabItemSpawn { x: nx, y: ny, item: i.item.clone() }
     }).collect();
 
-    let triggers = prefab.triggers.iter().map(|t| {
-        let (nx, ny) = transform(t.x, t.y);
-        crate::assets::PrefabTrigger {
-            x: nx, y: ny,
-            prop_name: t.prop_name.clone(),
-            trigger: t.trigger.clone(),
-            effect: t.effect.clone(),
-            consume_on_use: t.consume_on_use,
-        }
-    }).collect();
-
     let decorations = prefab.decorations.iter().map(|d| {
         let (nx, ny) = transform(d.x, d.y);
         crate::assets::PrefabDecoration {
@@ -164,7 +153,6 @@ fn rotate_90_cw(prefab: &PrefabTemplate) -> PrefabTemplate {
         props,
         monster_spawns,
         item_spawns,
-        triggers,
         decorations,
         flee_threshold: prefab.flee_threshold,
         placement: prefab.placement.clone(),
@@ -201,17 +189,6 @@ fn flip_prefab_h(prefab: &PrefabTemplate) -> PrefabTemplate {
         crate::assets::PrefabItemSpawn { x: nx, y: ny, item: i.item.clone() }
     }).collect();
 
-    let triggers = prefab.triggers.iter().map(|t| {
-        let (nx, ny) = transform(t.x, t.y);
-        crate::assets::PrefabTrigger {
-            x: nx, y: ny,
-            prop_name: t.prop_name.clone(),
-            trigger: t.trigger.clone(),
-            effect: t.effect.clone(),
-            consume_on_use: t.consume_on_use,
-        }
-    }).collect();
-
     let decorations = prefab.decorations.iter().map(|d| {
         let (nx, ny) = transform(d.x, d.y);
         crate::assets::PrefabDecoration {
@@ -231,7 +208,6 @@ fn flip_prefab_h(prefab: &PrefabTemplate) -> PrefabTemplate {
         props,
         monster_spawns,
         item_spawns,
-        triggers,
         decorations,
         flee_threshold: prefab.flee_threshold,
         placement: prefab.placement.clone(),
@@ -673,18 +649,6 @@ impl PrefabPlacer {
             }
         }
 
-        for tr in &prefab.triggers {
-            let wx = offset_x + tr.x;
-            let wy = offset_y + tr.y;
-            build_data.add_machine_spawn(super::MachineSpawn {
-                pos: Point::new(wx, wy),
-                prop_name: tr.prop_name.clone(),
-                trigger: tr.trigger.clone(),
-                effect: tr.effect.clone(),
-                consume_on_use: tr.consume_on_use,
-            });
-        }
-
         for dec in &prefab.decorations {
             let cx = offset_x + dec.x;
             let cy = offset_y + dec.y;
@@ -809,7 +773,6 @@ mod tests {
             props: Vec::new(),
             monster_spawns: Vec::new(),
             item_spawns: Vec::new(),
-            triggers: Vec::new(),
             decorations: Vec::new(),
             flee_threshold: 0.5,
             placement: "any".to_string(),

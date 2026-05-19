@@ -49,7 +49,7 @@ Design docs live in `docs/design/`. Read these before making gameplay changes.
 | [CHARACTER.md](docs/design/CHARACTER.md) | Race / class / attribute system, character creation, HP-from-CON, attribute → combat math |
 | [OVERWORLD.md](docs/design/OVERWORLD.md) | **Current map structure** — town hub, forest ring, temple, transitions, save layout |
 | [DUNGEON.md](docs/design/DUNGEON.md) | Legacy 26-floor pipeline (preserved for floor >= 12). Terrain/liquid layers, decorations, lighting |
-| [ENCOUNTERS.md](docs/design/ENCOUNTERS.md) | Machine system (hordes → spawn table → machines), blueprints, trapped chests, lock & key |
+| [ENCOUNTERS.md](docs/design/ENCOUNTERS.md) | Prop trigger system (hordes → spawn table → interactive props), blueprints, trapped chests, lock & key. See also [RFC 0002](docs/rfcs/0002-prop-machine-decoration-unification.md) for the props+machines unification. |
 | [ENEMIES.md](docs/design/ENEMIES.md) | Monster roster, factions, species, tier structure, per-monster identities |
 | [ITEMS.md](docs/design/ITEMS.md) | Weapons (active abilities), staves (charges), armor, rings/amulets, potions, enchanting, runics |
 
@@ -119,9 +119,9 @@ src/
     fleeing.rs           # Sticky `Fleeing` overlay component + damage_triggers_flee + maybe_exit_fleeing (entry/exit transitions for the new FSM state)
     gas.rs               # Gas layer system (poison clouds, spread, decay, FOV blocking)
     items.rs             # Item components, equip/unequip/drop handlers
-    machines.rs          # Machine encounter runtime logic
     magic.rs             # Magical effect processing
     particles.rs         # Visual particle effects
+    prop_effects.rs      # Prop trigger vocabulary (TileEffect, PropTrigger, EverFired) + bump/step/decoration dispatchers — RFC 0002
     ranged.rs            # Ranged attack handling
     spawner.rs           # Entity spawning helpers
     squad.rs             # Squad system, shared alerting, leader mechanics
@@ -166,9 +166,8 @@ src/
       town_npcs.rs       # TownNpcBuilder + TownNpcManifest + Placement enum — reads assets/town_npcs.ron, queues SpawnEntry with PatrolRoute per NPC count
       brogelike.rs       # BrogueLikeBuilder — primary map generator (room types + corridors)
       algorithms.rs      # BlobGenConfig, Grid, cellular automata helpers
-      choke_map.rs       # Topology analysis via petgraph (chokepoints for machines)
+      choke_map.rs       # Topology analysis via petgraph (chokepoints for prefab placement)
       lake_builder.rs    # Organic lake generation using blob algorithm
-      machine_builder.rs # Machine encounter placement in builder pipeline
       prefab_placer.rs   # Hand-designed room layout stamping
       decoration_propagator.rs # Game adapter — DecorationPropagator lives in engine
       diagonal_culler.rs # Removes diagonally-unreachable wall tiles

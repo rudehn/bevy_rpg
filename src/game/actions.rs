@@ -4,7 +4,7 @@ use bracket_lib::prelude::{Algorithm2D, Point};
 use crate::game::magic::GameStatusEffectsExt;
 use crate::{
     components::{Chest, Collider, Destructible, Faction, InInventory, Inventory, Key, LockedDoorData, MovementMode, Name, Position, Item},
-    game::machines::{Machine, MachineBumpMessage},
+    game::prop_effects::{Effected, PropBumpMessage},
     constants::BASE_ACTION_COST,
     game::{
         combat::{AttackIntentMessage, DamageType, DamageTypeTag, DamageSource},
@@ -434,8 +434,8 @@ enum BumpResult {
     HostileEntity(Entity),
     /// Tile has a chest — open it.
     Chest(Entity),
-    /// Tile has a machine entity — activate it.
-    Machine(Entity),
+    /// Tile has a blocking prop with an `Effected` trigger — bump-activate via PropBumpMessage.
+    Prop(Entity),
     /// Tile has a non-hostile entity with a Collider.
     BlockedByCollider,
     /// Tile has a chasm — prompt the player for confirmation before falling.
@@ -458,7 +458,7 @@ fn resolve_bump(
         Option<&Faction>,
         Has<Collider>,
         Has<Chest>,
-        Has<Machine>,
+        Has<Effected>,
         Option<&MovementMode>,
         Has<Destructible>,
     ), (Without<TileMarker>, Without<Item>)>,
@@ -480,24 +480,35 @@ fn resolve_bump(
         return BumpResult::LockedDoor(target_pt);
     }
 
-    // 3. Occupant scan — prioritize hostile entities over props.
-    let mut bump_target = None;
-    for (e, other_pos, _other_is_player, other_faction, other_has_collider, other_is_chest, other_is_machine, _, other_is_destructible) in
+    // 3. Occupant scan — prioritize hostile entities, then Collider-bearing
+    //    entities (so a chest wins over a colocated invisible trap prop),
+    //    then any remaining occupant. RFC 0002 option (a).
+    let mut bump_target: Option<(Entity, Option<&Faction>, bool, bool, bool, bool)> = None;
+    for (e, other_pos, _other_is_player, other_faction, other_has_collider, other_is_chest, other_is_effected, _, other_is_destructible) in
         actors_query.iter()
     {
         if other_pos.to_point() == target_pt && e != actor {
             // Faction-bearing entities (player/monsters) take priority over props.
             if other_faction.is_some() {
-                bump_target = Some((e, other_faction, other_has_collider, other_is_chest, other_is_machine, other_is_destructible));
+                bump_target = Some((e, other_faction, other_has_collider, other_is_chest, other_is_effected, other_is_destructible));
                 break;
             }
-            if bump_target.is_none() {
-                bump_target = Some((e, other_faction, other_has_collider, other_is_chest, other_is_machine, other_is_destructible));
+            // Non-faction candidates: prefer Collider-bearing entities so
+            // colocated (chest + invisible trap) configurations route the
+            // bump to the blocking entity.
+            let prefer_new = match bump_target {
+                None => true,
+                Some((_, _, current_has_collider, _, _, _)) => {
+                    !current_has_collider && other_has_collider
+                }
+            };
+            if prefer_new {
+                bump_target = Some((e, other_faction, other_has_collider, other_is_chest, other_is_effected, other_is_destructible));
             }
         }
     }
 
-    if let Some((target_entity, target_faction, target_has_collider, target_is_chest, target_is_machine, target_is_destructible)) =
+    if let Some((target_entity, target_faction, target_has_collider, target_is_chest, target_is_effected, target_is_destructible)) =
         bump_target
     {
         let is_hostile = crate::game::factions::factions_hostile(
@@ -511,9 +522,10 @@ fn resolve_bump(
         } else if target_is_destructible && actor_is_player {
             // Destructible props (barricades) can be attacked by the player.
             return BumpResult::HostileEntity(target_entity);
-        } else if target_is_machine && !target_is_chest && target_has_collider && actor_is_player {
-            // Bump-activated machine (blocking prop like altar/lever, not invisible step triggers)
-            return BumpResult::Machine(target_entity);
+        } else if target_is_effected && target_has_collider && actor_is_player {
+            // Bump-activated blocking prop with an `Effected` trigger.
+            // Audience filtering happens in `handle_prop_bump`.
+            return BumpResult::Prop(target_entity);
         } else if target_is_chest && actor_is_player {
             // Only the player opens chests via bump. GOAP entities (kobolds) emit
             // OpenChestIntent directly from their AI dispatch.
@@ -547,7 +559,7 @@ pub fn handle_movement(
     mut open_door_writer: MessageWriter<OpenDoorIntent>,
     mut unlock_door_writer: MessageWriter<UnlockDoorIntent>,
     mut open_chest_writer: MessageWriter<OpenChestIntent>,
-    mut machine_bump_writer: MessageWriter<MachineBumpMessage>,
+    mut prop_bump_writer: MessageWriter<PropBumpMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut free_writer: MessageWriter<FreeActionEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
@@ -559,7 +571,7 @@ pub fn handle_movement(
         Option<&Faction>,
         Has<Collider>,
         Has<Chest>,
-        Has<Machine>,
+        Has<Effected>,
         Option<&MovementMode>,
         Has<Destructible>,
     ), (Without<TileMarker>, Without<Item>)>,
@@ -705,12 +717,12 @@ pub fn handle_movement(
                 });
                 // ActionGuard cleared by handle_open_chest via finish_turn.
             }
-            BumpResult::Machine(machine_entity) => {
-                machine_bump_writer.write(MachineBumpMessage {
+            BumpResult::Prop(prop_entity) => {
+                prop_bump_writer.write(PropBumpMessage {
                     activator: intent.entity,
-                    machine_entity,
+                    prop_entity,
                 });
-                // ActionGuard cleared by handle_machine_bump via finish_turn.
+                // ActionGuard cleared by handle_prop_bump via finish_turn.
             }
             BumpResult::Chasm => {
                 // Store the target position and open the confirmation dialog.

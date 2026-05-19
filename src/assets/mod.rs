@@ -28,6 +28,7 @@ use std::collections::HashMap;
 use crate::components::{MovementMode, Species};
 use crate::game::effects::Effect;
 use crate::game::items::{ArmorSlot, ItemKind, OnHitEffect, Rarity};
+use crate::game::prop_effects::PropTrigger;
 use crate::game::staves::MonsterAbilityDef;
 
 use crate::game::{AppState, camera};
@@ -200,6 +201,13 @@ pub struct PropAsset {
     pub ascii_char: String,
     #[serde(default = "default_white_hex", deserialize_with = "serde_helpers::deserialize_hex_color")]
     pub ascii_fg: Color,
+    /// Optional trigger declaration. When present, the prop spawner
+    /// attaches `Effected` + `EverFired` components and the dispatch
+    /// systems in `prop_effects` activate this prop on step/bump (per
+    /// `is_blocking`). When `None`, the prop is passive scenery.
+    /// See RFC 0002.
+    #[serde(default)]
+    pub trigger: Option<PropTrigger>,
 }
 
 #[derive(Asset, TypePath, Deserialize, Debug, Clone)]
@@ -243,25 +251,6 @@ pub struct PrefabItemSpawn {
     pub item: Option<String>,
 }
 
-/// A machine-trigger embedded inside a prefab. Spawned by the prefab
-/// placer into `BuilderMap.machine_spawn_list`, the materializer
-/// stamps the prop + attaches `Machine` / `MachineTrigger` /
-/// `MachineEffect` components. This is the prefab system's runtime
-/// interactivity hook (shrines, traps, levers, etc.).
-#[derive(Deserialize, Debug, Clone)]
-pub struct PrefabTrigger {
-    pub x: i32,
-    pub y: i32,
-    /// Prop manifest key for the visible entity (e.g. `"altar"`).
-    /// Use `""` for invisible triggers (step-activated traps).
-    #[serde(default)]
-    pub prop_name: String,
-    pub trigger: crate::game::machines::MachineTrigger,
-    pub effect: crate::game::machines::MachineEffect,
-    #[serde(default)]
-    pub consume_on_use: bool,
-}
-
 /// Area decoration embedded inside a prefab. The placer stamps
 /// `decoration` onto every walkable tile within `radius` Chebyshev
 /// distance of `(x, y)` that doesn't already carry a decoration.
@@ -291,11 +280,6 @@ pub struct PrefabTemplate {
     pub monster_spawns: Vec<PrefabMonsterSpawn>,
     #[serde(default)]
     pub item_spawns: Vec<PrefabItemSpawn>,
-    /// Machine triggers embedded in this prefab — shrines, traps,
-    /// levers. The placer pushes each onto `machine_spawn_list`,
-    /// where the materializer attaches `Machine` components.
-    #[serde(default)]
-    pub triggers: Vec<PrefabTrigger>,
     /// Area decorations (e.g. moss radius around a shrine altar).
     #[serde(default)]
     pub decorations: Vec<PrefabDecoration>,
@@ -1503,5 +1487,153 @@ mod species_tests {
             .get::<Species>(entity)
             .expect("Species component should be on entity");
         assert_eq!(*read, Species::Insect);
+    }
+}
+
+#[cfg(test)]
+mod prop_asset_tests {
+    //! Verifies the `PropAsset.trigger` field parses correctly from RON
+    //! and defaults to `None` when omitted. The field is the authoring
+    //! surface for RFC 0002 (prop+machine+decoration unification).
+    use super::*;
+    use crate::game::prop_effects::{ActivationMode, EffectAudience, TileEffect};
+
+    /// A minimal PropAsset RON without the new `trigger:` field still
+    /// parses, and `trigger` defaults to `None`.
+    #[test]
+    fn prop_asset_without_trigger_defaults_to_none() {
+        let ron = r#"(
+            name: "Barrel",
+            is_blocking: true,
+            ascii_char: "o",
+        )"#;
+        let asset: PropAsset = ron::from_str(ron).expect("parse PropAsset");
+        assert_eq!(asset.name, "Barrel");
+        assert!(asset.trigger.is_none(), "missing trigger should default to None");
+    }
+
+    /// A PropAsset declaring a `trigger:` block parses with all
+    /// sub-fields populated.
+    #[test]
+    fn prop_asset_with_trigger_parses_fully() {
+        let ron = r#"(
+            name: "Campfire",
+            is_blocking: false,
+            light_radius: Some(28.0),
+            ascii_char: "*",
+            trigger: Some((
+                effect: DealDamage(dice: "1d4", kind: Fire),
+                audience: Anyone,
+                mode: Repeating,
+            )),
+        )"#;
+        let asset: PropAsset = ron::from_str(ron).expect("parse PropAsset");
+        let trigger = asset.trigger.expect("trigger should be Some");
+        assert!(matches!(trigger.effect, TileEffect::DealDamage { .. }));
+        assert_eq!(trigger.audience, EffectAudience::Anyone);
+        assert_eq!(trigger.mode, ActivationMode::Repeating);
+    }
+
+    /// PropTrigger sub-fields (audience, mode) default correctly when
+    /// the RON omits them — only `effect` is required.
+    #[test]
+    fn prop_asset_trigger_inner_fields_default() {
+        let ron = r#"(
+            name: "Altar",
+            is_blocking: true,
+            ascii_char: "_",
+            trigger: Some((
+                effect: HealFull,
+            )),
+        )"#;
+        let asset: PropAsset = ron::from_str(ron).expect("parse PropAsset");
+        let trigger = asset.trigger.expect("trigger should be Some");
+        assert!(matches!(trigger.effect, TileEffect::HealFull));
+        assert_eq!(trigger.audience, EffectAudience::Anyone);
+        assert_eq!(trigger.mode, ActivationMode::Repeating);
+    }
+
+    /// PropAsset reads OnceConsumed / PlayerOnly correctly — the
+    /// Trapped Vault use case.
+    #[test]
+    fn prop_asset_with_once_consumed_player_only_trigger() {
+        let ron = r#"(
+            name: "Trapped Chest",
+            is_blocking: true,
+            ascii_char: "$",
+            trigger: Some((
+                effect: SpawnMonsters(monster_name: "", count: 2),
+                audience: Anyone,
+                mode: OnceConsumed,
+            )),
+        )"#;
+        let asset: PropAsset = ron::from_str(ron).expect("parse PropAsset");
+        let trigger = asset.trigger.expect("trigger should be Some");
+        assert!(matches!(trigger.effect, TileEffect::SpawnMonsters { .. }));
+        assert_eq!(trigger.mode, ActivationMode::OnceConsumed);
+    }
+
+    /// The live `assets/props.ron` file deserializes end-to-end —
+    /// guards against typos / schema drift after editing prop entries.
+    #[test]
+    fn live_props_ron_parses() {
+        let ron_text = include_str!("../../assets/props.ron");
+        let manifest: PropManifest =
+            ron::from_str(ron_text).expect("assets/props.ron failed to deserialize");
+        assert!(!manifest.props.is_empty(), "props.ron should declare at least one prop");
+
+        // Spot-check: the altar carries its RFC 0002 trigger.
+        let altar = manifest.props.get("altar").expect("altar prop should exist");
+        let trigger = altar.trigger.as_ref().expect("altar should have trigger");
+        assert_eq!(trigger.audience, EffectAudience::PlayerOnly);
+        assert_eq!(trigger.mode, ActivationMode::OnceInert);
+        match &trigger.effect {
+            TileEffect::Multi(parts) => {
+                assert!(parts.iter().any(|p| matches!(p, TileEffect::HealFull)));
+                assert!(parts.iter().any(|p| matches!(p, TileEffect::SpawnItem { .. })));
+            }
+            other => panic!("altar trigger should be Multi, got {:?}", other),
+        }
+    }
+
+    /// The live `assets/prefabs.ron` file deserializes end-to-end —
+    /// guards against typos after restructuring entries (Shrine
+    /// migration in RFC 0002 step 2c, future migrations).
+    #[test]
+    fn live_prefabs_ron_parses() {
+        let ron_text = include_str!("../../assets/prefabs.ron");
+        let manifest: PrefabManifest =
+            ron::from_str(ron_text).expect("assets/prefabs.ron failed to deserialize");
+        assert!(
+            !manifest.prefabs.is_empty(),
+            "prefabs.ron should declare at least one prefab"
+        );
+
+        // Spot-check: the altar-bearing Shrine places the altar via
+        // props (RFC 0002 step 2c). There are two distinct prefabs
+        // named "Shrine" in the catalog (a V-barricade shrine and the
+        // heal-altar shrine); we look up the altar variant by its
+        // prop list.
+        let _altar_shrine = manifest
+            .prefabs
+            .iter()
+            .find(|p| p.name == "Shrine" && p.props.iter().any(|q| q.prop == "altar"))
+            .expect("altar-bearing Shrine should exist");
+
+        // Spot-check: the Trapped Vault places the monster_trap prop
+        // alongside the chest (RFC 0002 step 5).
+        let vault = manifest
+            .prefabs
+            .iter()
+            .find(|p| p.name == "Trapped Vault")
+            .expect("Trapped Vault prefab should exist");
+        assert!(
+            vault.props.iter().any(|p| p.prop == "chest"),
+            "Trapped Vault should still place a chest"
+        );
+        assert!(
+            vault.props.iter().any(|p| p.prop == "monster_trap"),
+            "Trapped Vault should place the monster_trap prop after RFC 0002 step 5"
+        );
     }
 }

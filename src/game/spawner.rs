@@ -698,6 +698,16 @@ pub fn spawn_prop(
         entity.insert(Collider);
     }
 
+    // Optional trigger: attach the effect payload + activation state.
+    // The dispatcher in prop_effects fires it on step or bump depending
+    // on is_blocking (the spawner just attaches the data — see RFC 0002).
+    if let Some(trigger) = asset.trigger.clone() {
+        entity.insert((
+            crate::game::prop_effects::Effected(trigger),
+            crate::game::prop_effects::EverFired::default(),
+        ));
+    }
+
     // Barricades are destructible props that can be attacked and destroyed.
     if prop_name == "barricade" {
         entity.insert((

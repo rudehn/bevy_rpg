@@ -55,19 +55,6 @@ mod room_drawer;
 mod start_point;
 mod unseen_culler;
 
-/// A machine-trigger placement recorded by the builder. The materializer
-/// stamps the named prop at `pos` (or an invisible entity when
-/// `prop_name` is empty) and attaches the `Machine` bundle with the
-/// supplied trigger + effect.
-#[derive(Debug, Clone)]
-pub struct MachineSpawn {
-    pub pos: Point,
-    pub prop_name: String,
-    pub trigger: crate::game::machines::MachineTrigger,
-    pub effect: crate::game::machines::MachineEffect,
-    pub consume_on_use: bool,
-}
-
 /// A single monster spawn entry, optionally linked to a squad.
 pub struct SpawnEntry {
     pub pos: Point,
@@ -127,7 +114,6 @@ pub struct BuilderMap {
     pub spawn_list: Vec<SpawnEntry>,
     pub item_spawn_list: Vec<(Point, String, u32)>, // (pos, item_name, count)
     pub prop_spawn_list: Vec<(Point, String)>,      // (pos, prop_name)
-    pub machine_spawn_list: Vec<MachineSpawn>,
     /// Tiles to mark with a [`crate::map::world::MapExitTile`] component
     /// in the materializer. Used by overworld edge builders + the temple
     /// entrance/exit so transitions don't require a custom terrain type.
@@ -203,13 +189,6 @@ impl BuilderMap {
         self.prop_spawn_list.push((pos, name));
     }
 
-    /// Record a machine-trigger placement. The materializer spawns the
-    /// prop + attaches the `Machine` bundle (trigger, effect,
-    /// consume-on-use).
-    pub fn add_machine_spawn(&mut self, spawn: MachineSpawn) {
-        self.machine_spawn_list.push(spawn);
-    }
-
     /// Mark a tile to receive a `MapExitTile` component when entities
     /// are materialized. Convention: use this for overworld edge exits
     /// (explicit destination position) and the temple entrance / exit.
@@ -254,7 +233,6 @@ impl BuilderMap {
             spawn_list: Vec::new(),
             item_spawn_list: Vec::new(),
             prop_spawn_list: Vec::new(),
-            machine_spawn_list: Vec::new(),
             exit_tile_spawn_list: Vec::new(),
             squad_counter: SquadIdCounter::default(),
             decoration_exclusion_zones: Vec::new(),
@@ -310,7 +288,6 @@ impl BuilderChain {
                 spawn_list: Vec::new(),
                 item_spawn_list: Vec::new(),
                 prop_spawn_list: Vec::new(),
-                machine_spawn_list: Vec::new(),
                 exit_tile_spawn_list: Vec::new(),
                 squad_counter,
                 decoration_exclusion_zones: Vec::new(),

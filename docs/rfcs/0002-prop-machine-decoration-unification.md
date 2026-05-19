@@ -1,8 +1,20 @@
 # RFC 0002 — Unify Props, Machines, and Decoration Step-Effects
 
-**Status:** Proposed
-**Branch:** _(unassigned)_
+**Status:** Landed
+**Branch:** `worktree-rfc-0002-prop-effects`
 **Related docs:** [GAME.md](../design/GAME.md), [FIRE.md](../design/FIRE.md), [TILE_PROMOTION.md](../design/TILE_PROMOTION.md), [SAVE.md](../design/SAVE.md), [RFC 0001 — Combat Resolver](0001-combat-resolver.md)
+
+## What shipped
+
+- `src/game/prop_effects.rs` — pure type vocabulary + Bevy adapter. 27 unit tests cover effect flattening, audience filtering, activation mode, and the `classify_activation` decision helper. PropEffectsPlugin registers bump dispatch, step dispatch, decoration step dispatch, and deferred spawn processors.
+- `PropAsset.trigger: Option<PropTrigger>` field — authors declare prop-level effects in `props.ron`. The altar prop carries HealFull + SpawnItem (PlayerOnly, OnceInert); `monster_trap` is a new invisible step trap (Anyone, OnceConsumed).
+- `Decoration::step_effect` lookup — Cobweb applies Slowed(3) on step; all other decorations stay silent.
+- `EverFired` persisted in saves; schema bumped v9 → v10 (backward-compatible via `#[serde(default)]`).
+- `resolve_bump` priority fix — non-faction candidates prefer Collider entities, so a chest wins over a colocated invisible trap.
+- Trapped Vault migrated: chest + monster_trap props colocated. Open chest, take loot, step into the now-empty tile, get ambushed.
+- `src/game/machines.rs` deleted (220+ lines). `PrefabTemplate.triggers` field removed. `MachineSpawn` / `machine_spawn_list` / `MachinePlan` deleted. 33 fewer lines of indirection in `floor_materializer.rs`.
+
+All 713 tests in bevy_rpg + 452 in roguelike_engine still pass.
 
 ## Summary
 
@@ -97,9 +109,12 @@ surface with a thin adapter.
 
 ### One effect vocabulary
 
-A new module **`src/game/effects.rs`** owns the shared `TileEffect`
+A new module **`src/game/prop_effects.rs`** owns the shared `TileEffect`
 enum and its application functions. No Bevy in the enum itself —
-just data.
+just data. (Named `prop_effects.rs` to avoid collision with the
+existing `src/game/effects.rs`, which owns *consumable item* effects
+— HealHp, ZapStaff, EnchantItem — a player-driven vocabulary distinct
+from this world-driven one.)
 
 ```rust
 //! Shared effect vocabulary for props (trigger block) and
@@ -264,7 +279,7 @@ impl Decoration {
 }
 ```
 
-A new system in `effects.rs` watches `Changed<Position>` for any
+A new system in `prop_effects.rs` watches `Changed<Position>` for any
 actor with `Health`, resolves the tile's decoration via `Map`, and
 fires the effect if present. Same system handles the prop step-trigger
 lookup by colocated-entity query.
@@ -318,7 +333,7 @@ prefab.
 
 [src/game/machines.rs](../../src/game/machines.rs) is deleted.
 Replaced by:
-- `src/game/effects.rs` — `TileEffect`, application functions,
+- `src/game/prop_effects.rs` — `TileEffect`, application functions,
   step/bump dispatch systems.
 - `Effected` component (replaces `Machine` marker) — carries the
   `PropTrigger` payload copied from the PropAsset at spawn (effect,
@@ -355,13 +370,16 @@ Locked decisions (per RFC scoping interview):
 
 ### Sequence
 
-1. **Land `TileEffect` + `effects.rs`** without removing Machines.
+1. **Land `TileEffect` + `prop_effects.rs`** without removing Machines.
    Both systems coexist for one commit window so tests can be
    written against the new shape against known-good Machine
    behavior.
-2. **Migrate `prefabs.ron`** — Shrine and Trapped Vault entries
-   rewritten to use prop-level effects. Verify floor generation,
-   on-step/on-bump behavior, single-use semantics.
+2. **Migrate `prefabs.ron`** — Shrine entry rewritten to use a
+   prop-level trigger on the altar (PlayerOnly + OnceInert + Multi[
+   HealFull, SpawnItem]). Verified floor generation, on-bump behavior,
+   single-use semantics. (Trapped Vault was deferred until step 5
+   pending a resolve_bump priority decision; landed via option a
+   below.)
 3. **Wire `Decoration::step_effect`** for Cobweb (Slowed 3 turns).
    Add unit tests for the lookup. No new decoration variants and no
    other variants opt in during this RFC — Embers/Ash/Bloodstain/etc.
@@ -385,7 +403,7 @@ too — the symmetric-combat pillar from CLAUDE.md.
 
 ## Tests
 
-Unit tests in `src/game/effects.rs` (mirrors combat resolver pattern):
+Unit tests in `src/game/prop_effects.rs` (mirrors combat resolver pattern):
 
 - `step_effect_deals_damage_to_player`
 - `step_effect_deals_damage_to_monster_when_audience_is_anyone`
@@ -408,9 +426,9 @@ Save round-trip tests in `src/save/mod.rs`:
 
 | File | Change |
 |------|--------|
-| `src/game/effects.rs` | **NEW** — TileEffect enum, application systems, plugin |
+| `src/game/prop_effects.rs` | **NEW** — TileEffect enum, application systems, plugin |
 | `src/game/machines.rs` | **DELETED** |
-| `src/game/mod.rs` | Remove `MachinesPlugin`, register `EffectsPlugin` |
+| `src/game/mod.rs` | Remove `MachinesPlugin`, register `PropEffectsPlugin` |
 | `src/game/actions.rs` | `BumpResult::Machine` → `BumpResult::ActivateProp`; writer swap |
 | `src/assets/mod.rs` | `PropAsset` gains 5 new fields |
 | `src/map/floor_materializer.rs` | Drop the trigger-spawn loop; props carry effects |
@@ -488,3 +506,14 @@ Save round-trip tests in `src/save/mod.rs`:
    grass)? Recommend defer — start as a static prop with damage.
    The Fire-entity path is a follow-up if campsites need to spread
    to ignite grass.
+4. **Trapped Vault migration. Resolved via option (a).** The
+   `resolve_bump` loop in [actions.rs](../../src/game/actions.rs)
+   now prefers Collider-bearing entities over non-Collider entities
+   when picking `bump_target` among non-faction candidates. This
+   preserves the original "open chest → next step springs the trap"
+   game feel: bumping the (chest + invisible monster_trap)
+   colocation routes to the chest (which has Collider), the chest
+   opens and despawns, and the player's next step onto the now-empty
+   tile springs the trap. The "monster_trap" prop is a new
+   non-blocking entity in `props.ron` with an OnceConsumed trigger
+   that spawns 2 level-appropriate monsters.
