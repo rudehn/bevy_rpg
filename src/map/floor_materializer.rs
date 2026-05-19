@@ -339,7 +339,12 @@ impl FloorPlan {
         let props = build_data
             .prop_spawn_list
             .into_iter()
-            .map(|(pt, name)| SavedProp { x: pt.x, y: pt.y, name })
+            .map(|(pt, name)| SavedProp {
+                x: pt.x,
+                y: pt.y,
+                name,
+                ever_fired: false, // freshly placed prefab prop, hasn't fired
+            })
             .collect();
 
         let machines = build_data
@@ -604,7 +609,7 @@ pub fn materialize_floor(
     // Spawn props
     for p in &plan.props {
         let pos = p.pos();
-        if spawn_prop(
+        match spawn_prop(
             commands,
             &p.name,
             &pos,
@@ -612,10 +617,22 @@ pub fn materialize_floor(
             &entity_assets.prop_manifest_handle,
             &entity_assets.prop_sprite_assets,
             ascii_font,
-        )
-        .is_none()
-        {
-            warnings.push(format!("Failed to spawn prop '{}'", p.name));
+        ) {
+            None => {
+                warnings.push(format!("Failed to spawn prop '{}'", p.name));
+            }
+            Some(entity) => {
+                // RFC 0002 step 4 — restore per-instance activation
+                // state. spawn_prop attached EverFired(false) by
+                // default for trigger props; overwrite with the saved
+                // value so used altars and sprung traps survive
+                // save/load.
+                if p.ever_fired {
+                    commands
+                        .entity(entity)
+                        .insert(crate::game::prop_effects::EverFired(true));
+                }
+            }
         }
     }
 

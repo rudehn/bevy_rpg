@@ -232,7 +232,17 @@ fn find_up_stairs(map: &Map) -> Option<Point> {
 pub(crate) struct SnapshotQueries<'w, 's> {
     pub monsters: Query<'w, 's, (&'static Position, &'static Name, &'static crate::game::combat::Health, Option<&'static crate::game::squad::SquadId>, Option<&'static crate::game::squad::SquadConfig>, Has<crate::game::squad::SquadLeader>, Option<&'static crate::game::ai::PatrolRoute>, Has<crate::components::Submerged>, Option<&'static roguelike_engine::stealth::Awareness>, Option<&'static crate::game::fleeing::Fleeing>), With<Monster>>,
     pub items: Query<'w, 's, (&'static Position, &'static Name, Option<&'static ItemStack>, Option<&'static Enchantment>, Option<&'static ItemWeaponRunic>, Option<&'static ItemArmorRunic>, Option<&'static RunicIdentified>, Option<&'static StaffData>, Option<&'static Rechargeable>, Has<crate::components::Drifting>), (With<Item>, Without<InInventory>)>,
-    pub props: Query<'w, 's, (&'static Position, &'static Name, Option<&'static crate::components::PropKey>), With<Prop>>,
+    pub props: Query<
+        'w,
+        's,
+        (
+            &'static Position,
+            &'static Name,
+            Option<&'static crate::components::PropKey>,
+            Option<&'static crate::game::prop_effects::EverFired>,
+        ),
+        With<Prop>,
+    >,
     pub exit_tiles: Query<'w, 's, (&'static Position, &'static crate::map::world::MapExitTile)>,
     /// Stealth Phase I: snapshot the player's entity + position so the
     /// floor-leave path can degrade per-monster awareness alongside the
@@ -297,12 +307,13 @@ fn snapshot_floor(
 
     let props = prop_query
         .iter()
-        .map(|(pos, name, prop_key)| SavedProp {
+        .map(|(pos, name, prop_key, ever_fired)| SavedProp {
             x: pos.x,
             y: pos.y,
             // Use the manifest key if available; fall back to display name
             // for backward compatibility with old saves.
             name: prop_key.map(|k| k.0.clone()).unwrap_or_else(|| name.0.clone()),
+            ever_fired: ever_fired.map(|e| e.0).unwrap_or(false),
         })
         .collect();
 
