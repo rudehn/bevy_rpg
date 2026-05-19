@@ -92,7 +92,10 @@ pub fn refresh_monster_modes_system(world: &mut World) {
 ///
 /// Friendly NPCs (Townsfolk, future allies) see the player but don't
 /// pursue them — escalation is gated on the faction relation being
-/// Hostile (`faction_hostile_to_player`).
+/// Hostile (`faction_hostile_to_player`). They are, however, still
+/// woken from the `Asleep` spawn default to `Idle` on first refresh
+/// so the `IdleMove` tactic (gated on `MonsterAIMode::Idle`) can run
+/// their patrol route — see [`non_hostile_mode_adjustment`].
 fn update_mode(monster_ai: &mut MonsterAI, entity: Entity, ctx: &AIContext, world: &mut World) {
     use roguelike_engine::stealth::{Awareness, AwarenessState};
 
@@ -101,6 +104,7 @@ fn update_mode(monster_ai: &mut MonsterAI, entity: Entity, ctx: &AIContext, worl
         world.resource::<FactionMatrix>(),
     );
     if !player_is_hostile_target {
+        monster_ai.mode = non_hostile_mode_adjustment(monster_ai.mode);
         return;
     }
 
@@ -195,6 +199,52 @@ fn update_mode(monster_ai: &mut MonsterAI, entity: Entity, ctx: &AIContext, worl
         }
         // Everything else (Asleep|Idle + Hidden, future modes): preserve.
         _ => {}
+    }
+}
+
+/// Mode adjustment applied to non-hostile NPCs in `update_mode`'s
+/// early-exit branch. Allied and neutral NPCs (Townsfolk drunks,
+/// future vendors, peaceful wildlife) never escalate to `Hunting`,
+/// but they also shouldn't sit in the `Asleep` spawn default — the
+/// `IdleMove` tactic is gated on `MonsterAIMode::Idle`, so an
+/// `Asleep` non-hostile NPC has no patrol behaviour to execute and
+/// freezes in place forever. Waking them to `Idle` on the first
+/// refresh tick lets the patrol route run; all other modes are
+/// preserved so a non-hostile NPC that was somehow already `Idle`
+/// (e.g. from a save-load path) keeps its state.
+pub(crate) fn non_hostile_mode_adjustment(current: MonsterAIMode) -> MonsterAIMode {
+    match current {
+        MonsterAIMode::Asleep => MonsterAIMode::Idle,
+        other => other,
+    }
+}
+
+#[cfg(test)]
+mod non_hostile_mode_tests {
+    use super::*;
+
+    #[test]
+    fn non_hostile_npc_wakes_from_asleep_to_idle() {
+        assert_eq!(
+            non_hostile_mode_adjustment(MonsterAIMode::Asleep),
+            MonsterAIMode::Idle
+        );
+    }
+
+    #[test]
+    fn non_hostile_npc_preserves_idle() {
+        assert_eq!(
+            non_hostile_mode_adjustment(MonsterAIMode::Idle),
+            MonsterAIMode::Idle
+        );
+    }
+
+    #[test]
+    fn non_hostile_npc_preserves_hunting() {
+        assert_eq!(
+            non_hostile_mode_adjustment(MonsterAIMode::Hunting),
+            MonsterAIMode::Hunting
+        );
     }
 }
 

@@ -138,7 +138,7 @@ every turn (subject to their `movement_delay`).
 | [assets/town_npcs.ron](../../assets/town_npcs.ron) | Placement RON. Edit to add NPCs to town. |
 | [assets/monsters.ron](../../assets/monsters.ron) | NPC stat blocks live here alongside hostile monsters (Drunken Sailor today). |
 | [assets/factions.ron](../../assets/factions.ron) | Townsfolk relations. |
-| [src/game/ai.rs](../../src/game/ai.rs) | `is_player_hostile_target` gate on Asleep/Idle → Hunting transitions. |
+| [src/game/ai.rs](../../src/game/ai.rs) | `is_player_hostile_target` gate on `→ Hunting` escalation, plus `non_hostile_mode_adjustment` which wakes non-hostile NPCs from the `Asleep` spawn default to `Idle` so their `IdleMove` patrol can run. |
 | [src/map/builders/town.rs](../../src/map/builders/town.rs) | Exposes `WATER_EAST_EDGE` so the NPC builder can avoid the harbour. |
 
 ## Adding a new NPC type
@@ -167,6 +167,15 @@ every turn (subject to their `movement_delay`).
 - **Glyph uniqueness**: drunks use `d`. Player uses `@`. Other NPCs
   will get unique letters (e.g. `f` for fishermen, named-letter for
   vendors).
+- **Wake from `Asleep` on spawn**: `MonsterAI::default()` produces
+  `mode: Asleep`, and `update_mode`'s non-hostile early-return used
+  to leave NPCs stuck there — frozen because `IdleMove` is gated on
+  `AiMode::Idle`. `non_hostile_mode_adjustment` in
+  [src/game/ai.rs](../../src/game/ai.rs) now promotes `Asleep → Idle`
+  inside the non-hostile branch on the first refresh tick after
+  spawn, so patrol routes run from frame one. Hostile monsters are
+  unaffected — they still wake via the awareness pipeline (LOS or
+  perception roll).
 
 ## Cross-links
 
