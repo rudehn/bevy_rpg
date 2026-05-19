@@ -643,9 +643,7 @@ pub fn handle_movement(
                             use crate::game::magic::GameStatusEffectsExt;
                             if !effects.is_entangled() {
                                 effects.add_effect(
-                                    crate::game::magic::StatusEffectKind::Custom {
-                                        id: crate::game::magic::STATUS_ENTANGLED,
-                                    },
+                                    crate::game::magic::StatusEffectKind::Entangled,
                                     3,
                                 );
                                 let msg = if is_player {

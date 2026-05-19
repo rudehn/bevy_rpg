@@ -167,9 +167,7 @@ impl InitialMapBuilder for TownLayoutBuilder {
                     build.map.tiles[idx] = Tile {
                         terrain: TerrainType::Floor,
                         liquid: LiquidType::None,
-                        decoration: Decoration::Custom {
-                            id: crate::map::world::TOWN_PATH_DECO_ID,
-                        },
+                        decoration: Decoration::TownPath,
                     };
                 }
             }
@@ -498,14 +496,11 @@ fn mark_path_tile(build: &mut BuilderMap, x: i32, y: i32) {
     // the decoration on plain Floor.
     if tile.terrain != TerrainType::Floor { return; }
     if tile.liquid != LiquidType::None { return; }
-    tile.decoration = Decoration::Custom { id: crate::map::world::TOWN_PATH_DECO_ID };
+    tile.decoration = Decoration::TownPath;
 }
 
 fn is_path_tile(tile: &Tile) -> bool {
-    matches!(
-        tile.decoration,
-        Decoration::Custom { id } if id == crate::map::world::TOWN_PATH_DECO_ID
-    )
+    matches!(tile.decoration, Decoration::TownPath)
 }
 
 /// Dijkstra path search with per-tile random noise (for organic

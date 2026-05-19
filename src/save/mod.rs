@@ -86,13 +86,19 @@ const GAME_SAVE_KEY: &str = "ironveil_save";
 ///   `Aware` collapses to `Searching{ player.pos, +20 }` at save time;
 ///   `Suspicious` collapses to `Hidden`. `#[serde(default)]` keeps v6
 ///   saves loadable with all monsters defaulting to `Hidden`.
-/// - **v8**: Tactic registry — `SavedMonster.fleeing: Option<SavedFleeing>`
+/// - **v8**: `StatusEffectKind::Custom { id }` variants replaced with
+///   named variants (`Entangled`, `Enraged`, `FireResistance`,
+///   `PoisonResistance`). The bincode representation of these kinds
+///   changes — **pre-v8 saves containing the old `Custom { id }` shape
+///   are unrecoverable** and will fail to deserialize. Acceptable in
+///   the permadeath dev cycle with no production save data.
+/// - **v9**: Tactic registry — `SavedMonster.fleeing: Option<SavedFleeing>`
 ///   persists the sticky `Fleeing` overlay component (since_turn +
-///   last_known_threat_pos). `#[serde(default)]` keeps v7 saves
-///   loadable; pre-v8 monsters load with `None` (not fleeing), which
+///   last_known_threat_pos). `#[serde(default)]` keeps v8 saves
+///   loadable; pre-v9 monsters load with `None` (not fleeing), which
 ///   matches the historical behaviour where Fleeing was always lost on
 ///   load anyway.
-pub const SAVE_SCHEMA_VERSION: u32 = 8;
+pub const SAVE_SCHEMA_VERSION: u32 = 9;
 
 // ---- Migration chain ----
 
@@ -272,15 +278,21 @@ impl SaveMigration for MigrateV6ToV7 {
     fn migrate(&self, data: &str) -> Result<String, String> { Ok(data.to_string()) }
 }
 
-/// v7 → v8: tactic-registry migration adds
+// Note: v7 → v8 is intentionally not in the migration chain. v8 was
+// the StatusEffectKind::Custom { id } → named-variant break (see the
+// schema-version doc above); pre-v8 saves carry an unrecoverable
+// bincode shape and fail to load. Adding a v7→v8 step would mask
+// that intentional failure.
+
+/// v8 → v9: tactic-registry migration adds
 /// `SavedMonster.fleeing: Option<SavedFleeing>`. The field is
 /// `#[serde(default)]` (defaults to `None`), so the migration is a
-/// no-op — v7 monsters load as not-fleeing, which matches the
+/// no-op — v8 monsters load as not-fleeing, which matches the
 /// historical behaviour where sticky panic was always lost on save.
-struct MigrateV7ToV8;
-impl SaveMigration for MigrateV7ToV8 {
-    fn from_version(&self) -> u32 { 7 }
-    fn to_version(&self) -> u32 { 8 }
+struct MigrateV8ToV9;
+impl SaveMigration for MigrateV8ToV9 {
+    fn from_version(&self) -> u32 { 8 }
+    fn to_version(&self) -> u32 { 9 }
     fn migrate(&self, data: &str) -> Result<String, String> { Ok(data.to_string()) }
 }
 
@@ -293,7 +305,7 @@ fn migrations() -> Vec<Box<dyn SaveMigration>> {
         Box::new(MigrateV4ToV5),
         Box::new(MigrateV5ToV6),
         Box::new(MigrateV6ToV7),
-        Box::new(MigrateV7ToV8),
+        Box::new(MigrateV8ToV9),
     ]
 }
 
@@ -528,9 +540,9 @@ pub struct SavedMonster {
     /// default to `Hidden` (matches a fresh perception state).
     #[serde(default)]
     pub awareness: MonsterAwarenessSave,
-    /// Tactic-registry migration (schema v8+): sticky Fleeing overlay.
+    /// Tactic-registry migration (schema v9+): sticky Fleeing overlay.
     /// `None` for monsters that weren't panicking when the save was
-    /// taken (the common case). Pre-v8 saves default to `None`.
+    /// taken (the common case). Pre-v9 saves default to `None`.
     #[serde(default)]
     pub fleeing: Option<crate::game::fleeing::SavedFleeing>,
 }
@@ -1532,8 +1544,7 @@ mod tests {
     use crate::game::enchantment::{ArmorRunic, WeaponRunic};
     use crate::game::items::{ArmorSlot, ItemKind, Rarity};
     use crate::game::magic::{
-        GameStatusEffectsExt, STATUS_ENRAGED, STATUS_ENTANGLED, STATUS_FIRE_RESISTANCE,
-        STATUS_POISON_RESISTANCE, StatusEffectInstance, StatusEffectKind, StatusEffects,
+        GameStatusEffectsExt, StatusEffectInstance, StatusEffectKind, StatusEffects,
     };
     use crate::game::squad::SquadConfig;
     use crate::game::staves::StaffEffect;
@@ -2231,9 +2242,9 @@ mod tests {
     }
 
     #[test]
-    fn pre_v8_save_loads_with_no_fleeing() {
+    fn pre_v9_save_loads_with_no_fleeing() {
         // RON without a `fleeing:` field must round-trip via serde defaults
-        // — that's the v7→v8 migration contract (no-op + serde(default)).
+        // — that's the v8→v9 migration contract (no-op + serde(default)).
         let ron = r#"(
             x: 5, y: 10, name: "Goblin", hp_current: 8,
             squad_id: None, is_leader: false, squad_config: None,
@@ -2552,27 +2563,12 @@ mod tests {
             (StatusEffectKind::Hasted, 0),
             (StatusEffectKind::Slowed, 0),
             (StatusEffectKind::Stunned, 0),
-            (
-                StatusEffectKind::Custom {
-                    id: STATUS_ENTANGLED,
-                },
-                0,
-            ),
+            (StatusEffectKind::Entangled, 0),
             (StatusEffectKind::Burning, 5),
             (StatusEffectKind::Poisoned, 3),
-            (StatusEffectKind::Custom { id: STATUS_ENRAGED }, 0),
-            (
-                StatusEffectKind::Custom {
-                    id: STATUS_FIRE_RESISTANCE,
-                },
-                0,
-            ),
-            (
-                StatusEffectKind::Custom {
-                    id: STATUS_POISON_RESISTANCE,
-                },
-                0,
-            ),
+            (StatusEffectKind::Enraged, 0),
+            (StatusEffectKind::FireResistance, 0),
+            (StatusEffectKind::PoisonResistance, 0),
         ];
         let p = PlayerSaveData {
             x: 0,
@@ -2848,15 +2844,9 @@ mod tests {
                     mk(StatusEffectKind::Hasted, 1, 0),
                     mk(StatusEffectKind::Slowed, 2, 0),
                     mk(StatusEffectKind::Stunned, 3, 0),
-                    mk(
-                        StatusEffectKind::Custom {
-                            id: STATUS_ENTANGLED,
-                        },
-                        4,
-                        0,
-                    ),
+                    mk(StatusEffectKind::Entangled, 4, 0),
                     mk(StatusEffectKind::Burning, 5, 10),
-                    mk(StatusEffectKind::Custom { id: STATUS_ENRAGED }, 6, 0),
+                    mk(StatusEffectKind::Enraged, 6, 0),
                 ],
             },
             inventory: vec![],
@@ -2917,8 +2907,8 @@ mod tests {
     // =====================================================================
 
     #[test]
-    fn schema_version_is_eight() {
-        assert_eq!(SAVE_SCHEMA_VERSION, 8);
+    fn schema_version_is_nine() {
+        assert_eq!(SAVE_SCHEMA_VERSION, 9);
     }
 
     #[test]
@@ -3000,6 +2990,9 @@ mod tests {
 
     #[test]
     fn migrations_chain_is_ordered() {
+        // Note: v7 → v8 is intentionally absent. v8 was the
+        // StatusEffectKind::Custom { id } → named-variant hard break;
+        // pre-v8 saves are unrecoverable by design and fail to load.
         let migs = migrations();
         assert_eq!(migs.len(), 8);
         assert_eq!(migs[0].from_version(), 0);
@@ -3016,8 +3009,8 @@ mod tests {
         assert_eq!(migs[5].to_version(), 6);
         assert_eq!(migs[6].from_version(), 6);
         assert_eq!(migs[6].to_version(), 7);
-        assert_eq!(migs[7].from_version(), 7);
-        assert_eq!(migs[7].to_version(), 8);
+        assert_eq!(migs[7].from_version(), 8);
+        assert_eq!(migs[7].to_version(), 9);
     }
 
     // =====================================================================

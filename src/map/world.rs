@@ -2,10 +2,11 @@
 //! roguelike layout.
 //!
 //! The game is a traditional descend-stairs roguelike: floor 0 is the
-//! town hub, floors 1..=`MAX_FLOOR` are the dungeon (currently two
-//! forest floors). Going down a `>` tile takes you to `floor + 1`;
-//! going up `<` returns you to `floor - 1`. The town's Portal tile is
-//! the win-condition return point once the amulet is recovered.
+//! town hub, floors 1..=`MAX_FLOOR - 1` are the forest, and `MAX_FLOOR`
+//! itself is the cult temple holding the Amulet of Yendor. Going down
+//! a `>` tile takes you to `floor + 1`; going up `<` returns you to
+//! `floor - 1`. The town's Portal tile is the win-condition return
+//! point once the amulet is recovered.
 //!
 //! This module previously hosted an overworld 3×3 grid topology
 //! (GridDir / neighbor / cardinal stair helpers + `MapExitTile`
@@ -19,10 +20,11 @@ use crate::components::Position;
 use crate::assets::TileManifest;
 use crate::map::tile::{Tile, TerrainType, resolve_tile_bg, resolve_tile_display};
 
-/// Final floor of the descent. Player can descend 0 → 1 → 2; floor 2
-/// is the deepest authored floor (holds the amulet). Raising this is
-/// content work — add more `FloorKind::Forest` floors or new variants.
-pub const MAX_FLOOR: u32 = 2;
+/// Final floor of the descent. Player descends 0 → 1 → … → 5; floor 5
+/// is the cult temple holding the Amulet of Yendor. Raising this is
+/// content work — add more `FloorKind::Forest` floors or new variants
+/// and adjust [`floor_kind`] accordingly.
+pub const MAX_FLOOR: u32 = 5;
 
 /// What kind of map a `Floor(u32)` index represents. Drives the
 /// builder pipeline + visual theme.
@@ -30,11 +32,14 @@ pub const MAX_FLOOR: u32 = 2;
 pub enum FloorKind {
     /// Floor 0 — the hub town with the return portal.
     Town,
-    /// Floors 1..=MAX_FLOOR — forest descent. `depth` is the floor's
-    /// distance from town (1 = first forest, 2 = deeper forest). Kept
-    /// as a `u8` so future content can branch on it (boss floors,
-    /// thematic variation per depth).
+    /// Floors 1..=MAX_FLOOR-1 — forest descent. `depth` is the floor's
+    /// distance from town (1 = first forest, 4 = deepest forest, where
+    /// the temple entrance hides). Kept as a `u8` so future content
+    /// can branch on it (boss floors, thematic variation per depth).
     Forest { depth: u8 },
+    /// Floor `MAX_FLOOR` — the cult temple. Linear corridor today;
+    /// designed to descend into additional sub-floors in the future.
+    Temple,
 }
 
 /// Classify a `Floor(u32)` index into a `FloorKind`.
@@ -43,7 +48,8 @@ pub enum FloorKind {
 pub fn floor_kind(floor: u32) -> FloorKind {
     match floor {
         0 => FloorKind::Town,
-        f if f <= MAX_FLOOR => FloorKind::Forest { depth: f as u8 },
+        f if f < MAX_FLOOR => FloorKind::Forest { depth: f as u8 },
+        f if f == MAX_FLOOR => FloorKind::Temple,
         other => panic!("floor_kind: floor {other} is beyond MAX_FLOOR ({MAX_FLOOR})"),
     }
 }
@@ -80,11 +86,6 @@ pub fn seed_overworld_state(_state: &mut OverworldState) {
 // Floor-theme + path rendering — used by the ASCII renderer.
 // =====================================================================
 
-/// `Decoration::Custom { id: TOWN_PATH_DECO_ID }` marks a floor tile
-/// as part of the town's path network — the renderer overrides the
-/// glyph + colour to read as packed dirt.
-pub const TOWN_PATH_DECO_ID: u32 = 1;
-
 /// Visual theme for a floor. Set per-floor by `spawn_dungeon`; read by
 /// the ASCII renderer to override Wall/Floor glyphs and colours.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -93,6 +94,8 @@ pub enum FloorTheme {
     Dungeon,
     Town,
     Forest,
+    /// Cult temple — cold stone halls, mossy flagstone underfoot.
+    Temple,
 }
 
 impl FloorTheme {
@@ -100,15 +103,18 @@ impl FloorTheme {
         match kind {
             FloorKind::Town => FloorTheme::Town,
             FloorKind::Forest { .. } => FloorTheme::Forest,
+            FloorKind::Temple => FloorTheme::Temple,
         }
     }
 
     fn override_glyph(self, terrain: TerrainType) -> Option<&'static str> {
         match (self, terrain) {
             (FloorTheme::Forest, TerrainType::Wall) => Some("\u{2663}"), // ♣
-            (FloorTheme::Forest, TerrainType::Floor) => Some(","),
+            (FloorTheme::Forest, TerrainType::Floor) => Some(" "),
             (FloorTheme::Town, TerrainType::Wall) => Some("\u{2593}"),    // ▓
             (FloorTheme::Town, TerrainType::Floor) => Some("."),
+            (FloorTheme::Temple, TerrainType::Wall) => Some("\u{2592}"),  // ▒
+            (FloorTheme::Temple, TerrainType::Floor) => Some("."),
             _ => None,
         }
     }
@@ -116,28 +122,34 @@ impl FloorTheme {
     fn override_fg(self, terrain: TerrainType) -> Option<Color> {
         match (self, terrain) {
             (FloorTheme::Forest, TerrainType::Wall) => Some(Color::srgb(0.20, 0.55, 0.18)),
-            (FloorTheme::Forest, TerrainType::Floor) => Some(Color::srgb(0.20, 0.35, 0.12)),
+            (FloorTheme::Forest, TerrainType::Floor) => Some(Color::srgb(0.40, 0.30, 0.18)),
             (FloorTheme::Town, TerrainType::Wall) => Some(Color::srgb(0.55, 0.40, 0.25)),
             (FloorTheme::Town, TerrainType::Floor) => Some(Color::srgb(0.65, 0.55, 0.40)),
+            (FloorTheme::Temple, TerrainType::Wall) => Some(Color::srgb(0.42, 0.42, 0.48)),
+            (FloorTheme::Temple, TerrainType::Floor) => Some(Color::srgb(0.30, 0.35, 0.32)),
             _ => None,
         }
     }
 
     fn override_bg(self, terrain: TerrainType) -> Option<Color> {
         match (self, terrain) {
-            (FloorTheme::Forest, TerrainType::Floor) => Some(Color::srgb(0.06, 0.10, 0.05)),
+            // Forest floor: dark loam — warm but low-saturation so the
+            // floor recedes and lets decorations / walls / overlays
+            // (poison gas, fire, blood) carry the visual signal. Per-tile
+            // noise tint is applied at render time (see `themed_floor_bg`
+            // in `ascii_renderer.rs`), so this is just the base palette.
+            (FloorTheme::Forest, TerrainType::Floor) => Some(Color::srgb(0.13, 0.11, 0.08)),
             (FloorTheme::Forest, TerrainType::Wall) => Some(Color::srgb(0.04, 0.07, 0.03)),
             (FloorTheme::Town, TerrainType::Floor) => Some(Color::srgb(0.18, 0.15, 0.10)),
+            (FloorTheme::Temple, TerrainType::Floor) => Some(Color::srgb(0.08, 0.09, 0.10)),
+            (FloorTheme::Temple, TerrainType::Wall) => Some(Color::srgb(0.05, 0.06, 0.07)),
             _ => None,
         }
     }
 }
 
 fn is_path_tile(tile: Tile) -> bool {
-    matches!(
-        tile.decoration,
-        crate::map::tile::Decoration::Custom { id } if id == TOWN_PATH_DECO_ID
-    )
+    matches!(tile.decoration, crate::map::tile::Decoration::TownPath)
 }
 
 /// Theme-aware wrapper around [`resolve_tile_display`]. Returns the
@@ -189,6 +201,13 @@ mod tests {
     fn floor_kind_forest_at_depth() {
         assert_eq!(floor_kind(1), FloorKind::Forest { depth: 1 });
         assert_eq!(floor_kind(2), FloorKind::Forest { depth: 2 });
+        assert_eq!(floor_kind(3), FloorKind::Forest { depth: 3 });
+        assert_eq!(floor_kind(4), FloorKind::Forest { depth: 4 });
+    }
+
+    #[test]
+    fn floor_kind_temple_at_max_floor() {
+        assert_eq!(floor_kind(MAX_FLOOR), FloorKind::Temple);
     }
 
     #[test]
@@ -204,12 +223,16 @@ mod tests {
             FloorTheme::for_floor_kind(FloorKind::Forest { depth: 1 }),
             FloorTheme::Forest,
         );
+        assert_eq!(
+            FloorTheme::for_floor_kind(FloorKind::Temple),
+            FloorTheme::Temple,
+        );
     }
 
     #[test]
     fn forest_theme_overrides_wall_and_floor_glyphs() {
         assert_eq!(FloorTheme::Forest.override_glyph(TerrainType::Wall), Some("\u{2663}"));
-        assert_eq!(FloorTheme::Forest.override_glyph(TerrainType::Floor), Some(","));
+        assert_eq!(FloorTheme::Forest.override_glyph(TerrainType::Floor), Some(" "));
     }
 
     #[test]
@@ -229,7 +252,7 @@ mod tests {
             TerrainType::Portal,
             TerrainType::Door,
         ] {
-            for theme in [FloorTheme::Forest, FloorTheme::Town] {
+            for theme in [FloorTheme::Forest, FloorTheme::Town, FloorTheme::Temple] {
                 assert_eq!(theme.override_glyph(terrain), None);
                 assert_eq!(theme.override_bg(terrain), None);
             }

@@ -537,6 +537,11 @@ pub fn floor_builder(
         FloorKind::Forest { .. } => {
             forest_builder(new_depth, width, height, squad_counter, spawn_table, decoration_rules)
         }
+        // Temple builder isn't implemented on main yet — placeholder
+        // until the cult-temple content pass ships.
+        FloorKind::Temple => {
+            todo!("temple_builder — see CLAUDE.md for the linear stone-corridor design")
+        }
     }
 }
 

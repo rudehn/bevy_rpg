@@ -1280,18 +1280,23 @@ mod species_tests {
         );
     }
 
-    /// Every active forest floor (1..=MAX_FLOOR) has at least one eligible
-    /// spawn entry — no silent "empty floor" regressions when the table
-    /// is pruned. Threshold is 1 (not 3 like the 26-floor era) because the
-    /// linear-floor world is mid-rebuild; raise the floor as the roster
-    /// grows. See docs/design/SPAWNING.md.
+    /// Every active forest floor has at least one eligible spawn entry —
+    /// no silent "empty floor" regressions when the table is pruned.
+    /// Threshold is 1 (not 3 like the 26-floor era) because the linear-
+    /// floor world is mid-rebuild; raise the floor as the roster grows.
+    /// Floor 1 is the town (no monster spawns by design) and the temple
+    /// floor (MAX_FLOOR) has no spawns yet either (cultists arrive
+    /// later). The forest floors in between must each have ≥1 entry.
+    /// See docs/design/SPAWNING.md.
     #[test]
     fn every_active_floor_has_a_spawn_entry() {
         let spawns_src = include_str!("../../assets/monster_spawns.ron");
         let table: MonsterSpawnTable =
             ron::from_str(spawns_src).expect("assets/monster_spawns.ron must parse");
 
-        for floor in 1..=crate::constants::MAX_FLOOR {
+        // Forest floors are 2..=MAX_FLOOR-1. Floor 1 is the town (no
+        // spawns by design); MAX_FLOOR is the temple (no spawns yet).
+        for floor in 2..crate::constants::MAX_FLOOR {
             let count = table
                 .spawns
                 .iter()

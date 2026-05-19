@@ -21,7 +21,7 @@ use crate::{
         actions::{finish_turn, ActionFinishedEvent, ActionKind, PendingPlayerAction},
         combat::Health,
         items::{ItemProperties, ItemStack},
-        magic::{GameStatusEffectsExt, StatusEffectKind, StatusEffects, STATUS_POISON_RESISTANCE, STATUS_FIRE_RESISTANCE},
+        magic::{GameStatusEffectsExt, StatusEffectKind, StatusEffects},
         turns::TurnState,
     },
     player::Player,
@@ -71,7 +71,7 @@ pub fn compute_heal(current_hp: i32, max_hp: i32, amount: i32) -> HealResult {
 pub fn apply_antidote(status_effects: &mut StatusEffects, turns: u32) -> bool {
     let was_poisoned = status_effects.is_poisoned();
     status_effects.remove_kind(|k| matches!(k, StatusEffectKind::Poisoned));
-    status_effects.add_effect(StatusEffectKind::Custom { id: STATUS_POISON_RESISTANCE }, turns);
+    status_effects.add_effect(StatusEffectKind::PoisonResistance, turns);
     was_poisoned
 }
 
@@ -184,7 +184,7 @@ pub fn handle_use_item(
                 )));
             }
             Effect::ApplyFireResistance(turns) => {
-                status_effects.add_effect(StatusEffectKind::Custom { id: STATUS_FIRE_RESISTANCE }, turns);
+                status_effects.add_effect(StatusEffectKind::FireResistance, turns);
                 log_writer.write(GameLogMessage(format!(
                     "You drink the {} and feel resistant to fire! ({} turns)",
                     item_name, turns
@@ -491,7 +491,7 @@ mod tests {
         let mut fx = StatusEffects::default();
         apply_antidote(&mut fx, 12);
 
-        let resist = fx.effects.iter().find(|e| e.kind == StatusEffectKind::Custom { id: STATUS_POISON_RESISTANCE }).unwrap();
+        let resist = fx.effects.iter().find(|e| e.kind == StatusEffectKind::PoisonResistance).unwrap();
         assert_eq!(resist.remaining_turns, 12);
     }
 
@@ -527,15 +527,15 @@ mod tests {
     #[test]
     fn apply_fire_resistance_sets_status() {
         let mut fx = StatusEffects::default();
-        fx.add_effect(StatusEffectKind::Custom { id: STATUS_FIRE_RESISTANCE }, 10);
+        fx.add_effect(StatusEffectKind::FireResistance, 10);
         assert!(fx.is_fire_resistant());
     }
 
     #[test]
     fn apply_fire_resistance_correct_duration() {
         let mut fx = StatusEffects::default();
-        fx.add_effect(StatusEffectKind::Custom { id: STATUS_FIRE_RESISTANCE }, 15);
-        let entry = fx.effects.iter().find(|e| e.kind == StatusEffectKind::Custom { id: STATUS_FIRE_RESISTANCE }).unwrap();
+        fx.add_effect(StatusEffectKind::FireResistance, 15);
+        let entry = fx.effects.iter().find(|e| e.kind == StatusEffectKind::FireResistance).unwrap();
         assert_eq!(entry.remaining_turns, 15);
     }
 
@@ -606,7 +606,7 @@ mod tests {
         let was_poisoned = apply_antidote(&mut fx, 10);
         assert!(!was_poisoned);
         // Resistance should have been refreshed to the longer duration
-        let resist = fx.effects.iter().find(|e| e.kind == StatusEffectKind::Custom { id: STATUS_POISON_RESISTANCE }).unwrap();
+        let resist = fx.effects.iter().find(|e| e.kind == StatusEffectKind::PoisonResistance).unwrap();
         assert_eq!(resist.remaining_turns, 10);
     }
 }

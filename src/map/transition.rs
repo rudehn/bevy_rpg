@@ -20,6 +20,8 @@ pub fn welcome_line_for_floor(floor: u32) -> String {
         FloorKind::Forest { depth } => {
             format!("You step deeper into the forest. (floor {depth})")
         }
+        // Temple builder isn't wired up on main yet either — placeholder.
+        FloorKind::Temple => "You enter the cult temple.".to_string(),
     }
 }
 

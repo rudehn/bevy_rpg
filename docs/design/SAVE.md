@@ -17,13 +17,15 @@ All versions are defined with migration stubs in `src/save/mod.rs`. Migrations a
 |---------|-------|-----------------|
 | **v0** | Initial | Pre-envelope raw RON — no versioning |
 | **v1** | Envelope wrapper | Same payload as v0; wraps in versioned [`SaveEnvelope`](../../../roguelike_engine/src/save/mod.rs) |
-| **v2** | Status effect format | Engine refactored status kinds (`Burning`/`Poisoned` flat + `magnitude`; game kinds to `Custom { id }`). Migration drops all active statuses (transient by design, max ~20 turns). |
+| **v2** | Status effect format | Engine refactored status kinds (`Burning`/`Poisoned` flat + `magnitude`; game kinds initially went through `Custom { id }`). Migration drops all active statuses (transient by design, max ~20 turns). |
 | **v3** | Character phase 1 | Added `PlayerSaveData`: `race`, `class`, `attributes`, `hit_bonus`, `damage_bonus`. Backward-compat via `#[serde(default)]`. |
 | **v4** | Character phase 2 | Dropped `CON` from `Attributes`; removed `Halfling` from `Race`; added `level: u32` (default 1 via `default_save_level`) and `experience: u32` (default 0) to `PlayerSaveData`. **Breaking** w.r.t. attribute math: the modifier anchor moved from 10 → 16, so v3 attribute scores load with off-by-six combat math. The migration stub (`MigrateV3ToV4` at `src/save/mod.rs:209`) is a no-op — acceptable in permadeath dev because there's no save to migrate after a death. |
 | **v5** | Skills phase 3 | Added `PlayerSaveData`: `skills`, `skill_xp`, `skill_training`, `skill_xp_pool`. All `#[serde(default)]` — v4 saves load with empty maps and 0 pool. No-op migration. |
 | **v6** | Overworld | Added `GameSaveData.overworld: OverworldSave` and `SavedFloorData.exit_tiles: Vec<SavedExitTile>`. Both `#[serde(default)]` — v5 saves load with empty overworld and no edge transitions. No-op migration. |
+| **v7** | Stealth phase I | Per-monster `SavedMonster.awareness` (degraded Hidden/Searching shape). `#[serde(default)]` — v6 saves default to Hidden. No-op migration. |
+| **v8** | Named status kinds | `StatusEffectKind::Custom { id }` replaced by named variants (`Entangled`, `Enraged`, `FireResistance`, `PoisonResistance`). **Pre-v8 saves containing the old `Custom { id }` shape are unrecoverable** — the bincode representation changed. No migration provided; acceptable in permadeath dev. |
 
-Current version: **6** (`src/save/mod.rs:255`)
+Current version: **8** (`src/save/mod.rs:89`)
 
 ---
 
