@@ -88,6 +88,19 @@ impl FactionMatrix {
         self.get(a, b) == Relation::Neutral
     }
 
+    /// Convenience for callers that already hold `&Faction` references
+    /// (typically inside an ECS query). Equivalent to
+    /// `is_hostile_to(a.0.as_str(), b.0.as_str())` but avoids the
+    /// `.0.0` traversal at every call site.
+    pub fn are_hostile(&self, a: &crate::components::Faction, b: &crate::components::Faction) -> bool {
+        self.is_hostile_to(a.0.as_str(), b.0.as_str())
+    }
+
+    /// Convenience for callers that already hold `&Faction` references.
+    pub fn are_allied(&self, a: &crate::components::Faction, b: &crate::components::Faction) -> bool {
+        self.is_allied_to(a.0.as_str(), b.0.as_str())
+    }
+
     fn get(&self, a: &str, b: &str) -> Relation {
         self.relations
             .get(&(a.to_string(), b.to_string()))
@@ -214,5 +227,29 @@ mod tests {
         let m = test_matrix();
         assert_eq!(m.get("Player", "Monster"), m.get("Monster", "Player"));
         assert_eq!(m.get("Monster", "Kobold"), m.get("Kobold", "Monster"));
+    }
+
+    #[test]
+    fn are_hostile_takes_faction_refs() {
+        use crate::components::{Faction, FactionKind};
+        let m = test_matrix();
+        let player = Faction(FactionKind::new("Player"));
+        let monster = Faction(FactionKind::new("Monster"));
+        assert!(m.are_hostile(&player, &monster));
+        assert!(m.are_hostile(&monster, &player));
+        assert!(!m.are_hostile(&player, &player));
+    }
+
+    #[test]
+    fn are_allied_takes_faction_refs() {
+        use crate::components::{Faction, FactionKind};
+        let m = test_matrix();
+        let monster_a = Faction(FactionKind::new("Monster"));
+        let monster_b = Faction(FactionKind::new("Monster"));
+        let kobold = Faction(FactionKind::new("Kobold"));
+        // Same faction always allied.
+        assert!(m.are_allied(&monster_a, &monster_b));
+        // Cross-faction monsters in this fixture are neutral, not allied.
+        assert!(!m.are_allied(&monster_a, &kobold));
     }
 }

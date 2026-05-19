@@ -188,10 +188,7 @@ pub fn maybe_exit_fleeing(
             if !viewshed.visible_tiles.contains(&pos.to_point()) {
                 return false;
             }
-            match (my_faction, other_faction) {
-                (Some(mf), Some(of)) => matrix.is_hostile_to(&mf.0 .0, &of.0 .0),
-                _ => false,
-            }
+            crate::game::factions::factions_hostile(my_faction, other_faction, &matrix)
         });
         if threat_visible {
             continue;

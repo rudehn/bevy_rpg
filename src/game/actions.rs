@@ -500,10 +500,11 @@ fn resolve_bump(
     if let Some((target_entity, target_faction, target_has_collider, target_is_chest, target_is_machine, target_is_destructible)) =
         bump_target
     {
-        let is_hostile = match (actor_faction, target_faction) {
-            (Some(a), Some(b)) => faction_matrix.is_hostile_to(&a.0.0, &b.0.0),
-            _ => false,
-        };
+        let is_hostile = crate::game::factions::factions_hostile(
+            actor_faction,
+            target_faction,
+            &faction_matrix,
+        );
 
         if is_hostile {
             return BumpResult::HostileEntity(target_entity);

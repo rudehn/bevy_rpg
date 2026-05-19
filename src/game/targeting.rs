@@ -109,7 +109,7 @@ fn setup_targeting(
             let best_ally = allies_query
                 .iter()
                 .filter(|(pos, faction, health)| {
-                    faction_matrix.is_allied_to(&faction.0.0, &player_faction.0.0)
+                    faction_matrix.are_allied(faction, player_faction)
                         && health.current < health.max
                         && viewshed.visible_tiles.contains(&Point::new(pos.x, pos.y))
                 })

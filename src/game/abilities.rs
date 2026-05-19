@@ -692,7 +692,7 @@ pub fn handle_war_cry(
 
         for (ally_entity, ally_pos, ally_faction) in ally_query.iter() {
             if ally_entity == msg.attacker { continue; }
-            if !faction_matrix.is_allied_to(&faction.0.0, &ally_faction.0.0) { continue; }
+            if !faction_matrix.are_allied(faction, ally_faction) { continue; }
             let dist = (ally_pos.x - pos.x).abs() + (ally_pos.y - pos.y).abs();
             if dist <= war_cry.radius
                 && let Ok(mut effects) = status_query.get_mut(ally_entity) {
@@ -720,7 +720,7 @@ pub fn handle_pack_tactics(
 
         // Check if any allied monster (not self) is adjacent to the defender
         let has_flanking_ally = ally_query.iter().any(|(ally_pos, ally_faction)| {
-            if !faction_matrix.is_allied_to(&attacker_faction.0.0, &ally_faction.0.0) { return false; }
+            if !faction_matrix.are_allied(attacker_faction, ally_faction) { return false; }
             let dist = (ally_pos.x - defender_pos.x).abs() + (ally_pos.y - defender_pos.y).abs();
             dist == 1
         });
@@ -761,7 +761,7 @@ pub fn rally_aura_system(
         // Apply new rally buffs
         for (leader_pos, rally, leader_faction) in leaders.iter() {
             for (ally_entity, ally_pos, ally_faction) in allies.iter() {
-                if !faction_matrix.is_allied_to(&leader_faction.0.0, &ally_faction.0.0) { continue; }
+                if !faction_matrix.are_allied(leader_faction, ally_faction) { continue; }
                 let dist = (ally_pos.x - leader_pos.x).abs() + (ally_pos.y - leader_pos.y).abs();
                 if dist <= rally.radius {
                     commands.entity(ally_entity).insert(RallyBuff {
@@ -790,7 +790,7 @@ pub fn terrify_aura_system(
         // Apply terrify to enemies in range
         for (source_pos, terrify, source_faction) in sources.iter() {
             for (target_entity, target_pos, target_faction) in targets.iter() {
-                if faction_matrix.is_allied_to(&source_faction.0.0, &target_faction.0.0) { continue; }
+                if faction_matrix.are_allied(source_faction, target_faction) { continue; }
                 let dist = (target_pos.x - source_pos.x).abs() + (target_pos.y - source_pos.y).abs();
                 if dist <= terrify.radius {
                     commands.entity(target_entity).insert(Terrified);

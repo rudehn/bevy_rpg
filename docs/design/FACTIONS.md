@@ -39,23 +39,38 @@ The matrix stores every directed pair `(A, B) → Relation`. When built from `fr
 
 ### Lookup API
 
+Three layers, picked by what the caller already has in hand:
+
 ```rust
-// roguelike_engine/src/factions/mod.rs:69-95
+// roguelike_engine/src/factions/mod.rs — string-based (most primitive)
 fn is_hostile_to(&self, a: &str, b: &str) -> bool;
 fn is_allied_to(&self, a: &str, b: &str) -> bool;
 fn is_neutral(&self,   a: &str, b: &str) -> bool;
-fn get(&self,          a: &str, b: &str) -> Relation;  // private
+
+// roguelike_engine/src/factions/mod.rs — `&Faction` overloads (both
+// factions known, typically inside an ECS query iter)
+fn are_hostile(&self, a: &Faction, b: &Faction) -> bool;
+fn are_allied(&self, a: &Faction, b: &Faction) -> bool;
+
+// src/game/factions.rs — `Option<&Faction>` helpers (one side may
+// lack the component) with the game's None-policy baked in
+fn factions_hostile(a: Option<&Faction>, b: Option<&Faction>, m: &FactionMatrix) -> bool;
+fn factions_allied (a: Option<&Faction>, b: Option<&Faction>, m: &FactionMatrix) -> bool;
+fn faction_hostile_to_player(faction: Option<&Faction>, m: &FactionMatrix) -> bool;
 ```
 
-Resolution rules (encoded in the public methods):
+Resolution rules:
 
 | Case | Result |
 |------|--------|
 | `a == b` (same faction string) | `is_allied_to → true`, `is_hostile_to → false`, `is_neutral → false` |
 | Pair found in matrix | The stored `Relation` |
-| Pair **not** found in matrix | Defaults to `Hostile` (`get()`, line 90-95) |
+| Pair **not** found in matrix | Defaults to `Neutral` (engine `FactionMatrix::get`) |
+| `factions_hostile(None, _) / (_, None)` | `false` (neutral default — faction-less entities are inert in pairwise checks) |
+| `factions_allied(None, _) / (_, None)` | `false` (same policy) |
+| `faction_hostile_to_player(None)` | `true` — the **asymmetric** default that wakes unfactioned monsters into Hunting on first sight of the player (legacy behavior the awareness gate relies on) |
 
-The "missing pair = Hostile" default is load-bearing: any monster whose faction is misspelled or absent from `factions.ron` becomes hostile to everyone, including its supposed allies. This fails loud rather than silently making rogue monsters peaceful.
+The asymmetric default in `faction_hostile_to_player` is the only place "no faction = hostile" applies; everywhere else, missing a `Faction` component means "skip this entity in the hostility check." Use the matching helper for each call site instead of recomputing the policy inline — it has bitten us before when one site missed the `None` arm.
 
 ### Veiled Tyrant faction constants
 
@@ -128,13 +143,13 @@ All four pairs have at least one populated archetype on each side, so all four c
 
 Every faction-aware system clones the resource into its world callback (because most call sites are `World &mut` GOAP/AI dispatch routines that can't hold concurrent borrows). Examples:
 
-- **Bump combat** — `resolve_bump` in `src/game/actions.rs:453,504` checks `faction_matrix.is_hostile_to(&actor.0.0, &target.0.0)` to decide whether a bump becomes a melee attack vs. a "swap places" non-action.
-- **Monster ability target selection** — `src/game/ai.rs:447-456`: the caster scans for the nearest entity where `is_hostile_to(self_faction, other_faction)` is true.
-- **Healing target selection** — `src/game/ai.rs:467-478` and `src/game/abilities.rs:695,723,764`: heal/buff abilities require `is_allied_to(caster, target)`. Same-faction members satisfy this automatically.
-- **AoE friendly fire avoidance** — `src/game/abilities.rs:782-793`: AoE filters out anyone the source `is_allied_to`.
-- **Adjacent-enemy detection (flee/cower triggers)** — `src/game/ai.rs:309-325`: `has_adjacent_enemy` walks the 8 neighbors and matches against `is_hostile_to`.
-- **GOAP perception** — `src/game/goap.rs:790` and `src/game/goap/dispatch.rs:100`: enemy visibility uses the same hostility predicate, so a goblin "sees an enemy" only when the visible entity's faction is hostile to its own.
-- **Player target picker** — `src/game/targeting.rs:112`: the player's targeting cursor cycles between visible entities that are **not** allied to the player, so allies can't be accidentally zapped.
+- **Bump combat** — `resolve_bump` in `src/game/actions.rs:504` calls `factions_hostile(actor, target, &matrix)` to decide whether a bump becomes a melee attack vs. a "swap places" non-action.
+- **Awareness gate / Idle→Hunting** — `update_mode` in `src/game/ai.rs` calls `faction_hostile_to_player(faction, matrix)`. This is the only site that defaults missing-faction to *Hostile*.
+- **Monster ability target selection** — `src/game/ai.rs` (squad-alerted nearest enemy / wounded ally scans): the caster scans for the nearest entity where `is_hostile_to(self_kind, other_kind)` is true. These use the `&str` API because `caster_faction` is held as `Option<FactionKind>`.
+- **War cry / pack tactics / rally / terrify** — `src/game/abilities.rs:695,723,764,793`: call `faction_matrix.are_allied(self, other)` or `.are_hostile(...)` directly on `&Faction` refs returned from the iter.
+- **AoE friendly fire avoidance** — `src/game/abilities.rs:793`: AoE filters out anyone the source `are_allied` with.
+- **Fleeing** — `src/game/fleeing.rs:191`: `factions_hostile(my_faction, other_faction, &matrix)` decides whether a visible nearby entity counts as a threat to flee from.
+- **Player target picker** — `src/game/targeting.rs:112`: cycles between visible entities the player is **not** `are_allied` with, so allies can't be accidentally zapped.
 
 ## AI Integration
 
@@ -155,8 +170,8 @@ Squad scouts and shared-FOV alerts only propagate to monsters of the **same** fa
 - **Symmetric only.** No support for "A hates B but B does not hate A." All relations are bidirectional. Asymmetric grudge mechanics, if ever wanted, would need a separate component (e.g., `PersonalGrudge`).
 - **No allied-NPC state for the player.** `Player` is its own faction with no `Allied` partners in `factions.ron`. Future companions/charmed monsters will need an `Allied` row added (or a temporary faction reassignment).
 - **No reputation / single-bit hostility.** There is no per-monster reputation, no "wounded then withdrew" cooldown, no decay. A pair is hostile or it isn't. A monster can be temporarily tamed only by replacing its `Faction` component or muting its AI via status effects (Charmed/Confused).
-- **Missing `Faction` component.** Bump resolution treats a missing faction as "no hostility check possible" and falls through to the destructible/chest/collider checks (`src/game/actions.rs:503-506`). Practically, every spawned actor has a `Faction`; props deliberately do not (chests, watchfires, machine props).
-- **Unknown faction name.** Resolves to `Neutral` against everything (default in `FactionMatrix::get`, line 90-95). Misspellings in monster RON produce a "won't fight, won't be fought" creature. Easy to miss visually — verify faction strings against `factions.ron` when adding monsters.
+- **Missing `Faction` component.** Resolves through `factions_hostile` / `factions_allied` — `(None, _)` or `(_, None)` returns `false`, so bumping a faction-less prop falls through to the destructible/chest/collider checks (`src/game/actions.rs:504`). The exception is the player-awareness gate `faction_hostile_to_player`, which defaults `None` to `true` so unfactioned monsters still wake up and hunt the player. Practically, every spawned actor has a `Faction`; props deliberately do not (chests, watchfires, machine props).
+- **Unknown faction name.** Resolves to `Neutral` against everything (default in `FactionMatrix::get`). Misspellings in monster RON produce a "won't fight, won't be fought" creature. Easy to miss visually — verify faction strings against `factions.ron` when adding monsters.
 - **Same-faction combat.** Forbidden at the lookup layer: `is_hostile_to(a, a)` always returns `false` regardless of matrix contents. There is no "civil war" mode.
 - **Slaying runics reference faction strings.** `WeaponRunic::Slaying { faction: String }` (`src/game/enchantment.rs:51`) tags a weapon with a damage bonus vs. a specific faction name. The pool is `["Goblin", "Dragon", "Undead", "Kobold", "Monster"]` — `Monster` is the universal-bane catch-all. The string must match an actual faction in `monsters.ron` or the runic is dead loot.
 

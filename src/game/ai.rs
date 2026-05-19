@@ -1,6 +1,6 @@
 use crate::{
     components::{Faction, FactionKind, MovementMode, Position, Viewshed},
-    game::factions::FactionMatrix,
+    game::factions::{faction_hostile_to_player, FactionMatrix},
     game::magic::GameStatusEffectsExt,
     game::{
         actions::{Direction, MovementIntent, RangedAttackIntent, WaitIntent},
@@ -84,7 +84,10 @@ fn update_mode(monster_ai: &mut MonsterAI, entity: Entity, ctx: &AIContext, worl
     // don't pursue them — `Asleep`/`Idle`→`Hunting` is gated on the
     // faction relation being Hostile. Non-Hostile actors stay where
     // they are.
-    let player_is_hostile_target = is_player_hostile_target(entity, world);
+    let player_is_hostile_target = faction_hostile_to_player(
+        world.get::<Faction>(entity),
+        world.resource::<FactionMatrix>(),
+    );
 
     match monster_ai.mode {
         MonsterAIMode::Asleep => {
@@ -152,17 +155,6 @@ fn update_mode(monster_ai: &mut MonsterAI, entity: Entity, ctx: &AIContext, worl
 /// or neutral NPCs (Townsfolk drunks, fishermen, future vendors)
 /// never pursue the player even when the player is in their FOV.
 ///
-/// Entities without a `Faction` component default to Hostile —
-/// matches the legacy behavior where unfactioned monsters always
-/// hunted the player.
-fn is_player_hostile_target(entity: Entity, world: &World) -> bool {
-    let Some(faction) = world.get::<Faction>(entity) else {
-        return true;
-    };
-    let matrix = world.resource::<FactionMatrix>();
-    matrix.is_hostile_to(&faction.0.0, "Player")
-}
-
 // ---------------------------------------------------------------------------
 // AI helper functions — extracted from MonsterAI::execute() for readability
 // ---------------------------------------------------------------------------
