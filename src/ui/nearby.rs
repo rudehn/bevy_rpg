@@ -5,10 +5,11 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use crate::components::{Chest, GameEntityMarker, InInventory, Item, Monster, Name, Position, Prop, Viewshed};
+use crate::components::{Chest, Faction, GameEntityMarker, InInventory, Item, Monster, Name, Position, Prop, Viewshed};
 use crate::game::ai::{MonsterAI, MonsterAIMode};
 use crate::game::combat::Health;
 use crate::game::enchantment::{display_item_name, Enchantment, ItemArmorRunic, ItemWeaponRunic, RunicIdentified};
+use crate::game::factions::FactionMatrix;
 use crate::game::items::ItemProperties;
 use crate::game::magic::StatusEffects;
 use crate::game::{AppState, InGameState};
@@ -18,6 +19,35 @@ use crate::map::tile::TerrainType;
 use crate::player::Player;
 use crate::ui::{collect_status_effects_with_duration, spawn_status_badge};
 use roguelike_engine::stealth::{Awareness, AwarenessState};
+
+/// How an actor's faction relates to the player — read by the nearby
+/// panel to decide section placement and pill label. Allied actors
+/// (Townsfolk) and Neutral actors get a static label and live in the
+/// "ALLIES & NPCS" section; only Hostile actors get the awareness-
+/// driven pill ("Hunting" / "Searching" / "Wandering" / "Sleeping").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PlayerRelation {
+    Hostile,
+    Allied,
+    Neutral,
+}
+
+impl PlayerRelation {
+    /// Classify by looking up `faction` against `"Player"` in the matrix.
+    /// Falls back to `Hostile` if the actor has no faction (matches the
+    /// engine's "unfactioned = Hostile" default).
+    fn classify(faction: Option<&Faction>, matrix: &FactionMatrix) -> Self {
+        let Some(f) = faction else { return PlayerRelation::Hostile };
+        let name = f.0.as_str();
+        if matrix.is_hostile_to(name, "Player") {
+            PlayerRelation::Hostile
+        } else if matrix.is_allied_to(name, "Player") {
+            PlayerRelation::Allied
+        } else {
+            PlayerRelation::Neutral
+        }
+    }
+}
 
 // --- Resources ---
 
@@ -92,18 +122,31 @@ fn tile_distance(a: &Position, b: &Position) -> i32 {
 
 /// Awareness pill text + colour for a monster row.
 ///
-/// `mode == Asleep` short-circuits to "Sleeping" regardless of any
-/// stale awareness record left over from before the monster was put
-/// to sleep. Otherwise the pill reflects the monster's current
-/// `AwarenessState` of the player — Aware → "Hunting", Searching or
-/// Searching → "Searching", and an absent or Hidden
-/// record means the monster is just "Wandering".
+/// Non-hostile actors (Townsfolk, future allies) get a static
+/// "Friendly" / "Neutral" badge instead of an awareness-driven label —
+/// their `Awareness` record can still rise to `Aware` when the player
+/// is in LOS (perception fires per-perceiver regardless of faction),
+/// but for the player-facing label "Hunting" is misleading when the
+/// NPC's `MonsterAI.mode` is actually `Idle`.
+///
+/// For hostile actors: `mode == Asleep` short-circuits to "Sleeping"
+/// regardless of any stale awareness record left over from before the
+/// monster was put to sleep. Otherwise the pill reflects the actor's
+/// current `AwarenessState` of the player — Aware → "Hunting",
+/// Searching → "Searching", and an absent or Hidden record means the
+/// monster is just "Wandering".
 pub(super) fn awareness_pill(
     mode: MonsterAIMode,
     awareness: &Awareness,
     player_entity: Entity,
     fleeing: bool,
+    relation: PlayerRelation,
 ) -> (&'static str, Color) {
+    match relation {
+        PlayerRelation::Allied => return ("Friendly", Color::srgb(0.35, 0.80, 0.45)),
+        PlayerRelation::Neutral => return ("Neutral", Color::srgb(0.55, 0.65, 0.85)),
+        PlayerRelation::Hostile => {}
+    }
     // Sticky Fleeing wins over everything except Sleeping — a fleeing
     // monster is by definition awake and panicked.
     if mode == MonsterAIMode::Asleep {
@@ -138,9 +181,11 @@ fn update_nearby_panel(
             Option<&StatusEffects>,
             Option<&Awareness>,
             Option<&crate::game::fleeing::Fleeing>,
+            Option<&Faction>,
         ),
         With<Monster>,
     >,
+    faction_matrix: Res<FactionMatrix>,
     item_query: Query<
         (Entity, &Position, &Name, &ItemProperties, Option<&Children>,
          Option<&Enchantment>, Option<&ItemWeaponRunic>, Option<&ItemArmorRunic>, Option<&RunicIdentified>),
@@ -189,31 +234,39 @@ fn update_nearby_panel(
         status_effects: Vec<(String, Color, u32, u32, String)>,
     }
 
-    // Collect visible monsters
+    // Collect visible monsters + NPCs. Split into two lists keyed by
+    // player-relation: hostiles go under "MONSTERS", allied/neutral
+    // actors go under "ALLIES & NPCS".
     let empty_awareness = Awareness::default();
-    let mut monsters: Vec<MonsterEntry> =
-        monster_query
-            .iter()
-            .filter(|(_, pos, ..)| visible.contains(&(pos.x, pos.y)))
-            .map(|(entity, pos, name, children, health, monster_ai, status, awareness, fleeing)| {
-                let dist = tile_distance(player_pos, pos);
-                let (ac, acol) = get_ascii_info(children).unzip();
-                let health_pct = if health.max > 0 { health.current as f32 / health.max as f32 } else { 1.0 };
-                let mode = monster_ai.map(|a| a.mode).unwrap_or(MonsterAIMode::Idle);
-                let aw = awareness.unwrap_or(&empty_awareness);
-                let (awareness_label, awareness_color) =
-                    awareness_pill(mode, aw, player_entity, fleeing.is_some());
-                let status_effects = collect_status_effects_with_duration(status);
-                MonsterEntry {
-                    base: (entity, dist, name.0.clone(), ac, acol),
-                    health_pct,
-                    awareness_label,
-                    awareness_color,
-                    status_effects,
-                }
-            })
-            .collect();
-    monsters.sort_by_key(|m| m.base.1);
+    let mut hostiles: Vec<MonsterEntry> = Vec::new();
+    let mut npcs: Vec<MonsterEntry> = Vec::new();
+    for (entity, pos, name, children, health, monster_ai, status, awareness, fleeing, faction)
+        in monster_query.iter()
+    {
+        if !visible.contains(&(pos.x, pos.y)) { continue; }
+        let dist = tile_distance(player_pos, pos);
+        let (ac, acol) = get_ascii_info(children).unzip();
+        let health_pct = if health.max > 0 { health.current as f32 / health.max as f32 } else { 1.0 };
+        let mode = monster_ai.map(|a| a.mode).unwrap_or(MonsterAIMode::Idle);
+        let aw = awareness.unwrap_or(&empty_awareness);
+        let relation = PlayerRelation::classify(faction, &faction_matrix);
+        let (awareness_label, awareness_color) =
+            awareness_pill(mode, aw, player_entity, fleeing.is_some(), relation);
+        let status_effects = collect_status_effects_with_duration(status);
+        let entry = MonsterEntry {
+            base: (entity, dist, name.0.clone(), ac, acol),
+            health_pct,
+            awareness_label,
+            awareness_color,
+            status_effects,
+        };
+        match relation {
+            PlayerRelation::Hostile => hostiles.push(entry),
+            PlayerRelation::Allied | PlayerRelation::Neutral => npcs.push(entry),
+        }
+    }
+    hostiles.sort_by_key(|m| m.base.1);
+    npcs.sort_by_key(|m| m.base.1);
 
     // Collect visible items
     let mut items: Vec<NearbyEntry> = item_query
@@ -259,10 +312,13 @@ fn update_nearby_panel(
     }
     stairs.sort_by_key(|(_, d)| *d);
 
-    // Update entity list
-    nearby_state.entity_list = monsters
+    // Update entity list. Order matches render order: hostiles, then
+    // NPCs, then items, then chests — selection indices into the
+    // panel rows align with this Vec.
+    nearby_state.entity_list = hostiles
         .iter()
         .map(|m| m.base.0)
+        .chain(npcs.iter().map(|m| m.base.0))
         .chain(items.iter().map(|(e, ..)| *e))
         .chain(chests.iter().map(|(e, ..)| *e))
         .collect();
@@ -282,7 +338,7 @@ fn update_nearby_panel(
         return;
     };
 
-    if monsters.is_empty() && items.is_empty() && chests.is_empty() && stairs.is_empty() {
+    if hostiles.is_empty() && npcs.is_empty() && items.is_empty() && chests.is_empty() && stairs.is_empty() {
         return;
     }
 
@@ -300,18 +356,31 @@ fn update_nearby_panel(
             NearbyRow { entity: Entity::PLACEHOLDER },
         ));
 
-        // --- MONSTERS ---
-        if !monsters.is_empty() {
+        // --- MONSTERS / NPCS ---
+        // Hostiles render first under a red "MONSTERS" header; non-
+        // hostile actors (Townsfolk, future allies/neutrals) follow
+        // under a green "ALLIES & NPCS" header. The selection index
+        // walks through both lists in order so keyboard nav still
+        // works across the union.
+        let sections: [(&str, Color, &[MonsterEntry]); 2] = [
+            ("MONSTERS", Color::srgb(0.9, 0.3, 0.3), &hostiles),
+            ("ALLIES & NPCS", Color::srgb(0.35, 0.80, 0.45), &npcs),
+        ];
+        let mut section_offset = 0usize;
+        for (header, header_color, entries) in sections {
+            if entries.is_empty() {
+                continue;
+            }
             parent.spawn((
-                Text::new("MONSTERS"),
+                Text::new(header),
                 TextFont { font: font.clone(), font_size: 11.0, ..default() },
-                TextColor(Color::srgb(0.9, 0.3, 0.3)),
+                TextColor(header_color),
                 Node { margin: UiRect::top(Val::Px(4.0)), ..default() },
                 NearbyRow { entity: Entity::PLACEHOLDER },
             ));
-            for (i, monster) in monsters.iter().enumerate() {
+            for (i, monster) in entries.iter().enumerate() {
                 let (entity, _dist, name, ascii_char, ascii_color) = &monster.base;
-                let is_selected = sel == Some(i);
+                let is_selected = sel == Some(section_offset + i);
                 let bg = if is_selected {
                     BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15))
                 } else {
@@ -420,6 +489,7 @@ fn update_nearby_panel(
                         }
                     });
             }
+            section_offset += entries.len();
         }
 
         // --- ITEMS ---
@@ -432,7 +502,7 @@ fn update_nearby_panel(
                 NearbyRow { entity: Entity::PLACEHOLDER },
             ));
             for (i, (entity, dist, name, ascii_char, ascii_color)) in items.iter().enumerate() {
-                let global_idx = monsters.len() + i;
+                let global_idx = section_offset + i;
                 let is_selected = sel == Some(global_idx);
                 let bg = if is_selected {
                     BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15))
@@ -475,6 +545,7 @@ fn update_nearby_panel(
                         ));
                     });
             }
+            section_offset += items.len();
         }
 
         // --- CHESTS ---
@@ -487,7 +558,7 @@ fn update_nearby_panel(
                 NearbyRow { entity: Entity::PLACEHOLDER },
             ));
             for (i, (entity, dist, name, ascii_char, ascii_color)) in chests.iter().enumerate() {
-                let global_idx = monsters.len() + items.len() + i;
+                let global_idx = section_offset + i;
                 let is_selected = sel == Some(global_idx);
                 let bg = if is_selected {
                     BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15))
@@ -743,7 +814,7 @@ mod tests {
     fn asleep_overrides_awareness() {
         let mut a = Awareness::default();
         a.set(pe(), AwarenessState::Aware, 0);
-        let (text, _) = awareness_pill(MonsterAIMode::Asleep, &a, pe(), false);
+        let (text, _) = awareness_pill(MonsterAIMode::Asleep, &a, pe(), false, PlayerRelation::Hostile);
         assert_eq!(text, "Sleeping");
     }
 
@@ -751,14 +822,14 @@ mod tests {
     fn aware_yields_hunting() {
         let mut a = Awareness::default();
         a.set(pe(), AwarenessState::Aware, 0);
-        let (text, _) = awareness_pill(MonsterAIMode::Hunting, &a, pe(), false);
+        let (text, _) = awareness_pill(MonsterAIMode::Hunting, &a, pe(), false, PlayerRelation::Hostile);
         assert_eq!(text, "Hunting");
     }
 
     #[test]
     fn no_record_yields_wandering() {
         let a = Awareness::default();
-        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe(), false);
+        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe(), false, PlayerRelation::Hostile);
         assert_eq!(text, "Wandering");
     }
 
@@ -773,7 +844,7 @@ mod tests {
             },
             0,
         );
-        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe(), false);
+        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe(), false, PlayerRelation::Hostile);
         assert_eq!(text, "Searching");
     }
 
@@ -781,7 +852,7 @@ mod tests {
     fn hidden_record_yields_wandering() {
         let mut a = Awareness::default();
         a.set(pe(), AwarenessState::Hidden, 0);
-        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe(), false);
+        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe(), false, PlayerRelation::Hostile);
         assert_eq!(text, "Wandering");
     }
 
@@ -789,7 +860,7 @@ mod tests {
     fn fleeing_marker_overrides_hunting_label() {
         let mut a = Awareness::default();
         a.set(pe(), AwarenessState::Aware, 0);
-        let (text, _) = awareness_pill(MonsterAIMode::Hunting, &a, pe(), true);
+        let (text, _) = awareness_pill(MonsterAIMode::Hunting, &a, pe(), true, PlayerRelation::Hostile);
         assert_eq!(text, "Fleeing");
     }
 
@@ -797,7 +868,40 @@ mod tests {
     fn fleeing_marker_does_not_override_sleeping() {
         // A sleeping monster cannot also be fleeing — guard the invariant.
         let a = Awareness::default();
-        let (text, _) = awareness_pill(MonsterAIMode::Asleep, &a, pe(), true);
+        let (text, _) = awareness_pill(MonsterAIMode::Asleep, &a, pe(), true, PlayerRelation::Hostile);
         assert_eq!(text, "Sleeping");
+    }
+
+    // ----- Non-hostile relations skip the awareness pipeline. -----
+
+    #[test]
+    fn allied_actor_shows_friendly_even_when_aware_of_player() {
+        // A Townsfolk's Awareness record CAN rise to Aware when the
+        // player is in LOS — perception fires per-perceiver regardless
+        // of faction. The pill must ignore that for non-hostile actors
+        // and show "Friendly" instead of "Hunting".
+        let mut a = Awareness::default();
+        a.set(pe(), AwarenessState::Aware, 0);
+        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe(), false, PlayerRelation::Allied);
+        assert_eq!(text, "Friendly");
+    }
+
+    #[test]
+    fn neutral_actor_shows_neutral() {
+        let mut a = Awareness::default();
+        a.set(pe(), AwarenessState::Aware, 0);
+        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe(), false, PlayerRelation::Neutral);
+        assert_eq!(text, "Neutral");
+    }
+
+    #[test]
+    fn allied_actor_label_does_not_change_with_mode() {
+        let a = Awareness::default();
+        let (asleep, _) = awareness_pill(MonsterAIMode::Asleep, &a, pe(), false, PlayerRelation::Allied);
+        let (idle, _) = awareness_pill(MonsterAIMode::Idle, &a, pe(), false, PlayerRelation::Allied);
+        let (hunting, _) = awareness_pill(MonsterAIMode::Hunting, &a, pe(), false, PlayerRelation::Allied);
+        assert_eq!(asleep, "Friendly");
+        assert_eq!(idle, "Friendly");
+        assert_eq!(hunting, "Friendly");
     }
 }
