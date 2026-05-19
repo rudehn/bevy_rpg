@@ -32,7 +32,7 @@ pub fn setup_camera(mut commands: Commands, windows: Query<&Window>) {
 
     // 2. Main Game Camera
     let mut projection = OrthographicProjection::default_2d();
-    projection.scale = 0.25;
+    projection.scale = 0.5;
 
     let Ok(window) = windows.single() else {
         // Fallback if window not yet available
