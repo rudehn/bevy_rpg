@@ -369,8 +369,10 @@ flee_threshold: 0.4,
 
         // --- Shrine: heal-and-reward altar with mossy floor ---
         // Bumping the altar heals to full HP and spawns a Scroll of
-        // Enchanting. `consume_on_use: false` lets repeated bumps fire;
-        // the per-instance MachineUsed flag still tracks activation.
+        // Enchanting once. The altar prop itself carries the trigger
+        // (RFC 0002, props.ron `altar` entry — Multi(HealFull, SpawnItem)
+        // with audience: PlayerOnly, mode: OnceInert). The prefab just
+        // places the altar — no `triggers:` array needed.
         PrefabTemplate(
             name: "Shrine",
             width: 5,
@@ -384,21 +386,11 @@ flee_threshold: 0.4,
                 ".....",
                 ".....",
             ],
-            props: [],
+            props: [
+                (x: 2, y: 2, prop: "altar"),
+            ],
             monster_spawns: [],
             item_spawns: [],
-            triggers: [
-                (
-                    x: 2, y: 2,
-                    prop_name: "altar",
-                    trigger: BumpActivate,
-                    effect: Multi([
-                        HealFull,
-                        SpawnItem(item_name: "Scroll of Enchanting"),
-                    ]),
-                    consume_on_use: false,
-                ),
-            ],
             decorations: [
                 (x: 2, y: 2, decoration: Moss, radius: 2),
             ],

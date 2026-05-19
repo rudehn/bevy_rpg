@@ -60,6 +60,17 @@ PropManifest(
             tile_size: Some((447, 447)),
             ascii_char: "π",
             ascii_fg: "#C8C8FF",
+            // Heal-and-reward shrine (RFC 0002). Bump once → full HP +
+            // Scroll of Enchanting. PlayerOnly + OnceInert: monsters
+            // can't activate; the altar stays as scenery after firing.
+            trigger: Some((
+                effect: Multi([
+                    HealFull,
+                    SpawnItem(item_name: "Scroll of Enchanting"),
+                ]),
+                audience: PlayerOnly,
+                mode: OnceInert,
+            )),
         ),
         "chest": PropAsset(
             name: "Chest",

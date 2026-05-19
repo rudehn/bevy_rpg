@@ -1596,4 +1596,68 @@ mod prop_asset_tests {
         assert!(matches!(trigger.effect, TileEffect::SpawnMonsters { .. }));
         assert_eq!(trigger.mode, ActivationMode::OnceConsumed);
     }
+
+    /// The live `assets/props.ron` file deserializes end-to-end —
+    /// guards against typos / schema drift after editing prop entries.
+    #[test]
+    fn live_props_ron_parses() {
+        let ron_text = include_str!("../../assets/props.ron");
+        let manifest: PropManifest =
+            ron::from_str(ron_text).expect("assets/props.ron failed to deserialize");
+        assert!(!manifest.props.is_empty(), "props.ron should declare at least one prop");
+
+        // Spot-check: the altar carries its RFC 0002 trigger.
+        let altar = manifest.props.get("altar").expect("altar prop should exist");
+        let trigger = altar.trigger.as_ref().expect("altar should have trigger");
+        assert_eq!(trigger.audience, EffectAudience::PlayerOnly);
+        assert_eq!(trigger.mode, ActivationMode::OnceInert);
+        match &trigger.effect {
+            TileEffect::Multi(parts) => {
+                assert!(parts.iter().any(|p| matches!(p, TileEffect::HealFull)));
+                assert!(parts.iter().any(|p| matches!(p, TileEffect::SpawnItem { .. })));
+            }
+            other => panic!("altar trigger should be Multi, got {:?}", other),
+        }
+    }
+
+    /// The live `assets/prefabs.ron` file deserializes end-to-end —
+    /// guards against typos after restructuring entries (Shrine
+    /// migration in RFC 0002 step 2c, future migrations).
+    #[test]
+    fn live_prefabs_ron_parses() {
+        let ron_text = include_str!("../../assets/prefabs.ron");
+        let manifest: PrefabManifest =
+            ron::from_str(ron_text).expect("assets/prefabs.ron failed to deserialize");
+        assert!(
+            !manifest.prefabs.is_empty(),
+            "prefabs.ron should declare at least one prefab"
+        );
+
+        // Spot-check: the altar-bearing Shrine now places the altar
+        // via props (RFC 0002 step 2c), not via `triggers:`. There are
+        // two distinct prefabs named "Shrine" in the catalog (a
+        // V-barricade shrine and the heal-altar shrine); we look up
+        // the altar variant by its prop list.
+        let altar_shrine = manifest
+            .prefabs
+            .iter()
+            .find(|p| p.name == "Shrine" && p.props.iter().any(|q| q.prop == "altar"))
+            .expect("altar-bearing Shrine should exist");
+        assert!(
+            altar_shrine.triggers.is_empty(),
+            "altar Shrine's triggers: array should be empty after RFC 0002 step 2c"
+        );
+
+        // And the inverse: no prefab still references "altar" via the
+        // legacy triggers: array (catches incomplete migration).
+        for prefab in &manifest.prefabs {
+            for t in &prefab.triggers {
+                assert_ne!(
+                    t.prop_name, "altar",
+                    "prefab {:?} still uses legacy triggers: array for altar — should be migrated to prop trigger",
+                    prefab.name
+                );
+            }
+        }
+    }
 }

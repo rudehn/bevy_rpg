@@ -362,9 +362,12 @@ Locked decisions (per RFC scoping interview):
    Both systems coexist for one commit window so tests can be
    written against the new shape against known-good Machine
    behavior.
-2. **Migrate `prefabs.ron`** — Shrine and Trapped Vault entries
-   rewritten to use prop-level effects. Verify floor generation,
-   on-step/on-bump behavior, single-use semantics.
+2. **Migrate `prefabs.ron`** — Shrine entry rewritten to use a
+   prop-level trigger on the altar (PlayerOnly + OnceInert + Multi[
+   HealFull, SpawnItem]). Verify floor generation, on-bump behavior,
+   single-use semantics. **Trapped Vault deferred** — the
+   chest-and-invisible-trap colocation needs a design pass before
+   migration (see "Trapped Vault migration" under Open Questions).
 3. **Wire `Decoration::step_effect`** for Cobweb (Slowed 3 turns).
    Add unit tests for the lookup. No new decoration variants and no
    other variants opt in during this RFC — Embers/Ash/Bloodstain/etc.
@@ -491,3 +494,29 @@ Save round-trip tests in `src/save/mod.rs`:
    grass)? Recommend defer — start as a static prop with damage.
    The Fire-entity path is a follow-up if campsites need to spread
    to ignite grass.
+4. **Trapped Vault migration.** The existing prefab uses two
+   colocated entities at `(2, 2)`: a chest (`Has<Chest>`, blocking,
+   opens via `BumpResult::Chest`) and an invisible step-trigger
+   Machine (fires after the chest is opened and the player steps
+   onto the now-empty tile). Translating this to two colocated prop
+   entities surfaces a priority bug in `resolve_bump` — the chest
+   should always win over a colocated non-blocking prop, but the
+   loop picks the first match and only filters by faction. Three
+   options:
+   - **(a) Fix `resolve_bump` priority** — prefer Collider-bearing
+     entities over non-Collider entities when picking `bump_target`
+     among non-faction candidates. Smallest change but lands a new
+     behavior contract.
+   - **(b) Unify chest + trap into one "trapped_chest" prop** with
+     both `Chest` and `Effected`. Bumping fires both the chest open
+     path AND the trigger. Requires teaching the chest-open code to
+     also run the prop trigger pipeline.
+   - **(c) Drop the invisible-trap shape entirely** — re-author
+     Trapped Vault as a single "trapped chest" prop whose
+     `BumpResult::Prop` activation spawns the loot AND the monsters
+     (effect: `Multi([SpawnItem, SpawnMonsters]) + OnceConsumed`).
+     Simpler semantics, slightly different game feel (no "open then
+     get ambushed when you step into the empty tile").
+   Recommend **(c)** — the "open the chest, take the loot, get
+   ambushed in the same beat" model is more readable and removes
+   the two-entity colocation entirely. Lands in a follow-up commit.
