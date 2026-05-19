@@ -246,7 +246,7 @@ fn regen_system(
 ///
 /// "Hidden" means either no record of the attacker exists (default for
 /// freshly spawned and Asleep monsters) or the record is
-/// `AwarenessState::Hidden`. Any of Suspicious / Searching / Aware
+/// `AwarenessState::Hidden`. Any of Searching / Aware
 /// rejects.
 pub fn target_is_hidden_to(
     awareness_query: &Query<&roguelike_engine::stealth::Awareness>,
@@ -366,7 +366,7 @@ fn attack_resolution_system(
         // an Asleep monster has no awareness record of the player and
         // so resolves to Hidden by default, preserving the original
         // "first-hit power spike on sleeping foes". A Searching /
-        // Suspicious / Aware target rejects: stealthed-ambush play
+        // Searching / Aware target rejects: stealthed-ambush play
         // must re-stealth between hits.
         // The ×3 multiplier flows through `damage_multiplier_bp` so the
         // resolver applies it after Enraged / Terrified.
@@ -1013,18 +1013,5 @@ mod tests {
             assert!(!awareness_is_hidden(&awareness, player_entity()));
         }
 
-        #[test]
-        fn backstab_rejected_when_target_is_suspicious() {
-            let mut awareness = Awareness::default();
-            awareness.set(
-                player_entity(),
-                AwarenessState::Suspicious {
-                    suspect_pos: Point::new(0, 0),
-                    decay_at_turn: 100,
-                },
-                0,
-            );
-            assert!(!awareness_is_hidden(&awareness, player_entity()));
-        }
     }
 }

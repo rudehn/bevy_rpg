@@ -135,30 +135,35 @@ impl MonsterAI {
         }
     }
 
-    /// Awareness-driven mode update. Replaces the legacy LOS-only check
-    /// for callers that have wired up the stealth system. The highest
-    /// state across all awareness records determines the mode:
+    /// Awareness-driven mode update. The highest awareness state across
+    /// all records determines the mode:
     ///
-    /// - `Aware` or `Searching` → `Hunting`
-    /// - `Suspicious` → `Idle` (unless already `Hunting`)
-    /// - `Hidden` → preserve current mode (so `Asleep` stays `Asleep`
-    ///   until a successful perception roll flips a record to `Aware`)
+    /// - `Aware` → `Hunting` — there's current line of sight to a
+    ///   target (or the perceiver was just attacked).
+    /// - `Searching` → `Idle` — the perceiver knows something is out
+    ///   there but doesn't have current LOS. An `Asleep` monster on
+    ///   a successful perception roll wakes up to `Idle`; a `Hunting`
+    ///   monster that lost LOS stays `Hunting` until the
+    ///   `Searching` timer expires back to `Hidden`.
+    /// - `Hidden` → preserve current mode (so `Asleep` stays asleep
+    ///   until a perception roll flips a record).
     ///
-    /// Awareness records' `last_known_pos` / `suspect_pos` are not
-    /// copied into `last_known_player_position` here — the caller is
-    /// responsible for that wiring at the perception-tick site, since
-    /// awareness state is target-keyed and only the caller knows which
-    /// record describes the player.
+    /// Awareness records' `last_known_pos` is not copied into
+    /// `last_known_player_position` here — the caller is responsible
+    /// for that wiring at the perception-tick site, since awareness
+    /// state is target-keyed and only the caller knows which record
+    /// describes the player.
     pub fn update_mode_from_awareness(&mut self, awareness: &crate::stealth::Awareness) {
         use crate::stealth::AwarenessState;
         match awareness.highest() {
-            AwarenessState::Aware | AwarenessState::Searching { .. } => {
+            AwarenessState::Aware => {
                 self.mode = MonsterAIMode::Hunting;
             }
-            AwarenessState::Suspicious { .. } => {
-                if self.mode != MonsterAIMode::Hunting {
+            AwarenessState::Searching { .. } => {
+                if self.mode == MonsterAIMode::Asleep {
                     self.mode = MonsterAIMode::Idle;
                 }
+                // Hunting stays Hunting until Searching expires to Hidden.
             }
             AwarenessState::Hidden => {
                 // Preserve current default — Asleep keeps sleeping.
@@ -245,9 +250,32 @@ mod tests {
     }
 
     #[test]
-    fn awareness_searching_drives_hunting() {
+    fn awareness_searching_wakes_asleep_to_idle() {
         use crate::stealth::{Awareness, AwarenessState};
         let mut ai = MonsterAI::default();
+        ai.mode = MonsterAIMode::Asleep;
+        let mut aware = Awareness::default();
+        let target = Entity::from_raw_u32(42).expect("valid test entity");
+        aware.set(
+            target,
+            AwarenessState::Searching {
+                last_known_pos: Point::new(3, 3),
+                giveup_at_turn: 100,
+            },
+            0,
+        );
+        ai.update_mode_from_awareness(&aware);
+        assert_eq!(ai.mode, MonsterAIMode::Idle);
+    }
+
+    #[test]
+    fn awareness_searching_preserves_hunting() {
+        // A monster that was Hunting and then lost LOS sits in
+        // Searching — should stay Hunting until the Searching timer
+        // expires to Hidden, not be downgraded to Idle.
+        use crate::stealth::{Awareness, AwarenessState};
+        let mut ai = MonsterAI::default();
+        ai.mode = MonsterAIMode::Hunting;
         let mut aware = Awareness::default();
         let target = Entity::from_raw_u32(42).expect("valid test entity");
         aware.set(
@@ -272,29 +300,6 @@ mod tests {
         assert_eq!(ai.mode, MonsterAIMode::Asleep);
     }
 
-    #[test]
-    fn awareness_suspicious_idles_unless_hunting() {
-        use crate::stealth::{Awareness, AwarenessState};
-        let mut ai = MonsterAI::default();
-        ai.mode = MonsterAIMode::Asleep;
-        let mut aware = Awareness::default();
-        let target = Entity::from_raw_u32(42).expect("valid test entity");
-        aware.set(
-            target,
-            AwarenessState::Suspicious {
-                suspect_pos: Point::new(2, 2),
-                decay_at_turn: 50,
-            },
-            0,
-        );
-        ai.update_mode_from_awareness(&aware);
-        assert_eq!(ai.mode, MonsterAIMode::Idle);
-
-        // But if already hunting, suspicious doesn't downgrade it.
-        ai.mode = MonsterAIMode::Hunting;
-        ai.update_mode_from_awareness(&aware);
-        assert_eq!(ai.mode, MonsterAIMode::Hunting);
-    }
 
     #[test]
     fn is_alert_is_inverse_of_is_asleep_for_blessed_modes() {

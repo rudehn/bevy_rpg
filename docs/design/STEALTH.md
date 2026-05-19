@@ -34,9 +34,14 @@ position (needed for the `Aware → Searching` LOS-loss transition).
 
 ### State machine
 
+Three states. `Suspicious` was removed in favor of a flat `Searching`
+landing pad for both "perception roll succeeded" and "squad alert
+propagated to me."
+
 ```
 Hidden ───perception wins (in LOS)──→ Aware
-Hidden ───(out of LOS / no roll)─────→ Hidden  [no-op]
+Hidden ───squad alert (ally Aware)──→ Searching { last_known_pos, giveup_at_turn: now + N }
+Hidden ───(out of LOS / no roll)────→ Hidden  [no-op]
 
 Aware ───target leaves LOS──→ Searching { last_known_pos: target.pos,
                                           giveup_at_turn: now + 20 }
@@ -45,9 +50,6 @@ Aware (target still in LOS) ────────→ Aware    [no roll — st
 Searching ──perception wins (in LOS)──→ Aware
 Searching ──giveup_at_turn reached────→ Hidden
 Searching ──(no LOS, timer alive)─────→ Searching
-
-Suspicious ──perception wins (in LOS)──→ Aware
-Suspicious ──decay_at_turn reached─────→ Hidden
 ```
 
 **Sticky Aware.** No further rolls fire against an `Aware` record
@@ -57,29 +59,33 @@ hysteresis: once you've been spotted, the monster doesn't randomly
 forget about you mid-fight, and once they've lost you, they
 investigate the last known position for ~20 turns before giving up.
 
-**Suspicious** is reachable in V1 only through the future noise-map
-populator. Its variant, transitions, and decay tick all ship in V1 —
-when the V2 noise phase lands, a single new handler
-(`noise_event → Suspicious{suspect_pos}`) lights it up.
-
 **Asleep** is a *behavior mode* (`MonsterAIMode`), not an awareness
 state. It maps to `AwarenessState::Hidden` plus a flat **`−10`
 penalty** on the seeker's perception roll. Sleeping monsters can
 still wake from a clumsy stealth attempt — they're just deeply biased
 toward staying asleep.
 
-State ordering for AI-mode resolution: `Aware > Searching >
-Suspicious > Hidden`. `MonsterAI::update_mode_from_awareness` reads
-the strongest hostile-tracked state and drives the mode (Aware /
-Searching → Hunting, Suspicious → Idle with investigation target,
-Hidden → preserve current mode so Asleep stays Asleep).
+State ordering for AI-mode resolution: `Aware > Searching > Hidden`.
+`MonsterAI::update_mode_from_awareness` reads the strongest
+hostile-tracked state and drives the mode:
+
+- `Aware` → `Hunting`
+- `Searching` → wake `Asleep` to `Idle`; preserve `Hunting` until the
+  Searching timer expires to Hidden (so a hunter that just lost LOS
+  doesn't immediately downgrade to wandering)
+- `Hidden` → preserve current mode (so `Asleep` keeps sleeping)
+
+The game-side `update_mode` ([src/game/ai.rs](../../src/game/ai.rs))
+adds a viewshed fast path on top: any monster with current LOS to a
+hostile player is forced to `Aware` + `Hunting` in the same turn (no
+1-tick perception-tick delay).
 
 ## Detection Formula
 
 The opposed roll fires **on the perceiver's turn**, only against
 entities that are in the perceiver's `Viewshed.visible_tiles` AND
-whose awareness record is one of `Hidden`, `Suspicious`, or
-`Searching`. `Aware` skips the roll (sticky).
+whose awareness record is `Hidden` or `Searching`. `Aware` skips
+the roll (sticky).
 
 ```
 seeker_total = d20 + perception_mod
@@ -208,7 +214,7 @@ Each chest armor item gains an `armor_stealth_penalty: i32` field
 
 The Dagger's `Backstab` weapon ability triples damage **only when the
 target monster's awareness record about the player is `Hidden`**.
-Searching / Suspicious / Aware all reject — once a monster is even
+Searching / Aware all reject — once a monster is even
 investigating, the dagger does normal damage.
 
 Asleep monsters map to Hidden by default, so first-strike ambushes
@@ -264,7 +270,6 @@ the state is collapsed at save time:
 | Live state | Persisted as |
 |---|---|
 | `Hidden` | `Hidden` |
-| `Suspicious{..}` | `Hidden` (V1 simplification) |
 | `Searching{last_known_pos, giveup_at_turn}` | `Searching{last_known_pos, offset = giveup_at_turn - now}` |
 | `Aware` | `Searching{last_known_pos = player.pos, offset = 20}` |
 
@@ -283,7 +288,7 @@ the normal `perception_tick_system`.
 
 - **Nearby sidebar pill** ([src/ui/nearby.rs](../../src/ui/nearby.rs)):
   one of `Sleeping` (Asleep + Hidden), `Wandering` (Hidden + non-Asleep),
-  `Suspicious` (yellow), `Searching` (yellow), `Hunting` (red, =Aware).
+  `Searching` (yellow), `Hunting` (red, =Aware).
 - **Monster info hover tooltip** ([src/ui/hover_info.rs](../../src/ui/hover_info.rs))
   and **monster inspection overlay** ([src/ui/monster_info.rs](../../src/ui/monster_info.rs))
   show a `─ Stealth ────` section with `Notice this turn: X%` + a

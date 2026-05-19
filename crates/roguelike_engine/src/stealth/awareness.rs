@@ -7,20 +7,26 @@ use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AwarenessState {
+    /// Perceiver has no idea this target exists / has lost the trail.
     Hidden,
-    Suspicious { suspect_pos: Point, decay_at_turn: u32 },
-    Searching  { last_known_pos: Point, giveup_at_turn: u32 },
+    /// Perceiver believes the target is somewhere near `last_known_pos`
+    /// but has no current line of sight. Reached either by a perception
+    /// roll succeeding from `Hidden`, or by `Aware` decaying after LOS
+    /// is lost. Expires back to `Hidden` at `giveup_at_turn`.
+    Searching { last_known_pos: Point, giveup_at_turn: u32 },
+    /// Perceiver currently has line of sight (or recent direct contact).
+    /// Sticky — no roll fires while `Aware`; LOS loss demotes to
+    /// `Searching` via the perception tick.
     Aware,
 }
 
 impl AwarenessState {
-    /// Strength ordering for `Awareness::highest`. Hidden = 0, Aware = 3.
+    /// Strength ordering for `Awareness::highest`. Hidden = 0, Aware = 2.
     pub fn rank(&self) -> u8 {
         match self {
             AwarenessState::Hidden => 0,
-            AwarenessState::Suspicious { .. } => 1,
-            AwarenessState::Searching { .. } => 2,
-            AwarenessState::Aware => 3,
+            AwarenessState::Searching { .. } => 1,
+            AwarenessState::Aware => 2,
         }
     }
 }
@@ -74,14 +80,14 @@ pub struct AwarenessAlertEvent {
     pub target: Entity,
 }
 
-/// Decay timers and demote expired Searching/Suspicious records to
-/// Hidden. Called by `awareness_tick_system` per perceiver-Awareness;
-/// extracted for unit testability without a Bevy App.
+/// Decay `Searching` timers, demote expired records to `Hidden`, and
+/// GC long-stale `Hidden` records. Called by `awareness_tick_system`
+/// per perceiver-Awareness; extracted for unit testability without a
+/// Bevy App.
 pub fn tick_awareness(awareness: &mut Awareness, now: u32) {
     for record in awareness.records.values_mut() {
         let expired = match record.state {
             AwarenessState::Searching { giveup_at_turn, .. } => now > giveup_at_turn,
-            AwarenessState::Suspicious { decay_at_turn, .. } => now > decay_at_turn,
             _ => false,
         };
         if expired {
@@ -120,28 +126,16 @@ mod tests {
     fn rank_ordering_is_total() {
         assert!(
             AwarenessState::Hidden.rank()
-                < AwarenessState::Suspicious {
-                    suspect_pos: Point::new(0, 0),
-                    decay_at_turn: 0
-                }
-                .rank()
-        );
-        assert!(
-            AwarenessState::Suspicious {
-                suspect_pos: Point::new(0, 0),
-                decay_at_turn: 0
-            }
-            .rank()
                 < AwarenessState::Searching {
                     last_known_pos: Point::new(0, 0),
-                    giveup_at_turn: 0
+                    giveup_at_turn: 0,
                 }
                 .rank()
         );
         assert!(
             AwarenessState::Searching {
                 last_known_pos: Point::new(0, 0),
-                giveup_at_turn: 0
+                giveup_at_turn: 0,
             }
             .rank()
                 < AwarenessState::Aware.rank()
@@ -184,22 +178,6 @@ mod tests {
             0,
         );
         tick_awareness(&mut a, 11);
-        assert_eq!(a.get(target).unwrap().state, AwarenessState::Hidden);
-    }
-
-    #[test]
-    fn suspicious_timer_expires_to_hidden() {
-        let mut a = Awareness::default();
-        let target = test_entity(99);
-        a.set(
-            target,
-            AwarenessState::Suspicious {
-                suspect_pos: Point::new(2, 2),
-                decay_at_turn: 5,
-            },
-            0,
-        );
-        tick_awareness(&mut a, 6);
         assert_eq!(a.get(target).unwrap().state, AwarenessState::Hidden);
     }
 

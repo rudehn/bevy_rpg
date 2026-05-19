@@ -83,9 +83,11 @@ const GAME_SAVE_KEY: &str = "ironveil_save";
 ///   `exit_tiles` on `SavedFloorData`. Both `#[serde(default)]`.
 /// - **v7**: Stealth Phase I — per-monster awareness state persisted on
 ///   `SavedMonster.awareness` as a degraded shape (Hidden | Searching).
-///   `Aware` collapses to `Searching{ player.pos, +20 }` at save time;
-///   `Suspicious` collapses to `Hidden`. `#[serde(default)]` keeps v6
-///   saves loadable with all monsters defaulting to `Hidden`.
+///   `Aware` collapses to `Searching{ player.pos, +20 }` at save time.
+///   `#[serde(default)]` keeps v6 saves loadable with all monsters
+///   defaulting to `Hidden`. (Originally also captured a `Suspicious`
+///   state; that engine variant was removed in a later refactor — the
+///   on-disk shape did not include it, so no schema bump.)
 /// - **v8**: `StatusEffectKind::Custom { id }` variants replaced with
 ///   named variants (`Entangled`, `Enraged`, `FireResistance`,
 ///   `PoisonResistance`). The bincode representation of these kinds
@@ -485,7 +487,6 @@ pub struct SavedExitTile {
 /// Save-time degradations (see `degrade_awareness_for_save`):
 /// - `Aware`               → `Searching{ player.pos, +20 turns }`
 /// - `Searching{pos, t}`   → `Searching{ pos, t - now }` (offset preserved)
-/// - `Suspicious{...}`     → `Hidden` (no tracked suspect to round-trip)
 /// - `Hidden` / no record  → `Hidden`
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum SavedAwarenessState {
@@ -839,8 +840,7 @@ pub(crate) fn degrade_awareness_for_save(
                 giveup_at_offset: giveup_at_turn.saturating_sub(now),
             }
         }
-        // Suspicious has a suspect_pos but we deliberately drop it — V1
-        // keeps the saved shape narrow. Hidden / missing → Hidden.
+        // Hidden / missing → Hidden.
         _ => SavedAwarenessState::Hidden,
     };
     MonsterAwarenessSave { state: saved_state }
@@ -3046,21 +3046,6 @@ mod tests {
                 giveup_at_offset: 20,
             }
         ));
-    }
-
-    #[test]
-    fn suspicious_collapses_to_hidden_on_save() {
-        let mut a = roguelike_engine::stealth::Awareness::default();
-        a.set(
-            pe(),
-            roguelike_engine::stealth::AwarenessState::Suspicious {
-                suspect_pos: Point::new(7, 7),
-                decay_at_turn: 100,
-            },
-            0,
-        );
-        let saved = degrade_awareness_for_save(&a, pe(), Point::new(0, 0), 0);
-        assert_eq!(saved.state, SavedAwarenessState::Hidden);
     }
 
     #[test]

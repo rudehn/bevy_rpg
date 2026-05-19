@@ -257,12 +257,12 @@ src/
 
 ### Stealth & Awareness ([STEALTH.md](docs/design/STEALTH.md))
 - Per-perceiver `Awareness` component (engine-side, `roguelike_engine::stealth::Awareness`) maps `target_entity → AwarenessState`.
-- 4 states: `Hidden | Suspicious | Searching | Aware`. **Aware is sticky** — no rolls fire against an Aware target until LOS is lost; then it drops to Searching with a ~20-turn timer.
+- 3 states: `Hidden | Searching | Aware`. **Aware is sticky** — no rolls fire against an Aware target until LOS is lost; then it drops to Searching with a ~20-turn timer.
 - Opposed d20 roll fires on each perceiver's turn against non-Aware visible targets in [src/game/stealth.rs](src/game/stealth.rs).
-- `MonsterAIMode` is driven by `Awareness` via `MonsterAI::update_mode_from_awareness` (engine). Asleep monsters keep sleeping until awareness transitions away from Hidden.
+- `MonsterAIMode` is driven by `Awareness`: the engine's `MonsterAI::update_mode_from_awareness` maps `Aware → Hunting`, `Searching → Idle` (wakes Asleep), `Hidden → preserve`. The game-side `update_mode` in [src/game/ai.rs](src/game/ai.rs) adds a viewshed fast path on top: any monster with current LOS to a hostile player is forced to `Aware + Hunting` in the same turn.
 - Backstab triple-damage gates on `AwarenessState::Hidden` only (combat.rs). Asleep monsters resolve as Hidden by default.
 - `NoiseMap` resource ships in V1 with decay-by-1 tick but no producer. V2 noise phase plugs in Dijkstra populator.
-- Save schema v7: degraded persistence (`Aware → Searching{last_known_pos}` on save, `Suspicious → Hidden`).
+- Save: degraded persistence (`Aware → Searching{last_known_pos}` on save, `Searching` keeps its timer offset). See [SAVE.md](docs/design/SAVE.md) for schema version history.
 
 ### Tactic Registry ([TACTICS.md](docs/design/TACTICS.md))
 - **All monster AI runs through the tactic registry.** The legacy FSM mega-dispatcher (`execute_monster_ai`) and the GOAP planner were deleted; their behaviors live as discrete `Tactic` impls in `src/game/tactics/library/`.

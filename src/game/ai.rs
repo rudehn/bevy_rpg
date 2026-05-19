@@ -76,76 +76,124 @@ pub fn refresh_monster_modes_system(world: &mut World) {
     }
 }
 
-/// Update AI mode transitions based on player visibility. Companion
-/// to `execute_monster_ai` — was previously the private method
-/// `MonsterAI::update_mode`.
+/// Update AI mode transitions. Awareness-driven with a viewshed
+/// fast path:
+///
+/// 1. LOS to a hostile player → force `Aware` + `Hunting`. This
+///    short-circuits the awareness tick so a monster on first sight
+///    transitions in the same turn instead of one turn late.
+/// 2. No LOS → mode follows `Awareness::highest()`:
+///    - `Aware` → keep `Hunting` (sticky pursuit); chase-leash + reach-
+///      last-known logic applies and demotes to `Idle` when the chase
+///      times out or the monster reaches `last_known_player_position`.
+///    - `Searching { last_known_pos }` → wake `Asleep` → `Idle`; sync
+///      `last_known_player_position` from the awareness record.
+///    - `Hidden` → preserve current mode (so `Asleep` keeps sleeping).
+///
+/// Friendly NPCs (Townsfolk, future allies) see the player but don't
+/// pursue them — escalation is gated on the faction relation being
+/// Hostile (`faction_hostile_to_player`).
 fn update_mode(monster_ai: &mut MonsterAI, entity: Entity, ctx: &AIContext, world: &mut World) {
-    // Friendly NPCs (Townsfolk, future allies) see the player but
-    // don't pursue them — `Asleep`/`Idle`→`Hunting` is gated on the
-    // faction relation being Hostile. Non-Hostile actors stay where
-    // they are.
+    use roguelike_engine::stealth::{Awareness, AwarenessState};
+
     let player_is_hostile_target = faction_hostile_to_player(
         world.get::<Faction>(entity),
         world.resource::<FactionMatrix>(),
     );
+    if !player_is_hostile_target {
+        return;
+    }
 
-    match monster_ai.mode {
-        MonsterAIMode::Asleep => {
-            if ctx.is_player_visible && player_is_hostile_target {
-                monster_ai.mode = MonsterAIMode::Hunting;
-                monster_ai.last_known_player_position = Some(ctx.player_point);
-                monster_ai.chase_distance = 0;
-            }
+    // Fast path: LOS to player → force Aware + Hunting. Writes the
+    // awareness record so squad propagation + downstream systems read
+    // the same source of truth.
+    if ctx.is_player_visible {
+        let now = world.resource::<crate::game::TurnManager>().current_time;
+        if let Some(player_entity) = ctx.player_entity
+            && let Some(mut awareness) = world.get_mut::<Awareness>(entity)
+        {
+            awareness.set(player_entity, AwarenessState::Aware, now);
         }
-        MonsterAIMode::Hunting => {
-            if ctx.is_player_visible {
-                monster_ai.last_known_player_position = Some(ctx.player_point);
-                monster_ai.chase_distance = 0; // Reset chase tracking when player is visible
-            } else {
-                // Player not visible — increment chase distance for leash tracking
-                monster_ai.chase_distance += 1;
+        monster_ai.mode = MonsterAIMode::Hunting;
+        monster_ai.last_known_player_position = Some(ctx.player_point);
+        monster_ai.chase_distance = 0;
+        return;
+    }
 
-                // Land monsters give up faster when the player's last known
-                // position is on deep water (unreachable territory).
-                if let Some(last_pos) = monster_ai.last_known_player_position {
-                    let movement_mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
-                    if movement_mode == MovementMode::Land {
-                        let map = world.resource::<Map>();
-                        let idx = map.xy_idx(last_pos.x, last_pos.y);
-                        if map.tiles[idx].liquid == crate::map::tile::LiquidType::Water {
-                            monster_ai.chase_distance += 2;
-                        }
+    // No LOS: drive mode from awareness state.
+    let awareness_state = world
+        .get::<Awareness>(entity)
+        .map(|a| a.highest())
+        .unwrap_or(AwarenessState::Hidden);
+
+    match (monster_ai.mode, awareness_state) {
+        // Hunting + still Aware after losing LOS — sticky pursuit with
+        // the chase-leash + reach-last-known terminations.
+        (MonsterAIMode::Hunting, AwarenessState::Aware)
+        | (MonsterAIMode::Hunting, AwarenessState::Searching { .. }) => {
+            // Sync last_known from the awareness record if Searching has
+            // a fresher position than what we're tracking.
+            if let AwarenessState::Searching { last_known_pos, .. } = awareness_state {
+                monster_ai.last_known_player_position = Some(last_known_pos);
+            }
+
+            monster_ai.chase_distance += 1;
+
+            // Land monsters give up faster on deep water last-known.
+            if let Some(last_pos) = monster_ai.last_known_player_position {
+                let movement_mode = world.get::<MovementMode>(entity).copied().unwrap_or_default();
+                if movement_mode == MovementMode::Land {
+                    let map = world.resource::<Map>();
+                    let idx = map.xy_idx(last_pos.x, last_pos.y);
+                    if map.tiles[idx].liquid == crate::map::tile::LiquidType::Water {
+                        monster_ai.chase_distance += 2;
                     }
                 }
-
-                // Chase leash: give up if chased too far without seeing player
-                if should_give_up_chase(monster_ai.chase_distance, monster_ai.chase_leash) {
-                    monster_ai.mode = MonsterAIMode::Idle;
-                    monster_ai.last_known_player_position = None;
-                    monster_ai.chase_distance = 0;
-
-                    // Post-hunt: snap waypoint patrols to nearest waypoint.
-                    snap_to_nearest_waypoint(entity, ctx.monster_pos, world);
-                    return;
-                }
             }
-            if !ctx.is_player_visible && Some(ctx.monster_pos) == monster_ai.last_known_player_position {
+
+            if should_give_up_chase(monster_ai.chase_distance, monster_ai.chase_leash) {
                 monster_ai.mode = MonsterAIMode::Idle;
                 monster_ai.last_known_player_position = None;
                 monster_ai.chase_distance = 0;
+                snap_to_nearest_waypoint(entity, ctx.monster_pos, world);
+                return;
+            }
 
-                // Post-hunt: snap waypoint patrols to nearest waypoint.
+            if Some(ctx.monster_pos) == monster_ai.last_known_player_position {
+                monster_ai.mode = MonsterAIMode::Idle;
+                monster_ai.last_known_player_position = None;
+                monster_ai.chase_distance = 0;
                 snap_to_nearest_waypoint(entity, ctx.monster_pos, world);
             }
         }
-        MonsterAIMode::Idle => {
-            if ctx.is_player_visible && player_is_hostile_target {
-                monster_ai.mode = MonsterAIMode::Hunting;
-            }
+        // Hunting decayed to Hidden (awareness timer expired) — give up.
+        (MonsterAIMode::Hunting, AwarenessState::Hidden) => {
+            monster_ai.mode = MonsterAIMode::Idle;
+            monster_ai.last_known_player_position = None;
+            monster_ai.chase_distance = 0;
+            snap_to_nearest_waypoint(entity, ctx.monster_pos, world);
         }
-        // `MonsterAIMode` is `#[non_exhaustive]` — fall back to no
-        // transition for any future engine variant this game doesn't
-        // handle yet.
+        // Asleep + Searching → wake to Idle, sync last_known.
+        (MonsterAIMode::Asleep, AwarenessState::Searching { last_known_pos, .. }) => {
+            monster_ai.mode = MonsterAIMode::Idle;
+            monster_ai.last_known_player_position = Some(last_known_pos);
+        }
+        // Asleep + Aware (e.g. just attacked) → straight to Hunting.
+        (MonsterAIMode::Asleep, AwarenessState::Aware) => {
+            monster_ai.mode = MonsterAIMode::Hunting;
+            monster_ai.chase_distance = 0;
+        }
+        // Idle + Searching → keep wandering, sync last_known.
+        (MonsterAIMode::Idle, AwarenessState::Searching { last_known_pos, .. }) => {
+            monster_ai.last_known_player_position = Some(last_known_pos);
+        }
+        // Idle + Aware → escalate to Hunting (no LOS but something
+        // upgraded awareness; e.g. squad alert from a sighting).
+        (MonsterAIMode::Idle, AwarenessState::Aware) => {
+            monster_ai.mode = MonsterAIMode::Hunting;
+            monster_ai.chase_distance = 0;
+        }
+        // Everything else (Asleep|Idle + Hidden, future modes): preserve.
         _ => {}
     }
 }

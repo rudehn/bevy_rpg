@@ -198,7 +198,7 @@ fn light_intensity_at(light_map: &LightMap, map: &Map, pos: Point) -> f32 {
 /// in their viewshed, roll opposed d20s and transition non-Aware
 /// records to [`AwarenessState::Aware`] on a perception win. `Aware`
 /// is sticky — it's never demoted by this system (the
-/// `awareness_tick_system` handles `Searching`/`Suspicious` decay).
+/// `awareness_tick_system` handles `Searching` decay).
 /// Emits [`AwarenessAlertEvent`] for squad propagation (Task E5).
 ///
 /// Targets without a [`Skills`]/[`Attributes`]/[`Equipment`] component
@@ -373,7 +373,7 @@ pub fn squad_propagate_awareness(
 ///
 /// Scheduled in `ProcessingPhase::ResolveActions` so it runs after the
 /// damage pipeline has emitted [`DamageEvent`]s for this turn but
-/// before Cleanup ticks down `Searching`/`Suspicious` timers.
+/// before Cleanup ticks down `Searching` timers.
 pub fn attack_reveals_attacker(
     mut events: MessageReader<DamageEvent>,
     mut awareness_query: Query<&mut Awareness>,

@@ -96,7 +96,7 @@ fn tile_distance(a: &Position, b: &Position) -> i32 {
 /// stale awareness record left over from before the monster was put
 /// to sleep. Otherwise the pill reflects the monster's current
 /// `AwarenessState` of the player — Aware → "Hunting", Searching or
-/// Suspicious → "Searching" / "Suspicious", and an absent or Hidden
+/// Searching → "Searching", and an absent or Hidden
 /// record means the monster is just "Wandering".
 pub(super) fn awareness_pill(
     mode: MonsterAIMode,
@@ -115,7 +115,6 @@ pub(super) fn awareness_pill(
     match awareness.get(player_entity).map(|r| r.state) {
         Some(AwarenessState::Aware) => ("Hunting", Color::srgb(0.85, 0.20, 0.20)),
         Some(AwarenessState::Searching { .. }) => ("Searching", Color::srgb(0.95, 0.78, 0.20)),
-        Some(AwarenessState::Suspicious { .. }) => ("Suspicious", Color::srgb(0.95, 0.78, 0.20)),
         None | Some(AwarenessState::Hidden) => ("Wandering", Color::srgb(0.55, 0.55, 0.55)),
     }
 }
@@ -392,7 +391,7 @@ fn update_nearby_panel(
                             });
                             // Awareness pill (subsumes the legacy
                             // mode-only `(Sleeping)` label by adding
-                            // Suspicious / Searching states the engine
+                            // Searching state the engine
                             // mode FSM can't distinguish).
                             row.spawn((
                                 Text::new(monster.awareness_label),
@@ -776,21 +775,6 @@ mod tests {
         );
         let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe(), false);
         assert_eq!(text, "Searching");
-    }
-
-    #[test]
-    fn suspicious_yields_suspicious() {
-        let mut a = Awareness::default();
-        a.set(
-            pe(),
-            AwarenessState::Suspicious {
-                suspect_pos: Point::new(0, 0),
-                decay_at_turn: 10,
-            },
-            0,
-        );
-        let (text, _) = awareness_pill(MonsterAIMode::Idle, &a, pe(), false);
-        assert_eq!(text, "Suspicious");
     }
 
     #[test]
