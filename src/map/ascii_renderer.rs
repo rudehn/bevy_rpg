@@ -20,7 +20,7 @@ use crate::game::systems::Omniscient;
 use crate::game::water::WaterTiles;
 use crate::map::light::LightMap;
 use crate::map::map::Map;
-use crate::map::tile::{LiquidType, TileExplored, TileMarker, TileVisibility};
+use crate::map::tile::{LiquidType, TerrainType, TileExplored, TileMarker, TileVisibility};
 use crate::map::world::{FloorTheme, themed_tile_bg, themed_tile_display};
 use crate::player::Player;
 use bracket_lib::prelude::Algorithm2D;
@@ -143,6 +143,55 @@ pub fn compute_cracked_bg(t: f32, phase: f32) -> Color {
 /// Minimum brightness for tiles currently in the player's FOV but not near a candle.
 const AMBIENT: f32 = 0.55;
 
+/// 32-bit spatial hash of `(x, y, seed)` returning a uniform [0, 1) value.
+/// Used for true per-tile noise without the diagonal banding that
+/// sin(linear-combo) produces. Primes chosen to decorrelate neighbouring
+/// tiles across all three seeds.
+fn hash2d(x: i32, y: i32, seed: u32) -> f32 {
+    let mut h = (x as u32).wrapping_mul(73856093);
+    h ^= (y as u32).wrapping_mul(19349663);
+    h ^= seed.wrapping_mul(83492791);
+    h ^= h >> 13;
+    h = h.wrapping_mul(2654435761);
+    h ^= h >> 16;
+    (h as f32) / (u32::MAX as f32)
+}
+
+/// Per-tile static noise applied to the base forest-floor dirt color.
+/// Three independent hash channels per tile, so each cell gets a truly
+/// random RGB shade — no periodicity, no diagonal bands. Stable per
+/// `(x, y)` so the pattern doesn't flicker. No time component — dirt
+/// shouldn't shimmer the way water and fire do.
+pub fn compute_forest_floor_bg(x: i32, y: i32, base: Color) -> Color {
+    const VARIATION: f32 = 0.18;
+    let r_j = (hash2d(x, y, 0x1779) - 0.5) * 2.0;
+    let g_j = (hash2d(x, y, 0x4D5B) - 0.5) * 2.0;
+    let b_j = (hash2d(x, y, 0x8F31) - 0.5) * 2.0;
+    let s = base.to_srgba();
+    Color::srgb(
+        (s.red * (1.0 + r_j * VARIATION)).clamp(0.0, 1.0),
+        (s.green * (1.0 + g_j * VARIATION)).clamp(0.0, 1.0),
+        (s.blue * (1.0 + b_j * VARIATION)).clamp(0.0, 1.0),
+    )
+}
+
+/// `themed_tile_bg` plus per-tile noise tint for forest floors. Wall
+/// tiles and non-forest themes pass through unchanged.
+fn themed_floor_bg(
+    tile: crate::map::tile::Tile,
+    manifest: &TileManifest,
+    theme: FloorTheme,
+    x: i32,
+    y: i32,
+) -> Color {
+    let base = themed_tile_bg(tile, manifest, theme);
+    if theme == FloorTheme::Forest && tile.terrain == TerrainType::Floor {
+        compute_forest_floor_bg(x, y, base)
+    } else {
+        base
+    }
+}
+
 /// Resolve the background color for a visible cell, applying tile effect cascade
 /// (fire glow > gas blend > water shimmer > lit base).
 fn resolve_cell_bg(
@@ -165,7 +214,7 @@ fn resolve_cell_bg(
     if let Some(gas) = gas_tiles.0.get(&(x, y)) {
         let (light, light_color) = get_light(idx, light_map);
         let light_amount = ((light - AMBIENT) / (1.0 - AMBIENT)).clamp(0.0, 1.0);
-        let base_bg = apply_light_to_color(themed_tile_bg(tile, manifest, theme), light_amount, light_color);
+        let base_bg = apply_light_to_color(themed_floor_bg(tile, manifest, theme, x, y), light_amount, light_color);
         let gas_bg = compute_gas_bg(gas.gas_type, gas.concentration, t, phase);
         let alpha = (gas.concentration as f32 / 300.0).clamp(0.2, 0.85);
         let g = gas_bg.to_srgba();
@@ -202,7 +251,7 @@ fn resolve_cell_bg(
     // Normal lit base bg
     let (light, light_color) = get_light(idx, light_map);
     let light_amount = ((light - AMBIENT) / (1.0 - AMBIENT)).clamp(0.0, 1.0);
-    apply_light_to_color(themed_tile_bg(tile, manifest, theme), light_amount, light_color)
+    apply_light_to_color(themed_floor_bg(tile, manifest, theme, x, y), light_amount, light_color)
 }
 
 struct CellEntity {
@@ -409,7 +458,7 @@ pub fn render_tile_ascii(
 
                 let gas_bg = compute_gas_bg(gas.gas_type, gas.concentration, t, phase);
                 let base_bg = apply_light_to_color(
-                    themed_tile_bg(tile, manifest, theme), light_amount, light_color,
+                    themed_floor_bg(tile, manifest, theme, x, y), light_amount, light_color,
                 );
                 // Alpha blend: thicker gas covers more of the base
                 let alpha = (gas.concentration as f32 / 300.0).clamp(0.2, 0.85);
@@ -470,7 +519,7 @@ pub fn render_tile_ascii(
             } else {
                 // 5. Base: normal tile with lighting
                 let (base_char, base_fg, _) = themed_tile_display(tile, manifest, theme);
-                let base_bg = themed_tile_bg(tile, manifest, theme);
+                let base_bg = themed_floor_bg(tile, manifest, theme, x, y);
                 glyph_char = base_char;
 
                 let (light, light_color) = get_light(idx, &light_map);
@@ -481,7 +530,7 @@ pub fn render_tile_ascii(
         } else {
             // Explored but not visible: dim base glyph
             let (base_char, base_fg, _) = themed_tile_display(tile, manifest, theme);
-            let base_bg = themed_tile_bg(tile, manifest, theme);
+            let base_bg = themed_floor_bg(tile, manifest, theme, x, y);
             glyph_char = base_char;
             fg_color = dim_color(base_fg, 0.45);
             bg_color = dim_color(base_bg, 0.35);
