@@ -8,13 +8,13 @@
       body { margin: 0; background: #000; }
       canvas { display: block; }
     </style>
-  <link rel="modulepreload" href="/bevy_rpg/bevy_rpg-7b9bcde8140de064.js" crossorigin="anonymous" integrity="sha384-eDGtlz52wYKD5y1Aig+C4C9t62w20lj5riyk/tXDiYJjr8dI4OZKjB59iSbdjBo8"><link rel="preload" href="/bevy_rpg/bevy_rpg-7b9bcde8140de064_bg.wasm" crossorigin="anonymous" integrity="sha384-BWjcNK+4N2ifPqm5eazLaRjFUhSEXJjiqOgn6K58zh0qsPkGvWNm5EF1fVj+gvKa" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="/bevy_rpg/bevy_rpg-f8bb432787100d7f.js" crossorigin="anonymous" integrity="sha384-RaA7S5wWlmTDyGEbkoefqe+KeA7jFAgy4qai6a0BAuQXSkukxcbiAXWrbkex0lQy"><link rel="preload" href="/bevy_rpg/bevy_rpg-f8bb432787100d7f_bg.wasm" crossorigin="anonymous" integrity="sha384-f50YYEotSMun9fEgi8T02b8YRANm6n2HSYZgzrqU895PJRUo07bqxJuYTssHkWPH" as="fetch" type="application/wasm"></head>
   <body>
     <!-- Tell Trunk to compile and inject the Rust/WASM binary here -->
     
 <script type="module">
-import init, * as bindings from '/bevy_rpg/bevy_rpg-7b9bcde8140de064.js';
-const wasm = await init({ module_or_path: '/bevy_rpg/bevy_rpg-7b9bcde8140de064_bg.wasm' });
+import init, * as bindings from '/bevy_rpg/bevy_rpg-f8bb432787100d7f.js';
+const wasm = await init({ module_or_path: '/bevy_rpg/bevy_rpg-f8bb432787100d7f_bg.wasm' });
 
 
 window.wasmBindings = bindings;
