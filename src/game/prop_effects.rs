@@ -11,15 +11,11 @@
 //! ("I used a scroll"), this vocabulary is world-driven ("the world
 //! stepped on me").
 //!
-//! ## Scope (RFC 0002 Step 1)
+//! ## History
 //!
-//! This file lands the type vocabulary + pure decision helpers without
-//! wiring any behavior. The existing `Machine` system in
-//! [`crate::game::machines`] continues to handle live activations.
-//! Subsequent steps replace it module-by-module.
-//!
+//! Replaces the legacy Machine system (deleted in RFC 0002 step 5).
 //! See [`docs/rfcs/0002-prop-machine-decoration-unification.md`] for
-//! the migration plan.
+//! the migration history.
 
 use bevy::prelude::*;
 use bracket_lib::prelude::Point;
@@ -217,8 +213,7 @@ pub struct EverFired(pub bool);
 
 /// Sent when an actor bumps into a blocking prop that carries an
 /// `Effected` trigger. The bump-handler in `handle_movement`
-/// (actions.rs) emits this in place of the legacy `MachineBumpMessage`
-/// for prop-driven activations.
+/// (actions.rs) emits this for prop-driven activations.
 #[derive(Message, Debug)]
 pub struct PropBumpMessage {
     pub activator: Entity,

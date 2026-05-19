@@ -4,7 +4,6 @@ use bracket_lib::prelude::{Algorithm2D, Point};
 use crate::game::magic::GameStatusEffectsExt;
 use crate::{
     components::{Chest, Collider, Destructible, Faction, InInventory, Inventory, Key, LockedDoorData, MovementMode, Name, Position, Item},
-    game::machines::{Machine, MachineBumpMessage},
     game::prop_effects::{Effected, PropBumpMessage},
     constants::BASE_ACTION_COST,
     game::{
@@ -435,8 +434,6 @@ enum BumpResult {
     HostileEntity(Entity),
     /// Tile has a chest — open it.
     Chest(Entity),
-    /// Tile has a machine entity — activate it.
-    Machine(Entity),
     /// Tile has a blocking prop with an `Effected` trigger — bump-activate via PropBumpMessage.
     Prop(Entity),
     /// Tile has a non-hostile entity with a Collider.
@@ -461,7 +458,6 @@ fn resolve_bump(
         Option<&Faction>,
         Has<Collider>,
         Has<Chest>,
-        Has<Machine>,
         Has<Effected>,
         Option<&MovementMode>,
         Has<Destructible>,
@@ -484,24 +480,35 @@ fn resolve_bump(
         return BumpResult::LockedDoor(target_pt);
     }
 
-    // 3. Occupant scan — prioritize hostile entities over props.
-    let mut bump_target = None;
-    for (e, other_pos, _other_is_player, other_faction, other_has_collider, other_is_chest, other_is_machine, other_is_effected, _, other_is_destructible) in
+    // 3. Occupant scan — prioritize hostile entities, then Collider-bearing
+    //    entities (so a chest wins over a colocated invisible trap prop),
+    //    then any remaining occupant. RFC 0002 option (a).
+    let mut bump_target: Option<(Entity, Option<&Faction>, bool, bool, bool, bool)> = None;
+    for (e, other_pos, _other_is_player, other_faction, other_has_collider, other_is_chest, other_is_effected, _, other_is_destructible) in
         actors_query.iter()
     {
         if other_pos.to_point() == target_pt && e != actor {
             // Faction-bearing entities (player/monsters) take priority over props.
             if other_faction.is_some() {
-                bump_target = Some((e, other_faction, other_has_collider, other_is_chest, other_is_machine, other_is_effected, other_is_destructible));
+                bump_target = Some((e, other_faction, other_has_collider, other_is_chest, other_is_effected, other_is_destructible));
                 break;
             }
-            if bump_target.is_none() {
-                bump_target = Some((e, other_faction, other_has_collider, other_is_chest, other_is_machine, other_is_effected, other_is_destructible));
+            // Non-faction candidates: prefer Collider-bearing entities so
+            // colocated (chest + invisible trap) configurations route the
+            // bump to the blocking entity.
+            let prefer_new = match bump_target {
+                None => true,
+                Some((_, _, current_has_collider, _, _, _)) => {
+                    !current_has_collider && other_has_collider
+                }
+            };
+            if prefer_new {
+                bump_target = Some((e, other_faction, other_has_collider, other_is_chest, other_is_effected, other_is_destructible));
             }
         }
     }
 
-    if let Some((target_entity, target_faction, target_has_collider, target_is_chest, target_is_machine, target_is_effected, target_is_destructible)) =
+    if let Some((target_entity, target_faction, target_has_collider, target_is_chest, target_is_effected, target_is_destructible)) =
         bump_target
     {
         let is_hostile = crate::game::factions::factions_hostile(
@@ -519,10 +526,6 @@ fn resolve_bump(
             // Bump-activated blocking prop with an `Effected` trigger.
             // Audience filtering happens in `handle_prop_bump`.
             return BumpResult::Prop(target_entity);
-        } else if target_is_machine && !target_is_chest && target_has_collider && actor_is_player {
-            // Legacy bump-activated machine (altar/lever via prefab triggers:).
-            // Will be removed in RFC 0002 step 5.
-            return BumpResult::Machine(target_entity);
         } else if target_is_chest && actor_is_player {
             // Only the player opens chests via bump. GOAP entities (kobolds) emit
             // OpenChestIntent directly from their AI dispatch.
@@ -549,17 +552,6 @@ fn resolve_bump(
     BumpResult::Empty
 }
 
-/// Bundle the bump-dispatch message writers so `handle_movement` stays
-/// under Bevy's 16-param system limit. Both writers fire on bump
-/// (MachineBumpMessage is the legacy path, PropBumpMessage is the
-/// new RFC 0002 path); bundling them is a layering convenience, not
-/// a semantic group.
-#[derive(bevy::ecs::system::SystemParam)]
-pub struct BumpDispatchers<'w> {
-    pub machine: MessageWriter<'w, MachineBumpMessage>,
-    pub prop: MessageWriter<'w, PropBumpMessage>,
-}
-
 pub fn handle_movement(
     mut commands: Commands,
     mut intents: MessageReader<MovementIntent>,
@@ -567,7 +559,7 @@ pub fn handle_movement(
     mut open_door_writer: MessageWriter<OpenDoorIntent>,
     mut unlock_door_writer: MessageWriter<UnlockDoorIntent>,
     mut open_chest_writer: MessageWriter<OpenChestIntent>,
-    mut bump_writers: BumpDispatchers,
+    mut prop_bump_writer: MessageWriter<PropBumpMessage>,
     mut finish_writer: MessageWriter<ActionFinishedEvent>,
     mut free_writer: MessageWriter<FreeActionEvent>,
     mut log_writer: MessageWriter<GameLogMessage>,
@@ -579,7 +571,6 @@ pub fn handle_movement(
         Option<&Faction>,
         Has<Collider>,
         Has<Chest>,
-        Has<Machine>,
         Has<Effected>,
         Option<&MovementMode>,
         Has<Destructible>,
@@ -590,7 +581,7 @@ pub fn handle_movement(
     mut next_ingame_state: ResMut<NextState<crate::game::InGameState>>,
 ) {
     for intent in intents.read() {
-        let Ok((_, pos, is_player, actor_faction, _, _, _, _, movement_mode, _)) = actors_query.get(intent.entity) else {
+        let Ok((_, pos, is_player, actor_faction, _, _, _, movement_mode, _)) = actors_query.get(intent.entity) else {
             finish_turn(&mut commands, &mut finish_writer, intent.entity, BASE_ACTION_COST, ActionKind::Movement);
             continue;
         };
@@ -602,7 +593,7 @@ pub fn handle_movement(
 
         match result {
             BumpResult::Empty => {
-                if let Ok((_, mut pos, _, _, _, _, _, _, _, _)) = actors_query.get_mut(intent.entity) {
+                if let Ok((_, mut pos, _, _, _, _, _, _, _)) = actors_query.get_mut(intent.entity) {
                     pos.x = target_pt.x;
                     pos.y = target_pt.y;
                 }
@@ -726,15 +717,8 @@ pub fn handle_movement(
                 });
                 // ActionGuard cleared by handle_open_chest via finish_turn.
             }
-            BumpResult::Machine(machine_entity) => {
-                bump_writers.machine.write(MachineBumpMessage {
-                    activator: intent.entity,
-                    machine_entity,
-                });
-                // ActionGuard cleared by handle_machine_bump via finish_turn.
-            }
             BumpResult::Prop(prop_entity) => {
-                bump_writers.prop.write(PropBumpMessage {
+                prop_bump_writer.write(PropBumpMessage {
                     activator: intent.entity,
                     prop_entity,
                 });

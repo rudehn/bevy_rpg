@@ -12,7 +12,6 @@ use crate::assets::{
 use crate::components::{Collider, Position};
 use crate::game::ai::PatrolRoute;
 use crate::game::items::ItemStack;
-use crate::game::machines::{Machine, MachineEffect, MachineTrigger, MachineUsed};
 use crate::game::squad::{SquadConfig, SquadId, SquadLeader};
 use crate::game::TurnManager;
 use crate::game::{spawn_item, spawn_monster_by_name, spawn_prop};
@@ -86,17 +85,6 @@ pub struct EntityAssets<'w> {
 // type per entity kind.
 // ---------------------------------------------------------------------------
 
-/// Machine spawn — no `SavedMachine` exists yet because machines aren't
-/// snapshotted between floors. Kept as a dedicated type so the
-/// materializer can match it cleanly.
-pub struct MachinePlan {
-    pub pos: Point,
-    pub prop_name: String,
-    pub trigger: MachineTrigger,
-    pub effect: MachineEffect,
-    pub consume_on_use: bool,
-}
-
 /// A fully-resolved floor description ready for ECS materialization.
 ///
 /// Built by [`plan_floor`] from a [`FloorSource`]; consumed by
@@ -108,7 +96,6 @@ pub struct FloorPlan {
     pub monsters: Vec<SavedMonster>,
     pub items: Vec<SavedItem>,
     pub props: Vec<SavedProp>,
-    pub machines: Vec<MachinePlan>,
     /// Tiles that should receive a [`crate::map::world::MapExitTile`]
     /// component once their tile entities exist — used by overworld
     /// edges and the temple entrance / exit.
@@ -347,18 +334,6 @@ impl FloorPlan {
             })
             .collect();
 
-        let machines = build_data
-            .machine_spawn_list
-            .into_iter()
-            .map(|ms| MachinePlan {
-                pos: ms.pos,
-                prop_name: ms.prop_name,
-                trigger: ms.trigger,
-                effect: ms.effect,
-                consume_on_use: ms.consume_on_use,
-            })
-            .collect();
-
         let exit_tiles = build_data.exit_tile_spawn_list;
         let overworld_edit = build_data.overworld_edit;
 
@@ -367,7 +342,6 @@ impl FloorPlan {
             monsters,
             items,
             props,
-            machines,
             exit_tiles,
             player_spawn,
             pending_player_load: None,
@@ -431,7 +405,6 @@ impl FloorPlan {
             monsters: cached.monsters,
             items: cached.items,
             props: cached.props,
-            machines: Vec::new(),
             exit_tiles: cached.exit_tiles,
             player_spawn,
             pending_player_load: None,
@@ -451,7 +424,6 @@ impl FloorPlan {
             monsters: save_data.monsters,
             items: save_data.floor_items,
             props: save_data.props,
-            machines: Vec::new(),
             // Save schema v5 doesn't persist exit tiles; v6 will.
             exit_tiles: Vec::new(),
             player_spawn,
@@ -649,47 +621,6 @@ pub fn materialize_floor(
                 "MapExitTile at ({}, {}) skipped — no tile entity at that coordinate",
                 pos.x, pos.y
             ));
-        }
-    }
-
-    // Spawn machines
-    for m in &plan.machines {
-        if m.prop_name.is_empty() {
-            // Invisible trigger — no visual prop, just a position with machine components
-            let entity = commands.spawn((
-                crate::components::Position { x: m.pos.x, y: m.pos.y },
-                crate::components::GameEntityMarker,
-                crate::components::FloorEntityMarker,
-                Machine,
-                m.trigger.clone(),
-                m.effect.clone(),
-                MachineUsed(false),
-                crate::components::Name("Trap".to_string()),
-            )).id();
-            if m.consume_on_use {
-                commands.entity(entity).insert(crate::game::machines::MachineConsumeOnUse);
-            }
-        } else if let Some(entity) = spawn_prop(
-            commands,
-            &m.prop_name,
-            &m.pos,
-            &entity_assets.prop_manifests,
-            &entity_assets.prop_manifest_handle,
-            &entity_assets.prop_sprite_assets,
-            ascii_font,
-        ) {
-            commands.entity(entity).insert((
-                Machine,
-                m.trigger.clone(),
-                m.effect.clone(),
-                MachineUsed(false),
-                Collider,
-            ));
-            if m.consume_on_use {
-                commands.entity(entity).insert(crate::game::machines::MachineConsumeOnUse);
-            }
-        } else {
-            warnings.push(format!("Failed to spawn machine prop '{}'", m.prop_name));
         }
     }
 

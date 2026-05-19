@@ -396,11 +396,14 @@ flee_threshold: 0.4,
             ],
         ),
 
-        // --- Trapped Vault: chest + hidden step-trigger ambush ---
-        // Player opens the chest normally. When they step on the same
-        // tile after the chest despawns, the invisible step-trigger
-        // fires once and spawns 2 level-appropriate monsters at
-        // adjacent walkable tiles.
+        // --- Trapped Vault: chest + colocated invisible monster trap ---
+        // The chest and monster_trap share tile (2, 2). Bumping the tile
+        // routes to the chest (resolve_bump prefers Collider entities —
+        // RFC 0002 option a). The chest opens and despawns normally;
+        // the now-empty tile still has the monster_trap prop, which
+        // springs on the player's next step into it (OnceConsumed →
+        // trap despawns, spawns 2 level-appropriate monsters at
+        // adjacent walkable tiles).
         PrefabTemplate(
             name: "Trapped Vault",
             width: 5,
@@ -416,18 +419,10 @@ flee_threshold: 0.4,
             ],
             props: [
                 (x: 2, y: 2, prop: "chest"),
+                (x: 2, y: 2, prop: "monster_trap"),
             ],
             monster_spawns: [],
             item_spawns: [],
-            triggers: [
-                (
-                    x: 2, y: 2,
-                    prop_name: "",
-                    trigger: StepActivate,
-                    effect: SpawnMonsters(monster_name: "", count: 2),
-                    consume_on_use: true,
-                ),
-            ],
             decorations: [
                 (x: 2, y: 2, decoration: Cobweb, radius: 2),
             ],

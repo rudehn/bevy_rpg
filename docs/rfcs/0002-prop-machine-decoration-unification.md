@@ -1,8 +1,20 @@
 # RFC 0002 — Unify Props, Machines, and Decoration Step-Effects
 
-**Status:** Proposed
-**Branch:** _(unassigned)_
+**Status:** Landed
+**Branch:** `worktree-rfc-0002-prop-effects`
 **Related docs:** [GAME.md](../design/GAME.md), [FIRE.md](../design/FIRE.md), [TILE_PROMOTION.md](../design/TILE_PROMOTION.md), [SAVE.md](../design/SAVE.md), [RFC 0001 — Combat Resolver](0001-combat-resolver.md)
+
+## What shipped
+
+- `src/game/prop_effects.rs` — pure type vocabulary + Bevy adapter. 27 unit tests cover effect flattening, audience filtering, activation mode, and the `classify_activation` decision helper. PropEffectsPlugin registers bump dispatch, step dispatch, decoration step dispatch, and deferred spawn processors.
+- `PropAsset.trigger: Option<PropTrigger>` field — authors declare prop-level effects in `props.ron`. The altar prop carries HealFull + SpawnItem (PlayerOnly, OnceInert); `monster_trap` is a new invisible step trap (Anyone, OnceConsumed).
+- `Decoration::step_effect` lookup — Cobweb applies Slowed(3) on step; all other decorations stay silent.
+- `EverFired` persisted in saves; schema bumped v9 → v10 (backward-compatible via `#[serde(default)]`).
+- `resolve_bump` priority fix — non-faction candidates prefer Collider entities, so a chest wins over a colocated invisible trap.
+- Trapped Vault migrated: chest + monster_trap props colocated. Open chest, take loot, step into the now-empty tile, get ambushed.
+- `src/game/machines.rs` deleted (220+ lines). `PrefabTemplate.triggers` field removed. `MachineSpawn` / `machine_spawn_list` / `MachinePlan` deleted. 33 fewer lines of indirection in `floor_materializer.rs`.
+
+All 713 tests in bevy_rpg + 452 in roguelike_engine still pass.
 
 ## Summary
 
@@ -364,10 +376,10 @@ Locked decisions (per RFC scoping interview):
    behavior.
 2. **Migrate `prefabs.ron`** — Shrine entry rewritten to use a
    prop-level trigger on the altar (PlayerOnly + OnceInert + Multi[
-   HealFull, SpawnItem]). Verify floor generation, on-bump behavior,
-   single-use semantics. **Trapped Vault deferred** — the
-   chest-and-invisible-trap colocation needs a design pass before
-   migration (see "Trapped Vault migration" under Open Questions).
+   HealFull, SpawnItem]). Verified floor generation, on-bump behavior,
+   single-use semantics. (Trapped Vault was deferred until step 5
+   pending a resolve_bump priority decision; landed via option a
+   below.)
 3. **Wire `Decoration::step_effect`** for Cobweb (Slowed 3 turns).
    Add unit tests for the lookup. No new decoration variants and no
    other variants opt in during this RFC — Embers/Ash/Bloodstain/etc.
@@ -494,29 +506,14 @@ Save round-trip tests in `src/save/mod.rs`:
    grass)? Recommend defer — start as a static prop with damage.
    The Fire-entity path is a follow-up if campsites need to spread
    to ignite grass.
-4. **Trapped Vault migration.** The existing prefab uses two
-   colocated entities at `(2, 2)`: a chest (`Has<Chest>`, blocking,
-   opens via `BumpResult::Chest`) and an invisible step-trigger
-   Machine (fires after the chest is opened and the player steps
-   onto the now-empty tile). Translating this to two colocated prop
-   entities surfaces a priority bug in `resolve_bump` — the chest
-   should always win over a colocated non-blocking prop, but the
-   loop picks the first match and only filters by faction. Three
-   options:
-   - **(a) Fix `resolve_bump` priority** — prefer Collider-bearing
-     entities over non-Collider entities when picking `bump_target`
-     among non-faction candidates. Smallest change but lands a new
-     behavior contract.
-   - **(b) Unify chest + trap into one "trapped_chest" prop** with
-     both `Chest` and `Effected`. Bumping fires both the chest open
-     path AND the trigger. Requires teaching the chest-open code to
-     also run the prop trigger pipeline.
-   - **(c) Drop the invisible-trap shape entirely** — re-author
-     Trapped Vault as a single "trapped chest" prop whose
-     `BumpResult::Prop` activation spawns the loot AND the monsters
-     (effect: `Multi([SpawnItem, SpawnMonsters]) + OnceConsumed`).
-     Simpler semantics, slightly different game feel (no "open then
-     get ambushed when you step into the empty tile").
-   Recommend **(c)** — the "open the chest, take the loot, get
-   ambushed in the same beat" model is more readable and removes
-   the two-entity colocation entirely. Lands in a follow-up commit.
+4. **Trapped Vault migration. Resolved via option (a).** The
+   `resolve_bump` loop in [actions.rs](../../src/game/actions.rs)
+   now prefers Collider-bearing entities over non-Collider entities
+   when picking `bump_target` among non-faction candidates. This
+   preserves the original "open chest → next step springs the trap"
+   game feel: bumping the (chest + invisible monster_trap)
+   colocation routes to the chest (which has Collider), the chest
+   opens and despawns, and the player's next step onto the now-empty
+   tile springs the trap. The "monster_trap" prop is a new
+   non-blocking entity in `props.ron` with an OnceConsumed trigger
+   that spawns 2 level-appropriate monsters.

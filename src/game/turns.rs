@@ -246,7 +246,7 @@ impl Plugin for TurnOrderPlugin {
             )
             // --- Engine-side action handlers (core action set only) ---
             // Domain plugins (AbilitiesPlugin, EnchantmentPlugin, ItemsPlugin,
-            // EffectsPlugin, StavesPlugin, MachinesPlugin, RangedPlugin, GoapPlugin)
+            // EffectsPlugin, StavesPlugin, PropEffectsPlugin, RangedPlugin, GoapPlugin)
             // register their own handlers in `ProcessingPhase::ResolveActions`
             // and `CombatReactionSet`.
             .add_systems(

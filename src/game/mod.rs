@@ -59,7 +59,6 @@ pub mod fire;
 pub mod fleeing;
 pub mod gas;
 pub mod items;
-pub mod machines;
 pub mod magic;
 pub mod particles;
 pub mod prop_effects;
@@ -149,7 +148,6 @@ impl Plugin for GamePlugin {
                 FactionsPlugin,
                 EnchantmentPlugin,
                 crate::game::staves::StavesPlugin,
-                crate::game::machines::MachinesPlugin,
                 crate::game::prop_effects::PropEffectsPlugin,
                 water::WaterPlugin,
                 ascii_mode::AsciiModePlugin,

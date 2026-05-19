@@ -251,25 +251,6 @@ pub struct PrefabItemSpawn {
     pub item: Option<String>,
 }
 
-/// A machine-trigger embedded inside a prefab. Spawned by the prefab
-/// placer into `BuilderMap.machine_spawn_list`, the materializer
-/// stamps the prop + attaches `Machine` / `MachineTrigger` /
-/// `MachineEffect` components. This is the prefab system's runtime
-/// interactivity hook (shrines, traps, levers, etc.).
-#[derive(Deserialize, Debug, Clone)]
-pub struct PrefabTrigger {
-    pub x: i32,
-    pub y: i32,
-    /// Prop manifest key for the visible entity (e.g. `"altar"`).
-    /// Use `""` for invisible triggers (step-activated traps).
-    #[serde(default)]
-    pub prop_name: String,
-    pub trigger: crate::game::machines::MachineTrigger,
-    pub effect: crate::game::machines::MachineEffect,
-    #[serde(default)]
-    pub consume_on_use: bool,
-}
-
 /// Area decoration embedded inside a prefab. The placer stamps
 /// `decoration` onto every walkable tile within `radius` Chebyshev
 /// distance of `(x, y)` that doesn't already carry a decoration.
@@ -299,11 +280,6 @@ pub struct PrefabTemplate {
     pub monster_spawns: Vec<PrefabMonsterSpawn>,
     #[serde(default)]
     pub item_spawns: Vec<PrefabItemSpawn>,
-    /// Machine triggers embedded in this prefab — shrines, traps,
-    /// levers. The placer pushes each onto `machine_spawn_list`,
-    /// where the materializer attaches `Machine` components.
-    #[serde(default)]
-    pub triggers: Vec<PrefabTrigger>,
     /// Area decorations (e.g. moss radius around a shrine altar).
     #[serde(default)]
     pub decorations: Vec<PrefabDecoration>,
@@ -1633,31 +1609,31 @@ mod prop_asset_tests {
             "prefabs.ron should declare at least one prefab"
         );
 
-        // Spot-check: the altar-bearing Shrine now places the altar
-        // via props (RFC 0002 step 2c), not via `triggers:`. There are
-        // two distinct prefabs named "Shrine" in the catalog (a
-        // V-barricade shrine and the heal-altar shrine); we look up
-        // the altar variant by its prop list.
-        let altar_shrine = manifest
+        // Spot-check: the altar-bearing Shrine places the altar via
+        // props (RFC 0002 step 2c). There are two distinct prefabs
+        // named "Shrine" in the catalog (a V-barricade shrine and the
+        // heal-altar shrine); we look up the altar variant by its
+        // prop list.
+        let _altar_shrine = manifest
             .prefabs
             .iter()
             .find(|p| p.name == "Shrine" && p.props.iter().any(|q| q.prop == "altar"))
             .expect("altar-bearing Shrine should exist");
-        assert!(
-            altar_shrine.triggers.is_empty(),
-            "altar Shrine's triggers: array should be empty after RFC 0002 step 2c"
-        );
 
-        // And the inverse: no prefab still references "altar" via the
-        // legacy triggers: array (catches incomplete migration).
-        for prefab in &manifest.prefabs {
-            for t in &prefab.triggers {
-                assert_ne!(
-                    t.prop_name, "altar",
-                    "prefab {:?} still uses legacy triggers: array for altar — should be migrated to prop trigger",
-                    prefab.name
-                );
-            }
-        }
+        // Spot-check: the Trapped Vault places the monster_trap prop
+        // alongside the chest (RFC 0002 step 5).
+        let vault = manifest
+            .prefabs
+            .iter()
+            .find(|p| p.name == "Trapped Vault")
+            .expect("Trapped Vault prefab should exist");
+        assert!(
+            vault.props.iter().any(|p| p.prop == "chest"),
+            "Trapped Vault should still place a chest"
+        );
+        assert!(
+            vault.props.iter().any(|p| p.prop == "monster_trap"),
+            "Trapped Vault should place the monster_trap prop after RFC 0002 step 5"
+        );
     }
 }

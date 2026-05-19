@@ -117,13 +117,20 @@ Coordinates are relative to prefab `(0, 0)` top-left. Automatically transformed 
 
 Source: `assets/props.ron`
 
-`candle`, `watchfire`, `totem_pole`, `barricade`, `barrel`, `small_chest`, `chest`, `small_red_chest`, `red_chest`, `fountain`, `corrupted_fountain`, `tyrants_offering`
+`candle`, `watchfire`, `totem_pole`, `barricade`, `barrel`, `altar`, `small_chest`, `chest`, `monster_trap`, `small_red_chest`, `red_chest`, `fountain`, `corrupted_fountain`, `tyrants_offering`
 
-**Blocking props** (impassable): `barricade`, `barrel`, `totem_pole`, `small_chest`, `chest`, `small_red_chest`, `red_chest`, `fountain`, `corrupted_fountain`, `tyrants_offering`
+**Blocking props** (impassable): `barricade`, `barrel`, `totem_pole`, `altar`, `small_chest`, `chest`, `small_red_chest`, `red_chest`, `fountain`, `corrupted_fountain`, `tyrants_offering`
 
-**Non-blocking props:** `candle`, `watchfire`
+**Non-blocking props:** `candle`, `watchfire`, `monster_trap`
 
-**Light-emitting props:** `candle`, `watchfire`
+**Light-emitting props:** `candle`, `watchfire`, `altar`
+
+**Props with triggers** (fire effects on step or bump per RFC 0002):
+- `altar` — bump → HealFull + spawn Scroll of Enchanting (PlayerOnly, OnceInert)
+- `monster_trap` — step → SpawnMonsters x2 (Anyone, OnceConsumed)
+
+See [RFC 0002](../../../../docs/rfcs/0002-prop-machine-decoration-unification.md)
+for the PropAsset `trigger` block schema (effect / audience / mode).
 
 ## Valid Structure Names
 
