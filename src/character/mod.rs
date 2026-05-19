@@ -11,7 +11,6 @@
 mod asset;
 mod attributes;
 mod class;
-mod dice;
 mod race;
 
 pub use asset::{
@@ -23,7 +22,6 @@ pub use attributes::{
     AttributeDistribution, Attributes, CharacterChoice, DerivedStats,
 };
 pub use class::{Attribute, Class};
-pub use dice::{roll_d20_with_race};
 pub use race::{Race, RaceGainSchedule, RaceTrait};
 
 use bevy::prelude::*;

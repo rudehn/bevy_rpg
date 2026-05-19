@@ -132,7 +132,7 @@ helpers. See [CHARACTER.md](CHARACTER.md) §Combat Math Integration and
 ```
 AttackIntentMessage { source: Melee | Ranged | Spell | Environment }
   -> hit_check_system
-      roll d20 (via roll_d20_with_race)
+      roll d20
       finesse       = matches!(weapon.weapon_skill, ShortBlades | LongBlades)
       attr_bonus    = attack_attribute_bonus(source, finesse, attacker_attrs)
                       # Ranged: DEX_mod

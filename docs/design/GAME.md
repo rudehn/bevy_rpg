@@ -137,18 +137,12 @@ the Phase-1 D&D 5e anchor of 10). At chargen, most attribute scores
 land below 16 and most mods are negative; players grow into positive
 mods over levels.
 
-**d20 routing:** every player d20 site goes through
-`roll_d20_with_race` ([src/character/dice.rs](../../src/character/dice.rs)).
-Currently a thin `rng.roll_dice(1, 20)` wrapper — no race in the
-Phase 2 roster has a d20-affecting trait — but kept as the canonical
-site so future race / class / skill effects have one place to plug in.
-
 ### Damage Pipeline
 
 ```
 AttackIntent { source: Melee | Ranged | Spell | Environment }
   -> hit_check (d20 + hit_bonus + attr_bonus + weapon_bonus + fighting_bonus
-                  ↑ via roll_d20_with_race                vs 4 + dodge_bonus)
+                                                          vs 4 + dodge_bonus)
                                 ↑ DEX_mod (Ranged or finesse melee — Short/Long Blades),
                                   STR_mod (any other melee), 0 otherwise
                                               ↑ floor(weapon_skill/4) — Long Blades, Axes, Ranged, etc.

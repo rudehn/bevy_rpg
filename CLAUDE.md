@@ -101,7 +101,6 @@ src/
     class.rs             # Class enum component + Attribute enum (STR/DEX/CON/INT)
     attributes.rs        # Attributes component + ability_mod + compose / derive helpers
     asset.rs             # RaceManifest / ClassManifest RON schemas + handle resources
-    dice.rs              # roll_d20_with_race helper (thin wrapper after Halfling Lucky removed in Phase 2)
   assets/
     mod.rs               # Asset loading plugin, RON manifests, sprite handles
   game/
