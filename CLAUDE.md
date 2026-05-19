@@ -48,7 +48,6 @@ Design docs live in `docs/design/`. Read these before making gameplay changes.
 | [PLAYER.md](docs/design/PLAYER.md) | Player stats, starting kit, equipment slots |
 | [CHARACTER.md](docs/design/CHARACTER.md) | Race / class / attribute system, character creation, HP-from-CON, attribute → combat math |
 | [OVERWORLD.md](docs/design/OVERWORLD.md) | **Current map structure** — town hub, forest ring, temple, transitions, save layout |
-| [DUNGEON.md](docs/design/DUNGEON.md) | Legacy 26-floor pipeline (preserved for floor >= 12). Terrain/liquid layers, decorations, lighting |
 | [ENCOUNTERS.md](docs/design/ENCOUNTERS.md) | Prop trigger system (hordes → spawn table → interactive props), blueprints, trapped chests, lock & key. See also [RFC 0002](docs/rfcs/0002-prop-machine-decoration-unification.md) for the props+machines unification. |
 | [ENEMIES.md](docs/design/ENEMIES.md) | Monster roster, factions, species, tier structure, per-monster identities |
 | [ITEMS.md](docs/design/ITEMS.md) | Weapons (active abilities), staves (charges), armor, rings/amulets, potions, enchanting, runics |
@@ -159,31 +158,18 @@ src/
     ascii_renderer.rs    # Themed glyph + colour resolution (reads FloorTheme)
     world.rs             # Overworld topology — FloorKind, GridDir, neighbor, edge/arrival positions, FloorTheme, MapExitTile, OverworldState
     builders/
-      mod.rs             # BuilderChain, BuilderMap, floor_builder dispatch (town | forest | temple | dungeon)
+      mod.rs             # BuilderChain, BuilderMap, floor_builder dispatch (town | forest | temple)
       town.rs            # TownLayoutBuilder (water + piers + scattered themed buildings + roles + interior props + Pub-door spawn + quest-board) + TownPortalBuilder + TownDownStairsBuilder (east border) + TownPathBuilder (A* organic road network)
       forest.rs          # ForestTerrainBuilder (depth-tuned CA, depths 1-4 + west/east end-clearings + spine corridor) + ForestStairsBuilder (west `<`, east `>` for Forest 1-3; off-spine random `>` on Forest 4 — the hidden temple entrance)
       temple.rs          # TempleLayoutBuilder (sealed stone interior — east-west corridor + 7×7 sanctum chamber) + TempleStairsBuilder (UpStairs at entry, Amulet at sanctum centre)
       town_npcs.rs       # TownNpcBuilder + TownNpcManifest + Placement enum — reads assets/town_npcs.ron, queues SpawnEntry with PatrolRoute per NPC count
-      brogelike.rs       # BrogueLikeBuilder — primary map generator (room types + corridors)
-      algorithms.rs      # BlobGenConfig, Grid, cellular automata helpers
-      choke_map.rs       # Topology analysis via petgraph (chokepoints for prefab placement)
-      lake_builder.rs    # Organic lake generation using blob algorithm
-      prefab_placer.rs   # Hand-designed room layout stamping
+      algorithms.rs      # Re-export of `roguelike_engine::map::builders::algorithms` (BlobGenConfig, Grid, CA helpers)
       decoration_propagator.rs # Game adapter — DecorationPropagator lives in engine
-      diagonal_culler.rs # Removes diagonally-unreachable wall tiles
-      unseen_culler.rs   # Culls tiles unreachable from player start
-      isolated_area_culler.rs # Removes disconnected map regions
-      pillar_culler.rs   # Removes isolated wall pillars
-      cave_eroder.rs     # Cave wall erosion for organic shapes
-      finish_doors.rs    # Final door placement/cleanup pass
-      item_spawner.rs    # Places chests with loot (currently unused by overworld pipelines)
       voronoi_spawner.rs # Voronoi-cell pack spawner; works on any walkable map (forest, future dungeon). See docs/design/SPAWNING.md
+      prefab_placer.rs   # Hand-designed room layout stamping (currently unused; preserved for future authored rooms)
+      item_spawner.rs    # Places chests with loot (currently unused by overworld pipelines)
       candle_spawner.rs  # Places light source entities (currently unused by overworld pipelines)
-      start_point.rs     # Places player starting position
-      exit_points.rs     # Places distant exit stairs
-      corridors.rs       # Corridor carving
-      room_drawer.rs     # Room rendering onto BuilderMap
-      bsp_dungeon.rs     # Alternate BSP-based builder (unused)
+      exit_points.rs     # Engine `DistantExit` wrapper + final-floor amulet placement (currently unused by overworld pipelines)
   save/
     mod.rs               # Save/load system (RON format, permadeath deletion)
   menu/                  # Main menu plugin
@@ -366,7 +352,7 @@ src/
 
 ## Conventions
 - Snake_case for files, modules, functions, variables; PascalCase for types
-- Prefer `bracket-lib` RNG (`RandomNumberGenerator`) in builder code; `rand` crate directly in `brogelike.rs`
+- Prefer `bracket-lib` RNG (`RandomNumberGenerator`) in builder code
 - Map index arithmetic: `idx = y * width + x`; use `map.xy_idx(x, y)` / `map.idx_xy(idx)`
 - `GameEntityMarker` — tag all in-game entities that should be despawned on game over
 - `FloorEntityMarker` — tag entities that belong to the current floor only

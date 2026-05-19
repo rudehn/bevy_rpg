@@ -14,46 +14,23 @@ use crate::{
     map::{
         Map,
         builders::{
-            candle_spawner::CandleSpawner,
             decoration_propagator::DecorationPropagator,
-            diagonal_culler::DiagonalCuller,
-            exit_points::DistantExit,
-            finish_doors::FinishDoors,
-            isolated_area_culler::IsolatedAreaCuller,
-            item_spawner::ItemSpawner,
-            lake_builder::LakeBuilder,
-            pillar_culler::PillarCuller,
             voronoi_spawner::VoronoiSpawner,
-            prefab_placer::PrefabPlacer,
-            start_point::{StartPointBuilder, XStart, YStart},
         },
     },
 };
 
 pub mod algorithms;
-mod brogelike;
-mod bsp_dungeon;
-mod candle_spawner;
-mod cave_eroder;
-pub(crate) mod choke_map;
-mod corridors;
+pub mod candle_spawner;
 pub mod decoration_propagator;
-mod diagonal_culler;
-mod exit_points;
-mod finish_doors;
-mod isolated_area_culler;
-pub mod item_spawner;
-mod lake_builder;
+pub mod exit_points;
 pub mod forest;
+pub mod item_spawner;
+pub mod prefab_placer;
 pub mod temple;
 pub mod town;
 pub mod town_npcs;
 pub mod voronoi_spawner;
-mod pillar_culler;
-pub mod prefab_placer;
-mod room_drawer;
-mod start_point;
-mod unseen_culler;
 
 /// A single monster spawn entry, optionally linked to a squad.
 pub struct SpawnEntry {
@@ -444,58 +421,12 @@ pub trait MetaMapBuilder: Send + 'static {
     }
 }
 
-#[allow(dead_code)]
-fn random_start_position() -> (XStart, YStart) {
-    let mut rng = RandomNumberGenerator::new();
-    let xroll = rng.roll_dice(1, 3);
-    let x = match xroll {
-        1 => XStart::LEFT,
-        2 => XStart::CENTER,
-        _ => XStart::RIGHT,
-    };
-
-    let yroll = rng.roll_dice(1, 3);
-    let y = match yroll {
-        1 => YStart::BOTTOM,
-        2 => YStart::CENTER,
-        _ => YStart::TOP,
-    };
-
-    (x, y)
-}
-
-/// Constructs the builder pipeline for a single dungeon floor.
-///
-/// # Pipeline Dependency Graph
-///
-/// ```text
-/// Phase: Geometry
-///   BrogueLikeBuilder        → sets: rooms, map terrain
-///
-/// Phase: TerrainCleanup
-///   StartPointBuilder        → reads: rooms         → sets: starting_position
-///   LakeBuilder              → reads: starting_position, map terrain
-///   DiagonalCuller2          → reads: map terrain
-///   PillarCuller             → reads: map terrain
-///   FinishDoors              → reads: map terrain
-///
-/// Phase: StructurePlacement
-///   PrefabPlacer             → reads: rooms          → sets: spawn_list, exclusion_zones
-///
-/// Phase: ConnectivityCull
-///   IsolatedAreaCuller       → reads: starting_position → modifies: map terrain
-///
-/// Phase: Spawning (must run AFTER ConnectivityCull)
-///   CandleSpawner            → reads: rooms          → sets: prop_spawn_list
-///   VoronoiSpawner           → reads: walkable map, starting_position → sets: spawn_list
-///                              (replaces the old room-based MonsterSpawner;
-///                              see docs/design/SPAWNING.md)
-///   ItemSpawner              → reads: rooms          → sets: prop_spawn_list
-///
-/// Phase: Finalization
-///   DistantExit              → reads: starting_position → modifies: map terrain
-///   DecorationPropagator     → reads: exclusion_zones → modifies: map decoration
-/// ```
+/// Dispatch a builder chain for a single floor based on its
+/// `FloorKind` (town → forest → temple). Each chain is small and
+/// hand-built in the per-level functions below; the legacy generic
+/// pipeline (BrogueLike → cullers → PrefabPlacer → spawners → exits)
+/// is gone with the dungeon milestone — see the per-level builders for
+/// the actual phase order they assemble.
 pub fn floor_builder(
     new_depth: i32,
     width: i32,
