@@ -14,11 +14,11 @@ pub use roguelike_engine::constants::{
 
 // --- Game-specific balance constants ---
 
-/// The deepest floor in the dungeon. Player can descend 0 → 1 → 2:
-/// floor 0 is the town hub (return Portal lives here), floors 1..=2
-/// are forest. The Amulet of Yendor sits on floor 2; return to the
-/// town Portal to win.
-pub const MAX_FLOOR: i32 = 2;
+/// The deepest floor in the dungeon. Player can descend 0 → 1 → … → 5:
+/// floor 0 is the town hub (return Portal lives here), floors 1..=4
+/// are forest, floor 5 is the cult temple. The Amulet of Yendor sits
+/// inside the temple; return to the town Portal to win.
+pub const MAX_FLOOR: i32 = 5;
 
 /// Damage dice used when no weapon is equipped (bare fists).
 pub const UNARMED_DAMAGE: &str = "1d4";

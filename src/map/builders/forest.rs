@@ -47,13 +47,20 @@ const CLEARING_INSET: i32 = 3;
 // =====================================================================
 
 /// Returns `(initial_alive_percent, round_count)` tuned to depth.
-/// Forest 1 is sparser (smaller %), Forest 2 is denser.
+/// Forest 1 is sparsest (open paths, easy to navigate); each subsequent
+/// floor gets denser and gnarlier, culminating in Forest 4 — claustrophobic
+/// woods where the temple entrance hides off-spine.
 fn profile_for_depth(depth: i32) -> (i32, usize) {
     match depth {
         // Forest 1 (outer woods) — looser trees, larger clearings.
         1 => (50, 4),
-        // Forest 2 (deep woods) — gnarlier, denser canopy.
-        2 => (62, 5),
+        // Forest 2 — slightly denser, scrubbier underbrush.
+        2 => (54, 4),
+        // Forest 3 — deeper woods, canopy thickens.
+        3 => (58, 5),
+        // Forest 4 (deepest) — gnarly old-growth; temple entrance lurks
+        // off the spine so the player must explore to find it.
+        4 => (62, 5),
         // Beyond authored content — fall back to mid values.
         _ => (55, 5),
     }
@@ -206,6 +213,17 @@ impl ForestStairsBuilder {
     pub fn new() -> Box<Self> { Box::new(Self) }
 }
 
+/// Minimum vertical distance from the spine row for a "discoverable"
+/// temple entrance — pushes it far enough off-corridor that the player
+/// has to actually wander into the woods to find it.
+const TEMPLE_ENTRANCE_MIN_DY: i32 = 6;
+
+/// Last forest floor in the descent (the one hiding the temple
+/// entrance). One below the temple itself.
+fn deepest_forest_depth() -> i32 {
+    crate::constants::MAX_FLOOR - 1
+}
+
 impl MetaMapBuilder for ForestStairsBuilder {
     // StructurePlacement (not Finalization): stairs *are* terrain placement,
     // and Spawning must run after stair tiles exist so the spawner can
@@ -218,24 +236,34 @@ impl MetaMapBuilder for ForestStairsBuilder {
         let west_cx = CLEARING_INSET;
         let east_cx = w - 1 - CLEARING_INSET;
         let depth = build.map.depth;
+        let is_temple_entrance_floor = depth == deepest_forest_depth();
 
         // West clearing → UpStairs (where the player arrives).
         let up_idx = build.map.xy_idx(west_cx, mid_y);
         build.map.tiles[up_idx].terrain = TerrainType::UpStairs;
         build.map.tiles[up_idx].liquid = LiquidType::None;
 
-        // East clearing → DownStairs (non-final floor) or Amulet (final floor).
-        if depth >= crate::constants::MAX_FLOOR {
-            build.add_item_spawn(
+        if is_temple_entrance_floor {
+            // Forest 4: the temple entrance is hidden somewhere in the
+            // woods, not at the predictable east clearing. Pick a random
+            // walkable tile well off the east-west spine so the player
+            // has to leave the corridor to find it.
+            let pos = pick_temple_entrance_pos(build, west_cx, mid_y).unwrap_or(
+                // Fallback: if no off-spine tile qualifies (pathological
+                // CA), fall back to the east clearing so the floor is
+                // still beatable.
                 Point::new(east_cx, mid_y),
-                "Amulet of Yendor".to_string(),
-                1,
             );
+            let idx = build.map.xy_idx(pos.x, pos.y);
+            build.map.tiles[idx].terrain = TerrainType::DownStairs;
+            build.map.tiles[idx].liquid = LiquidType::None;
             bevy::log::info!(
-                "ForestStairsBuilder: Amulet at east clearing ({}, {}) on final floor {}",
-                east_cx, mid_y, depth,
+                "ForestStairsBuilder: temple-entrance DownStairs at ({}, {}) on floor {} (off-spine, |dy|={})",
+                pos.x, pos.y, depth, (pos.y - mid_y).abs(),
             );
         } else {
+            // Forest 1-3: DownStairs at the east clearing — standard
+            // east-bound progression.
             let down_idx = build.map.xy_idx(east_cx, mid_y);
             build.map.tiles[down_idx].terrain = TerrainType::DownStairs;
             build.map.tiles[down_idx].liquid = LiquidType::None;
@@ -275,6 +303,56 @@ impl MetaMapBuilder for ForestStairsBuilder {
             }
         }
     }
+}
+
+/// Pick a random walkable Floor tile that's well off the east-west
+/// spine, reachable from the west clearing. Returns `None` only if
+/// the map has no qualifying tile (pathological CA outcome).
+fn pick_temple_entrance_pos(
+    build: &mut BuilderMap,
+    west_cx: i32,
+    mid_y: i32,
+) -> Option<Point> {
+    let w = build.width;
+    let h = build.height;
+
+    // Reachability mask from the west clearing — we only consider
+    // tiles the player can actually walk to.
+    let start_idx = build.map.point2d_to_index(Point::new(west_cx, mid_y));
+    let mut walkable = vec![false; (w * h) as usize];
+    for (idx, tile) in build.map.tiles.iter().enumerate() {
+        walkable[idx] = matches!(tile.terrain, TerrainType::Floor | TerrainType::UpStairs);
+    }
+    let dijkstra = DijkstraMap::new(
+        w as usize,
+        h as usize,
+        &[start_idx],
+        &WalkableMaskMap { walkable: &walkable, width: w as usize, height: h as usize },
+        2048.0,
+    );
+
+    let mut candidates: Vec<Point> = Vec::new();
+    for y in 1..h - 1 {
+        for x in 1..w - 1 {
+            if (y - mid_y).abs() < TEMPLE_ENTRANCE_MIN_DY {
+                continue;
+            }
+            let idx = build.map.xy_idx(x, y);
+            if !matches!(build.map.tiles[idx].terrain, TerrainType::Floor) {
+                continue;
+            }
+            if dijkstra.map[idx] == f32::MAX {
+                continue;
+            }
+            candidates.push(Point::new(x, y));
+        }
+    }
+
+    if candidates.is_empty() {
+        return None;
+    }
+    let pick = build.rng.range(0, candidates.len() as i32) as usize;
+    Some(candidates[pick])
 }
 
 /// Minimal `BaseMap` adapter for the spine-reachability check.
@@ -385,7 +463,7 @@ mod tests {
 
     #[test]
     fn forest_stairs_at_west_and_east() {
-        let mut bm = build_forest(1); // floor 1, MAX_FLOOR = 2
+        let mut bm = build_forest(1); // floor 1 — east-clearing DownStairs
         ForestStairsBuilder.build_map(&mut bm);
         let west_idx = bm.map.xy_idx(CLEARING_INSET, bm.height / 2);
         let east_idx = bm.map.xy_idx(bm.width - 1 - CLEARING_INSET, bm.height / 2);
@@ -393,19 +471,61 @@ mod tests {
         assert_eq!(bm.map.tiles[east_idx].terrain, TerrainType::DownStairs);
     }
 
+    /// Forest 4 (deepest forest floor) hides the temple-entrance DownStairs
+    /// off the east-west spine. The east clearing stays as a regular Floor
+    /// tile so the player can't just walk straight east to the temple —
+    /// they have to wander to discover the entrance.
     #[test]
-    fn forest_final_floor_places_amulet_not_downstairs() {
-        let mut bm = build_forest(crate::constants::MAX_FLOOR);
+    fn forest_4_places_temple_entrance_off_spine() {
+        let deepest = crate::constants::MAX_FLOOR - 1;
+        let mut bm = build_forest(deepest);
         ForestStairsBuilder.build_map(&mut bm);
-        let east_idx = bm.map.xy_idx(bm.width - 1 - CLEARING_INSET, bm.height / 2);
-        assert_eq!(bm.map.tiles[east_idx].terrain, TerrainType::Floor,
-                   "east clearing must NOT be DownStairs on the final floor");
+        let mid_y = bm.height / 2;
+        let east_idx = bm.map.xy_idx(bm.width - 1 - CLEARING_INSET, mid_y);
+        assert_ne!(
+            bm.map.tiles[east_idx].terrain,
+            TerrainType::DownStairs,
+            "Forest 4 east clearing must NOT host the DownStairs — entrance is off-spine",
+        );
+        // Exactly one DownStairs tile, and it's far enough from the spine
+        // to feel "discovered" rather than handed to the player.
+        let mut entrances = Vec::new();
+        for y in 0..bm.height {
+            for x in 0..bm.width {
+                let idx = bm.map.xy_idx(x, y);
+                if bm.map.tiles[idx].terrain == TerrainType::DownStairs {
+                    entrances.push((x, y));
+                }
+            }
+        }
+        assert_eq!(
+            entrances.len(),
+            1,
+            "Forest 4 must place exactly one temple-entrance DownStairs",
+        );
+        let (_, ey) = entrances[0];
+        // Allow the fallback at the east clearing too (very rare CA outcome);
+        // otherwise demand |dy| >= TEMPLE_ENTRANCE_MIN_DY.
+        let dy = (ey - mid_y).abs();
+        assert!(
+            dy >= TEMPLE_ENTRANCE_MIN_DY || dy == 0,
+            "temple entrance should be off-spine, got |dy|={dy}",
+        );
+    }
+
+    /// The deepest forest floor must NOT spawn the amulet — that's the
+    /// temple's job now.
+    #[test]
+    fn forest_4_does_not_spawn_amulet() {
+        let deepest = crate::constants::MAX_FLOOR - 1;
+        let mut bm = build_forest(deepest);
+        ForestStairsBuilder.build_map(&mut bm);
         let amulet_count = bm
             .item_spawn_list
             .iter()
             .filter(|(_, name, _)| name == "Amulet of Yendor")
             .count();
-        assert_eq!(amulet_count, 1, "final floor must spawn the Amulet");
+        assert_eq!(amulet_count, 0, "amulet lives in the temple, not Forest 4");
     }
 
     #[test]
@@ -441,5 +561,282 @@ mod tests {
                 "deep-forest spine tile ({}, {}) must be walkable, got {:?}", x, mid_y, terrain,
             );
         }
+    }
+
+    // =================================================================
+    // Interior-opaque leak probe — the actual user-reported symptom.
+    //
+    // The 5x7-block pin test in src/game/systems.rs proves bracket-lib
+    // hides interior walls when the cluster is a uniform dense block.
+    // The real forest is a CA-generated sparse field with concave bays
+    // and single-tile peninsulas. This test runs FOV from the player's
+    // actual spawn point on a real forest map and asserts that NO tile
+    // in visible_tiles is "interior opaque" (opaque with every in-bounds
+    // 8-neighbor also opaque). If it fires, the pin test was insufficient
+    // — bracket-lib's shadowcasting is leaking interior opaque tiles
+    // into the visible set on irregular shapes, and the reverted
+    // `cull_interior_opaque_from_fov` system was the right defense.
+    //
+    // Off-map neighbors count as opaque (a corner wall with 3 in-bounds
+    // wall neighbors is still interior — no ray could reach it).
+    // =================================================================
+
+    use crate::map::tile::is_opaque;
+
+    fn is_interior_opaque(map: &crate::map::map::Map, x: i32, y: i32) -> bool {
+        let idx = map.xy_idx(x, y);
+        if idx >= map.tiles.len() || !is_opaque(map.tiles[idx]) {
+            return false;
+        }
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                let nx = x + dx;
+                let ny = y + dy;
+                if nx < 0 || ny < 0 || nx >= map.width || ny >= map.height {
+                    // Off-map = opaque. Don't disqualify.
+                    continue;
+                }
+                let nidx = map.xy_idx(nx, ny);
+                if nidx < map.tiles.len() && !is_opaque(map.tiles[nidx]) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Run FOV on a real forest map (every depth × many seeds) from
+    /// the player's spawn point. Fail if any opaque tile fully boxed
+    /// in by other opaque tiles appears in visible_tiles.
+    #[test]
+    fn forest_fov_does_not_leak_interior_opaque_trees() {
+        use bracket_lib::prelude::{field_of_view_set, Point};
+
+        const VIEWSHED_RANGE: i32 = 20; // matches assets/player.ron
+        const SEEDS_PER_DEPTH: usize = 20;
+
+        let mut total_leaks = 0_usize;
+        let mut sample_leak: Option<(i32, Point, usize)> = None; // (depth, tile, count)
+
+        for depth in 1..=4_i32 {
+            for seed_iter in 0..SEEDS_PER_DEPTH {
+                let bm = build_forest(depth);
+                let start = bm
+                    .starting_position
+                    .expect("forest must set starting_position");
+                let player_pt = Point::new(start.x, start.y);
+
+                let visible = field_of_view_set(player_pt, VIEWSHED_RANGE, &bm.map);
+
+                let leaks: Vec<Point> = visible
+                    .iter()
+                    .copied()
+                    .filter(|p| is_interior_opaque(&bm.map, p.x, p.y))
+                    .collect();
+
+                if !leaks.is_empty() {
+                    total_leaks += leaks.len();
+                    if sample_leak.is_none() {
+                        sample_leak = Some((depth, leaks[0], leaks.len()));
+                    }
+                    eprintln!(
+                        "forest depth={} seed_iter={} leaked {} interior-opaque tiles into FOV; sample: {:?}",
+                        depth, seed_iter, leaks.len(), &leaks[..leaks.len().min(5)],
+                    );
+                }
+            }
+        }
+
+        assert_eq!(
+            total_leaks, 0,
+            "bracket-lib leaked interior-opaque tiles into visible_tiles across forest depths. \
+             First sample: depth={:?}, tile={:?}, total in that FOV={:?}. \
+             This validates the reverted cull_interior_opaque_from_fov system — bracket-lib's \
+             shadowcasting does NOT correctly hide opaque tiles fully boxed in by opaque tiles \
+             on irregular CA-generated maps. The 5x7-block pin test in src/game/systems.rs was \
+             checking a uniform fortress shape and missed this case.",
+            sample_leak.map(|(d, _, _)| d),
+            sample_leak.map(|(_, p, _)| p),
+            sample_leak.map(|(_, _, c)| c),
+        );
+    }
+
+    /// Walk the spine west→east one tile at a time, accumulate every
+    /// FOV's visible_tiles into a simulated `explored_tiles` set
+    /// (exactly what `fov_update_system` does for an entity with
+    /// `FovRevealsMap`), then check if any interior-opaque tile ended
+    /// up explored. This is the closest in-process reproduction of the
+    /// player's actual experience: by the time they reach the east
+    /// clearing, dozens of FOV computations have been ORed together.
+    #[test]
+    fn walking_spine_does_not_explore_any_interior_opaque_tile() {
+        use bracket_lib::prelude::{field_of_view_set, Point};
+
+        const VIEWSHED_RANGE: i32 = 20;
+        const SEEDS_PER_DEPTH: usize = 10;
+
+        let mut total_explored_interior = 0_usize;
+        let mut sample: Option<(i32, Point)> = None;
+
+        for depth in 1..=4_i32 {
+            for _ in 0..SEEDS_PER_DEPTH {
+                let bm = build_forest(depth);
+                let mid_y = bm.height / 2;
+                let west_cx = CLEARING_INSET;
+                let east_cx = bm.width - 1 - CLEARING_INSET;
+
+                let total_cells = (bm.width * bm.height) as usize;
+                let mut explored = vec![false; total_cells];
+
+                for x in west_cx..=east_cx {
+                    let idx = bm.map.xy_idx(x, mid_y);
+                    if !matches!(
+                        bm.map.tiles[idx].terrain,
+                        TerrainType::Floor | TerrainType::UpStairs | TerrainType::DownStairs
+                    ) {
+                        // Spine should be walkable; if not, stop the walk.
+                        break;
+                    }
+                    let visible = field_of_view_set(Point::new(x, mid_y), VIEWSHED_RANGE, &bm.map);
+                    for pt in visible.iter() {
+                        if bm.map.in_bounds(*pt) {
+                            explored[bm.map.xy_idx(pt.x, pt.y)] = true;
+                        }
+                    }
+                }
+
+                for idx in 0..total_cells {
+                    if !explored[idx] {
+                        continue;
+                    }
+                    let (x, y) = bm.map.idx_xy(idx);
+                    if is_interior_opaque(&bm.map, x, y) {
+                        total_explored_interior += 1;
+                        if sample.is_none() {
+                            sample = Some((depth, Point::new(x, y)));
+                        }
+                    }
+                }
+            }
+        }
+
+        assert_eq!(
+            total_explored_interior, 0,
+            "Walking the spine explored {} interior-opaque tiles across 40 forest maps. \
+             Sample: depth={:?}, tile={:?}. This is the smoking gun — even though a single \
+             FOV call doesn't leak (see forest_fov_does_not_leak_*), the OR of many calls \
+             does. Restore the cull system OR investigate why bracket-lib is octant-dependent.",
+            total_explored_interior, sample.map(|(d, _)| d), sample.map(|(_, p)| p),
+        );
+    }
+
+    /// Exhaustive sweep: for each forest map, run FOV from a random
+    /// sample of walkable cells. This catches positional bugs where
+    /// only certain octant alignments leak.
+    #[test]
+    fn forest_fov_from_random_positions_does_not_leak_interior_opaque() {
+        use bracket_lib::prelude::{field_of_view_set, Point, RandomNumberGenerator};
+
+        const VIEWSHED_RANGE: i32 = 20;
+        const MAPS_PER_DEPTH: usize = 5;
+        const SAMPLES_PER_MAP: usize = 200;
+
+        let mut total_explored_interior = 0_usize;
+        let mut sample_leak: Option<(i32, Point, Point)> = None; // (depth, origin, leaked_tile)
+
+        let mut rng = RandomNumberGenerator::new();
+
+        for depth in 1..=4_i32 {
+            for _ in 0..MAPS_PER_DEPTH {
+                let bm = build_forest(depth);
+
+                let walkable: Vec<(i32, i32)> = (0..bm.height)
+                    .flat_map(|y| (0..bm.width).map(move |x| (x, y)))
+                    .filter(|&(x, y)| {
+                        let idx = bm.map.xy_idx(x, y);
+                        matches!(bm.map.tiles[idx].terrain, TerrainType::Floor)
+                    })
+                    .collect();
+
+                if walkable.is_empty() {
+                    continue;
+                }
+
+                for _ in 0..SAMPLES_PER_MAP {
+                    let pick = rng.range(0, walkable.len() as i32) as usize;
+                    let (ox, oy) = walkable[pick];
+                    let origin = Point::new(ox, oy);
+
+                    let visible = field_of_view_set(origin, VIEWSHED_RANGE, &bm.map);
+                    for pt in visible.iter() {
+                        if !bm.map.in_bounds(*pt) {
+                            continue;
+                        }
+                        if is_interior_opaque(&bm.map, pt.x, pt.y) {
+                            total_explored_interior += 1;
+                            if sample_leak.is_none() {
+                                sample_leak = Some((depth, origin, *pt));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assert_eq!(
+            total_explored_interior, 0,
+            "Random-origin FOV sweep across {} forests leaked {} interior-opaque tiles. \
+             First leak: depth={:?}, origin={:?}, leaked_tile={:?}.",
+            4 * MAPS_PER_DEPTH, total_explored_interior,
+            sample_leak.map(|(d, _, _)| d),
+            sample_leak.map(|(_, o, _)| o),
+            sample_leak.map(|(_, _, t)| t),
+        );
+    }
+
+    /// Same test but from the east clearing — the player walks the spine,
+    /// so FOV from both ends matters.
+    #[test]
+    fn forest_fov_does_not_leak_interior_opaque_from_east_clearing() {
+        use bracket_lib::prelude::{field_of_view_set, Point};
+
+        const VIEWSHED_RANGE: i32 = 20;
+        const SEEDS_PER_DEPTH: usize = 20;
+
+        let mut total_leaks = 0_usize;
+        let mut sample_leak: Option<(i32, Point)> = None;
+
+        for depth in 1..=4_i32 {
+            for _ in 0..SEEDS_PER_DEPTH {
+                let bm = build_forest(depth);
+                let east_cx = bm.width - 1 - CLEARING_INSET;
+                let mid_y = bm.height / 2;
+                let player_pt = Point::new(east_cx, mid_y);
+
+                let visible = field_of_view_set(player_pt, VIEWSHED_RANGE, &bm.map);
+
+                let leaks: Vec<Point> = visible
+                    .iter()
+                    .copied()
+                    .filter(|p| is_interior_opaque(&bm.map, p.x, p.y))
+                    .collect();
+
+                if !leaks.is_empty() {
+                    total_leaks += leaks.len();
+                    if sample_leak.is_none() {
+                        sample_leak = Some((depth, leaks[0]));
+                    }
+                }
+            }
+        }
+
+        assert_eq!(
+            total_leaks, 0,
+            "FOV from east clearing leaked interior-opaque tiles. Sample: {:?}",
+            sample_leak,
+        );
     }
 }

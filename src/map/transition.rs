@@ -20,8 +20,9 @@ pub fn welcome_line_for_floor(floor: u32) -> String {
         FloorKind::Forest { depth } => {
             format!("You step deeper into the forest. (floor {depth})")
         }
-        // Temple builder isn't wired up on main yet either — placeholder.
-        FloorKind::Temple => "You enter the cult temple.".to_string(),
+        FloorKind::Temple => {
+            "Cold stone closes around you. The cult's shrine.".to_string()
+        }
     }
 }
 
@@ -131,6 +132,15 @@ mod tests {
         assert_eq!(theme_for_floor(0), FloorTheme::Town);
         assert_eq!(theme_for_floor(1), FloorTheme::Forest);
         assert_eq!(theme_for_floor(2), FloorTheme::Forest);
+        assert_eq!(theme_for_floor(3), FloorTheme::Forest);
+        assert_eq!(theme_for_floor(4), FloorTheme::Forest);
+        assert_eq!(theme_for_floor(crate::map::world::MAX_FLOOR), FloorTheme::Temple);
+    }
+
+    #[test]
+    fn welcome_line_temple_is_distinct() {
+        let line = welcome_line_for_floor(crate::map::world::MAX_FLOOR);
+        assert!(line.contains("shrine") || line.contains("temple") || line.contains("cult"));
     }
 
     // ----- pick_source_kind ----------------------------------------------

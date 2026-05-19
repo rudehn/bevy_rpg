@@ -45,6 +45,7 @@ mod isolated_area_culler;
 pub mod item_spawner;
 mod lake_builder;
 pub mod forest;
+pub mod temple;
 pub mod town;
 pub mod town_npcs;
 pub mod voronoi_spawner;
@@ -537,11 +538,7 @@ pub fn floor_builder(
         FloorKind::Forest { .. } => {
             forest_builder(new_depth, width, height, squad_counter, spawn_table, decoration_rules)
         }
-        // Temple builder isn't implemented on main yet — placeholder
-        // until the cult-temple content pass ships.
-        FloorKind::Temple => {
-            todo!("temple_builder — see CLAUDE.md for the linear stone-corridor design")
-        }
+        FloorKind::Temple => temple_builder(new_depth, width, height, squad_counter),
     }
 }
 
@@ -603,16 +600,37 @@ pub fn forest_builder(
     // starting clearing. Currently active for forest only; town has
     // no spawn entries so plugging it in would be a no-op.
     builder.with_named("VoronoiSpawner", VoronoiSpawner::new(spawn_table));
-    // Decoration density scales with depth: Forest 2 (deep woods) gets
-    // more rubble + dead grass than Forest 1 (outer woods).
+    // Decoration density scales with depth: deeper forests get more
+    // rubble, dead grass, and foliage. Curve is gentle from Forest 1
+    // (open, navigable) to Forest 4 (claustrophobic, overgrown — the
+    // floor where the temple entrance hides).
     let density = match new_depth {
         1 => 0.20,
-        _ => 0.35,
+        2 => 0.27,
+        3 => 0.33,
+        _ => 0.40,
     };
     builder.with_named(
         "DecorationPropagator",
         Box::new(DecorationPropagator::new(decoration_rules, new_depth, density)),
     );
+    builder
+}
+
+/// Build the cult temple (floor `MAX_FLOOR`). Linear stone corridor
+/// from the entry UpStairs (where the player arrives from Forest 4)
+/// east to a sanctum chamber holding the Amulet of Yendor. Sealed
+/// interior — everything outside the carved corridor + sanctum is
+/// solid wall. No spawn table yet; cultists arrive in a future pass.
+pub fn temple_builder(
+    new_depth: i32,
+    width: i32,
+    height: i32,
+    squad_counter: SquadIdCounter,
+) -> BuilderChain {
+    let mut builder = BuilderChain::new(new_depth, width, height, "Temple", squad_counter);
+    builder.start_with(temple::TempleLayoutBuilder::new());
+    builder.with_named("TempleStairsBuilder", temple::TempleStairsBuilder::new());
     builder
 }
 
