@@ -22,10 +22,26 @@
 //! the migration plan.
 
 use bevy::prelude::*;
+use bracket_lib::prelude::Point;
+use bracket_lib::random::RandomNumberGenerator;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
-use roguelike_engine::combat::DamageType;
+use roguelike_engine::combat::events::DamageEvent;
+use roguelike_engine::combat::{DamageSource, DamageType};
+use roguelike_engine::dice::roll_dice_string;
 use roguelike_engine::status::StatusEffectKind;
+
+use crate::components::{Collider, Name, Position, Prop};
+use crate::constants::BASE_ACTION_COST;
+use crate::game::actions::{finish_turn, ActionFinishedEvent, ActionKind};
+use crate::game::combat::Health;
+use crate::game::magic::{GameStatusEffectsExt, StatusEffects};
+use crate::game::turns::{ProcessingPhase, TurnManager, TurnState};
+use crate::game::AppState;
+use crate::map::map::Map;
+use crate::player::Player;
+use crate::ui::game_log::GameLogMessage;
 
 // =====================================================================
 // TileEffect — what happens when an effect fires
@@ -195,23 +211,458 @@ pub struct Effected(pub PropTrigger);
 pub struct EverFired(pub bool);
 
 // =====================================================================
+// Messages
+// =====================================================================
+
+/// Sent when an actor bumps into a blocking prop that carries an
+/// `Effected` trigger. The bump-handler in `handle_movement`
+/// (actions.rs) emits this in place of the legacy `MachineBumpMessage`
+/// for prop-driven activations.
+#[derive(Message, Debug)]
+pub struct PropBumpMessage {
+    pub activator: Entity,
+    pub prop_entity: Entity,
+}
+
+// =====================================================================
+// Deferred-spawn resources
+// =====================================================================
+//
+// `SpawnItem` and `SpawnMonsters` effects need heavy resources
+// (manifests, sprite assets, turn manager) that can't be borrowed
+// inside the bump/step systems alongside `Health`, `StatusEffects`,
+// etc. The Machine system solved this with deferred singleton
+// resources processed on the next frame. We mirror that pattern.
+
+#[derive(Resource)]
+pub struct PendingPropSpawnItem {
+    pub item_name: String,
+    pub pos: Position,
+}
+
+#[derive(Resource)]
+pub struct PendingPropSpawnMonsters {
+    pub monster_name: String,
+    pub count: u32,
+    pub pos: Position,
+}
+
+// =====================================================================
+// Activation classification (pure)
+// =====================================================================
+
+/// Outcome of evaluating a prop trigger against an activator.
+/// Pure value — bump/step systems map it to side effects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivationOutcome {
+    /// Audience filter rejected this activator. Do nothing.
+    AudienceRejected,
+    /// Mode is single-use and this prop has already fired. Do nothing.
+    AlreadyFired,
+    /// Fire the effect. `despawn_after` is true for `OnceConsumed` mode.
+    Fire { despawn_after: bool },
+}
+
+/// Decide what should happen when `kind` activates a prop with this
+/// `trigger` and current `ever_fired` state. Pure — testable without
+/// Bevy.
+pub fn classify_activation(
+    trigger: &PropTrigger,
+    ever_fired: bool,
+    kind: ActivatorKind,
+) -> ActivationOutcome {
+    if !trigger.audience.applies_to(kind) {
+        return ActivationOutcome::AudienceRejected;
+    }
+    if !trigger.mode.should_fire(ever_fired) {
+        return ActivationOutcome::AlreadyFired;
+    }
+    ActivationOutcome::Fire {
+        despawn_after: trigger.mode.should_despawn_after_firing(),
+    }
+}
+
+/// Resolve an entity to its `ActivatorKind` (Player vs Monster) for
+/// audience filtering. Any entity not flagged as the player falls
+/// back to `Monster` — the prop dispatch is symmetric by default and
+/// only diverges when audience is `PlayerOnly` or `MonstersOnly`.
+fn classify_activator(activator: Entity, player_query: &Query<(), With<Player>>) -> ActivatorKind {
+    if player_query.get(activator).is_ok() {
+        ActivatorKind::Player
+    } else {
+        ActivatorKind::Monster
+    }
+}
+
+// =====================================================================
+// Effect application
+// =====================================================================
+
+/// Apply the effects that only need direct component access (Health,
+/// StatusEffects). Damage effects emit a `DamageEvent` via the writer
+/// so the engine's `damage_application_system` handles armor +
+/// resistance uniformly with the rest of combat.
+fn apply_inline(
+    effect: &TileEffect,
+    activator: Entity,
+    health_query: &mut Query<&mut Health>,
+    status_query: &mut Query<&mut StatusEffects>,
+    damage_writer: &mut MessageWriter<DamageEvent>,
+    log_writer: &mut MessageWriter<GameLogMessage>,
+) {
+    match effect {
+        TileEffect::HealFull => {
+            if let Ok(mut health) = health_query.get_mut(activator) {
+                let healed = health.max - health.current;
+                health.current = health.max;
+                if healed > 0 {
+                    log_writer.write(GameLogMessage(format!(
+                        "You are healed for {} HP!",
+                        healed
+                    )));
+                }
+            }
+        }
+        TileEffect::DealDamage { dice, kind } => {
+            let mut rng = RandomNumberGenerator::new();
+            let raw = roll_dice_string(&mut rng, dice);
+            if raw > 0 {
+                damage_writer.write(DamageEvent {
+                    target: activator,
+                    amount: raw,
+                    damage_type: *kind,
+                    source: DamageSource::Environment,
+                    attacker: None,
+                    armor: 0,
+                });
+            }
+        }
+        TileEffect::ApplyStatus { effect, duration } => {
+            if let Ok(mut effects) = status_query.get_mut(activator) {
+                effects.add_effect(*effect, *duration);
+            }
+        }
+        TileEffect::Multi(children) => {
+            for child in children {
+                apply_inline(child, activator, health_query, status_query, damage_writer, log_writer);
+            }
+        }
+        // Spawn effects are deferred — handled by queue_deferred.
+        TileEffect::SpawnItem { .. } | TileEffect::SpawnMonsters { .. } => {}
+    }
+}
+
+/// Stash any spawn-style effects into deferred resources to be picked
+/// up next frame by their dedicated systems. Mirrors `machines.rs`.
+fn queue_deferred(effect: &TileEffect, pos: &Position, commands: &mut Commands) {
+    match effect {
+        TileEffect::SpawnItem { item_name } => {
+            commands.insert_resource(PendingPropSpawnItem {
+                item_name: item_name.clone(),
+                pos: *pos,
+            });
+        }
+        TileEffect::SpawnMonsters {
+            monster_name,
+            count,
+        } => {
+            commands.insert_resource(PendingPropSpawnMonsters {
+                monster_name: monster_name.clone(),
+                count: *count,
+                pos: *pos,
+            });
+        }
+        TileEffect::Multi(children) => {
+            for child in children {
+                queue_deferred(child, pos, commands);
+            }
+        }
+        _ => {}
+    }
+}
+
+// =====================================================================
+// Bump dispatch
+// =====================================================================
+
+/// Apply prop bump activations. Mirrors `handle_machine_bump`.
+///
+/// Reads `PropBumpMessage`, gates on audience + activation mode, fires
+/// effects (inline + deferred), finalizes activation state, and ends
+/// the activator's turn.
+pub fn handle_prop_bump(
+    mut commands: Commands,
+    mut messages: MessageReader<PropBumpMessage>,
+    mut props_query: Query<(&Effected, &mut EverFired, &Position, &Name), With<Prop>>,
+    mut health_query: Query<&mut Health>,
+    mut status_query: Query<&mut StatusEffects>,
+    mut damage_writer: MessageWriter<DamageEvent>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+    mut finish_writer: MessageWriter<ActionFinishedEvent>,
+    player_query: Query<(), With<Player>>,
+) {
+    for msg in messages.read() {
+        let Ok((effected, mut ever_fired, pos, name)) = props_query.get_mut(msg.prop_entity) else {
+            continue;
+        };
+        let trigger = &effected.0;
+        let kind = classify_activator(msg.activator, &player_query);
+
+        match classify_activation(trigger, ever_fired.0, kind) {
+            ActivationOutcome::AudienceRejected => {
+                // Silent no-op; bump still consumes a turn.
+            }
+            ActivationOutcome::AlreadyFired => {
+                log_writer.write(GameLogMessage(format!("The {} is inert.", name.0)));
+            }
+            ActivationOutcome::Fire { despawn_after } => {
+                log_writer.write(GameLogMessage(format!("You activate the {}.", name.0)));
+                apply_inline(
+                    &trigger.effect,
+                    msg.activator,
+                    &mut health_query,
+                    &mut status_query,
+                    &mut damage_writer,
+                    &mut log_writer,
+                );
+                queue_deferred(&trigger.effect, pos, &mut commands);
+                ever_fired.0 = true;
+                if despawn_after {
+                    commands.entity(msg.prop_entity).despawn();
+                }
+            }
+        }
+
+        finish_turn(
+            &mut commands,
+            &mut finish_writer,
+            msg.activator,
+            BASE_ACTION_COST,
+            ActionKind::Movement,
+        );
+    }
+}
+
+// =====================================================================
+// Step dispatch
+// =====================================================================
+
+/// Detect when any actor moves onto a non-blocking Effected prop tile.
+///
+/// Unlike the legacy `machine_step_system` (player-only), prop-step
+/// fires for any actor whose audience the trigger permits — see
+/// [`EffectAudience`]. Step effects do **not** cost an additional turn;
+/// they ride alongside the movement that triggered them, same as lava.
+pub fn prop_step_system(
+    mut commands: Commands,
+    moved_query: Query<(Entity, &Position), Changed<Position>>,
+    mut props_query: Query<
+        (Entity, &Effected, &mut EverFired, &Position, &Name),
+        (With<Prop>, Without<Collider>),
+    >,
+    mut health_query: Query<&mut Health>,
+    mut status_query: Query<&mut StatusEffects>,
+    mut damage_writer: MessageWriter<DamageEvent>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+    player_query: Query<(), With<Player>>,
+    turn_state: Res<bevy::state::state::State<TurnState>>,
+) {
+    if *turn_state.get() != TurnState::Processing {
+        return;
+    }
+
+    for (mover, mover_pos) in moved_query.iter() {
+        for (prop_entity, effected, mut ever_fired, prop_pos, name) in props_query.iter_mut() {
+            if mover_pos.x != prop_pos.x || mover_pos.y != prop_pos.y {
+                continue;
+            }
+            let trigger = &effected.0;
+            let kind = classify_activator(mover, &player_query);
+
+            if let ActivationOutcome::Fire { despawn_after } =
+                classify_activation(trigger, ever_fired.0, kind)
+            {
+                log_writer.write(GameLogMessage(format!("You step onto the {}.", name.0)));
+                apply_inline(
+                    &trigger.effect,
+                    mover,
+                    &mut health_query,
+                    &mut status_query,
+                    &mut damage_writer,
+                    &mut log_writer,
+                );
+                queue_deferred(&trigger.effect, prop_pos, &mut commands);
+                ever_fired.0 = true;
+                if despawn_after {
+                    commands.entity(prop_entity).despawn();
+                }
+                break; // One activation per move tick
+            }
+        }
+    }
+}
+
+// =====================================================================
+// Deferred-spawn processing
+// =====================================================================
+
+/// Spawn the queued item at an adjacent walkable tile.
+pub fn process_pending_prop_item(
+    mut commands: Commands,
+    pending: Option<Res<PendingPropSpawnItem>>,
+    item_manifests: Res<bevy::asset::Assets<crate::assets::ItemManifest>>,
+    item_manifest_handle: Res<crate::assets::ItemManifestHandle>,
+    item_sprite_assets: Res<crate::assets::ItemSpriteAssets>,
+    ascii_font: Option<Res<crate::game::ascii_mode::AsciiFont>>,
+    map: Res<Map>,
+    collider_query: Query<&Position, With<Collider>>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+) {
+    let Some(pending) = pending else {
+        return;
+    };
+    use crate::map::tile::is_walkable;
+
+    let occupied: HashSet<(i32, i32)> = collider_query.iter().map(|p| (p.x, p.y)).collect();
+    let directions = [
+        (0, -1), (0, 1), (-1, 0), (1, 0), (-1, -1), (1, -1), (-1, 1), (1, 1),
+    ];
+    let mut spawn_point = Point::new(pending.pos.x, pending.pos.y);
+    for (dx, dy) in &directions {
+        let nx = pending.pos.x + dx;
+        let ny = pending.pos.y + dy;
+        let idx = map.xy_idx(nx, ny);
+        if idx < map.tiles.len() && is_walkable(map.tiles[idx]) && !occupied.contains(&(nx, ny)) {
+            spawn_point = Point::new(nx, ny);
+            break;
+        }
+    }
+
+    crate::game::spawner::spawn_item(
+        &mut commands,
+        &pending.item_name,
+        &spawn_point,
+        &item_manifests,
+        &item_manifest_handle,
+        &item_sprite_assets,
+        ascii_font.as_deref(),
+        None,
+    );
+    log_writer.write(GameLogMessage(format!("A {} appears!", pending.item_name)));
+    commands.remove_resource::<PendingPropSpawnItem>();
+}
+
+/// Spawn the queued monster(s) at adjacent walkable tiles.
+/// Empty monster_name picks from the level's spawn table.
+pub fn process_pending_prop_monsters(
+    mut commands: Commands,
+    pending: Option<Res<PendingPropSpawnMonsters>>,
+    mut turn_manager: ResMut<TurnManager>,
+    monster_manifests: Res<bevy::asset::Assets<crate::assets::MonsterManifest>>,
+    monster_manifest_handle: Res<crate::assets::MonsterManifestHandle>,
+    monster_sprite_assets: Res<crate::assets::MonsterSpriteAssets>,
+    monster_spawn_table_handle: Res<crate::assets::MonsterSpawnTableHandle>,
+    monster_spawn_tables: Res<bevy::asset::Assets<crate::assets::MonsterSpawnTable>>,
+    floor: Res<crate::map::dungeon::Floor>,
+    ascii_font: Option<Res<crate::game::ascii_mode::AsciiFont>>,
+    map: Res<Map>,
+    collider_query: Query<&Position, With<Collider>>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+) {
+    let Some(pending) = pending else {
+        return;
+    };
+
+    let occupied: HashSet<(i32, i32)> = collider_query.iter().map(|p| (p.x, p.y)).collect();
+    let mut rng = RandomNumberGenerator::new();
+    let depth = floor.0 as i32;
+
+    let directions = [
+        (0, -1), (0, 1), (-1, 0), (1, 0), (-1, -1), (1, -1), (-1, 1), (1, 1),
+    ];
+    let mut spawned = 0u32;
+    for (dx, dy) in &directions {
+        if spawned >= pending.count {
+            break;
+        }
+        let nx = pending.pos.x + dx;
+        let ny = pending.pos.y + dy;
+        let idx = map.xy_idx(nx, ny);
+        if idx >= map.tiles.len()
+            || !crate::map::tile::is_walkable(map.tiles[idx])
+            || occupied.contains(&(nx, ny))
+        {
+            continue;
+        }
+
+        let monster_name = if pending.monster_name.is_empty() {
+            pick_level_monster(&monster_spawn_tables, &monster_spawn_table_handle, depth, &mut rng)
+        } else {
+            Some(pending.monster_name.clone())
+        };
+
+        if let Some(name) = monster_name {
+            crate::game::spawner::spawn_monster_by_name(
+                &mut commands,
+                &name,
+                &Point::new(nx, ny),
+                &mut turn_manager,
+                &monster_manifests,
+                &monster_manifest_handle,
+                &monster_sprite_assets,
+                ascii_font.as_deref(),
+            );
+            spawned += 1;
+        }
+    }
+    if spawned > 0 {
+        log_writer.write(GameLogMessage("Monsters emerge from the shadows!".to_string()));
+    }
+    commands.remove_resource::<PendingPropSpawnMonsters>();
+}
+
+fn pick_level_monster(
+    spawn_tables: &Res<bevy::asset::Assets<crate::assets::MonsterSpawnTable>>,
+    handle: &Res<crate::assets::MonsterSpawnTableHandle>,
+    depth: i32,
+    rng: &mut RandomNumberGenerator,
+) -> Option<String> {
+    let table = spawn_tables.get(&handle.0)?;
+    let eligible: Vec<&crate::assets::MonsterSpawnInfo> = table
+        .spawns
+        .iter()
+        .filter(|s| depth >= s.min_floor && depth <= s.max_floor && !s.monster.is_empty())
+        .collect();
+    if eligible.is_empty() {
+        return None;
+    }
+    let idx = rng.range(0, eligible.len() as i32) as usize;
+    Some(eligible[idx].monster.clone())
+}
+
+// =====================================================================
 // Plugin
 // =====================================================================
 
-/// Plugin scaffold for the prop effect system.
-///
-/// Currently registers nothing — the dispatch systems land in later
-/// RFC 0002 steps. Lives here so `src/game/mod.rs` can wire it once
-/// and the migration steps add systems incrementally.
+/// Wires bump + step dispatchers and deferred-spawn processors.
 pub struct PropEffectsPlugin;
 
 impl Plugin for PropEffectsPlugin {
-    fn build(&self, _app: &mut App) {
-        // Intentionally empty. Subsequent RFC 0002 steps add:
-        //   - PropBumpMessage + bump dispatch system
-        //   - Step dispatch system (Changed<Position> watcher)
-        //   - Decoration::step_effect dispatch
-        //   - Save serialization of EverFired
+    fn build(&self, app: &mut App) {
+        app.add_message::<PropBumpMessage>()
+            .add_systems(
+                Update,
+                handle_prop_bump.in_set(ProcessingPhase::ResolveActions),
+            )
+            .add_systems(
+                Update,
+                (
+                    prop_step_system,
+                    process_pending_prop_item,
+                    process_pending_prop_monsters,
+                )
+                    .run_if(in_state(AppState::InGame)),
+            );
     }
 }
 
@@ -364,5 +815,102 @@ mod tests {
     #[test]
     fn ever_fired_default_is_false() {
         assert!(!EverFired::default().0);
+    }
+
+    // ---- classify_activation ----
+
+    fn trigger(audience: EffectAudience, mode: ActivationMode) -> PropTrigger {
+        PropTrigger {
+            effect: TileEffect::HealFull,
+            audience,
+            mode,
+        }
+    }
+
+    #[test]
+    fn classify_player_only_rejects_monster() {
+        let t = trigger(EffectAudience::PlayerOnly, ActivationMode::Repeating);
+        assert_eq!(
+            classify_activation(&t, false, ActivatorKind::Monster),
+            ActivationOutcome::AudienceRejected
+        );
+    }
+
+    #[test]
+    fn classify_anyone_player_repeating_fires_without_despawn() {
+        let t = trigger(EffectAudience::Anyone, ActivationMode::Repeating);
+        assert_eq!(
+            classify_activation(&t, false, ActivatorKind::Player),
+            ActivationOutcome::Fire { despawn_after: false }
+        );
+    }
+
+    #[test]
+    fn classify_repeating_fires_even_when_already_fired() {
+        let t = trigger(EffectAudience::Anyone, ActivationMode::Repeating);
+        assert_eq!(
+            classify_activation(&t, true, ActivatorKind::Player),
+            ActivationOutcome::Fire { despawn_after: false }
+        );
+    }
+
+    #[test]
+    fn classify_once_inert_first_time_fires_no_despawn() {
+        let t = trigger(EffectAudience::Anyone, ActivationMode::OnceInert);
+        assert_eq!(
+            classify_activation(&t, false, ActivatorKind::Player),
+            ActivationOutcome::Fire { despawn_after: false }
+        );
+    }
+
+    #[test]
+    fn classify_once_inert_second_time_blocked() {
+        let t = trigger(EffectAudience::Anyone, ActivationMode::OnceInert);
+        assert_eq!(
+            classify_activation(&t, true, ActivatorKind::Player),
+            ActivationOutcome::AlreadyFired
+        );
+    }
+
+    #[test]
+    fn classify_once_consumed_first_time_fires_with_despawn() {
+        let t = trigger(EffectAudience::Anyone, ActivationMode::OnceConsumed);
+        assert_eq!(
+            classify_activation(&t, false, ActivatorKind::Player),
+            ActivationOutcome::Fire { despawn_after: true }
+        );
+    }
+
+    #[test]
+    fn classify_once_consumed_second_time_blocked_no_despawn() {
+        let t = trigger(EffectAudience::Anyone, ActivationMode::OnceConsumed);
+        assert_eq!(
+            classify_activation(&t, true, ActivatorKind::Player),
+            ActivationOutcome::AlreadyFired
+        );
+    }
+
+    #[test]
+    fn classify_audience_filter_runs_before_mode_check() {
+        // PlayerOnly + OnceConsumed: a monster bumping it should be
+        // rejected by audience, NOT consumed.
+        let t = trigger(EffectAudience::PlayerOnly, ActivationMode::OnceConsumed);
+        assert_eq!(
+            classify_activation(&t, false, ActivatorKind::Monster),
+            ActivationOutcome::AudienceRejected
+        );
+    }
+
+    #[test]
+    fn classify_monsters_only_lets_monster_through() {
+        let t = trigger(EffectAudience::MonstersOnly, ActivationMode::Repeating);
+        assert_eq!(
+            classify_activation(&t, false, ActivatorKind::Monster),
+            ActivationOutcome::Fire { despawn_after: false }
+        );
+        assert_eq!(
+            classify_activation(&t, false, ActivatorKind::Player),
+            ActivationOutcome::AudienceRejected
+        );
     }
 }
