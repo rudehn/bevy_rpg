@@ -33,6 +33,7 @@ use roguelike_engine::dice::roll_dice_string;
 use roguelike_engine::status::StatusEffectKind;
 
 use crate::components::{Collider, Name, Position, Prop};
+use crate::map::tile::Decoration;
 use crate::constants::BASE_ACTION_COST;
 use crate::game::actions::{finish_turn, ActionFinishedEvent, ActionKind};
 use crate::game::combat::Health;
@@ -444,6 +445,71 @@ pub fn handle_prop_bump(
 }
 
 // =====================================================================
+// Decoration step lookup
+// =====================================================================
+
+/// Map a `Decoration` variant to the effect that fires when an actor
+/// steps onto a tile carrying it. Pure data — testable without Bevy.
+///
+/// Most decorations are passive flavor (grass, moss, embers, rubble)
+/// and return `None`. The only opted-in variant today is `Cobweb`
+/// (Slowed 3 turns). Embers stays silent on purpose — see RFC 0002
+/// for the "post-fire trace shouldn't punish you" rationale.
+pub fn decoration_step_effect(decoration: Decoration) -> Option<TileEffect> {
+    match decoration {
+        Decoration::Cobweb => Some(TileEffect::ApplyStatus {
+            effect: StatusEffectKind::Slowed,
+            duration: 3,
+        }),
+        _ => None,
+    }
+}
+
+/// Fire a decoration step effect when any actor moves onto a decorated
+/// tile. Mirrors `prop_step_system` but for tile-packed `Decoration`
+/// data (no entity colocation).
+pub fn decoration_step_system(
+    moved_query: Query<(Entity, &Position), Changed<Position>>,
+    mut health_query: Query<&mut Health>,
+    mut status_query: Query<&mut StatusEffects>,
+    mut damage_writer: MessageWriter<DamageEvent>,
+    mut log_writer: MessageWriter<GameLogMessage>,
+    map: Res<Map>,
+    turn_state: Res<bevy::state::state::State<TurnState>>,
+) {
+    if *turn_state.get() != TurnState::Processing {
+        return;
+    }
+
+    for (mover, pos) in moved_query.iter() {
+        let idx = map.xy_idx(pos.x, pos.y);
+        if idx >= map.tiles.len() {
+            continue;
+        }
+        let Some(effect) = decoration_step_effect(map.tiles[idx].decoration) else {
+            continue;
+        };
+
+        // Audience filtering doesn't apply to decoration effects —
+        // they're physics, not authored content. Anyone stepping on
+        // cobwebs gets slowed.
+        //
+        // Spawn-style effects are intentionally unsupported for
+        // decoration triggers — they need per-tile fire-once state
+        // that the packed Decoration enum doesn't carry. Use a prop
+        // with OnceConsumed if you need that.
+        apply_inline(
+            &effect,
+            mover,
+            &mut health_query,
+            &mut status_query,
+            &mut damage_writer,
+            &mut log_writer,
+        );
+    }
+}
+
+// =====================================================================
 // Step dispatch
 // =====================================================================
 
@@ -658,6 +724,7 @@ impl Plugin for PropEffectsPlugin {
                 Update,
                 (
                     prop_step_system,
+                    decoration_step_system,
                     process_pending_prop_item,
                     process_pending_prop_monsters,
                 )
@@ -912,5 +979,43 @@ mod tests {
             classify_activation(&t, false, ActivatorKind::Player),
             ActivationOutcome::AudienceRejected
         );
+    }
+
+    // ---- decoration_step_effect ----
+
+    #[test]
+    fn cobweb_decoration_applies_slowed_three_turns() {
+        let effect = decoration_step_effect(Decoration::Cobweb)
+            .expect("Cobweb should have a step effect");
+        match effect {
+            TileEffect::ApplyStatus { effect, duration } => {
+                assert_eq!(effect, StatusEffectKind::Slowed);
+                assert_eq!(duration, 3);
+            }
+            other => panic!("expected ApplyStatus(Slowed, 3), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn embers_decoration_is_silent_on_step() {
+        // RFC 0002 §"Decorations that intentionally stay silent" —
+        // walking through post-fire embers should not punish the
+        // player who just won a fight.
+        assert!(decoration_step_effect(Decoration::Embers).is_none());
+    }
+
+    #[test]
+    fn passive_decorations_have_no_step_effect() {
+        // Spot-check the broad flavor set — none of these should ever
+        // fire an effect.
+        assert!(decoration_step_effect(Decoration::None).is_none());
+        assert!(decoration_step_effect(Decoration::Grass).is_none());
+        assert!(decoration_step_effect(Decoration::TallGrass).is_none());
+        assert!(decoration_step_effect(Decoration::Moss).is_none());
+        assert!(decoration_step_effect(Decoration::Rubble).is_none());
+        assert!(decoration_step_effect(Decoration::Bloodstain).is_none());
+        assert!(decoration_step_effect(Decoration::Ash).is_none());
+        assert!(decoration_step_effect(Decoration::Fungus).is_none());
+        assert!(decoration_step_effect(Decoration::CrackedFloor).is_none());
     }
 }
