@@ -46,15 +46,15 @@ Each occupied tile holds **one** gas entity (with `Position`, `FloorEntityMarker
 | `EFFECT_THRESHOLD` | 100 | `gas.rs:35` | Concentration ≥ this applies status effects and changes display name |
 | Decay rate | 10% per turn | `gas.rs:149` | `new = concentration * 9 / 10` integer math |
 | Redistribution share | 20% to each neighbor | `gas.rs:299` | `share = concentration / 5` |
-| `GAS_EMISSION_CHANCE` | 12 (out of 100) | `gas.rs:141` | Per-turn chance per fungus tile to belch gas |
-| Fungus emission volume | 200 | `gas.rs:279` | Hardcoded volume per emission burst |
+| `GAS_EMISSION_CHANCE` | 30 (out of 100) | `gas.rs:141` | Per-turn chance per fungus tile to belch gas |
+| Fungus emission volume | 600 | `gas.rs:279` | Hardcoded volume per emission burst |
 | Ignition AoE | 3×3 (Chebyshev radius 1) | `gas.rs:375` | Damage radius around each ignited tile |
 
 ## Spread System
 
 `gas_tick_system` runs once per `TurnEndEvent` and performs five passes (`gas.rs:250-437`):
 
-1. **Emission.** Walk every map tile; if `decoration == Fungus` and `rng.range(0,100) < 12`, queue a 200-volume Poison emission on that tile.
+1. **Emission.** Walk every map tile; if `decoration == Fungus` and `rng.range(0,100) < 30`, queue a 600-volume Poison emission on that tile.
 2. **Redistribution.** Snapshot every gas tile, then redistribute. Each tile sends 1 share (= 20%) to itself and 1 share to each of its 4 cardinal neighbors. Walls and `Empty` tiles eat the share — gas is "lost to the wall".
 
    ```text
@@ -119,8 +119,8 @@ This is intentional for now. The full Brogue model — per-ray opacity accumulat
 | **Bloat — `ExplodeOnHit { GasCloud }`** | `abilities.rs:127`, `abilities.rs:423` | On melee hit, the Bloat dies and `gas_positions_in_radius(radius)` are filled with Poison at the configured volume. The `ExplodeOnHit` handler also strips `GasOnDeath` from itself (`abilities.rs:433`) so the kill doesn't double-spawn. |
 | **`GasOnDeath` (Pit Bloat, etc.)** | `abilities.rs:120`, `abilities.rs:553` | On `DeathEvent`, fill the Manhattan radius with Poison gas at `volume`. Same helper as above. |
 | **Staff of Poison** | `staves.rs` (existing) | Targeted gas burst at the cursor tile. |
-| **Mycoid Sovereign** | `monsters.ron` (Mycoid Sovereign uses fungus emission via decoration) | A Sovereign laying down `Decoration::Fungus` causes the per-tile 12% emission to fire each turn. |
-| **Fungus tiles (passive)** | `gas.rs:268` | Every fungus tile rolls 12% per turn for a 200-volume Poison emission on itself. |
+| **Mycoid Sovereign** | `monsters.ron` (Mycoid Sovereign uses fungus emission via decoration) | A Sovereign laying down `Decoration::Fungus` causes the per-tile 30% emission to fire each turn. |
+| **Fungus tiles (passive)** | `gas.rs:268` | Every fungus tile rolls 30% per turn for a 600-volume Poison emission on itself. |
 | **Steam from fire+water** | `fire.rs` water interaction | When a fire tile sits on shallow water, a Steam cloud is spawned. (See FIRE.md.) |
 
 The ECS-side helper `gas_positions_in_radius` (`abilities.rs:534`) returns every tile inside a Manhattan radius that passes `gas::can_gas_occupy` — so chasms, walls, and `Empty` tiles are skipped automatically by the source.
