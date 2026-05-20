@@ -11,14 +11,14 @@
 //! This module previously hosted an overworld 3×3 grid topology
 //! (GridDir / neighbor / cardinal stair helpers + `MapExitTile`
 //! components). That was ripped out when the game pivoted back to
-//! linear floors; see `docs/design/DUNGEON.md` for the writeup.
+//! linear floors; see `docs/design/OVERWORLD.md` for the writeup.
 
 use bevy::prelude::{Color, Component, Resource};
 
 use crate::components::Position;
 
 use crate::assets::TileManifest;
-use crate::map::tile::{Tile, TerrainType, resolve_tile_bg, resolve_tile_display};
+use crate::map::tile::{TerrainType, Tile, resolve_tile_bg, resolve_tile_display};
 
 /// Final floor of the descent. Player descends 0 → 1 → … → 5; floor 5
 /// is the cult temple holding the Amulet of Yendor. Raising this is
@@ -111,9 +111,9 @@ impl FloorTheme {
         match (self, terrain) {
             (FloorTheme::Forest, TerrainType::Wall) => Some("\u{2663}"), // ♣
             (FloorTheme::Forest, TerrainType::Floor) => Some(" "),
-            (FloorTheme::Town, TerrainType::Wall) => Some("\u{2593}"),    // ▓
+            // (FloorTheme::Town, TerrainType::Wall) => Some("\u{2593}"),    // ▓
             (FloorTheme::Town, TerrainType::Floor) => Some("."),
-            (FloorTheme::Temple, TerrainType::Wall) => Some("\u{2592}"),  // ▒
+            (FloorTheme::Temple, TerrainType::Wall) => Some("\u{2592}"), // ▒
             (FloorTheme::Temple, TerrainType::Floor) => Some("."),
             _ => None,
         }
@@ -160,7 +160,11 @@ pub fn themed_tile_display<'a>(
     theme: FloorTheme,
 ) -> (String, Color, &'a str) {
     if is_path_tile(tile) {
-        return (".".to_string(), Color::srgb(0.45, 0.32, 0.18), tile.terrain.name());
+        return (
+            ".".to_string(),
+            Color::srgb(0.45, 0.32, 0.18),
+            tile.terrain.name(),
+        );
     }
     let (glyph, fg, name) = resolve_tile_display(tile, manifest);
     // Only theme bare Wall/Floor. Decorations / liquids / stairs keep
@@ -218,7 +222,10 @@ mod tests {
 
     #[test]
     fn floor_theme_for_kind() {
-        assert_eq!(FloorTheme::for_floor_kind(FloorKind::Town), FloorTheme::Town);
+        assert_eq!(
+            FloorTheme::for_floor_kind(FloorKind::Town),
+            FloorTheme::Town
+        );
         assert_eq!(
             FloorTheme::for_floor_kind(FloorKind::Forest { depth: 1 }),
             FloorTheme::Forest,
@@ -231,8 +238,14 @@ mod tests {
 
     #[test]
     fn forest_theme_overrides_wall_and_floor_glyphs() {
-        assert_eq!(FloorTheme::Forest.override_glyph(TerrainType::Wall), Some("\u{2663}"));
-        assert_eq!(FloorTheme::Forest.override_glyph(TerrainType::Floor), Some(" "));
+        assert_eq!(
+            FloorTheme::Forest.override_glyph(TerrainType::Wall),
+            Some("\u{2663}")
+        );
+        assert_eq!(
+            FloorTheme::Forest.override_glyph(TerrainType::Floor),
+            Some(" ")
+        );
     }
 
     #[test]
