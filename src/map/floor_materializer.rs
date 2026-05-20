@@ -100,11 +100,6 @@ pub struct FloorPlan {
     pub player_spawn: Point,
     /// Carried through from the Load path for the caller.
     pub pending_player_load: Option<crate::save::PlayerSaveData>,
-    /// Set by the forest builder when it places the temple-entrance
-    /// DownStairs; the orchestrator latches it onto
-    /// [`crate::map::world::OverworldState::temple_entrance_pos`].
-    /// `None` on every other path.
-    pub overworld_edit: Option<crate::components::Position>,
 }
 
 // ---------------------------------------------------------------------------
@@ -332,7 +327,6 @@ impl FloorPlan {
             .collect();
 
         let exit_tiles = build_data.exit_tile_spawn_list;
-        let overworld_edit = build_data.overworld_edit;
 
         FloorPlan {
             map: build_data.map,
@@ -342,7 +336,6 @@ impl FloorPlan {
             exit_tiles,
             player_spawn,
             pending_player_load: None,
-            overworld_edit,
         }
     }
 
@@ -405,9 +398,6 @@ impl FloorPlan {
             exit_tiles: cached.exit_tiles,
             player_spawn,
             pending_player_load: None,
-            // Restored floors don't re-emit overworld edits — the
-            // orchestrator latched them on first generation.
-            overworld_edit: None,
         }
     }
 
@@ -425,8 +415,6 @@ impl FloorPlan {
             exit_tiles: Vec::new(),
             player_spawn,
             pending_player_load: Some(save_data.player),
-            // Load path: overworld state is already on the save.
-            overworld_edit: None,
         }
     }
 }
@@ -841,37 +829,6 @@ mod tests {
         assert_eq!(plan.monsters[0].name, "Goblin");
         assert_eq!(plan.items[0].count, 1);
         assert_eq!(plan.props[0].name, "Pillar");
-    }
-
-    #[test]
-    fn plan_floor_generate_propagates_overworld_edit() {
-        // The forest builder records its temple-entrance position on
-        // `BuilderMap::overworld_edit`; that field must reach the
-        // resulting FloorPlan so the orchestrator can latch it onto
-        // OverworldState.
-        let mut bm = super::super::builders::BuilderMap::new_for_test(10, 10);
-        for t in bm.map.tiles.iter_mut() {
-            *t = Tile {
-                terrain: TerrainType::Floor,
-                liquid: LiquidType::None,
-                decoration: Decoration::None,
-            };
-        }
-        bm.starting_position = Some(Position { x: 0, y: 0 });
-        bm.overworld_edit = Some(Position { x: 8, y: 8 });
-
-        let plan = plan_floor(FloorSource::Generate(bm));
-        assert_eq!(plan.overworld_edit, Some(Position { x: 8, y: 8 }));
-    }
-
-    #[test]
-    fn plan_floor_restore_does_not_emit_overworld_edit() {
-        // Restored floors must not re-emit overworld writes — the edit
-        // was latched on first generation; reapplying it would clobber
-        // any later mutation.
-        let cached = cached_floor_with_stairs(Point::new(7, 4), Point::new(2, 2));
-        let plan = plan_floor(FloorSource::Restore { cached, ascending: true });
-        assert!(plan.overworld_edit.is_none());
     }
 
     #[test]

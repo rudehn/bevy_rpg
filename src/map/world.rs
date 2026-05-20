@@ -54,12 +54,6 @@ pub fn floor_kind(floor: u32) -> FloorKind {
     }
 }
 
-/// Per-run state that survives across floor transitions. Kept as a
-/// struct so future per-run content (faction influence, NPC state,
-/// quest flags) has a home, even though it's empty today.
-#[derive(Resource, Clone, Debug, Default)]
-pub struct OverworldState {}
-
 /// Optional component on a tile entity that overrides the default
 /// `>` / `<` terrain-based transition with an **explicit** destination.
 ///
@@ -74,12 +68,6 @@ pub struct MapExitTile {
     /// `Some(pos)` means the player arrives at exactly `pos`. `None`
     /// means the destination floor decides (its `<` / `>` position).
     pub destination_pos: Option<Position>,
-}
-
-/// Reseed per-run state at the start of a new game. No-op today;
-/// future seeders hook here.
-pub fn seed_overworld_state(_state: &mut OverworldState) {
-    // Intentionally empty.
 }
 
 // =====================================================================

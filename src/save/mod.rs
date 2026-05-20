@@ -994,12 +994,11 @@ pub struct PlayerSkillSaveParams<'w, 's> {
 }
 
 /// Bundled resources for `auto_save_system` — keeps the system under
-/// Bevy's 16-param limit now that overworld state needs to be saved.
+/// Bevy's 16-param limit.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct AutoSaveExtras<'w, 's> {
     pub squad_counter: Res<'w, SquadIdCounter>,
     pub fallen_entities: Res<'w, crate::map::dungeon::FallenEntities>,
-    pub overworld_state: Res<'w, crate::map::world::OverworldState>,
     /// Stealth Phase I (schema v7): needed by the per-monster awareness
     /// degrade pass to compute `giveup_at_offset = giveup_at_turn - now`.
     pub turn_manager: Res<'w, crate::game::TurnManager>,
@@ -1105,7 +1104,6 @@ pub fn auto_save_system(
 ) {
     auto_save_pending.0 = false;
     let fallen_entities = &auto_save_extras.fallen_entities;
-    let overworld_state = &auto_save_extras.overworld_state;
     let squad_counter = &auto_save_extras.squad_counter;
     let now = auto_save_extras.turn_manager.current_time;
     // Stealth Phase I: degraded awareness keys on the player entity. If

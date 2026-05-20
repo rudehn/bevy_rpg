@@ -147,7 +147,6 @@ impl Plugin for DungeonPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Floor>()
             .init_resource::<crate::map::world::FloorTheme>()
-            .init_resource::<crate::map::world::OverworldState>()
             .init_resource::<FloorCache>()
             .init_resource::<FallenEntities>()
             .init_resource::<PendingFloorRestore>()
@@ -162,14 +161,6 @@ impl Plugin for DungeonPlugin {
             .add_systems(
                 OnEnter(AppState::InGame),
                 (
-                    |mut overworld: ResMut<crate::map::world::OverworldState>,
-                     pending_load: Res<PendingGameLoad>| {
-                        // Skip reseeding when restoring a save — the loaded
-                        // overworld state will be applied by spawn_dungeon.
-                        if pending_load.0.is_none() {
-                            crate::map::world::seed_overworld_state(&mut overworld);
-                        }
-                    },
                     |mut writer: MessageWriter<SpawnDungeonMessage>| {
                         writer.write(SpawnDungeonMessage);
                     },
@@ -681,13 +672,8 @@ pub(crate) struct SpawnDungeonExtras<'w> {
     /// `MapExitTile` with an explicit destination position. If `Some`,
     /// overrides the materializer's default player spawn point.
     pending_arrival: ResMut<'w, PendingArrival>,
-    /// Per-run overworld state — which forest tile hosts the temple,
-    /// and where its entrance stairs sit. Mutated by `spawn_dungeon`
-    /// after building the temple-entrance forest tile so temple-floor 1
-    /// can wire its UpStairs back to the same coordinate.
-    overworld: ResMut<'w, crate::map::world::OverworldState>,
     /// Visual theme. Set per-floor by `spawn_dungeon` so the renderer
-    /// draws forests, town, temple, and the legacy dungeon distinctly.
+    /// draws town, forest, and temple distinctly.
     floor_theme: ResMut<'w, crate::map::world::FloorTheme>,
 }
 
@@ -743,13 +729,6 @@ pub fn spawn_dungeon(
 
         commands.insert_resource(crate::game::squad::SquadIdCounter(save_data.squad_id_counter));
 
-        // Restore overworld state from the save so the temple entrance
-        // stays put across reloads.
-        // Linear-floor scheme: OverworldState carries no per-run
-        // overworld topology to restore. Future fields (faction
-        // influence, NPC state) land here.
-        let _ = save_data; // suppress unused-binding warning if save_data isn't read elsewhere
-
         let saved_floor_cache: std::collections::HashMap<u32, crate::save::CachedFloorSave> =
             save_data.floor_cache.clone();
         commands.insert_resource(SavedFloorCache(saved_floor_cache));
@@ -803,17 +782,10 @@ pub fn spawn_dungeon(
             prefabs,
             &monster_manifest.monsters,
             decoration_rules,
-            extras.overworld.clone(),
         );
         builder.build_map();
         // Write the updated counter back so future floors don't reuse IDs.
         *extras.squad_counter = builder.build_data.squad_counter.clone();
-
-        // Legacy: TempleEntranceBuilder used to stamp the temple
-        // entrance position here. The linear-floor scheme has no
-        // temple entrance to track. Field retained on BuilderMap for
-        // future use (e.g. boss-room anchor).
-        let _ = builder.build_data.overworld_edit;
 
         // Reset RunStats on new game (town, generate path only — the
         // town is floor 0 and is always the first floor a fresh run

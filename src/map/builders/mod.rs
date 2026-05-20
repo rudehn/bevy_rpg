@@ -98,12 +98,6 @@ pub struct BuilderMap {
     pub decoration_exclusion_zones: Vec<Rect>,
     /// Seeded RNG for deterministic map generation.
     pub rng: RandomNumberGenerator,
-    /// Set by [`forest::TempleEntranceBuilder`] when it stamps the
-    /// temple-entrance DownStairs. The orchestrator latches this onto
-    /// [`crate::map::world::OverworldState::temple_entrance_pos`] so
-    /// temple floor 1's UpStairs (built later) can return to the same
-    /// coordinate. `None` for every other floor.
-    pub overworld_edit: Option<Position>,
 }
 
 /// Implement the engine's `BuildContext` so engine builders can operate on
@@ -213,7 +207,6 @@ impl BuilderMap {
             squad_counter: SquadIdCounter::default(),
             decoration_exclusion_zones: Vec::new(),
             rng: RandomNumberGenerator::new(),
-            overworld_edit: None,
         }
     }
 
@@ -268,7 +261,6 @@ impl BuilderChain {
                 squad_counter,
                 decoration_exclusion_zones: Vec::new(),
                 rng: RandomNumberGenerator::new(),
-                overworld_edit: None,
             },
         }
     }
@@ -436,7 +428,6 @@ pub fn floor_builder(
     _prefabs: Vec<PrefabTemplate>,
     _monster_manifest: &HashMap<String, MonsterAsset>,
     decoration_rules: Vec<crate::assets::DecorationRule>,
-    _overworld: crate::map::world::OverworldState,
 ) -> BuilderChain {
     use crate::map::world::{FloorKind, floor_kind};
     match floor_kind(new_depth as u32) {
@@ -547,7 +538,6 @@ pub fn level_builder(
     prefabs: Vec<PrefabTemplate>,
     monster_manifest: &HashMap<String, MonsterAsset>,
     decoration_rules: Vec<crate::assets::DecorationRule>,
-    overworld: crate::map::world::OverworldState,
 ) -> BuilderChain {
     floor_builder(
         new_depth,
@@ -559,6 +549,5 @@ pub fn level_builder(
         prefabs,
         monster_manifest,
         decoration_rules,
-        overworld,
     )
 }
