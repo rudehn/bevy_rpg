@@ -87,11 +87,11 @@ pub fn seed_overworld_state(_state: &mut OverworldState) {
 // =====================================================================
 
 /// Visual theme for a floor. Set per-floor by `spawn_dungeon`; read by
-/// the ASCII renderer to override Wall/Floor glyphs and colours.
+/// the ASCII renderer to override Wall/Floor glyphs and colours. The
+/// game starts on the town floor, so `Town` is the default.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum FloorTheme {
     #[default]
-    Dungeon,
     Town,
     Forest,
     /// Cult temple — cold stone halls, mossy flagstone underfoot.
@@ -246,15 +246,6 @@ mod tests {
             FloorTheme::Forest.override_glyph(TerrainType::Floor),
             Some(" ")
         );
-    }
-
-    #[test]
-    fn dungeon_theme_overrides_nothing() {
-        for terrain in [TerrainType::Wall, TerrainType::Floor, TerrainType::Portal] {
-            assert_eq!(FloorTheme::Dungeon.override_glyph(terrain), None);
-            assert_eq!(FloorTheme::Dungeon.override_fg(terrain), None);
-            assert_eq!(FloorTheme::Dungeon.override_bg(terrain), None);
-        }
     }
 
     #[test]

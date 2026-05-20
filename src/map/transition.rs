@@ -26,9 +26,7 @@ pub fn welcome_line_for_floor(floor: u32) -> String {
     }
 }
 
-/// Renderer theme for a floor. Falls back to `FloorTheme::Dungeon` for
-/// legacy floor indices (>= 12) which the overworld pipelines do not
-/// cover.
+/// Renderer theme for a floor.
 pub fn theme_for_floor(floor: u32) -> FloorTheme {
     FloorTheme::for_floor_kind(floor_kind(floor))
 }

@@ -183,31 +183,12 @@ pub fn update_tile_visibility(
     }
 }
 
-// `populate_blocked_tiles`, `Map`, `MapWithMode` and their bracket-lib
-// trait impls are re-exported from the engine above. All Map/MapWithMode
-// tests also live in the engine crate now.
-//
-// Game-side only: nothing below — this is the end of the stripped section.
-// The file above retains MapPlugin, GRID_SIZE, MAP_SIZE, DungeonECSMap,
-// RevealMapMessage, NeedsExploredInit, init_explored_tiles_system,
-// update_tile_visibility, and handle_reveal_map_system.
-//
-// (The block below is a compile-gate: everything from the old Map struct
-// through the test module has been removed.)
-
-// REMOVED: pub struct Map { ... }
-// REMOVED: impl Map { ... }
-// REMOVED: impl BaseMap for Map { ... }
-// REMOVED: impl Algorithm2D for Map { ... }
-// REMOVED: pub struct MapWithMode { ... }
-// REMOVED: impl MapWithMode { ... }
-// REMOVED: impl BaseMap for MapWithMode { ... }
-// REMOVED: impl Algorithm2D for MapWithMode { ... }
-// REMOVED: pub fn populate_blocked_tiles(...) { ... }
-// REMOVED: mod tests { ... }
-// All code replaced by `pub use roguelike_engine::map::*` above.
-// If you see this marker after a merge conflict: delete everything below this line,
-// the canonical code is in crates/roguelike_engine/src/map/map.rs.
+// `Map`, `MapWithMode`, and `populate_blocked_tiles` now live in the
+// engine and are re-exported at the top of this file. Game-side
+// surface in this module is `MapPlugin`, `GRID_SIZE`, `MAP_SIZE`,
+// `DungeonECSMap`, `RevealMapMessage`, `NeedsExploredInit`,
+// `init_explored_tiles_system`, `update_tile_visibility`, and
+// `handle_reveal_map_system`.
 
 #[cfg(test)]
 mod tests {
