@@ -221,7 +221,7 @@ const TEMPLE_ENTRANCE_MIN_DY: i32 = 6;
 /// Last forest floor in the descent (the one hiding the temple
 /// entrance). One below the temple itself.
 fn deepest_forest_depth() -> i32 {
-    crate::constants::MAX_FLOOR - 1
+    (crate::constants::MAX_FLOOR - 1) as i32
 }
 
 impl MetaMapBuilder for ForestStairsBuilder {
@@ -477,7 +477,7 @@ mod tests {
     /// they have to wander to discover the entrance.
     #[test]
     fn forest_4_places_temple_entrance_off_spine() {
-        let deepest = crate::constants::MAX_FLOOR - 1;
+        let deepest = (crate::constants::MAX_FLOOR - 1) as i32;
         let mut bm = build_forest(deepest);
         ForestStairsBuilder.build_map(&mut bm);
         let mid_y = bm.height / 2;
@@ -517,7 +517,7 @@ mod tests {
     /// temple's job now.
     #[test]
     fn forest_4_does_not_spawn_amulet() {
-        let deepest = crate::constants::MAX_FLOOR - 1;
+        let deepest = (crate::constants::MAX_FLOOR - 1) as i32;
         let mut bm = build_forest(deepest);
         ForestStairsBuilder.build_map(&mut bm);
         let amulet_count = bm

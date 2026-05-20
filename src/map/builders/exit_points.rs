@@ -35,7 +35,7 @@ impl DistantExit {
 
 impl MetaMapBuilder for DistantExit {
     fn build_map(&mut self, build_data: &mut BuilderMap) {
-        if build_data.map.depth >= MAX_FLOOR {
+        if build_data.map.depth as u32 >= MAX_FLOOR {
             self.final_floor(build_data);
         } else {
             // Delegate normal floors to the engine builder (places DownStairs).

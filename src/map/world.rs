@@ -19,13 +19,8 @@
 use bevy::prelude::{Color, Resource};
 
 use crate::assets::TileManifest;
+use crate::constants::MAX_FLOOR;
 use crate::map::tile::{TerrainType, Tile, resolve_tile_bg, resolve_tile_display};
-
-/// Final floor of the descent. Player descends 0 → 1 → … → 5; floor 5
-/// is the cult temple holding the Amulet of Yendor. Raising this is
-/// content work — add more `FloorKind::Forest` floors or new variants
-/// and adjust [`floor_kind`] accordingly.
-pub const MAX_FLOOR: u32 = 5;
 
 /// What kind of map a `Floor(u32)` index represents. Drives the
 /// builder pipeline and the ASCII renderer's per-floor theming.

@@ -341,7 +341,7 @@ pub fn chasm_fall_reaction_system(
         // Handle entities on chasm tiles — they fall to the floor below.
         if msg.new_liquid == LiquidType::Chasm {
             let dest_floor = floor.0 + 1;
-            let can_fall = dest_floor <= crate::constants::MAX_FLOOR as u32;
+            let can_fall = dest_floor <= crate::constants::MAX_FLOOR;
 
             if can_fall {
                 // Check for player

@@ -138,7 +138,7 @@ mod tests {
 
     fn build_temple() -> BuilderMap {
         let mut bm = BuilderMap::new_for_test(80, 60);
-        bm.map.depth = crate::constants::MAX_FLOOR;
+        bm.map.depth = crate::constants::MAX_FLOOR as i32;
         TempleLayoutBuilder.build_map(&mut bm);
         TempleStairsBuilder.build_map(&mut bm);
         bm

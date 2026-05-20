@@ -317,7 +317,7 @@ fn snapshot_floor(
         })
         .unwrap_or(Point::new(1, 1));
 
-    if find_down_stairs(map).is_none() && map.depth < MAX_FLOOR {
+    if find_down_stairs(map).is_none() && (map.depth as u32) < MAX_FLOOR {
         warn!("snapshot_floor: no DownStairs found on floor {}", map.depth);
     }
     if find_up_stairs(map).is_none() && map.depth > 1 {

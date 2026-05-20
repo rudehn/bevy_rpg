@@ -18,7 +18,11 @@ pub use roguelike_engine::constants::{
 /// floor 0 is the town hub (return Portal lives here), floors 1..=4
 /// are forest, floor 5 is the cult temple. The Amulet of Yendor sits
 /// inside the temple; return to the town Portal to win.
-pub const MAX_FLOOR: i32 = 5;
+///
+/// Typed `u32` to match `Floor(u32)` and every save-side floor index.
+/// `map.depth` is `i32` (engine convention from bracket-lib); the few
+/// places that compare against it cast explicitly.
+pub const MAX_FLOOR: u32 = 5;
 
 /// Damage dice used when no weapon is equipped (bare fists).
 pub const UNARMED_DAMAGE: &str = "1d4";

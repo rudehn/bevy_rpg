@@ -1267,7 +1267,7 @@ mod species_tests {
 
         // Forest floors are 2..=MAX_FLOOR-1. Floor 1 is the town (no
         // spawns by design); MAX_FLOOR is the temple (no spawns yet).
-        for floor in 2..crate::constants::MAX_FLOOR {
+        for floor in 2..crate::constants::MAX_FLOOR as i32 {
             let count = table
                 .spawns
                 .iter()
