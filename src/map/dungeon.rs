@@ -592,7 +592,7 @@ fn apply_map_transition(
 
     // Pure decision: snapshot/restore/arrival-direction. `None` means
     // the message was a no-op (same source and target).
-    let Some(decision) = crate::map::transition::decide_transition(
+    let Some(decision) = crate::map::world::decide_transition(
         source,
         target,
         floor_cache.0.contains_key(&target),
@@ -882,7 +882,7 @@ pub fn spawn_dungeon(
     // Floor-kind drives both the welcome line and tile theming.
     *extras.floor_kind = crate::map::world::floor_kind(floor.0);
     log_writer.write(GameLogMessage(
-        crate::map::transition::welcome_line_for_floor(floor.0),
+        crate::map::world::welcome_line_for_floor(floor.0),
     ));
 
     // First-time intro on the town spawn.
