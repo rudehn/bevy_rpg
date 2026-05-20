@@ -793,12 +793,6 @@ pub fn spawn_dungeon(
             .get(&assets.decoration_catalog_handle.0)
             .map(|c| c.rules.clone())
             .unwrap_or_default();
-        let town_npc_spawns = assets
-            .town_npc_manifests
-            .get(&assets.town_npc_manifest_handle.0)
-            .map(|m| m.spawns.clone())
-            .unwrap_or_default();
-
         let mut builder = level_builder(
             floor.0 as i32,
             MAP_SIZE.x as i32,
@@ -809,7 +803,6 @@ pub fn spawn_dungeon(
             prefabs,
             &monster_manifest.monsters,
             decoration_rules,
-            town_npc_spawns,
             extras.overworld.clone(),
         );
         builder.build_map();

@@ -60,7 +60,7 @@ Design docs live in `docs/design/`. Read these before making gameplay changes.
 | [ABILITIES.md](docs/design/ABILITIES.md) | Monster ability triggers (on-hit/on-being-hit/on-death/passive), cooldown family, ExplodeEffect variants |
 | [STATUS_EFFECTS.md](docs/design/STATUS_EFFECTS.md) | Burning, Poisoned, Slowed, Stunned, Hasted, Enraged, Entangled, Fire/Poison Resistance, tick model, refresh policy |
 | [FACTIONS.md](docs/design/FACTIONS.md) | Faction component, FactionMatrix, hostility lookup, cross-faction combat, default-Hostile gotcha |
-| [NPCS.md](docs/design/NPCS.md) | Peaceful Townsfolk reuse the monster pipeline; faction-gated Idle→Hunting; town_npcs.ron placement contract; AreaRoam / Sentry patrol routes |
+| [NPCS.md](docs/design/NPCS.md) | Peaceful Townsfolk reuse the monster pipeline; faction-gated Idle→Hunting; `TOWN_NPC_SPAWNS` placement roster; AreaRoam / Sentry patrol routes |
 | [RANGED.md](docs/design/RANGED.md) | Ranged attack pipeline, F-key targeting, weapon range, ammo, LOS gating |
 | [SQUAD_AI.md](docs/design/SQUAD_AI.md) | Squad system, shared alerting, leader mechanics, morale-based fleeing |
 | [TACTICS.md](docs/design/TACTICS.md) | Per-monster tactic registry — pure resolver + Bevy adapter, ordered tactic list per monster, sticky `Fleeing` mode overlay, `IdleMove` with `PathToRandomTile`/`Patrol`/`Roam`/`Stationary` variants. Single AI path (replaced FSM + GOAP) |
@@ -159,10 +159,9 @@ src/
     world.rs             # Overworld topology — FloorKind, GridDir, neighbor, edge/arrival positions, FloorTheme, MapExitTile, OverworldState
     builders/
       mod.rs             # BuilderChain, BuilderMap, floor_builder dispatch (town | forest | temple)
-      town.rs            # TownLayoutBuilder (water + piers + scattered themed buildings + roles + interior props + Pub-door spawn + quest-board) + TownPortalBuilder + TownDownStairsBuilder (east border) + TownPathBuilder (A* organic road network)
+      town.rs            # All town building: TownLayoutBuilder (water + piers + buildings + Pub-door spawn + quest-board) + TownPortalBuilder + TownDownStairsBuilder (east border) + TownPathBuilder (A* organic road network) + TownNpcBuilder (reads hardcoded `TOWN_NPC_SPAWNS` const, queues SpawnEntry with PatrolRoute)
       forest.rs          # ForestTerrainBuilder (depth-tuned CA, depths 1-4 + west/east end-clearings + spine corridor) + ForestStairsBuilder (west `<`, east `>` for Forest 1-3; off-spine random `>` on Forest 4 — the hidden temple entrance)
       temple.rs          # TempleLayoutBuilder (sealed stone interior — east-west corridor + 7×7 sanctum chamber) + TempleStairsBuilder (UpStairs at entry, Amulet at sanctum centre)
-      town_npcs.rs       # TownNpcBuilder + TownNpcManifest + Placement enum — reads assets/town_npcs.ron, queues SpawnEntry with PatrolRoute per NPC count
       algorithms.rs      # Re-export of `roguelike_engine::map::builders::algorithms` (BlobGenConfig, Grid, CA helpers)
       decoration_propagator.rs # Game adapter — DecorationPropagator lives in engine
       voronoi_spawner.rs # Voronoi-cell pack spawner; works on any walkable map (forest, future dungeon). See docs/design/SPAWNING.md
@@ -286,9 +285,9 @@ src/
 - **`Townsfolk` faction** is Allied to Player + Neutral to all monster factions. Player bumps fall through `resolve_bump`'s hostility check to `BumpResult::BlockedByCollider` — no melee swing.
 - **Faction-filtered visibility.** The tactic snapshot builder filters `visible_enemies` through the `FactionMatrix`; non-hostile actors never appear in an NPC's enemy list, so `HuntVisibleTarget` / `MeleeAdjacent` / etc. all return `None` against the player. Allied NPCs see the player but stay non-hostile.
 - **`Asleep → Idle` wake gate.** Every monster spawns with `MonsterAI::default().mode == Asleep`. The `is_player_hostile_target` gate in [src/game/ai.rs](src/game/ai.rs) `update_mode` early-returns for non-hostile actors so they never escalate to `Hunting`, but it now also calls `non_hostile_mode_adjustment` to promote `Asleep → Idle` on the first mode-refresh tick. Without this promotion the `IdleMove` tactic — gated on `AiMode::Idle` — would never fire and NPCs would freeze at their spawn point forever.
-- **Placement is separated from NPC identity.** [`assets/town_npcs.ron`](assets/town_npcs.ron) declares `(npc, count, placement)` triples; [`TownNpcBuilder`](src/map/builders/town_npcs.rs) consumes them and queues `SpawnEntry`s with the appropriate `PatrolRoute` (`AreaRoam` for drunks, future `Sentry` for vendors). The NPC asset has no notion of "pier" or "building interior" — placement lives in the town builder.
+- **Placement is separated from NPC identity.** The shipping roster lives in the [`TOWN_NPC_SPAWNS`](src/map/builders/town.rs) const inside `town.rs` — a `&[TownNpcSpawn]` with `(npc, count, placement)` triples. `TownNpcBuilder` reads the const directly and queues `SpawnEntry`s with the appropriate `PatrolRoute` (`AreaRoam` for drunks, future `Sentry` for vendors). The NPC asset has no notion of "pier" or "building interior" — placement lives in the town builder. Previously hot-loaded from `assets/town_npcs.ron`; consolidated when it became clear the roster never diverged from the layout that produced it.
 - **Roaming** uses the `IdleMove` tactic's `Roam` variant (`idle_movement: Roam` on the asset) plus the `PatrolRoute::AreaRoam { min, max }` component the builder attaches at spawn. The asset declares "I roam"; the builder declares "where". `IdleMove::Patrol` follows the same pattern for waypoint-based NPCs.
-- Adding a new NPC = one stat block in `monsters.ron` + one row in `town_npcs.ron`. Zero code change unless the placement strategy is new.
+- Adding a new NPC = one stat block in `monsters.ron` + one entry in `TOWN_NPC_SPAWNS` (in [src/map/builders/town.rs](src/map/builders/town.rs)). Zero code change unless the placement strategy is new (a new `TownNpcPlacement` variant + placement helper).
 
 ### Tile Mutation Pipeline (engine-owned)
 - Mutation messages (`TileMutationMessage`, `DecorationMutationMessage`, `LiquidMutationMessage`) and their apply systems live in `roguelike_engine::map::mutation`. The engine plugin `MapMutationPlugin` registers them; game configures `MapMutationSet` ordering inside `ProcessingPhase::Cleanup`.

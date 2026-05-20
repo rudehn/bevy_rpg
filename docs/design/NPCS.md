@@ -17,11 +17,11 @@ that distinguish them from monsters:
   gating the `Asleep`/`Idle → Hunting` transition on the faction
   relation being **Hostile**. Non-Hostile actors stay where they are
   even when the player walks past them.
-- A separate placement RON ([assets/town_npcs.ron](../../assets/town_npcs.ron))
-  parsed by the town-side `TownNpcBuilder` that decides *where* on
-  the map each NPC goes and what their roaming bounds are. The NPC
-  asset itself has no notion of "pier" or "building interior" — it
-  just declares stats, glyph, AI tuning.
+- A hardcoded placement roster ([`TOWN_NPC_SPAWNS`](../../src/map/builders/town.rs))
+  inside the town builder that decides *where* on the map each NPC
+  goes and what their roaming bounds are. The NPC asset itself has no
+  notion of "pier" or "building interior" — it just declares stats,
+  glyph, AI tuning.
 
 This deliberately mixes NPCs into `monsters.ron` rather than creating
 a parallel `npcs.ron` asset type. Pro: zero new spawn code path,
@@ -56,13 +56,11 @@ to split.
 ),
 ```
 
-```ron
-// assets/town_npcs.ron
-(
-    spawns: [
-        ( npc: "Drunken Sailor", count: 3, placement: AnywhereInTown ),
-    ],
-)
+```rust
+// src/map/builders/town.rs
+pub const TOWN_NPC_SPAWNS: &[TownNpcSpawn] = &[
+    TownNpcSpawn { npc: "Drunken Sailor", count: 3, placement: TownNpcPlacement::AnywhereInTown },
+];
 ```
 
 ```ron
@@ -84,7 +82,8 @@ to split.
 
 ### Placement strategies
 
-Implemented in [src/map/builders/town_npcs.rs](../../src/map/builders/town_npcs.rs):
+Implemented in [src/map/builders/town.rs](../../src/map/builders/town.rs)
+(the NPC code lives in the same file as the rest of the town builder):
 
 | Strategy | Roam bounds | Notes |
 |---|---|---|
@@ -134,21 +133,21 @@ every turn (subject to their `movement_delay`).
 
 | File | Role |
 |---|---|
-| [src/map/builders/town_npcs.rs](../../src/map/builders/town_npcs.rs) | Module — `TownNpcManifest`, `TownNpcSpawn`, `TownNpcPlacement`, `TownNpcBuilder`, loader system. Single concept, single file. |
-| [assets/town_npcs.ron](../../assets/town_npcs.ron) | Placement RON. Edit to add NPCs to town. |
+| [src/map/builders/town.rs](../../src/map/builders/town.rs) | Owns `TownNpcSpawn`, `TownNpcPlacement`, `TOWN_NPC_SPAWNS` const, `TownNpcBuilder`, and the placement helpers — all in the same file as the rest of the town layout, because the geometry and the placement strategy share so much state. |
 | [assets/monsters.ron](../../assets/monsters.ron) | NPC stat blocks live here alongside hostile monsters (Drunken Sailor today). |
 | [assets/factions.ron](../../assets/factions.ron) | Townsfolk relations. |
 | [src/game/ai.rs](../../src/game/ai.rs) | `is_player_hostile_target` gate on `→ Hunting` escalation, plus `non_hostile_mode_adjustment` which wakes non-hostile NPCs from the `Asleep` spawn default to `Idle` so their `IdleMove` patrol can run. |
-| [src/map/builders/town.rs](../../src/map/builders/town.rs) | Exposes `WATER_EAST_EDGE` so the NPC builder can avoid the harbour. |
 
 ## Adding a new NPC type
 
 1. Add the stat block to `assets/monsters.ron` with `faction: "Townsfolk"`
    and an FSM AI config (peaceful behaviour comes from faction relation).
-2. Add a placement entry to `assets/town_npcs.ron`.
+2. Add a row to the `TOWN_NPC_SPAWNS` const in
+   [src/map/builders/town.rs](../../src/map/builders/town.rs).
 3. Done. No code change unless the placement strategy is new
    (`Pier`, `BuildingInterior(role)`, etc.) — those land later as
-   variants on `TownNpcPlacement`.
+   new variants on `TownNpcPlacement` plus matching arms in
+   `place_one_npc`.
 
 ## Edge cases + resolved decisions
 

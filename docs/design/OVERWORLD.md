@@ -75,7 +75,7 @@ builder list. The town hub has:
 - A central `Portal` tile (win-condition return)
 - A `DownStairs` on the east border → Forest 1
 - An organic A*-style dirt road network connecting everything
-- Townsfolk NPCs placed per `town_npcs.ron` (drunken sailors today)
+- Townsfolk NPCs placed per the `TOWN_NPC_SPAWNS` const in [src/map/builders/town.rs](../../src/map/builders/town.rs) (drunken sailors today)
 
 ### Forest (floors 1..=`MAX_FLOOR - 1`)
 

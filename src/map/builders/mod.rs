@@ -29,7 +29,6 @@ pub mod item_spawner;
 pub mod prefab_placer;
 pub mod temple;
 pub mod town;
-pub mod town_npcs;
 pub mod voronoi_spawner;
 
 /// A single monster spawn entry, optionally linked to a squad.
@@ -437,12 +436,11 @@ pub fn floor_builder(
     _prefabs: Vec<PrefabTemplate>,
     _monster_manifest: &HashMap<String, MonsterAsset>,
     decoration_rules: Vec<crate::assets::DecorationRule>,
-    town_npc_spawns: Vec<town_npcs::TownNpcSpawn>,
     _overworld: crate::map::world::OverworldState,
 ) -> BuilderChain {
     use crate::map::world::{FloorKind, floor_kind};
     match floor_kind(new_depth as u32) {
-        FloorKind::Town => town_builder(new_depth, width, height, squad_counter, town_npc_spawns),
+        FloorKind::Town => town_builder(new_depth, width, height, squad_counter),
         FloorKind::Forest { .. } => {
             forest_builder(new_depth, width, height, squad_counter, spawn_table, decoration_rules)
         }
@@ -453,13 +451,13 @@ pub fn floor_builder(
 /// Build the town hub (floor 0). Open Floor with a handful of small
 /// buildings, a Portal at the centre (the win-condition return point),
 /// a DownStairs on the east border into Forest 1, an organic dirt-
-/// road network, and Townsfolk NPCs placed per `town_npcs.ron`.
+/// road network, and Townsfolk NPCs placed per the hardcoded
+/// `town::TOWN_NPC_SPAWNS` roster.
 pub fn town_builder(
     new_depth: i32,
     width: i32,
     height: i32,
     squad_counter: SquadIdCounter,
-    town_npc_spawns: Vec<town_npcs::TownNpcSpawn>,
 ) -> BuilderChain {
     let mut builder = BuilderChain::new(new_depth, width, height, "Town", squad_counter);
     builder.start_with(town::TownLayoutBuilder::new());
@@ -473,10 +471,7 @@ pub fn town_builder(
     // NPC placement runs LAST so it can read the finalised map
     // (avoiding water, building interiors, stairs) and queue
     // SpawnEntry's with PatrolRoute components.
-    builder.with_named(
-        "TownNpcBuilder",
-        town_npcs::TownNpcBuilder::new(town_npc_spawns),
-    );
+    builder.with_named("TownNpcBuilder", town::TownNpcBuilder::new());
     builder
 }
 
@@ -552,7 +547,6 @@ pub fn level_builder(
     prefabs: Vec<PrefabTemplate>,
     monster_manifest: &HashMap<String, MonsterAsset>,
     decoration_rules: Vec<crate::assets::DecorationRule>,
-    town_npc_spawns: Vec<town_npcs::TownNpcSpawn>,
     overworld: crate::map::world::OverworldState,
 ) -> BuilderChain {
     floor_builder(
@@ -565,7 +559,6 @@ pub fn level_builder(
         prefabs,
         monster_manifest,
         decoration_rules,
-        town_npc_spawns,
         overworld,
     )
 }

@@ -59,9 +59,6 @@ pub struct EntityAssets<'w> {
     pub prefab_manifest_handle: Res<'w, PrefabManifestHandle>,
     pub decoration_catalogs: Res<'w, Assets<DecorationCatalog>>,
     pub decoration_catalog_handle: Res<'w, DecorationCatalogHandle>,
-    pub town_npc_manifests:
-        Res<'w, Assets<crate::map::builders::town_npcs::TownNpcManifest>>,
-    pub town_npc_manifest_handle: Res<'w, crate::map::builders::town_npcs::TownNpcManifestHandle>,
 }
 
 // ---------------------------------------------------------------------------

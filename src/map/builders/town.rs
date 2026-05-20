@@ -43,8 +43,10 @@ use std::cmp::Ordering;
 
 use bracket_lib::prelude::{Point, Rect};
 
+use roguelike_engine::components::PatrolState;
+
 use crate::components::Position;
-use crate::map::builders::{BuilderMap, BuilderPhase, InitialMapBuilder, MetaMapBuilder};
+use crate::map::builders::{BuilderMap, BuilderPhase, InitialMapBuilder, MetaMapBuilder, SpawnEntry};
 use crate::map::tile::{Decoration, LiquidType, TerrainType, Tile};
 
 // =====================================================================
@@ -65,9 +67,8 @@ const CENTER_KEEPOUT: i32 = 3;
 const EAST_STAIR_KEEPOUT_WIDTH: i32 = 6;
 const EAST_STAIR_KEEPOUT_HEIGHT: i32 = 5;
 /// Tiles west of (and including) this column are water. Buildings and
-/// roads stay east of `WATER_EAST_EDGE`. Public so the NPC placement
-/// builder (`town_npcs.rs`) can use it to bound roam areas to the
-/// land side of the map.
+/// roads stay east of `WATER_EAST_EDGE`; the NPC placement code in
+/// this file uses it to bound roam areas to the land side of the map.
 pub(crate) const WATER_EAST_EDGE: i32 = 12;
 /// Pier configuration — three piers spread vertically along the
 /// shore. Each is `(y, length, thickness)` where `length` is how many
@@ -632,6 +633,188 @@ fn door_for_building(building: Rect, toward: Point) -> Point {
 }
 
 // =====================================================================
+// Town NPCs
+//
+// Previously sourced from `assets/town_npcs.ron` via a RonAssetPlugin;
+// consolidated into this file (alongside the rest of the town builder)
+// because there's no scenario where NPC placement diverges from the
+// layout that produces it. The roster is small and changes rarely —
+// editing this const is the canonical way to add a townsfolk.
+//
+// Each entry says "spawn N of `<npc>` via `<placement>`". The `npc`
+// string keys into `monsters.ron`; NPCs reuse the monster pipeline
+// and their peaceful behaviour comes from their `faction:` field, not
+// a separate spawn path.
+// =====================================================================
+
+/// Placement strategy for a town NPC. The town builder owns the
+/// geometry; this enum is the stable contract.
+///
+/// `AnywhereInTown` is the only variant today. Future entries (Pier,
+/// BuildingInterior(role)) land when vendors / quest NPCs ship.
+#[derive(Debug, Clone, Copy)]
+pub enum TownNpcPlacement {
+    /// Random walkable Floor tile east of the water strip, outside
+    /// every building interior. Roam bounds = the entire land
+    /// portion of the town.
+    AnywhereInTown,
+}
+
+/// One row in the hardcoded town-NPC roster.
+#[derive(Debug, Clone, Copy)]
+pub struct TownNpcSpawn {
+    /// Lookup key into `monsters.ron`.
+    pub npc: &'static str,
+    /// How many copies to place.
+    pub count: u32,
+    /// Where + roam-bounds.
+    pub placement: TownNpcPlacement,
+}
+
+/// The shipping town-NPC roster. Edit this to add or remove townsfolk.
+pub const TOWN_NPC_SPAWNS: &[TownNpcSpawn] = &[
+    // Three drunken sailors stagger around the town centre.
+    TownNpcSpawn {
+        npc: "Drunken Sailor",
+        count: 3,
+        placement: TownNpcPlacement::AnywhereInTown,
+    },
+];
+
+/// Queues NPC `SpawnEntry`s onto `BuilderMap.spawn_list`. Each entry
+/// carries a `PatrolRoute` matching the chosen placement so the
+/// materializer wires the right roaming behaviour onto the spawned
+/// entity. Runs in `Finalization` so it can read the finalised town
+/// (water + buildings + stairs + paths) without stomping anything.
+pub struct TownNpcBuilder;
+
+impl TownNpcBuilder {
+    pub fn new() -> Box<Self> {
+        Box::new(Self)
+    }
+}
+
+impl MetaMapBuilder for TownNpcBuilder {
+    fn phase(&self) -> Option<BuilderPhase> {
+        Some(BuilderPhase::Finalization)
+    }
+
+    fn build_map(&mut self, build: &mut BuilderMap) {
+        place_town_npcs(TOWN_NPC_SPAWNS, build);
+    }
+}
+
+/// Place every entry in `spawns` onto `build.spawn_list`. Extracted
+/// so tests can drive the placement code with an arbitrary roster
+/// without going through the `MetaMapBuilder` trait.
+fn place_town_npcs(spawns: &[TownNpcSpawn], build: &mut BuilderMap) {
+    for spawn in spawns {
+        for _ in 0..spawn.count {
+            place_one_npc(build, spawn);
+        }
+    }
+}
+
+/// Pick a position + patrol bounds for one NPC and push the resulting
+/// `SpawnEntry` onto `build.spawn_list`. Silently gives up after an
+/// attempts budget — better one missing drunk than a hung builder on
+/// a degenerate town.
+fn place_one_npc(build: &mut BuilderMap, spawn: &TownNpcSpawn) {
+    match spawn.placement {
+        TownNpcPlacement::AnywhereInTown => {
+            let Some(pos) = pick_anywhere_in_town(build) else {
+                bevy::log::warn!(
+                    "TownNpcBuilder: could not find an open tile for '{}' (AnywhereInTown)",
+                    spawn.npc,
+                );
+                return;
+            };
+            let bounds = town_npc_bounds(build);
+            let patrol = roguelike_engine::components::PatrolRoute {
+                state: PatrolState::AreaRoam {
+                    min: (bounds.x1, bounds.y1),
+                    max: (bounds.x2, bounds.y2),
+                },
+            };
+            build.spawn_list.push(SpawnEntry {
+                pos: Point::new(pos.x, pos.y),
+                name: spawn.npc.to_string(),
+                squad_id: None,
+                squad_config: None,
+                is_leader: false,
+                patrol_route: Some(patrol),
+            });
+        }
+    }
+}
+
+/// The walkable land box — everywhere east of the water strip,
+/// minus the outer wall. Drunks roam within this rectangle.
+fn town_npc_bounds(build: &BuilderMap) -> Rect {
+    Rect::with_exact(
+        WATER_EAST_EDGE + 1,
+        1,
+        build.width - 2,
+        build.height - 2,
+    )
+}
+
+/// Pick a random walkable Floor tile suitable for an NPC. Avoids
+/// water, building interiors, stairs, the portal, and any tile
+/// already claimed by a prior spawn — we don't want two drunks
+/// starting in the same square.
+fn pick_anywhere_in_town(build: &mut BuilderMap) -> Option<Position> {
+    const MAX_TRIES: u32 = 128;
+    let bounds = town_npc_bounds(build);
+    let occupied: HashSet<(i32, i32)> = build
+        .spawn_list
+        .iter()
+        .map(|e| (e.pos.x, e.pos.y))
+        .collect();
+
+    for _ in 0..MAX_TRIES {
+        let x = build.rng.range(bounds.x1, bounds.x2);
+        let y = build.rng.range(bounds.y1, bounds.y2);
+        if occupied.contains(&(x, y)) {
+            continue;
+        }
+        if !is_open_town_tile(build, x, y) {
+            continue;
+        }
+        if inside_any_building(build, x, y) {
+            continue;
+        }
+        return Some(Position { x, y });
+    }
+    None
+}
+
+/// A "town tile" the NPC may start on: plain walkable Floor, no
+/// liquid (so we don't drop a drunk into the harbour). Stairs and
+/// the portal are non-`Floor` so they're already excluded.
+fn is_open_town_tile(build: &BuilderMap, x: i32, y: i32) -> bool {
+    if x <= 0 || y <= 0 || x >= build.width - 1 || y >= build.height - 1 {
+        return false;
+    }
+    let idx = build.map.xy_idx(x, y);
+    let tile = build.map.tiles[idx];
+    if tile.liquid != LiquidType::None {
+        return false;
+    }
+    matches!(tile.terrain, TerrainType::Floor)
+}
+
+fn inside_any_building(build: &BuilderMap, x: i32, y: i32) -> bool {
+    let Some(rooms) = &build.rooms else {
+        return false;
+    };
+    rooms.iter().any(|r| {
+        // Building interior = strictly inside the wall border.
+        x > r.x1 && x < r.x2 - 1 && y > r.y1 && y < r.y2 - 1
+    })
+}
+
+// =====================================================================
 // Tests
 // =====================================================================
 
@@ -798,5 +981,95 @@ mod tests {
         let idx = bm.map.xy_idx(pos.x, pos.y);
         assert_eq!(bm.map.tiles[idx].terrain, TerrainType::Floor);
         assert_eq!(bm.map.tiles[idx].liquid, LiquidType::None);
+    }
+
+    // -----------------------------------------------------------------
+    // Town NPC placement
+    // -----------------------------------------------------------------
+
+    /// Builds a town-ish BuilderMap for NPC tests: open Floor everywhere
+    /// east of WATER_EAST_EDGE, water everywhere west. No buildings (so
+    /// placement has a clear field), no stairs (so the test doesn't
+    /// depend on those builders running).
+    fn open_town_for_npc_test(w: i32, h: i32) -> BuilderMap {
+        let mut bm = BuilderMap::new_for_test(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let idx = bm.map.xy_idx(x, y);
+                let liquid = if x < WATER_EAST_EDGE {
+                    LiquidType::Water
+                } else {
+                    LiquidType::None
+                };
+                bm.map.tiles[idx] = Tile {
+                    terrain: TerrainType::Floor,
+                    liquid,
+                    decoration: Decoration::None,
+                };
+            }
+        }
+        bm.rooms = Some(vec![]);
+        bm
+    }
+
+    /// `place_town_npcs` with N drunks must queue N entries onto
+    /// `spawn_list`. Each entry references the NPC name, sits on open
+    /// Floor, and carries an `AreaRoam` patrol route.
+    #[test]
+    fn builder_queues_n_entries_with_area_roam_route() {
+        let mut bm = open_town_for_npc_test(80, 60);
+        place_town_npcs(
+            &[TownNpcSpawn {
+                npc: "Drunken Sailor",
+                count: 3,
+                placement: TownNpcPlacement::AnywhereInTown,
+            }],
+            &mut bm,
+        );
+        assert_eq!(bm.spawn_list.len(), 3);
+        for entry in &bm.spawn_list {
+            assert_eq!(entry.name, "Drunken Sailor");
+            assert!(matches!(
+                &entry.patrol_route,
+                Some(roguelike_engine::components::PatrolRoute {
+                    state: PatrolState::AreaRoam { .. }
+                })
+            ));
+            let idx = bm.map.xy_idx(entry.pos.x, entry.pos.y);
+            assert_eq!(bm.map.tiles[idx].terrain, TerrainType::Floor);
+            assert_eq!(bm.map.tiles[idx].liquid, LiquidType::None);
+        }
+    }
+
+    /// Two NPCs in the same builder run shouldn't share a tile.
+    #[test]
+    fn npc_positions_are_unique_within_one_run() {
+        let mut bm = open_town_for_npc_test(80, 60);
+        place_town_npcs(
+            &[TownNpcSpawn {
+                npc: "Drunken Sailor",
+                count: 5,
+                placement: TownNpcPlacement::AnywhereInTown,
+            }],
+            &mut bm,
+        );
+        let mut seen = HashSet::new();
+        for entry in &bm.spawn_list {
+            assert!(
+                seen.insert((entry.pos.x, entry.pos.y)),
+                "duplicate NPC position ({}, {})",
+                entry.pos.x,
+                entry.pos.y,
+            );
+        }
+    }
+
+    /// The shipping roster must be non-empty — guards against an
+    /// accidental edit that empties `TOWN_NPC_SPAWNS` and silently
+    /// removes every drunk from the town.
+    #[test]
+    fn shipping_roster_has_at_least_one_entry() {
+        assert!(!TOWN_NPC_SPAWNS.is_empty());
+        assert!(TOWN_NPC_SPAWNS.iter().any(|s| s.npc == "Drunken Sailor"));
     }
 }
