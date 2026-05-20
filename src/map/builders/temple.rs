@@ -16,7 +16,7 @@
 //! sanctum.
 //!
 //! No connection to forest builders or town builders — this floor has
-//! its own theme (`FloorTheme::Temple`, cold stone) and its own builder
+//! its own theme (`FloorKind::Temple`, cold stone) and its own builder
 //! chain.
 
 use bracket_lib::prelude::Point;

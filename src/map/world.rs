@@ -25,10 +25,13 @@ use crate::map::tile::{TerrainType, Tile, resolve_tile_bg, resolve_tile_display}
 pub const MAX_FLOOR: u32 = 5;
 
 /// What kind of map a `Floor(u32)` index represents. Drives the
-/// builder pipeline + visual theme.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// builder pipeline and the ASCII renderer's per-floor theming.
+/// Stored as a resource by `spawn_dungeon` and read by tile rendering;
+/// the game starts on the town hub, so `Town` is the default.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum FloorKind {
     /// Floor 0 — the hub town with the return portal.
+    #[default]
     Town,
     /// Floors 1..=MAX_FLOOR-1 — forest descent. `depth` is the floor's
     /// distance from town (1 = first forest, 4 = deepest forest, where
@@ -53,50 +56,35 @@ pub fn floor_kind(floor: u32) -> FloorKind {
 }
 
 // =====================================================================
-// Floor-theme + path rendering — used by the ASCII renderer.
+// Per-floor theming — used by the ASCII renderer.
+//
+// All three lookups (glyph, foreground, background) match directly on
+// `FloorKind`. The `Forest { depth }` payload is ignored today; if you
+// want depth-tuned theming (e.g. Forest 4 walls darker than Forest 1)
+// it slots in here without touching any other module.
 // =====================================================================
 
-/// Visual theme for a floor. Set per-floor by `spawn_dungeon`; read by
-/// the ASCII renderer to override Wall/Floor glyphs and colours. The
-/// game starts on the town floor, so `Town` is the default.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum FloorTheme {
-    #[default]
-    Town,
-    Forest,
-    /// Cult temple — cold stone halls, mossy flagstone underfoot.
-    Temple,
-}
-
-impl FloorTheme {
-    pub fn for_floor_kind(kind: FloorKind) -> Self {
-        match kind {
-            FloorKind::Town => FloorTheme::Town,
-            FloorKind::Forest { .. } => FloorTheme::Forest,
-            FloorKind::Temple => FloorTheme::Temple,
-        }
-    }
-
+impl FloorKind {
     fn override_glyph(self, terrain: TerrainType) -> Option<&'static str> {
         match (self, terrain) {
-            (FloorTheme::Forest, TerrainType::Wall) => Some("\u{2663}"), // ♣
-            (FloorTheme::Forest, TerrainType::Floor) => Some(" "),
-            // (FloorTheme::Town, TerrainType::Wall) => Some("\u{2593}"),    // ▓
-            (FloorTheme::Town, TerrainType::Floor) => Some("."),
-            (FloorTheme::Temple, TerrainType::Wall) => Some("\u{2592}"), // ▒
-            (FloorTheme::Temple, TerrainType::Floor) => Some("."),
+            (FloorKind::Forest { .. }, TerrainType::Wall) => Some("\u{2663}"), // ♣
+            (FloorKind::Forest { .. }, TerrainType::Floor) => Some(" "),
+            // Town walls fall through to the manifest default `#`.
+            (FloorKind::Town, TerrainType::Floor) => Some("."),
+            (FloorKind::Temple, TerrainType::Wall) => Some("\u{2592}"), // ▒
+            (FloorKind::Temple, TerrainType::Floor) => Some("."),
             _ => None,
         }
     }
 
     fn override_fg(self, terrain: TerrainType) -> Option<Color> {
         match (self, terrain) {
-            (FloorTheme::Forest, TerrainType::Wall) => Some(Color::srgb(0.20, 0.55, 0.18)),
-            (FloorTheme::Forest, TerrainType::Floor) => Some(Color::srgb(0.40, 0.30, 0.18)),
-            (FloorTheme::Town, TerrainType::Wall) => Some(Color::srgb(0.55, 0.40, 0.25)),
-            (FloorTheme::Town, TerrainType::Floor) => Some(Color::srgb(0.65, 0.55, 0.40)),
-            (FloorTheme::Temple, TerrainType::Wall) => Some(Color::srgb(0.42, 0.42, 0.48)),
-            (FloorTheme::Temple, TerrainType::Floor) => Some(Color::srgb(0.30, 0.35, 0.32)),
+            (FloorKind::Forest { .. }, TerrainType::Wall) => Some(Color::srgb(0.20, 0.55, 0.18)),
+            (FloorKind::Forest { .. }, TerrainType::Floor) => Some(Color::srgb(0.40, 0.30, 0.18)),
+            (FloorKind::Town, TerrainType::Wall) => Some(Color::srgb(0.55, 0.40, 0.25)),
+            (FloorKind::Town, TerrainType::Floor) => Some(Color::srgb(0.65, 0.55, 0.40)),
+            (FloorKind::Temple, TerrainType::Wall) => Some(Color::srgb(0.42, 0.42, 0.48)),
+            (FloorKind::Temple, TerrainType::Floor) => Some(Color::srgb(0.30, 0.35, 0.32)),
             _ => None,
         }
     }
@@ -108,11 +96,11 @@ impl FloorTheme {
             // (poison gas, fire, blood) carry the visual signal. Per-tile
             // noise tint is applied at render time (see `themed_floor_bg`
             // in `ascii_renderer.rs`), so this is just the base palette.
-            (FloorTheme::Forest, TerrainType::Floor) => Some(Color::srgb(0.13, 0.11, 0.08)),
-            (FloorTheme::Forest, TerrainType::Wall) => Some(Color::srgb(0.04, 0.07, 0.03)),
-            (FloorTheme::Town, TerrainType::Floor) => Some(Color::srgb(0.18, 0.15, 0.10)),
-            (FloorTheme::Temple, TerrainType::Floor) => Some(Color::srgb(0.08, 0.09, 0.10)),
-            (FloorTheme::Temple, TerrainType::Wall) => Some(Color::srgb(0.05, 0.06, 0.07)),
+            (FloorKind::Forest { .. }, TerrainType::Floor) => Some(Color::srgb(0.13, 0.11, 0.08)),
+            (FloorKind::Forest { .. }, TerrainType::Wall) => Some(Color::srgb(0.04, 0.07, 0.03)),
+            (FloorKind::Town, TerrainType::Floor) => Some(Color::srgb(0.18, 0.15, 0.10)),
+            (FloorKind::Temple, TerrainType::Floor) => Some(Color::srgb(0.08, 0.09, 0.10)),
+            (FloorKind::Temple, TerrainType::Wall) => Some(Color::srgb(0.05, 0.06, 0.07)),
             _ => None,
         }
     }
@@ -127,7 +115,7 @@ fn is_path_tile(tile: Tile) -> bool {
 pub fn themed_tile_display<'a>(
     tile: Tile,
     manifest: &'a TileManifest,
-    theme: FloorTheme,
+    kind: FloorKind,
 ) -> (String, Color, &'a str) {
     if is_path_tile(tile) {
         return (
@@ -142,16 +130,16 @@ pub fn themed_tile_display<'a>(
     if name != tile.terrain.name() {
         return (glyph, fg, name);
     }
-    let new_glyph = theme
+    let new_glyph = kind
         .override_glyph(tile.terrain)
         .map(|s| s.to_string())
         .unwrap_or(glyph);
-    let new_fg = theme.override_fg(tile.terrain).unwrap_or(fg);
+    let new_fg = kind.override_fg(tile.terrain).unwrap_or(fg);
     (new_glyph, new_fg, name)
 }
 
 /// Theme-aware wrapper around [`resolve_tile_bg`].
-pub fn themed_tile_bg(tile: Tile, manifest: &TileManifest, theme: FloorTheme) -> Color {
+pub fn themed_tile_bg(tile: Tile, manifest: &TileManifest, kind: FloorKind) -> Color {
     if is_path_tile(tile) {
         return Color::srgb(0.30, 0.22, 0.13);
     }
@@ -159,7 +147,7 @@ pub fn themed_tile_bg(tile: Tile, manifest: &TileManifest, theme: FloorTheme) ->
     if tile.liquid != crate::map::tile::LiquidType::None {
         return base;
     }
-    theme.override_bg(tile.terrain).unwrap_or(base)
+    kind.override_bg(tile.terrain).unwrap_or(base)
 }
 
 #[cfg(test)]
@@ -191,31 +179,10 @@ mod tests {
     }
 
     #[test]
-    fn floor_theme_for_kind() {
-        assert_eq!(
-            FloorTheme::for_floor_kind(FloorKind::Town),
-            FloorTheme::Town
-        );
-        assert_eq!(
-            FloorTheme::for_floor_kind(FloorKind::Forest { depth: 1 }),
-            FloorTheme::Forest,
-        );
-        assert_eq!(
-            FloorTheme::for_floor_kind(FloorKind::Temple),
-            FloorTheme::Temple,
-        );
-    }
-
-    #[test]
     fn forest_theme_overrides_wall_and_floor_glyphs() {
-        assert_eq!(
-            FloorTheme::Forest.override_glyph(TerrainType::Wall),
-            Some("\u{2663}")
-        );
-        assert_eq!(
-            FloorTheme::Forest.override_glyph(TerrainType::Floor),
-            Some(" ")
-        );
+        let forest = FloorKind::Forest { depth: 1 };
+        assert_eq!(forest.override_glyph(TerrainType::Wall), Some("\u{2663}"));
+        assert_eq!(forest.override_glyph(TerrainType::Floor), Some(" "));
     }
 
     #[test]
@@ -226,9 +193,13 @@ mod tests {
             TerrainType::Portal,
             TerrainType::Door,
         ] {
-            for theme in [FloorTheme::Forest, FloorTheme::Town, FloorTheme::Temple] {
-                assert_eq!(theme.override_glyph(terrain), None);
-                assert_eq!(theme.override_bg(terrain), None);
+            for kind in [
+                FloorKind::Town,
+                FloorKind::Forest { depth: 1 },
+                FloorKind::Temple,
+            ] {
+                assert_eq!(kind.override_glyph(terrain), None);
+                assert_eq!(kind.override_bg(terrain), None);
             }
         }
     }

@@ -260,7 +260,7 @@ pub fn resolve_tile_display(tile: Tile, manifest: &TileManifest) -> (String, bev
                 // theme-override its glyph." Returning the terrain name
                 // here caused every forest decoration (Moss, TallGrass,
                 // PhosphorescentMoss, …) to be silently overwritten by
-                // the FloorTheme's `,` comma glyph.
+                // the FloorKind's `,` comma glyph.
                 return (da.ascii_char.clone(), da.ascii_fg, tile.decoration.name());
             }
         }

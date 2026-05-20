@@ -143,7 +143,7 @@ pub struct DungeonPlugin;
 impl Plugin for DungeonPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Floor>()
-            .init_resource::<crate::map::world::FloorTheme>()
+            .init_resource::<crate::map::world::FloorKind>()
             .init_resource::<FloorCache>()
             .init_resource::<FallenEntities>()
             .init_resource::<PendingFloorRestore>()
@@ -642,9 +642,9 @@ pub(crate) struct SpawnDungeonExtras<'w> {
     /// explicit destination position. If `Some`, overrides the
     /// materializer's default player spawn point.
     pending_arrival: ResMut<'w, PendingArrival>,
-    /// Visual theme. Set per-floor by `spawn_dungeon` so the renderer
-    /// draws town, forest, and temple distinctly.
-    floor_theme: ResMut<'w, crate::map::world::FloorTheme>,
+    /// Per-floor world kind. Set by `spawn_dungeon` and read by the
+    /// ASCII renderer for theme-aware tile rendering.
+    floor_kind: ResMut<'w, crate::map::world::FloorKind>,
 }
 
 pub fn spawn_dungeon(
@@ -879,9 +879,8 @@ pub fn spawn_dungeon(
          skips the transition frame and stale FOV doesn't bleed into the new map",
     );
 
-    // Floor-kind aware welcome line + theme — both are pure functions
-    // of the floor index (see `crate::map::transition`).
-    *extras.floor_theme = crate::map::transition::theme_for_floor(floor.0);
+    // Floor-kind drives both the welcome line and tile theming.
+    *extras.floor_kind = crate::map::world::floor_kind(floor.0);
     log_writer.write(GameLogMessage(
         crate::map::transition::welcome_line_for_floor(floor.0),
     ));

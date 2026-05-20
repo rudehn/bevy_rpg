@@ -7,7 +7,7 @@
 //! the decisions behind a floor transition can be unit-tested without
 //! spinning up an `App`.
 
-use crate::map::world::{FloorKind, FloorTheme, floor_kind};
+use crate::map::world::{FloorKind, floor_kind};
 
 // ---------------------------------------------------------------------------
 // Welcome line + theme
@@ -24,11 +24,6 @@ pub fn welcome_line_for_floor(floor: u32) -> String {
             "Cold stone closes around you. The cult's shrine.".to_string()
         }
     }
-}
-
-/// Renderer theme for a floor.
-pub fn theme_for_floor(floor: u32) -> FloorTheme {
-    FloorTheme::for_floor_kind(floor_kind(floor))
 }
 
 // ---------------------------------------------------------------------------
@@ -121,18 +116,6 @@ mod tests {
             welcome_line_for_floor(2),
             "You step deeper into the forest. (floor 2)",
         );
-    }
-
-    // ----- theme_for_floor -----------------------------------------------
-
-    #[test]
-    fn theme_matches_floor_kind() {
-        assert_eq!(theme_for_floor(0), FloorTheme::Town);
-        assert_eq!(theme_for_floor(1), FloorTheme::Forest);
-        assert_eq!(theme_for_floor(2), FloorTheme::Forest);
-        assert_eq!(theme_for_floor(3), FloorTheme::Forest);
-        assert_eq!(theme_for_floor(4), FloorTheme::Forest);
-        assert_eq!(theme_for_floor(crate::map::world::MAX_FLOOR), FloorTheme::Temple);
     }
 
     #[test]
