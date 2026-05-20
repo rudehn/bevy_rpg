@@ -39,9 +39,6 @@ pub struct CachedFloor {
     pub items: Vec<crate::save::SavedItem>,
     /// Props.
     pub props: Vec<crate::save::SavedProp>,
-    /// `MapExitTile` components stamped on overworld edge tiles and the
-    /// temple entrance / exit — re-applied when this floor is restored.
-    pub exit_tiles: Vec<(Point, crate::map::world::MapExitTile)>,
     /// Position of the DownStairs on this floor; player lands adjacent to it
     /// when returning from below (ascending).
     pub down_stairs_pos: Point,
@@ -234,7 +231,6 @@ pub(crate) struct SnapshotQueries<'w, 's> {
         ),
         With<Prop>,
     >,
-    pub exit_tiles: Query<'w, 's, (&'static Position, &'static crate::map::world::MapExitTile)>,
     /// Stealth Phase I: snapshot the player's entity + position so the
     /// floor-leave path can degrade per-monster awareness alongside the
     /// disk-save path. Awareness without an active player collapses to
@@ -255,7 +251,6 @@ fn snapshot_floor(
     let monster_query = &snap.monsters;
     let item_query = &snap.items;
     let prop_query = &snap.props;
-    let exit_query = &snap.exit_tiles;
     use crate::save::{SavedMonster, SavedItem, SavedProp};
 
     let player_snapshot = snap.player.single().ok().map(|(e, p)| (e, Point::new(p.x, p.y)));
@@ -308,11 +303,6 @@ fn snapshot_floor(
         })
         .collect();
 
-    let exit_tiles = exit_query
-        .iter()
-        .map(|(pos, exit)| (Point::new(pos.x, pos.y), *exit))
-        .collect();
-
     let fallback_pos = map
         .tiles
         .iter()
@@ -342,7 +332,6 @@ fn snapshot_floor(
         monsters,
         items,
         props,
-        exit_tiles,
         down_stairs_pos,
         up_stairs_pos,
     }
@@ -509,26 +498,19 @@ fn reset_floor_spatial_indices(
 // Systems
 // ---------------------------------------------------------------------------
 
-/// Unified transition system. Replaces the old separate
-/// `player_stair_system`. Fires one `MapTransitionMessage` per trigger,
-/// regardless of whether the trigger was a `MapExitTile` component
-/// (overworld edges, temple entrance / exit) or a stair terrain
-/// (`DownStairs` / `UpStairs`).
+/// Player-transition system. Fires one `MapTransitionMessage` per
+/// stair tile step.
 ///
 /// Resolution order:
-/// 1. If the tile at the player's position carries a `MapExitTile`
-///    component, use its explicit destination floor + position.
-/// 2. Else `DownStairs` → `floor + 1`, stair-relative arrival.
-/// 3. Else `UpStairs` (and `floor > 1`) → `floor - 1`, stair-relative.
-/// 4. Else `Portal` → Victory if the player has a `QuestItem`,
+/// 1. `DownStairs` → `floor + 1`, stair-relative arrival.
+/// 2. `UpStairs` (and `floor > 0`) → `floor - 1`, stair-relative.
+/// 3. `Portal` → Victory if the player has a `QuestItem`,
 ///    otherwise a hint log line.
 fn player_transition_system(
     mut commands: Commands,
     player_query: Query<(Entity, &Position, Has<StairCooldown>), (With<Player>, Changed<Position>)>,
     map: Res<Map>,
     floor: Res<Floor>,
-    tile_index: Res<crate::map::tile::TileEntityIndex>,
-    exit_tiles: Query<&crate::map::world::MapExitTile>,
     mut writer: MessageWriter<MapTransitionMessage>,
     quest_item_query: Query<(), (With<crate::components::QuestItem>, With<InInventory>)>,
     mut next_state: ResMut<NextState<AppState>>,
@@ -545,18 +527,6 @@ fn player_transition_system(
             continue;
         }
 
-        // 1. Explicit MapExitTile component overrides everything.
-        if let Some(&tile_entity) = tile_index.0.get(&(pos.x, pos.y))
-            && let Ok(exit) = exit_tiles.get(tile_entity)
-        {
-            writer.write(MapTransitionMessage {
-                destination_floor: exit.destination_floor,
-                destination_pos: exit.destination_pos,
-            });
-            continue;
-        }
-
-        // 2-4. Terrain-based fallback.
         let idx = map.xy_idx(pos.x, pos.y);
         match map.tiles[idx].terrain {
             TerrainType::DownStairs => {
@@ -668,9 +638,9 @@ pub(crate) struct SpawnDungeonExtras<'w> {
     /// reads — see the load arm of `spawn_dungeon`. Lives in `extras`
     /// because the top-level signature is already at Bevy's 16-param cap.
     character_choice: ResMut<'w, crate::character::CharacterChoice>,
-    /// Set by [`apply_map_transition`] when arriving on a floor via a
-    /// `MapExitTile` with an explicit destination position. If `Some`,
-    /// overrides the materializer's default player spawn point.
+    /// Set by [`apply_map_transition`] when arriving on a floor with an
+    /// explicit destination position. If `Some`, overrides the
+    /// materializer's default player spawn point.
     pending_arrival: ResMut<'w, PendingArrival>,
     /// Visual theme. Set per-floor by `spawn_dungeon` so the renderer
     /// draws town, forest, and temple distinctly.

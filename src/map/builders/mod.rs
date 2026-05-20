@@ -90,10 +90,6 @@ pub struct BuilderMap {
     pub spawn_list: Vec<SpawnEntry>,
     pub item_spawn_list: Vec<(Point, String, u32)>, // (pos, item_name, count)
     pub prop_spawn_list: Vec<(Point, String)>,      // (pos, prop_name)
-    /// Tiles to mark with a [`crate::map::world::MapExitTile`] component
-    /// in the materializer. Used by overworld edge builders + the temple
-    /// entrance/exit so transitions don't require a custom terrain type.
-    pub exit_tile_spawn_list: Vec<(Point, crate::map::world::MapExitTile)>,
     pub squad_counter: SquadIdCounter,
     pub decoration_exclusion_zones: Vec<Rect>,
     /// Seeded RNG for deterministic map generation.
@@ -159,21 +155,6 @@ impl BuilderMap {
         self.prop_spawn_list.push((pos, name));
     }
 
-    /// Mark a tile to receive a `MapExitTile` component when entities
-    /// are materialized. Convention: use this for overworld edge exits
-    /// (explicit destination position) and the temple entrance / exit.
-    pub fn add_exit_tile(
-        &mut self,
-        pos: Point,
-        destination_floor: u32,
-        destination_pos: Option<Position>,
-    ) {
-        self.exit_tile_spawn_list.push((
-            pos,
-            crate::map::world::MapExitTile { destination_floor, destination_pos },
-        ));
-    }
-
     pub fn add_exclusion_zone(&mut self, rect: Rect) {
         self.decoration_exclusion_zones.push(rect);
     }
@@ -203,7 +184,6 @@ impl BuilderMap {
             spawn_list: Vec::new(),
             item_spawn_list: Vec::new(),
             prop_spawn_list: Vec::new(),
-            exit_tile_spawn_list: Vec::new(),
             squad_counter: SquadIdCounter::default(),
             decoration_exclusion_zones: Vec::new(),
             rng: RandomNumberGenerator::new(),
@@ -257,7 +237,6 @@ impl BuilderChain {
                 spawn_list: Vec::new(),
                 item_spawn_list: Vec::new(),
                 prop_spawn_list: Vec::new(),
-                exit_tile_spawn_list: Vec::new(),
                 squad_counter,
                 decoration_exclusion_zones: Vec::new(),
                 rng: RandomNumberGenerator::new(),

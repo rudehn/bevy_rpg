@@ -13,9 +13,7 @@
 //! components). That was ripped out when the game pivoted back to
 //! linear floors; see `docs/design/OVERWORLD.md` for the writeup.
 
-use bevy::prelude::{Color, Component, Resource};
-
-use crate::components::Position;
+use bevy::prelude::{Color, Resource};
 
 use crate::assets::TileManifest;
 use crate::map::tile::{TerrainType, Tile, resolve_tile_bg, resolve_tile_display};
@@ -52,22 +50,6 @@ pub fn floor_kind(floor: u32) -> FloorKind {
         f if f == MAX_FLOOR => FloorKind::Temple,
         other => panic!("floor_kind: floor {other} is beyond MAX_FLOOR ({MAX_FLOOR})"),
     }
-}
-
-/// Optional component on a tile entity that overrides the default
-/// `>` / `<` terrain-based transition with an **explicit** destination.
-///
-/// In the linear-floor scheme, terrain stairs are sufficient and this
-/// component is rarely used — but the materializer still threads
-/// `exit_tile_spawn_list` through the build pipeline so future content
-/// (warps, fast-travel, scripted teleporters) can stamp explicit
-/// transitions without re-introducing infrastructure.
-#[derive(Component, Clone, Copy, Debug)]
-pub struct MapExitTile {
-    pub destination_floor: u32,
-    /// `Some(pos)` means the player arrives at exactly `pos`. `None`
-    /// means the destination floor decides (its `<` / `>` position).
-    pub destination_pos: Option<Position>,
 }
 
 // =====================================================================

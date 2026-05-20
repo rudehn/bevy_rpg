@@ -81,6 +81,7 @@ const GAME_SAVE_KEY: &str = "ironveil_save";
 ///   effect until the player trains; migration is a no-op.
 /// - **v6**: Overworld topology — `OverworldSave` on `GameSaveData` and
 ///   `exit_tiles` on `SavedFloorData`. Both `#[serde(default)]`.
+///   *(Both fields removed in v11 when the overworld grid was retired.)*
 /// - **v7**: Stealth Phase I — per-monster awareness state persisted on
 ///   `SavedMonster.awareness` as a degraded shape (Hidden | Searching).
 ///   `Aware` collapses to `Searching{ player.pos, +20 }` at save time.
@@ -105,7 +106,14 @@ const GAME_SAVE_KEY: &str = "ironveil_save";
 ///   traps don't re-fire). `#[serde(default)]` keeps v9 saves loadable;
 ///   pre-v10 saves load all props as not-yet-fired, matching the
 ///   pre-RFC behavior where Machine activation state was lost on load.
-pub const SAVE_SCHEMA_VERSION: u32 = 10;
+/// - **v11**: Retires the v6 overworld-topology fields. The in-memory
+///   `OverworldState` resource and `MapExitTile` component were
+///   removed with the linear-floor milestone; this version drops
+///   the matching `GameSaveData.overworld: OverworldSave` and
+///   `SavedFloorData.exit_tiles: Vec<SavedExitTile>` save fields.
+///   Pure deletion — RON silently ignores unknown fields when loading
+///   v10 saves on v11.
+pub const SAVE_SCHEMA_VERSION: u32 = 11;
 
 // ---- Migration chain ----
 
@@ -313,6 +321,22 @@ impl SaveMigration for MigrateV9ToV10 {
     fn migrate(&self, data: &str) -> Result<String, String> { Ok(data.to_string()) }
 }
 
+/// v10 → v11: drops the legacy v6 overworld topology fields. The
+/// in-memory `OverworldState` resource and the `MapExitTile`
+/// component were removed when the linear-floor milestone replaced
+/// the 3×3 overworld grid; this version retires the matching save
+/// fields (`GameSaveData.overworld` of type `OverworldSave`, and
+/// `SavedFloorData.exit_tiles: Vec<SavedExitTile>`). RON
+/// deserialisation silently ignores unknown fields, so v10 saves
+/// load on v11 with the legacy data dropped on the floor —
+/// migration is a pure version-bump no-op.
+struct MigrateV10ToV11;
+impl SaveMigration for MigrateV10ToV11 {
+    fn from_version(&self) -> u32 { 10 }
+    fn to_version(&self) -> u32 { 11 }
+    fn migrate(&self, data: &str) -> Result<String, String> { Ok(data.to_string()) }
+}
+
 fn migrations() -> Vec<Box<dyn SaveMigration>> {
     vec![
         Box::new(MigrateV0ToV1),
@@ -324,6 +348,7 @@ fn migrations() -> Vec<Box<dyn SaveMigration>> {
         Box::new(MigrateV6ToV7),
         Box::new(MigrateV8ToV9),
         Box::new(MigrateV9ToV10),
+        Box::new(MigrateV10ToV11),
     ]
 }
 
@@ -461,32 +486,6 @@ pub struct GameSaveData {
     /// Items that have fallen through a chasm, waiting on the destination floor.
     #[serde(default)]
     pub fallen_items: HashMap<u32, Vec<SavedItem>>,
-    /// Per-run overworld state — which forest tile contains the temple
-    /// entrance and where on that tile the entrance sits. Schema v6+.
-    #[serde(default)]
-    pub overworld: OverworldSave,
-}
-
-/// Save-format mirror of `crate::map::world::OverworldState`.
-#[derive(Serialize, Deserialize, Clone, Copy, Default)]
-pub struct OverworldSave {
-    #[serde(default = "default_entrance_floor")]
-    pub temple_entrance_floor: u32,
-    #[serde(default)]
-    pub temple_entrance_pos: Option<[i32; 2]>,
-}
-
-fn default_entrance_floor() -> u32 { 1 }
-
-/// `MapExitTile` snapshot — used to round-trip overworld edge exits
-/// and temple stairs across save / restore. Schema v6+.
-#[derive(Serialize, Deserialize, Clone, Copy, Default)]
-pub struct SavedExitTile {
-    pub x: i32,
-    pub y: i32,
-    pub destination_floor: u32,
-    #[serde(default)]
-    pub destination_pos: Option<[i32; 2]>,
 }
 
 // ---------------------------------------------------------------------------
@@ -646,9 +645,6 @@ pub struct SavedFloorData {
     pub down_stairs_pos: [i32; 2],
     #[serde(default)]
     pub up_stairs_pos: [i32; 2],
-    /// Overworld edge / temple stair `MapExitTile` markers. Schema v6+.
-    #[serde(default)]
-    pub exit_tiles: Vec<SavedExitTile>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -937,16 +933,6 @@ pub fn cached_floor_to_save(cached: &CachedFloor) -> SavedFloorData {
         props: cached.props.clone(),
         down_stairs_pos: [cached.down_stairs_pos.x, cached.down_stairs_pos.y],
         up_stairs_pos: [cached.up_stairs_pos.x, cached.up_stairs_pos.y],
-        exit_tiles: cached
-            .exit_tiles
-            .iter()
-            .map(|(pt, exit)| SavedExitTile {
-                x: pt.x,
-                y: pt.y,
-                destination_floor: exit.destination_floor,
-                destination_pos: exit.destination_pos.map(|p| [p.x, p.y]),
-            })
-            .collect(),
     }
 }
 
@@ -956,19 +942,6 @@ pub fn save_to_cached_floor(data: &SavedFloorData) -> CachedFloor {
         monsters: data.monsters.clone(),
         items: data.items.clone(),
         props: data.props.clone(),
-        exit_tiles: data
-            .exit_tiles
-            .iter()
-            .map(|e| {
-                (
-                    Point::new(e.x, e.y),
-                    crate::map::world::MapExitTile {
-                        destination_floor: e.destination_floor,
-                        destination_pos: e.destination_pos.map(|p| crate::components::Position { x: p[0], y: p[1] }),
-                    },
-                )
-            })
-            .collect(),
         down_stairs_pos: Point::new(data.down_stairs_pos[0], data.down_stairs_pos[1]),
         up_stairs_pos: Point::new(data.up_stairs_pos[0], data.up_stairs_pos[1]),
     }
@@ -1318,7 +1291,6 @@ pub fn auto_save_system(
         squad_id_counter: squad_counter.0,
         fallen_monsters: fallen_entities.monsters.clone(),
         fallen_items: fallen_entities.items.clone(),
-        overworld: OverworldSave::default(),
     };
 
     match ron::ser::to_string_pretty(&save_data, ron::ser::PrettyConfig::default()) {
@@ -1929,7 +1901,6 @@ mod tests {
             props: vec![basic_prop()],
             down_stairs_pos: [3, 2],
             up_stairs_pos: [1, 1],
-            exit_tiles: Vec::new(),
         }
     }
 
@@ -1957,8 +1928,7 @@ mod tests {
             squad_id_counter: 99,
             fallen_monsters,
             fallen_items,
-            overworld: OverworldSave::default(),
-        }
+            }
     }
 
     fn minimal_save(squad_id_counter: u64) -> GameSaveData {
@@ -1992,8 +1962,7 @@ mod tests {
             squad_id_counter,
             fallen_monsters: HashMap::new(),
             fallen_items: HashMap::new(),
-            overworld: OverworldSave::default(),
-        }
+            }
     }
 
     // =====================================================================
@@ -2685,8 +2654,7 @@ mod tests {
                 props: vec![],
                 down_stairs_pos: [1, 0],
                 up_stairs_pos: [0, 1],
-                exit_tiles: Vec::new(),
-            },
+                },
         );
         let save = GameSaveData {
             floor: 3,
@@ -2711,8 +2679,7 @@ mod tests {
             squad_id_counter: 10,
             fallen_monsters: HashMap::new(),
             fallen_items: HashMap::new(),
-            overworld: OverworldSave::default(),
-        };
+            };
         let l: GameSaveData = from_ron(&to_ron(&save));
         assert_eq!(l.floor_cache.len(), 2);
         assert_eq!(l.floor_cache[&1].monsters.len(), 1);
@@ -2825,7 +2792,6 @@ mod tests {
             monsters: vec![basic_monster()],
             items: vec![basic_item()],
             props: vec![basic_prop()],
-            exit_tiles: Vec::new(),
             down_stairs_pos: Point::new(1, 0),
             up_stairs_pos: Point::new(0, 1),
         };
@@ -2956,34 +2922,8 @@ mod tests {
     // =====================================================================
 
     #[test]
-    fn schema_version_is_ten() {
-        assert_eq!(SAVE_SCHEMA_VERSION, 10);
-    }
-
-    #[test]
-    fn v6_overworld_survives_roundtrip() {
-        let mut save = full_save();
-        save.overworld = OverworldSave {
-            temple_entrance_floor: 7,
-            temple_entrance_pos: Some([40, 30]),
-        };
-        let l: GameSaveData = from_ron(&to_ron(&save));
-        assert_eq!(l.overworld.temple_entrance_floor, 7);
-        assert_eq!(l.overworld.temple_entrance_pos, Some([40, 30]));
-    }
-
-    #[test]
-    fn v6_exit_tiles_survive_roundtrip() {
-        let mut floor = floor_data();
-        floor.exit_tiles = vec![
-            SavedExitTile { x: 78, y: 30, destination_floor: 5, destination_pos: Some([2, 30]) },
-            SavedExitTile { x: 1, y: 1, destination_floor: 9, destination_pos: None },
-        ];
-        let l: SavedFloorData = from_ron(&to_ron(&floor));
-        assert_eq!(l.exit_tiles.len(), 2);
-        assert_eq!(l.exit_tiles[0].destination_floor, 5);
-        assert_eq!(l.exit_tiles[0].destination_pos, Some([2, 30]));
-        assert_eq!(l.exit_tiles[1].destination_pos, None);
+    fn schema_version_is_eleven() {
+        assert_eq!(SAVE_SCHEMA_VERSION, 11);
     }
 
     #[test]
@@ -3043,7 +2983,7 @@ mod tests {
         // StatusEffectKind::Custom { id } → named-variant hard break;
         // pre-v8 saves are unrecoverable by design and fail to load.
         let migs = migrations();
-        assert_eq!(migs.len(), 9);
+        assert_eq!(migs.len(), 10);
         assert_eq!(migs[0].from_version(), 0);
         assert_eq!(migs[0].to_version(), 1);
         assert_eq!(migs[1].from_version(), 1);
@@ -3062,6 +3002,8 @@ mod tests {
         assert_eq!(migs[7].to_version(), 9);
         assert_eq!(migs[8].from_version(), 9);
         assert_eq!(migs[8].to_version(), 10);
+        assert_eq!(migs[9].from_version(), 10);
+        assert_eq!(migs[9].to_version(), 11);
     }
 
     // =====================================================================
