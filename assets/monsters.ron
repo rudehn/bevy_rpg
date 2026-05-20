@@ -1158,7 +1158,7 @@
         // player's bumps fall through to BlockedByCollider (no melee).
         //
         // Placement and patrol bounds are decided by the town builder
-        // (see assets/town_npcs.ron + src/map/builders/town_npcs.rs).
+        // (see TOWN_NPC_SPAWNS in src/map/builders/town.rs).
         // The monster asset declares stats + idle_movement style;
         // PatrolRoute (AreaRoam bounds / Sentry anchor) is attached at
         // spawn time by the builder and read by the IdleMove tactic.

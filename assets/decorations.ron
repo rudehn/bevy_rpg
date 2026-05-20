@@ -86,7 +86,7 @@
         ),
         // Phosphorescent moss — sparse cyan-green glow patches in the
         // forest. Each tile emits a `phosphorescent_moss_light` (radius
-        // 6, intensity 0.7) via the engine's lighting pipeline, which
+        // 6, intensity 1.3) via the engine's lighting pipeline, which
         // the stealth system reads to penalise hiding nearby. Kept
         // small (3-6 seeds, fast falloff) so patches are clumpy
         // accents, not a wall-to-wall green carpet.
